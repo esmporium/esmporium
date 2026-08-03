@@ -9,6 +9,11 @@ authors = [
 license = { text = "3-Clause BSD License" }
 requires-python = ">=3.10"
 dependencies = [
+    # Required, not dev-only:
+    # the database lives on the user's machine,
+    # so the user's own process is the only thing
+    # that can ever migrate it to a newer schema.
+    "alembic>=1.13.0",
     # If you use numpy, we suggest pinning to >2.1.0
     # based on the minimum supported python version
     "pandas>=2.2.0", # pin based on minimum supported python version
@@ -634,6 +639,10 @@ formats = "ipynb,py:percent"
 [tool.pytest.ini_options]
 addopts = [
     "--import-mode=importlib",
+    # Alembic's `env.py` runs migrations as an import side effect
+    # and is meaningless outside an alembic invocation,
+    # so `--doctest-modules` must not collect it.
+    "--ignore=src/esmporium/db/migrations",
 ]
 
 [tool.ruff]
@@ -671,6 +680,14 @@ ignore = [
     "D",
     "S101",
     "PLR2004",
+]
+# Migration scripts are generated, then reviewed by hand.
+# They must import `sqlmodel.sql.sqltypes` because that is where the column types
+# in a SQLModel-generated migration come from, but plenty of migrations
+# (e.g. one that only adds an index) never reference it.
+# Fighting that per-file with `noqa` just trades F401 for RUF100.
+"src/esmporium/db/migrations/versions/*.py" = [
+    "F401",
 ]
 "docs/*" = [
     "D100",

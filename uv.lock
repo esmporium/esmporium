@@ -15,6 +15,21 @@ resolution-markers = [
 ]
 
 [[package]]
+name = "alembic"
+version = "1.18.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "mako" },
+    { name = "sqlalchemy" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/1a/cc/ac0bed8e562e7407fe55c3ba85a4dce86e6dbd8730887bd1e406a6c5c18a/alembic-1.18.5.tar.gz", hash = "sha256:1554982221dd17e9a749b53902407578eb305e453f71999e8c7f0a48389fff8e", size = 2060480, upload-time = "2026-06-25T15:20:54.888Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/96/78/5fe6dc3a3a5b2f5a2a4faef8bfe336d5fa049a38884ab3172e0098160c01/alembic-1.18.5-py3-none-any.whl", hash = "sha256:06d8ba9d04558022f5395e9317de03d270f3dced49cee01f89fe7a13c26f14bc", size = 264664, upload-time = "2026-06-25T15:20:56.673Z" },
+]
+
+[[package]]
 name = "annotated-types"
 version = "0.8.0"
 source = { registry = "https://pypi.org/simple" }
@@ -722,6 +737,7 @@ name = "esmporium"
 version = "0.1.2.post1"
 source = { editable = "." }
 dependencies = [
+    { name = "alembic" },
     { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "pandas", version = "3.0.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "sqlmodel" },
@@ -1085,6 +1101,7 @@ tests-min = [
 
 [package.metadata]
 requires-dist = [
+    { name = "alembic", specifier = ">=1.13.0" },
     { name = "esmporium", extras = ["plots"], marker = "extra == 'full'" },
     { name = "matplotlib", marker = "extra == 'plots'", specifier = ">=3.7.1" },
     { name = "pandas", specifier = ">=2.2.0" },
@@ -2251,6 +2268,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/84/f0/962ba77fae91ad0cca2ead4fb0ff5aa00f9793c1a78cd807672f9e5a9aa3/liccheck-0.9.2.tar.gz", hash = "sha256:bdc2190f8e95af3c8f9c19edb784ba7d41ecb2bf9189422eae6112bf84c08cd5", size = 16020, upload-time = "2023-09-22T14:23:59.009Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f1/bb/fbc7dd6ea215b97b90c35efc8c8f3dbfcbacb91af8c806dff1f49deddd8e/liccheck-0.9.2-py2.py3-none-any.whl", hash = "sha256:15cbedd042515945fe9d58b62e0a5af2f2a7795def216f163bb35b3016a16637", size = 13652, upload-time = "2023-09-22T14:23:57.849Z" },
+]
+
+[[package]]
+name = "mako"
+version = "1.3.12"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "markupsafe" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/00/62/791b31e69ae182791ec67f04850f2f062716bbd205483d63a215f3e062d3/mako-1.3.12.tar.gz", hash = "sha256:9f778e93289bd410bb35daadeb4fc66d95a746f0b75777b942088b7fd7af550a", size = 400219, upload-time = "2026-04-28T19:01:08.512Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/bc/b1/a0ec7a5a9db730a08daef1fdfb8090435b82465abbf758a596f0ea88727e/mako-1.3.12-py3-none-any.whl", hash = "sha256:8f61569480282dbf557145ce441e4ba888be453c30989f879f0d652e39f53ea9", size = 78521, upload-time = "2026-04-28T19:01:10.393Z" },
 ]
 
 [[package]]

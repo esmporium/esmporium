@@ -54,6 +54,30 @@ test:  ## run the tests
 # that improves the coverage handling when there are doctests
 # and a `src` layout like ours.
 
+# The scratch database that migrations are authored against.
+# It is deleted before and after every autogenerate,
+# so autogenerate always compares the models against
+# "every existing migration applied from scratch".
+ALEMBIC_SCRATCH_DB := alembic-scratch.db
+
+.PHONY: migration
+migration:  ## generate a migration for the current models, e.g. make migration MESSAGE="add version table"
+	@if [ -z "$(MESSAGE)" ]; then echo 'Usage: make migration MESSAGE="what you changed"' >&2; exit 1; fi
+	rm -f $(ALEMBIC_SCRATCH_DB)
+	uv run alembic upgrade head
+	uv run alembic revision --autogenerate -m "$(MESSAGE)"
+	rm -f $(ALEMBIC_SCRATCH_DB)
+    # Alembic's output isn't formatted to our line length, so fix that here
+    # rather than leaving it to fail in CI.
+	uv run --group dev ruff format src/esmporium/db/migrations
+	@echo "Now read the generated file in src/esmporium/db/migrations/versions/."
+	@echo "Autogenerate is a first draft, not an answer:"
+	@echo "it cannot see data migrations and it guesses at renames."
+
+.PHONY: migration-sql
+migration-sql:  ## print the SQL that upgrading from scratch would run, without touching a database
+	uv run alembic upgrade base:head --sql
+
 .PHONY: docs
 docs:  ## build the docs
 	uv run --group docs properdocs build

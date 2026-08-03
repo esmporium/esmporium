@@ -31,6 +31,49 @@ Try and keep your merge requests as small as possible
 This makes life much easier for reviewers
 which allows contributions to be accepted at a faster rate.
 
+## Database migrations
+
+The database lives on the user's own machine.
+That means there is no deployment step at which someone could migrate it for them,
+so esmporium has to be able to migrate it itself.
+This is why `alembic` is a required dependency rather than a development one,
+and why the migration scripts ship inside the installed package,
+in `src/esmporium/db/migrations`.
+
+The rule that follows from this is short:
+**any change to `src/esmporium/db/schema.py` needs a migration in the same merge request.**
+A released version that can't upgrade a database written by the version before it
+leaves users with a database they can no longer open.
+
+To write one, change the models first, then:
+
+```sh
+make migration MESSAGE="add a version table"
+```
+
+That applies every existing migration to a throwaway database,
+diffs the models against the result,
+and writes the difference to a new file in `src/esmporium/db/migrations/versions`.
+
+Then read what it wrote, because autogenerate drafts migrations, it doesn't write them.
+In particular it cannot see:
+
+- **data migrations.** Alembic will happily add a non-nullable column
+  to a table that already has rows in it, which fails at runtime.
+  If existing rows need a value, you have to write that yourself.
+- **renames.** A renamed column looks exactly like
+  a dropped column plus an added one, which silently discards the data.
+- **whether the downgrade is right.** It is generated,
+  and for anything lossy it can't be.
+
+`make migration-sql` prints the SQL that upgrading from scratch would run,
+without touching a database, which is a good way to check what you've written.
+
+Two tests guard this:
+`tests/integration/test_migrations.py` fails if the migrations and the models
+have drifted apart, and `tests/regression/test_schema_ddl.py` fails if the SQL
+the schema compiles to has changed, so a schema change can't pass review unnoticed.
+
 ## Language
 
 We use British English for our development.
