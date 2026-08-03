@@ -33,6 +33,12 @@ def get_ddl():
     """
     Get the DDL that our schema compiles to, as a single deterministic string
 
+    SQLAlchemy's compiler leaves trailing whitespace on most lines.
+    We strip it, because our own pre-commit hooks strip it from the file
+    we compare against, and a snapshot that the repository's tooling
+    rewrites behind the test's back is a snapshot that fails for no reason.
+    Trailing whitespace means nothing in SQL, so nothing is lost by dropping it.
+
     Returns
     -------
     :
@@ -47,7 +53,9 @@ def get_ddl():
         for index in sorted(table.indexes, key=lambda idx: idx.name or ""):
             statements.append(str(CreateIndex(index).compile(dialect=dialect)).strip())
 
-    return "\n\n".join(f"{statement};" for statement in statements) + "\n"
+    ddl = "\n\n".join(f"{statement};" for statement in statements)
+
+    return "\n".join(line.rstrip() for line in ddl.splitlines()) + "\n"
 
 
 def test_schema_ddl():
