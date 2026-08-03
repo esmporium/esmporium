@@ -1,7 +1,7 @@
 # Changes here will be overwritten by Copier; NEVER EDIT MANUALLY
 _commit: v0.15.4
 _src_path: gl:openscm/copier-core-python-repository
-conda_release: true
+conda_release: false
 email: zehrunga@unimelb.edu.au
 include_cli: false
 include_mypy: true

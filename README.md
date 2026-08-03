@@ -12,11 +12,6 @@ Unified data retrieval from ESGF and access to datasets
 [![PyPI](https://img.shields.io/pypi/v/esmporium.svg)](https://pypi.org/project/esmporium/)
 [![PyPI install](https://github.com/esmporium/esmporium/actions/workflows/install-pypi.yaml/badge.svg?branch=main)](https://github.com/esmporium/esmporium/actions/workflows/install-pypi.yaml)
 
-**Conda :**
-[![Conda](https://img.shields.io/conda/vn/conda-forge/esmporium.svg)](https://anaconda.org/conda-forge/esmporium)
-[![Conda platforms](https://img.shields.io/conda/pn/conda-forge/esmporium.svg)](https://anaconda.org/conda-forge/esmporium)
-[![Conda install](https://github.com/esmporium/esmporium/actions/workflows/install-conda.yaml/badge.svg?branch=main)](https://github.com/esmporium/esmporium/actions/workflows/install-conda.yaml)
-
 **Tests :**
 [![CI](https://github.com/esmporium/esmporium/actions/workflows/ci.yaml/badge.svg?branch=main)](https://github.com/esmporium/esmporium/actions/workflows/ci.yaml)
 [![Coverage](https://codecov.io/gh/esmporium/esmporium/branch/main/graph/badge.svg)](https://codecov.io/gh/esmporium/esmporium)
@@ -65,16 +60,6 @@ because of breaking updates to dependencies.
 
 The locked version of esmporium can be installed with
 
-=== "mamba"
-    ```sh
-    mamba install -c conda-forge esmporium-locked
-    ```
-
-=== "conda"
-    ```sh
-    conda install -c conda-forge esmporium-locked
-    ```
-
 === "pip"
     ```sh
     pip install 'esmporium[locked]'
@@ -99,32 +84,12 @@ please [raise an issue](https://github.com/esmporium/esmporium/issues).
 
 The (non-locked) version of esmporium can be installed with
 
-=== "mamba"
-    ```sh
-    mamba install -c conda-forge esmporium
-    ```
-
-=== "conda"
-    ```sh
-    conda install -c conda-forge esmporium
-    ```
-
 === "pip"
     ```sh
     pip install esmporium
     ```
 
 Additional dependencies can be installed using
-
-=== "mamba"
-    If you are installing with mamba, we recommend
-    installing the extras by hand because there is no stable
-    solution yet (see [conda issue #7502](https://github.com/conda/conda/issues/7502))
-
-=== "conda"
-    If you are installing with conda, we recommend
-    installing the extras by hand because there is no stable
-    solution yet (see [conda issue #7502](https://github.com/conda/conda/issues/7502))
 
 === "pip"
     ```sh
