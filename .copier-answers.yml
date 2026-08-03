@@ -1,0 +1,19 @@
+# Changes here will be overwritten by Copier; NEVER EDIT MANUALLY
+_commit: v0.15.4
+_src_path: gl:openscm/copier-core-python-repository
+conda_release: true
+email: zehrunga@unimelb.edu.au
+include_cli: false
+include_mypy: true
+include_ty: true
+name: Anna Zehrung
+notebook_based_docs: true
+package_manager: uv
+pandas_doctests: true
+plot_dependencies: true
+project_description_short: Unified data retrieval from ESGF and access to datasets
+project_name_human: esmporium
+project_name_pip: esmporium
+project_name_python: esmporium
+project_url: https://github.com/esmporium/esmporium
+track_lock_file: true
