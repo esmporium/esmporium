@@ -21,6 +21,13 @@ from the examples given in that link.
 
 <!-- towncrier release notes start -->
 
+## esmporium v0.1.2 (2026-08-03)
+
+### 🎉 Improvements
+
+- Added BSD 3-Clause licence ([#2](https://github.com/esmporium/esmporium/pull/2))
+
+
 ## esmporium v0.1.1 (2026-08-03)
 
 No significant changes.
