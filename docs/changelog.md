@@ -20,3 +20,7 @@ from the examples given in that link.
 -->
 
 <!-- towncrier release notes start -->
+
+## esmporium v0.1.1 (2026-08-03)
+
+No significant changes.

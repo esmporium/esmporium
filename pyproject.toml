@@ -1,6 +1,6 @@
 [project]
 name = "esmporium"
-version = "0.1.0a1"
+version = "0.1.1"
 description = "Unified data retrieval from ESGF and access to datasets"
 authors = [
     { name = "Anna Zehrung", email = "zehrunga@unimelb.edu.au" },
