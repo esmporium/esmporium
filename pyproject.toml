@@ -4,8 +4,9 @@ version = "0.1.1.post1"
 description = "Unified data retrieval from ESGF and access to datasets"
 authors = [
     { name = "Anna Zehrung", email = "zehrunga@unimelb.edu.au" },
+    { name = "Zebedee Nicholls", email = "zebedee.nicholls@climate-energy-college.org" },
 ]
-license = { text = "placeholder" }
+license = { text = "3-Clause BSD License" }
 requires-python = ">=3.10"
 dependencies = [
     # If you use numpy, we suggest pinning to >2.1.0
@@ -17,8 +18,7 @@ classifiers = [
     # Full list: https://pypi.org/classifiers/
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
-    ## If you apply an OSI-approved licence, you should uncomment the below
-    # "License :: OSI Approved :: BSD License",
+    "License :: OSI Approved :: BSD License",
     "Natural Language :: English",
     "Operating System :: OS Independent",
     "Programming Language :: Python",
