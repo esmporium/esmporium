@@ -107,6 +107,7 @@ class Dataset(EsmporiumBase, table=True):
             # The columns are therefore ordered
             # roughly by how often we expect to filter on them.
             "variable",
+            "processing_id",
             "experiment",
             "model",
             "variant_label",
@@ -224,7 +225,7 @@ class Dataset(EsmporiumBase, table=True):
     For example, `gn`, `gr`, `g115`
     """
 
-    # TODO: does branding suffix kind of replace table_id for CMIP7?
+    # TODO: does branding_suffix kind of replace table_id for CMIP7?
     processing_id: str
     """
     The label describing the dimensions of variables

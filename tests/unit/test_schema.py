@@ -30,6 +30,7 @@ VALID_DATASET_KWARGS = {
     "variable": "tas",
     "reporting_interval": "mon",
     "grid_label": "gn",
+    "processing_id": "Amon",
 }
 """A dataset with every facet filled in, i.e. one the database should accept"""
 
