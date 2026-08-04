@@ -118,7 +118,8 @@ class Dataset(EsmporiumBase, table=True):
         ),
     )
 
-    # Note: this needs to come from master_id when reading ESGF records.
+    # Note: this needs to come from master_id when reading ESGF records (for CMIP6).
+    # Likely will need to be created manually for CMIP5
     # We call it id beacuse that's what it is and we think the ESGF name is confusing.
     id: str = Field(primary_key=True)
     """
@@ -209,6 +210,8 @@ class Dataset(EsmporiumBase, table=True):
     # TODO: decide what to put here for projects that have no grid label.
     # CMIP5 has no such concept, so ingesting CMIP5 will need to pick a value
     # (a sentinel such as "unknown") rather than leaving this unset.
+    # Likely manually add 'gn' for CMIP5, as all are considered native
+    # grids, even if on cartesian coords.
     # Making the column optional instead is not a fix, see the note on
     # `institution` above: it would put the hole back in `uq_dataset_facets`.
     grid_label: str
@@ -219,6 +222,20 @@ class Dataset(EsmporiumBase, table=True):
     We don't handle this mapping here.
 
     For example, `gn`, `gr`, `g115`
+    """
+
+    # TODO: does branding suffix kind of replace table_id for CMIP7?
+    processing_id: str
+    """
+    The label describing the dimensions of variables
+
+    Includes the reporting interval (frequency) and may include information relating
+    to latitude, longitude or vertical dimension.
+
+    A dataset for a single variable may differ by processing_id.
+    Known as `table_id` for CMIP5 and CMIP6.
+
+    For example, `Amon`, `CFmon`, `3hr`
     """
 
     # # TODO: check whether this is easily available from CMIP6
