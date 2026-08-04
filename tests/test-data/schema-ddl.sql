@@ -8,6 +8,7 @@ CREATE TABLE dataset (
 	variable VARCHAR NOT NULL,
 	reporting_interval VARCHAR NOT NULL,
 	grid_label VARCHAR NOT NULL,
+	processing_id VARCHAR NOT NULL,
 	CONSTRAINT pk_dataset PRIMARY KEY (id),
-	CONSTRAINT uq_dataset_facets UNIQUE (variable, experiment, model, variant_label, reporting_interval, grid_label, project, institution)
+	CONSTRAINT uq_dataset_facets UNIQUE (variable, processing_id, experiment, model, variant_label, reporting_interval, grid_label, project, institution)
 );
