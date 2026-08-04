@@ -228,15 +228,32 @@ class Dataset(EsmporiumBase, table=True):
     # TODO: does branding_suffix kind of replace table_id for CMIP7?
     processing_id: str
     """
-    The label describing the dimensions of variables
+    The label describing the processing of variables
 
-    Includes the reporting interval (frequency) and may include information relating
-    to latitude, longitude or vertical dimension.
+    This was known as `table_id` for CMIP5 and CMIP6.
 
-    A dataset for a single variable may differ by processing_id.
-    Known as `table_id` for CMIP5 and CMIP6.
+    The confusion here is that variable alone does not define the data that will
+    be provided. Instead, it is the variable and processing_id that defines the data
+    uniquely. Usually, variables are only reported based on one processing_id, so as
+    a user you don't notice. However, sometimes variables are reported under more than
+    one, which introduces ambiguity.
 
-    For example, `Amon`, `CFmon`, `3hr`
+    As a concrete example, in CMIP5 the variable `ta` is reported for both a
+    processing_id="CFmon" and processing_id="Amon". The variable is the same,
+    but for processing_id="CFmon" the data is reported on model levels, while for
+    processing_id="Amon" the data is reported on pressure levels.
+
+    This processing ID has essentially changed meaning over successive CMIP phases.
+    It implies certain characteristics of the data, but it is very hard to check
+    what exactly is implied by any given label (without investigating the underlying
+    CMOR tables upon which each variable is built).
+
+    For CMIP6, refer to https://github.com/PCMDI/cmip6-cmor-tables/blob/main/Tables
+    to verify if a single variable has a unique processing_id.
+
+    As we learn more about this, we will add more details and references here.
+
+    For example, `Amon`, `CFmon`, `3hr`, `AERmon`.
     """
 
     # # TODO: check whether this is easily available from CMIP6
