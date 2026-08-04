@@ -107,6 +107,7 @@ class Dataset(EsmporiumBase, table=True):
             # The columns are therefore ordered
             # roughly by how often we expect to filter on them.
             "variable",
+            "processing_id",
             "experiment",
             "model",
             "variant_label",
@@ -118,7 +119,8 @@ class Dataset(EsmporiumBase, table=True):
         ),
     )
 
-    # Note: this needs to come from master_id when reading ESGF records.
+    # Note: this needs to come from master_id when reading ESGF records (for CMIP6).
+    # Likely will need to be created manually for CMIP5
     # We call it id beacuse that's what it is and we think the ESGF name is confusing.
     id: str = Field(primary_key=True)
     """
@@ -209,6 +211,8 @@ class Dataset(EsmporiumBase, table=True):
     # TODO: decide what to put here for projects that have no grid label.
     # CMIP5 has no such concept, so ingesting CMIP5 will need to pick a value
     # (a sentinel such as "unknown") rather than leaving this unset.
+    # Likely manually add 'gn' for CMIP5, as all are considered native
+    # grids, even if on cartesian coords.
     # Making the column optional instead is not a fix, see the note on
     # `institution` above: it would put the hole back in `uq_dataset_facets`.
     grid_label: str
@@ -219,6 +223,37 @@ class Dataset(EsmporiumBase, table=True):
     We don't handle this mapping here.
 
     For example, `gn`, `gr`, `g115`
+    """
+
+    # TODO: does branding_suffix kind of replace table_id for CMIP7?
+    processing_id: str
+    """
+    The label describing the processing of variables
+
+    This was known as `table_id` for CMIP5 and CMIP6.
+
+    The confusion here is that variable alone does not define the data that will
+    be provided. Instead, it is the variable and processing_id that defines the data
+    uniquely. Usually, variables are only reported based on one processing_id, so as
+    a user you don't notice. However, sometimes variables are reported under more than
+    one, which introduces ambiguity.
+
+    As a concrete example, in CMIP5 the variable `ta` is reported for both a
+    processing_id="CFmon" and processing_id="Amon". The variable is the same,
+    but for processing_id="CFmon" the data is reported on model levels, while for
+    processing_id="Amon" the data is reported on pressure levels.
+
+    This processing ID has essentially changed meaning over successive CMIP phases.
+    It implies certain characteristics of the data, but it is very hard to check
+    what exactly is implied by any given label (without investigating the underlying
+    CMOR tables upon which each variable is built).
+
+    For CMIP6, refer to https://github.com/PCMDI/cmip6-cmor-tables/blob/main/Tables
+    to verify if a single variable has a unique processing_id.
+
+    As we learn more about this, we will add more details and references here.
+
+    For example, `Amon`, `CFmon`, `3hr`, `AERmon`.
     """
 
     # # TODO: check whether this is easily available from CMIP6
