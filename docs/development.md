@@ -107,15 +107,32 @@ That doesn't work for us: on SQLite, migrations run in batch mode,
 which rewrites the table rather than altering it,
 and to do that it has to read the real table first.)
 
-Two tests guard this:
+Three tests guard this:
 `tests/integration/test_migrations.py` fails if the migrations and the models
-have drifted apart, and `tests/regression/test_schema_ddl.py` fails if the SQL
-the schema compiles to has changed, so a schema change can't pass review unnoticed.
+have drifted apart, `tests/regression/test_schema_ddl.py` fails if the SQL
+the schema compiles to has changed, so a schema change can't pass review unnoticed,
+and `tests/integration/test_migrations_from_previous_release.py` fails if a database
+written by the previous release can no longer be migrated.
 The second of those uses a regression file
 (`tests/regression/test_schema_ddl/test_schema_ddl.sql` at the time of writing);
 when a change to the schema is intended, regenerate the file with
 `pytest tests/regression --force-regen`, check the diff and,
 if happy that the diff is correct, commit the changes.
+
+The third is the only one that tests the case that actually breaks users:
+a database that already exists, with their data in it.
+It installs the previous release, creates a database with it, puts a row in it,
+then migrates that database with the working tree,
+so it needs `uv` and network access to run.
+Which release it tests against is read from our tags,
+so there is nothing to update when we release.
+
+It is skipped until there is a release to test against,
+because no release ships a database yet.
+**Set its `FIRST_RELEASE_WITH_A_DATABASE` constant as soon as we release
+a version that includes the database**, and the test starts running by itself
+once that version is tagged.
+That constant is a fact about our history, so it is set once and then left alone.
 
 ## Language
 

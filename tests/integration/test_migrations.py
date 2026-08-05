@@ -3,44 +3,13 @@ Tests that our migrations and our models describe the same database
 
 These tests ensure that every time that someone changes a model,
 they have to also write the migration.
-
-The tests use a file-backed SQLite database rather than an in-memory one,
-because an in-memory database only lives as long as the connection that made it,
-and migrating is inherently a multi-connection exercise.
 """
 
 from __future__ import annotations
 
-import pytest
-from alembic.autogenerate import compare_metadata
-from alembic.runtime.migration import MigrationContext
-from sqlmodel import Session, create_engine, text
+from sqlmodel import Session, text
 
-from esmporium.db import METADATA, Dataset, migrate
-
-
-@pytest.fixture
-def engine(tmp_path):
-    """Get engine for the database to use in the tests"""
-    return create_engine(f"sqlite:///{tmp_path / 'esmporium.db'}")
-
-
-def get_pending_changes(engine):
-    """
-    Get the changes alembic would need to make for the database to match the models
-
-    Returns
-    -------
-    :
-        The differences alembic detected. Empty if the two agree.
-    """
-    with engine.connect() as connection:
-        migration_context = MigrationContext.configure(
-            connection,
-            opts={"compare_type": True, "compare_server_default": True},
-        )
-
-        return compare_metadata(migration_context, METADATA)
+from esmporium.db import Dataset, migrate
 
 
 def get_schema(engine):
@@ -59,7 +28,7 @@ def get_schema(engine):
         ).all()
 
 
-def test_migrations_leave_database_matching_models(engine):
+def test_migrations_leave_database_matching_models(engine, get_pending_changes):
     """
     Test that applying every migration gives the schema our models describe
 
@@ -97,7 +66,7 @@ def test_upgrade_from_nothing_records_head_revision(engine):
     assert migrate.get_current_revision(engine) == migrate.get_head_revision()
 
 
-def test_upgrade_is_idempotent(engine, get_dataset_kwargs):
+def test_upgrade_is_idempotent(engine, get_dataset_kwargs, get_pending_changes):
     """
     Test that migrating an already-migrated database is a no-op
 
