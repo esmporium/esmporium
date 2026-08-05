@@ -5,39 +5,20 @@ The value here is not that the DDL is right, it's that it is *visible*.
 A one-word change to a field annotation can silently change a column's type
 or drop an index, and reviewing a diff of the models tells you very little
 about what actually happens to a database.
-Reviewing a diff of the `CREATE TABLE` statement tells you exactly.
-
-So when this test fails, that is usually correct and expected.
-Regenerate the file with:
-
-    ESMPORIUM_UPDATE_REGRESSION_DATA=1 pytest tests/regression
-
-then read the resulting diff, and check that a migration exists for it.
+Reviewing a diff of the SQL `CREATE TABLE` statement tells you exactly.
 """
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
-import pytest
 from sqlalchemy.dialects import sqlite
 from sqlalchemy.schema import CreateIndex, CreateTable
 
 from esmporium.db import METADATA
 
-EXPECTED_DDL_FILE = Path(__file__).parents[1] / "test-data" / "schema-ddl.sql"
-
 
 def get_ddl():
     """
     Get the DDL that our schema compiles to, as a single deterministic string
-
-    SQLAlchemy's compiler leaves trailing whitespace on most lines.
-    We strip it, because our own pre-commit hooks strip it from the file
-    we compare against, and a snapshot that the repository's tooling
-    rewrites behind the test's back is a snapshot that fails for no reason.
-    Trailing whitespace means nothing in SQL, so nothing is lost by dropping it.
 
     Returns
     -------
@@ -55,18 +36,20 @@ def get_ddl():
 
     ddl = "\n\n".join(f"{statement};" for statement in statements)
 
+    # Be careful to strip trailing whitespace
+    # so we don't end up fighting our own pre-comit.
+    # Nothing is lost by dropping the trailing whitespace.
     return "\n".join(line.rstrip() for line in ddl.splitlines()) + "\n"
 
 
-def test_schema_ddl():
+def test_schema_ddl(file_regression):
     """
     Test that the SQL our schema compiles to hasn't changed unnoticed
+
+    When this test fails, that is usually correct and expected.
+    Regenerate the file by using the `--force-regen` flag (from pytest-regressions),
+    then read the resulting diff
+    (`tests/integration/test_migrations.py` ensures that a migration exists,
+    but double checking manually won't hurt).
     """
-    ddl = get_ddl()
-
-    if os.environ.get("ESMPORIUM_UPDATE_REGRESSION_DATA"):
-        EXPECTED_DDL_FILE.parent.mkdir(parents=True, exist_ok=True)
-        EXPECTED_DDL_FILE.write_text(ddl)
-        pytest.skip(f"Regenerated {EXPECTED_DDL_FILE}")
-
-    assert ddl == EXPECTED_DDL_FILE.read_text()
+    file_regression.check(get_ddl(), extension=".sql")

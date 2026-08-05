@@ -45,7 +45,7 @@ The rule that follows from this is short:
 A released version that can't upgrade a database written by the version before it
 leaves users with a database they can no longer open.
 
-To write one, change the models first, then:
+To write one, change the models first, then run:
 
 ```sh
 make migration MESSAGE="add a version table"
@@ -65,14 +65,57 @@ In particular it cannot see:
   a dropped column plus an added one, which silently discards the data.
 - **whether the downgrade is right.** It is generated,
   and for anything lossy it can't be.
+  Lossy here means the upgrade left the database holding something
+  that the schema before it had no way to express,
+  so the downgrade would have to invent an answer.
+  Dropping a column is the obvious case: the values that were in it are gone,
+  and putting the column back can only fill it with nulls or a made-up default.
+  Relaxing a constraint is the less obvious one:
+  once `uq_dataset_facets` was dropped, for example, the database is allowed
+  to hold rows that the constraint would have refused,
+  so re-creating it has no correct answer as to which of those rows should survive.
+  A downgrade that can't be right should fail loudly rather than guess.
+  Say so in a comment on the downgrade when that is the case.
 
-`make migration-sql` prints the SQL that upgrading from scratch would run,
-without touching a database, which is a good way to check what you've written.
+We haven't yet worked out how to edit what autogenerate writes
+in a way we're happy with, i.e. what a good migration looks like for us
+once it stops being a plain add-a-column.
+We will figure that out as we go, and write it down here as we do.
+Until then, these are the pages worth reading before hand-editing a migration:
+
+- [Tutorial](https://alembic.sqlalchemy.org/en/latest/tutorial.html),
+  for the anatomy of a migration script and what `upgrade` and `downgrade` are for
+- [Operation Reference](https://alembic.sqlalchemy.org/en/latest/ops.html),
+  for every directive available inside them,
+  including `op.execute` and `op.bulk_insert`, which is how data (rather than
+  schema) changes get written
+- [Auto Generating Migrations](https://alembic.sqlalchemy.org/en/latest/autogenerate.html),
+  for the list of what autogenerate does and does not detect,
+  which is the list of things you have to check by hand
+- [Running "Batch" Migrations for SQLite and Other Databases](https://alembic.sqlalchemy.org/en/latest/batch.html),
+  because every one of our migrations goes through batch mode,
+  and it has its own rules (particularly around constraints and reflection)
+- [Cookbook](https://alembic.sqlalchemy.org/en/latest/cookbook.html),
+  in particular "Data Migrations - General Techniques"
+  and "Conditional Migration Elements"
+
+`make migration-sql` applies every migration to a throwaway database
+and prints the schema that comes out the other end,
+which is a good way to check that what you've written
+adds up to the schema you expected.
+(Alembic can also print SQL without touching a database at all, via `--sql`.
+That doesn't work for us: on SQLite, migrations run in batch mode,
+which rewrites the table rather than altering it,
+and to do that it has to read the real table first.)
 
 Two tests guard this:
 `tests/integration/test_migrations.py` fails if the migrations and the models
 have drifted apart, and `tests/regression/test_schema_ddl.py` fails if the SQL
 the schema compiles to has changed, so a schema change can't pass review unnoticed.
+The second of those keeps its expected SQL in
+`tests/regression/test_schema_ddl/test_schema_ddl.sql`;
+when a change to it is intended, regenerate it with
+`pytest tests/regression --force-regen` and read the diff.
 
 ## Language
 

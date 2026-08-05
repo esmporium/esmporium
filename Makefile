@@ -74,9 +74,32 @@ migration:  ## generate a migration for the current models, e.g. make migration 
 	@echo "Autogenerate is a first draft, not an answer:"
 	@echo "it cannot see data migrations and it guesses at renames."
 
+# A helper script to print the schema of a SQLite database
+define PRINT_SQLITE_SCHEMA_PYSCRIPT
+import sqlite3
+import sys
+
+connection = sqlite3.connect(sys.argv[1])
+statements = connection.execute(
+    "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type DESC, name"
+)
+
+print("\n\n".join(f"{statement};" for (statement,) in statements))
+endef
+export PRINT_SQLITE_SCHEMA_PYSCRIPT
+
 .PHONY: migration-sql
-migration-sql:  ## print the SQL that upgrading from scratch would run, without touching a database
-	uv run alembic upgrade base:head --sql
+migration-sql:  ## print the schema that applying every migration from scratch gives
+    # This applies the migrations to a throwaway database
+    # rather than using alembic's offline mode (`alembic upgrade base:head --sql`).
+    # Offline mode cannot run our migrations:
+    # SQLite needs batch mode (see `env.py`),
+    # and batch mode has to reflect the existing table,
+    # which it can only do against a real database.
+	rm -f $(ALEMBIC_SCRATCH_DB)
+	uv run alembic upgrade head
+	@uv run python -c "$$PRINT_SQLITE_SCHEMA_PYSCRIPT" $(ALEMBIC_SCRATCH_DB)
+	rm -f $(ALEMBIC_SCRATCH_DB)
 
 .PHONY: docs
 docs:  ## build the docs

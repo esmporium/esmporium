@@ -9,8 +9,7 @@ authors = [
 license = { text = "3-Clause BSD License" }
 requires-python = ">=3.10"
 dependencies = [
-    # Required, not dev-only:
-    # the database lives on the user's machine,
+    # Required because the database lives on the user's machine,
     # so the user's own process is the only thing
     # that can ever migrate it to a newer schema.
     "alembic>=1.13.0",
@@ -533,6 +532,9 @@ tests-min = [
     # Key dependencies
     # ----------------
     "pytest==8.3.4",
+    # Manages the expected files for our regression tests,
+    # see `tests/regression`.
+    "pytest-regressions==2.11.0",
     # Implied by the key dependencies above
     # -------------------------------------
     "colorama==0.4.6 ; sys_platform == 'win32'",
@@ -545,6 +547,10 @@ tests-min = [
         # via pytest
     "pluggy==1.5.0",
         # via pytest
+    "pytest-datadir==1.8.0",
+        # via pytest-regressions
+    "pyyaml==6.0.2",
+        # via pytest-regressions
     "tomli==2.2.1 ; python_full_version < '3.11'",
         # via pytest
     "typing-extensions==4.12.2 ; python_full_version < '3.11'",
@@ -685,7 +691,8 @@ ignore = [
 # They must import `sqlmodel.sql.sqltypes` because that is where the column types
 # in a SQLModel-generated migration come from, but plenty of migrations
 # (e.g. one that only adds an index) never reference it.
-# Fighting that per-file with `noqa` just trades F401 for RUF100.
+# We could try and automate this more cleverly, it's not worth it,
+# just ignore this RUFF rule for these files.
 "src/esmporium/db/migrations/versions/*.py" = [
     "F401",
 ]

@@ -7,7 +7,7 @@ Database schema
 
 from sqlalchemy import MetaData
 from sqlalchemy.orm import registry
-from sqlmodel import Field, SQLModel, UniqueConstraint
+from sqlmodel import Field, SQLModel
 
 NAMING_CONVENTION = {
     "ix": "ix_%(table_name)s_%(column_0_N_name)s",
@@ -52,18 +52,51 @@ see [`esmporium.db.migrate`][].
 class EsmporiumBase(SQLModel, registry=REGISTRY):
     """
     Base class for our tables
-
-    Inheriting from this rather than `SQLModel` directly
-    is what puts a table in [`REGISTRY`][esmporium.db.schema.REGISTRY].
     """
+
+
+# TODO: work out how we handle clashes,
+# i.e. two entries that describe the same data but have different IDs.
+# We had a warn-on-commit check here (`warn_on_facet_clashes`), now removed:
+# the problem is much more complicated than a warning at commit time can cover,
+# so we will deal with it as we go.
+# Some notes on things we'll need to deal with:
+# - clashes on import
+#   - if we import data that has a clash on import, we want to warn the user
+#     and ideally explain to them why there is a clash
+#     based on looking at project-specific metadata (or raw JSON or something)
+# - clashes on update
+#   - if we update an entry, and that update would lead to a clash,
+#     we want to warn the user
+#     and ideally explain to them why there is a clash
+#     based on looking at project-specific metadata (or raw JSON or something)
+# - resolving clashes by deleting an entry
+#   - users should be able to pick one of the clashing entries
+#     and remove all others easily
+# - clashes on data loading
+#   - if we load data that has a clash,
+#     we want to warn the user
+#     and ideally explain to them why there is a clash
+#     based on looking at project-specific metadata (or raw JSON or something).
+#     The user needs to then somehow be able to specify which dataset to load
+#     or how to modify the loading process so the resulting data can be differentiated.
 
 
 class Dataset(EsmporiumBase, table=True):
     """
     A model output dataset
 
-    Following ESGF's data model, this is always the data for a single variable,
-    from a single experiment, from a single climate model...
+    We model a dataset as having a single value for each of the facets defined below
+    i.e. a single variable, experiment, climate model etc.
+    This is our model and it makes sense in our workflows.
+    It obviously has implications for how the rest of this package works.
+    If you need something different, you will need to use a different package.
+
+    Unfortunately, this data model
+    doesn't always match the definition of a dataset used on ESGF.
+    For example, CMIP5 datasets contained multiple variables.
+    This is unfortunate, but there is nothing we can do:
+    there is no universally applicable dataset model for ESGF datasets.
     """
 
     # SQLModel does not validate table models on construction
@@ -98,37 +131,13 @@ class Dataset(EsmporiumBase, table=True):
     # so this is a question of where the facets are declared,
     # not of adding new machinery.
 
-    __table_args__ = (
-        UniqueConstraint(
-            # The column order here is chosen for querying, not for readability.
-            # An index can be used for any *leading prefix* of its columns,
-            # so this one also answers a search on variable alone,
-            # or on variable plus experiment, and so on.
-            # The columns are therefore ordered
-            # roughly by how often we expect to filter on them.
-            "variable",
-            "processing_id",
-            "experiment",
-            "model",
-            "variant_label",
-            "reporting_interval",
-            "grid_label",
-            "project",
-            "institution",
-            name="uq_dataset_facets",
-        ),
-    )
-
-    # Note: this needs to come from master_id when reading ESGF records (for CMIP6).
-    # Likely will need to be created manually for CMIP5
-    # We call it id beacuse that's what it is and we think the ESGF name is confusing.
     id: str = Field(primary_key=True)
     """
     Unique identifier of the dataset
 
     Note here that this doesn't include version information.
     A single dataset can have more than one version.
-    This version information is handled elsewhere (i.e. not in this ID).
+    This version information is handled elsewhere.
 
     Similarly, data access (e.g. node information)
     is also not covered by this ID.
@@ -145,9 +154,6 @@ class Dataset(EsmporiumBase, table=True):
     and doesn't apply to all projects we might want to support.
     """
 
-    # Note: this is called source_id in CMIP6,
-    # model in CMIP5 and we think also source_id in CMIP7,
-    # but we have to check.
     model: str
     """
     Climate model that generated the dataset
@@ -157,17 +163,11 @@ class Dataset(EsmporiumBase, table=True):
     """
     Institution that generated this dataset
 
-    This is kept to avoid clashes where two different institutes
+    This is kept to distinguish the case where two different institutes
     ran the same climate model and used the same variant label.
     This isn't meant to happen, but it might,
-    so we keep this column to ensure we don't get such clashes.
+    so we keep this column so that we can tell such datasets apart.
     """
-    # Note: clashing rows are handled by `uq_dataset_facets` above.
-    # That constraint depends on every facet being NOT NULL,
-    # because SQL treats two NULLs as different values,
-    # so a nullable facet would let duplicates slip past it.
-    # In other words, the facets below are not optional by accident:
-    # making any of them optional again would quietly weaken that constraint.
 
     experiment: str
     """
@@ -208,13 +208,6 @@ class Dataset(EsmporiumBase, table=True):
     For example, `mon`, `yr`, `3hr`, `monC`
     """
 
-    # TODO: decide what to put here for projects that have no grid label.
-    # CMIP5 has no such concept, so ingesting CMIP5 will need to pick a value
-    # (a sentinel such as "unknown") rather than leaving this unset.
-    # Likely manually add 'gn' for CMIP5, as all are considered native
-    # grids, even if on cartesian coords.
-    # Making the column optional instead is not a fix, see the note on
-    # `institution` above: it would put the hole back in `uq_dataset_facets`.
     grid_label: str
     """
     The label of the grid on which the dataset is reported
@@ -225,7 +218,6 @@ class Dataset(EsmporiumBase, table=True):
     For example, `gn`, `gr`, `g115`
     """
 
-    # TODO: does branding_suffix kind of replace table_id for CMIP7?
     processing_id: str
     """
     The label describing the processing of variables
@@ -256,17 +248,13 @@ class Dataset(EsmporiumBase, table=True):
     For example, `Amon`, `CFmon`, `3hr`, `AERmon`.
     """
 
-    # # TODO: check whether this is easily available from CMIP6
-    # # and whether we should include it here.
-    # # It might have to come during metadata from header enrichment
-    # # because it isn't returned by the search API.
-    # # It might also not be necessary because it is implied by the grid...
-    # region: str | None = None
-    # """
-    # The region over which the dataset is reported
-    #
-    # For example, `glb`, `gr`, `g115`
-    # """
+    # @Anna note: we don't need region. It didn't exist in previous CMIP phases
+    # and is tightly coupled to grid in CMIP7
+    # so I don't think there's a benefit of adding it in now.
+    # If we think it will be useful to add later,
+    # we won't add it here.
+    # We'll use some wrapper instead as figuring out the region for e.g. CMIP6 data
+    # could be super complicated as we'll have to actually look at the data to be sure.
 
     # # TODO: bring these back in once we start doing searches
     # first_seen_run_id: int | None = Field(default=None, foreign_key="searchrun.id")
@@ -277,3 +265,35 @@ class Dataset(EsmporiumBase, table=True):
     #     back_populates="dataset",
     #     sa_relationship_kwargs={"cascade": "all, delete-orphan"},
     # )
+
+
+DATASET_FACET_COLUMNS: tuple[str, ...] = (
+    "project",
+    "institution",
+    "model",
+    "experiment",
+    "variant_label",
+    "variable",
+    "reporting_interval",
+    "grid_label",
+    "processing_id",
+)
+"""
+The columns of [`Dataset`][esmporium.db.schema.Dataset] that describe the data itself
+
+In other words, everything except the ID
+and (in future) the bookkeeping columns such as when we last saw the dataset.
+
+Two rows agreeing on all of these is allowed:
+the same dataset can legitimately turn up under more than one ID
+(ESGF's IDs are not ours to control, and we do not always parse one).
+It is unusual enough to be worth telling the user about, though,
+which is the open question recorded in the note above
+[`Dataset`][esmporium.db.schema.Dataset].
+
+This list is written out rather than derived from the table
+because not every future column will be a facet.
+Adding a facet to [`Dataset`][esmporium.db.schema.Dataset] means adding it here too.
+This is checked by the tests explicitly,
+see `test_facet_columns_are_the_declared_facets`.
+"""
