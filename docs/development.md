@@ -70,16 +70,15 @@ In particular it cannot see:
   so the downgrade would have to invent an answer.
   Dropping a column is the obvious case: the values that were in it are gone,
   and putting the column back can only fill it with nulls or a made-up default.
-  Relaxing a constraint is the less obvious one:
-  once `uq_dataset_facets` was dropped, for example, the database is allowed
+  Relaxing a constraint is a less obvious one:
+  once a constraint is dropped, the database is allowed
   to hold rows that the constraint would have refused,
   so re-creating it has no correct answer as to which of those rows should survive.
   A downgrade that can't be right should fail loudly rather than guess.
-  Say so in a comment on the downgrade when that is the case.
 
 We haven't yet worked out how to edit what autogenerate writes
-in a way we're happy with, i.e. what a good migration looks like for us
-once it stops being a plain add-a-column.
+in a way we're happy with, i.e. what a good migration and error handling looks like for us
+once they stop being trivial.
 We will figure that out as we go, and write it down here as we do.
 Until then, these are the pages worth reading before hand-editing a migration:
 
@@ -112,10 +111,11 @@ Two tests guard this:
 `tests/integration/test_migrations.py` fails if the migrations and the models
 have drifted apart, and `tests/regression/test_schema_ddl.py` fails if the SQL
 the schema compiles to has changed, so a schema change can't pass review unnoticed.
-The second of those keeps its expected SQL in
-`tests/regression/test_schema_ddl/test_schema_ddl.sql`;
-when a change to it is intended, regenerate it with
-`pytest tests/regression --force-regen` and read the diff.
+The second of those uses a regression file
+(`tests/regression/test_schema_ddl/test_schema_ddl.sql` at the time of writing);
+when a change to the schema is intended, regenerate the file with
+`pytest tests/regression --force-regen`, check the diff and,
+if happy that the diff is correct, commit the changes.
 
 ## Language
 
