@@ -74,6 +74,46 @@ migration:  ## generate a migration for the current models, e.g. make migration 
 	@echo "Autogenerate is a first draft, not an answer:"
 	@echo "it cannot see data migrations and it guesses at renames."
 
+.PHONY: migration-squash
+migration-squash:  ## squash the migrations added since REF, e.g. make migration-squash REF=origin/main MESSAGE="add version table"
+    # A release should ship the migrations a user's database actually needs,
+    # not a record of every step we took while developing.
+    # This rewrites every migration added since `REF` into a single one,
+    # so a column that was added and then renamed twice before anyone released it
+    # doesn't leave three migrations behind forever.
+    #
+    # Only migrations that are absent from `REF` are touched.
+    # Anything `REF` already had may already have been applied
+    # to a database somewhere, so it is left exactly as it is,
+    # and the squashed migration is chained onto the end of it.
+	@if [ -z "$(REF)" ]; then echo 'Usage: make migration-squash REF=<git ref> MESSAGE="what you changed"' >&2; exit 1; fi
+	@if [ -z "$(MESSAGE)" ]; then echo 'Usage: make migration-squash REF=<git ref> MESSAGE="what you changed"' >&2; exit 1; fi
+	uv run --group dev python scripts/prune-migrations-for-squash.py "$(REF)"
+	rm -f $(ALEMBIC_SCRATCH_DB)
+    # With the unreleased migrations gone, `head` is the state of `REF`,
+    # so autogenerate diffs the models against what was last released.
+	uv run alembic upgrade head
+	uv run alembic revision --autogenerate -m "$(MESSAGE)"
+	rm -f $(ALEMBIC_SCRATCH_DB)
+	uv run --group dev ruff format src/esmporium/db/migrations
+	@echo "Now read the generated file in src/esmporium/db/migrations/versions/."
+	@echo "The same caveats as 'make migration' apply, plus one more:"
+	@echo "any hand-written data migration in the squashed-away migrations is gone,"
+	@echo "so check whether it needs to be written again."
+	@echo "If the squashed migration is empty, the changes since $(REF) cancelled out;"
+	@echo "delete it rather than releasing a migration that does nothing."
+
+.PHONY: migration-squash-main
+migration-squash-main:  ## squash the migrations added since main, e.g. make migration-squash-main MESSAGE="add version table"
+	@$(MAKE) --no-print-directory migration-squash REF=main MESSAGE="$(MESSAGE)"
+
+.PHONY: migration-squash-release
+migration-squash-release:  ## squash the migrations added since the last tagged release, e.g. make migration-squash-release MESSAGE="add version table"
+	@ref=$$(git describe --tags --abbrev=0 --match "v*") || \
+		{ echo "Could not find a tagged release reachable from HEAD (do you need to 'git fetch --tags'?)" >&2; exit 1; }; \
+		echo "Last tagged release: $$ref"; \
+		$(MAKE) --no-print-directory migration-squash REF=$$ref MESSAGE="$(MESSAGE)"
+
 # A helper script to print the schema of a SQLite database
 define PRINT_SQLITE_SCHEMA_PYSCRIPT
 import sqlite3
