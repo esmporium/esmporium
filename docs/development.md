@@ -45,7 +45,7 @@ The rule that follows from this is short:
 A released version that can't upgrade a database written by the version before it
 leaves users with a database they can no longer open.
 
-To write one, change the models first, then:
+To write one, change the models first, then run:
 
 ```sh
 make migration MESSAGE="add a version table"
@@ -65,14 +65,74 @@ In particular it cannot see:
   a dropped column plus an added one, which silently discards the data.
 - **whether the downgrade is right.** It is generated,
   and for anything lossy it can't be.
+  Lossy here means the upgrade left the database holding something
+  that the schema before it had no way to express,
+  so the downgrade would have to invent an answer.
+  Dropping a column is the obvious case: the values that were in it are gone,
+  and putting the column back can only fill it with nulls or a made-up default.
+  Relaxing a constraint is a less obvious one:
+  once a constraint is dropped, the database is allowed
+  to hold rows that the constraint would have refused,
+  so re-creating it has no correct answer as to which of those rows should survive.
+  A downgrade that can't be right should fail loudly rather than guess.
 
-`make migration-sql` prints the SQL that upgrading from scratch would run,
-without touching a database, which is a good way to check what you've written.
+We haven't yet worked out how to edit what autogenerate writes
+in a way we're happy with, i.e. what a good migration and error handling looks like for us
+once they stop being trivial.
+We will figure that out as we go, and write it down here as we do.
+Until then, these are the pages worth reading before hand-editing a migration:
 
-Two tests guard this:
+- [Tutorial](https://alembic.sqlalchemy.org/en/latest/tutorial.html),
+  for the anatomy of a migration script and what `upgrade` and `downgrade` are for
+- [Operation Reference](https://alembic.sqlalchemy.org/en/latest/ops.html),
+  for every directive available inside them,
+  including `op.execute` and `op.bulk_insert`, which is how data (rather than
+  schema) changes get written
+- [Auto Generating Migrations](https://alembic.sqlalchemy.org/en/latest/autogenerate.html),
+  for the list of what autogenerate does and does not detect,
+  which is the list of things you have to check by hand
+- [Running "Batch" Migrations for SQLite and Other Databases](https://alembic.sqlalchemy.org/en/latest/batch.html),
+  because every one of our migrations goes through batch mode,
+  and it has its own rules (particularly around constraints and reflection)
+- [Cookbook](https://alembic.sqlalchemy.org/en/latest/cookbook.html),
+  in particular "Data Migrations - General Techniques"
+  and "Conditional Migration Elements"
+
+`make migration-sql` applies every migration to a throwaway database
+and prints the schema that comes out the other end,
+which is a good way to check that what you've written
+adds up to the schema you expected.
+(Alembic can also print SQL without touching a database at all, via `--sql`.
+That doesn't work for us: on SQLite, migrations run in batch mode,
+which rewrites the table rather than altering it,
+and to do that it has to read the real table first.)
+
+Three tests guard this:
 `tests/integration/test_migrations.py` fails if the migrations and the models
-have drifted apart, and `tests/regression/test_schema_ddl.py` fails if the SQL
-the schema compiles to has changed, so a schema change can't pass review unnoticed.
+have drifted apart, `tests/regression/test_schema_ddl.py` fails if the SQL
+the schema compiles to has changed, so a schema change can't pass review unnoticed,
+and `tests/integration/test_migrations_from_previous_release.py` fails if a database
+written by the previous release can no longer be migrated.
+The second of those uses a regression file
+(`tests/regression/test_schema_ddl/test_schema_ddl.sql` at the time of writing);
+when a change to the schema is intended, regenerate the file with
+`pytest tests/regression --force-regen`, check the diff and,
+if happy that the diff is correct, commit the changes.
+
+The third is the only one that tests the case that actually breaks users:
+a database that already exists, with their data in it.
+It installs the previous release, creates a database with it, puts a row in it,
+then migrates that database with the working tree,
+so it needs `uv` and network access to run.
+Which release it tests against is read from our tags,
+so there is nothing to update when we release.
+
+It is skipped until there is a release to test against,
+because no release ships a database yet.
+**Set its `FIRST_RELEASE_WITH_A_DATABASE` constant as soon as we release
+a version that includes the database**, and the test starts running by itself
+once that version is tagged.
+That constant is a fact about our history, so it is set once and then left alone.
 
 ## Language
 

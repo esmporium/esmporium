@@ -7,6 +7,28 @@ See https://docs.pytest.org/en/7.1.x/reference/fixtures.html#conftest-py-sharing
 import pandas as pd
 import pytest
 
+from esmporium.db import DATASET_FACET_COLUMNS
+
+
+@pytest.fixture
+def get_dataset_kwargs():
+    """
+    Get a factory for the keyword arguments of a dataset with every facet filled in
+
+    The facet values are built from their column names,
+    so adding a facet to the model doesn't mean editing every test that stores one.
+    Tests that care about a particular value pass it by name.
+    """
+
+    def factory(dataset_id, **facets):
+        return {
+            "id": dataset_id,
+            **{column: f"{column}-value" for column in DATASET_FACET_COLUMNS},
+            **facets,
+        }
+
+    return factory
+
 
 @pytest.fixture(scope="session", autouse=True)
 def pandas_terminal_width():
