@@ -10,6 +10,5 @@ CREATE TABLE dataset (
 	reporting_interval VARCHAR NOT NULL,
 	grid_label VARCHAR NOT NULL,
 	processing_id VARCHAR NOT NULL,
-	retracted BOOLEAN NOT NULL,
 	CONSTRAINT pk_dataset PRIMARY KEY (id)
 );

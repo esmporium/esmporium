@@ -31,7 +31,6 @@ VALID_DATASET_KWARGS = {
     # hence the grid label we use below.
     "grid_label": "bcc-csm-1_rcp45_atmos",
     "processing_id": "Amon",
-    "retracted": False,
 }
 """A dataset with every facet filled in, i.e. one the database should accept"""
 

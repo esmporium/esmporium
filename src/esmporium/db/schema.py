@@ -271,19 +271,20 @@ class Dataset(EsmporiumBase, table=True):
     For example, `Amon`, `CFmon`, `3hr`, `AERmon`.
     """
 
-    retracted: bool
-    """
-    Whether this dataset has been retracted or not
-
-    Retracted means that it has been marked as not fit for scientific use.
-
-    Note that there are other ideas of 'superceded'
-    that ESGF tries to convey (e.g. with the deprecated column).
-    We don't know exactly what these mean,
-    so we don't include them on our core `Dataset` class.
-    The values can be retrieved from project-specific tables
-    if they are needed.
-    """
+    # # Put this on the version information instead
+    # retracted: bool
+    # """
+    # Whether this dataset has been retracted or not
+    #
+    # Retracted means that it has been marked as not fit for scientific use.
+    #
+    # Note that there are other ideas of 'superceded'
+    # that ESGF tries to convey (e.g. with the deprecated column).
+    # We don't know exactly what these mean,
+    # so we don't include them on our core `Dataset` class.
+    # The values can be retrieved from project-specific tables
+    # if they are needed.
+    # """
 
     # @Anna note: we don't need region. It didn't exist in previous CMIP phases
     # and is tightly coupled to grid in CMIP7
@@ -315,7 +316,6 @@ DATASET_FACET_COLUMNS: tuple[str, ...] = (
     "reporting_interval",
     "grid_label",
     "processing_id",
-    "retracted",
 )
 """
 The columns of [`Dataset`][esmporium.db.schema.Dataset] that describe the data itself
