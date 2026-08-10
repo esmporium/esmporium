@@ -1,5 +1,6 @@
 CREATE TABLE dataset (
 	id VARCHAR NOT NULL,
+	id_project_specific VARCHAR NOT NULL,
 	project VARCHAR NOT NULL,
 	model VARCHAR NOT NULL,
 	institution VARCHAR NOT NULL,
@@ -9,5 +10,6 @@ CREATE TABLE dataset (
 	reporting_interval VARCHAR NOT NULL,
 	grid_label VARCHAR NOT NULL,
 	processing_id VARCHAR NOT NULL,
+	retracted BOOLEAN NOT NULL,
 	CONSTRAINT pk_dataset PRIMARY KEY (id)
 );

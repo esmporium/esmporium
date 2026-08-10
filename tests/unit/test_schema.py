@@ -14,16 +14,20 @@ from sqlmodel import Session, create_engine, select
 from esmporium.db import DATASET_FACET_COLUMNS, METADATA, Dataset
 
 VALID_DATASET_KWARGS = {
-    "id": "CMIP6.CMIP.CSIRO.ACCESS-ESM1-5.historical.r1i1p1f1.Amon.tas.gn",
-    "project": "CMIP6",
-    "model": "ACCESS-ESM1-5",
-    "institution": "CSIRO",
-    "experiment": "historical",
-    "variant_label": "r1i1p1f1",
+    "id": "CMIP5.CMIP.BCC.bcc-csm-1.rcp45.r1i1p1.Amon.tas.bcc-csm-1_rcp45_atmos",
+    "id_project_specific": (
+        "cmip5.output1.BCC.bcc-csm1-1.rcp45.mon.atmos.Amon.r1i1p1_tas"
+    ),
+    "project": "CMIP5",
+    "model": "bcc-csm-1",
+    "institution": "BCC",
+    "experiment": "rcp45",
+    "variant_label": "r1i1p1",
     "variable": "tas",
     "reporting_interval": "mon",
-    "grid_label": "gn",
+    "grid_label": "bcc-csm-1_rcp45_atmos",
     "processing_id": "Amon",
+    "retracted": False,
 }
 """A dataset with every facet filled in, i.e. one the database should accept"""
 

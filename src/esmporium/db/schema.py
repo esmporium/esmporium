@@ -305,15 +305,17 @@ class Dataset(EsmporiumBase, table=True):
 
 
 DATASET_FACET_COLUMNS: tuple[str, ...] = (
+    "id_project_specific",
     "project",
-    "institution",
     "model",
+    "institution",
     "experiment",
     "variant_label",
     "variable",
     "reporting_interval",
     "grid_label",
     "processing_id",
+    "retracted",
 )
 """
 The columns of [`Dataset`][esmporium.db.schema.Dataset] that describe the data itself
