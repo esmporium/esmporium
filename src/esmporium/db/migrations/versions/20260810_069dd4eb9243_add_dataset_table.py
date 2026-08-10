@@ -1,8 +1,8 @@
 """Add Dataset table
 
-Revision ID: 6237f4cde293
+Revision ID: 069dd4eb9243
 Revises:
-Create Date: 2026-08-10 11:26:21.657361
+Create Date: 2026-08-10 12:09:05.974686
 
 """
 
@@ -19,7 +19,7 @@ import sqlalchemy as sa
 import sqlmodel.sql.sqltypes
 from alembic import op
 
-revision: str = "6237f4cde293"
+revision: str = "069dd4eb9243"
 down_revision: str | None = None
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
@@ -44,8 +44,10 @@ def upgrade() -> None:
         ),
         sa.Column("grid_label", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
         sa.Column("processing_id", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
-        sa.Column("retracted", sa.Boolean(), nullable=False),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_dataset")),
+        sa.UniqueConstraint(
+            "id_project_specific", name=op.f("uq_dataset_id_project_specific")
+        ),
     )
 
 
