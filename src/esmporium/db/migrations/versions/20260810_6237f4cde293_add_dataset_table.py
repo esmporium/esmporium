@@ -1,8 +1,8 @@
-"""Add dataset model
+"""Add Dataset table
 
-Revision ID: ac846e40d991
+Revision ID: 6237f4cde293
 Revises:
-Create Date: 2026-08-05 14:32:18.631865
+Create Date: 2026-08-10 11:26:21.657361
 
 """
 
@@ -19,7 +19,7 @@ import sqlalchemy as sa
 import sqlmodel.sql.sqltypes
 from alembic import op
 
-revision: str = "ac846e40d991"
+revision: str = "6237f4cde293"
 down_revision: str | None = None
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
@@ -30,6 +30,9 @@ def upgrade() -> None:
     op.create_table(
         "dataset",
         sa.Column("id", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+        sa.Column(
+            "id_project_specific", sqlmodel.sql.sqltypes.AutoString(), nullable=False
+        ),
         sa.Column("project", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
         sa.Column("model", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
         sa.Column("institution", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
@@ -41,6 +44,7 @@ def upgrade() -> None:
         ),
         sa.Column("grid_label", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
         sa.Column("processing_id", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+        sa.Column("retracted", sa.Boolean(), nullable=False),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_dataset")),
     )
 
