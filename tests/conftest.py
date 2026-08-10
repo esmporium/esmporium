@@ -69,6 +69,7 @@ def get_dataset_kwargs():
     def factory(dataset_id, **facets):
         return {
             "id": dataset_id,
+            "id_project_specific": f"{dataset_id}_ps",
             **{column: get_facet_value(column) for column in DATASET_FACET_COLUMNS},
             **facets,
         }

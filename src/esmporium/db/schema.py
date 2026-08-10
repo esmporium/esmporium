@@ -306,7 +306,6 @@ class Dataset(EsmporiumBase, table=True):
 
 
 DATASET_FACET_COLUMNS: tuple[str, ...] = (
-    "id_project_specific",
     "project",
     "model",
     "institution",
@@ -320,7 +319,7 @@ DATASET_FACET_COLUMNS: tuple[str, ...] = (
 """
 The columns of [`Dataset`][esmporium.db.schema.Dataset] that describe the data itself
 
-In other words, everything except the ID
+In other words, everything except the ID(s)
 and (in future) the bookkeeping columns such as when we last saw the dataset.
 
 Two rows agreeing on all of these is allowed:

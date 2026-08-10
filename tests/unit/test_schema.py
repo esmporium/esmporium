@@ -19,7 +19,7 @@ VALID_DATASET_KWARGS = {
         "cmip5.output1.BCC.bcc-csm1-1.rcp45.mon.atmos.Amon.r1i1p1_tas"
     ),
     "project": "CMIP5",
-    "model": "bcc-csm-1",
+    "model": "bcc-csm1-1",
     "institution": "BCC",
     "experiment": "rcp45",
     "variant_label": "r1i1p1",
@@ -34,7 +34,17 @@ VALID_DATASET_KWARGS = {
 }
 """A dataset with every facet filled in, i.e. one the database should accept"""
 
-FACET_COLUMNS = [k for k in VALID_DATASET_KWARGS if k != "id"]
+FACET_COLUMNS = [
+    "project",
+    "model",
+    "institution",
+    "experiment",
+    "variant_label",
+    "variable",
+    "reporting_interval",
+    "grid_label",
+    "processing_id",
+]
 
 
 @pytest.fixture
@@ -143,7 +153,9 @@ def test_facet_columns_are_the_declared_facets():
     We want to make sure we really think through changes.
     """
     columns_that_are_not_the_id = [
-        column.name for column in Dataset.__table__.columns if column.name != "id"
+        column.name
+        for column in Dataset.__table__.columns
+        if column.name not in ("id", "id_project_specific")
     ]
 
     # This ensures that we make clear decisions about new columns
