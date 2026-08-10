@@ -144,6 +144,29 @@ class Dataset(EsmporiumBase, table=True):
     That lives elsewhere.
     """
 
+    # TODO: make sure that this has to be unique across the entire table
+    id_project_specific: str
+    """
+    Unique identifier of the dataset in the project's language
+
+    This is useful for being able to quickly check
+    if we have seen a given dataset before
+    (e.g. when re-running a search)
+    without having to load other information from project-specific tables.
+
+    This is a bit complicated.
+    Where possible, e.g. CMIP6, we just use the unique ID from the project
+    (which in the case of CMIP6 just comes from ESGF's `master_id`).
+    In trickier cases, e.g. CMIP5, we have to do a bit more work.
+    There is no ID on ESGF that fits our use case:
+    the `master_id` does not include a variable
+    (so would not be unique for most use cases)
+    and other IDs are file-specific i.e. are too high granularity.
+    Thus, we will have to create these IDs at ingestion time.
+    That is a bit painful, but unavoidable given the mismatch
+    between the data model we use and the data model ESGF uses.
+    """
+
     project: str
     """
     Project to which this data belongs
@@ -246,6 +269,20 @@ class Dataset(EsmporiumBase, table=True):
     As we learn more about this, we will add more details and references here.
 
     For example, `Amon`, `CFmon`, `3hr`, `AERmon`.
+    """
+
+    retracted: bool
+    """
+    Whether this dataset has been retracted or not
+
+    Retracted means that it has been marked as not fit for scientific use.
+
+    Note that there are other ideas of 'superceded'
+    that ESGF tries to convey (e.g. with the deprecated column).
+    We don't know exactly what these mean,
+    so we don't include them on our core `Dataset` class.
+    The values can be retrieved from project-specific tables
+    if they are needed.
     """
 
     # @Anna note: we don't need region. It didn't exist in previous CMIP phases
