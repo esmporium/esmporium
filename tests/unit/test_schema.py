@@ -14,7 +14,7 @@ from sqlmodel import Session, create_engine, select
 from esmporium.db import DATASET_FACET_COLUMNS, METADATA, Dataset
 
 VALID_DATASET_KWARGS = {
-    "id": "CMIP5.CMIP.BCC.bcc-csm-1.rcp45.r1i1p1.Amon.tas.bcc-csm-1_rcp45_atmos",
+    "id": "CMIP5.CMIP.BCC.bcc-csm1-1.rcp45.r1i1p1.Amon.tas.bcc-csm-1_rcp45_atmos",
     "id_project_specific": (
         "cmip5.output1.BCC.bcc-csm1-1.rcp45.mon.atmos.Amon.r1i1p1_tas"
     ),
@@ -25,6 +25,10 @@ VALID_DATASET_KWARGS = {
     "variant_label": "r1i1p1",
     "variable": "tas",
     "reporting_interval": "mon",
+    # CMIP5 doesn't have grid labels.
+    # All data seems to be reported in native grids,
+    # that might be experiment and realm specific,
+    # hence the grid label we use below.
     "grid_label": "bcc-csm-1_rcp45_atmos",
     "processing_id": "Amon",
     "retracted": False,
@@ -69,9 +73,7 @@ def test_round_trip(engine):
     """
     Test that a dataset comes back out of the database as it went in
 
-    Every column here is a string, so this looks like it can't fail.
-    It is worth having anyway, because it stops being free
-    the moment a column is anything else: a datetime, an enum, a path.
+    This is important for types like datetimes, enums, paths.
     Those are the columns where the value that comes back
     is quietly not the value that went in.
     """
@@ -84,6 +86,10 @@ def test_round_trip(engine):
 
     assert retrieved is not None
     assert retrieved.model_dump() == VALID_DATASET_KWARGS
+
+    for column in VALID_DATASET_KWARGS:
+        column_type = Dataset.model_fields[column].annotation
+        assert isinstance(getattr(retrieved, column), column_type)
 
 
 def test_id_is_unique(engine):

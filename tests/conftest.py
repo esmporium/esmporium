@@ -46,7 +46,7 @@ def get_facet_value(column):
         return f"{column}-value"
 
     if facet_type is bool:
-        return True
+        return False
 
     msg = (
         f"No placeholder value defined for {column!r}, "
