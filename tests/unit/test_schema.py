@@ -118,6 +118,25 @@ def test_id_is_unique(engine):
             session.commit()
 
 
+def test_id_project_specific_is_unique(engine):
+    """
+    Test that two datasets can't share a project-specific ID
+    """
+    with Session(engine) as session:
+        session.add(Dataset(**VALID_DATASET_KWARGS))
+        session.commit()
+
+        # A different dataset by our ID, but the same one in the project's language:
+        # one of these two is wrong and we can't tell which.
+        session.add(Dataset(**{**VALID_DATASET_KWARGS, "id": "a-different-id"}))
+
+        with pytest.raises(
+            IntegrityError,
+            match=re.escape("UNIQUE constraint failed: dataset.id_project_specific"),
+        ):
+            session.commit()
+
+
 def test_facets_are_not_unique(engine):
     """
     Test that two datasets are allowed to describe the same combination of facets
@@ -126,7 +145,11 @@ def test_facets_are_not_unique(engine):
         session.add(Dataset(**VALID_DATASET_KWARGS))
         session.commit()
 
-        same_facets_different_id = {**VALID_DATASET_KWARGS, "id": "a-different-id"}
+        same_facets_different_id = {
+            **VALID_DATASET_KWARGS,
+            "id": "a-different-id",
+            "id_project_specific": "a-different-id-project-specific",
+        }
         session.add(Dataset(**same_facets_different_id))
         session.commit()
 

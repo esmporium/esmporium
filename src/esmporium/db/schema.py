@@ -144,8 +144,7 @@ class Dataset(EsmporiumBase, table=True):
     That lives elsewhere.
     """
 
-    # TODO: make sure that this has to be unique across the entire table
-    id_project_specific: str
+    id_project_specific: str = Field(unique=True)
     """
     Unique identifier of the dataset in the project's language
 

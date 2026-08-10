@@ -10,5 +10,6 @@ CREATE TABLE dataset (
 	reporting_interval VARCHAR NOT NULL,
 	grid_label VARCHAR NOT NULL,
 	processing_id VARCHAR NOT NULL,
-	CONSTRAINT pk_dataset PRIMARY KEY (id)
+	CONSTRAINT pk_dataset PRIMARY KEY (id),
+	CONSTRAINT uq_dataset_id_project_specific UNIQUE (id_project_specific)
 );
