@@ -19,7 +19,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from esmporium.db.esgf import (
+from esmporium.esgf import (
     CANONICAL_FACETS,
     ESGFQuery,
     ESGFQueryCMIP5,
@@ -27,7 +27,7 @@ from esmporium.db.esgf import (
     ESGFQueryCMIP7,
     translate,
 )
-from esmporium.db.esgf.mip_translation import (
+from esmporium.esgf.mip_translation import (
     CMIP5_PROFILE,
     CMIP6_PROFILE,
     CMIP7_PROFILE,

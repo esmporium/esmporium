@@ -1,10 +1,10 @@
 """
 Era profiles — the declarative out-adapters (the "M" side of hub-and-spoke).
 
-One [`EraProfile`][esmporium.db.esgf.mip_translation.EraProfile] per MIP era holds
+One [`EraProfile`][esmporium.esgf.mip_translation.EraProfile] per MIP era holds
 the pure data needed to (a) lower a dialect's native facet names *up* to the
 canonical vocabulary and (b) render a
-[`CanonicalQuery`][esmporium.db.esgf.canonical.CanonicalQuery] back *down* to that
+[`CanonicalQuery`][esmporium.esgf.canonical.CanonicalQuery] back *down* to that
 era's native facet names.
 
 Both directions are driven by a single `field_map` (canonical -> native) per era:
@@ -22,7 +22,7 @@ from collections.abc import Iterable
 
 from pydantic import BaseModel
 
-from esmporium.db.esgf.canonical import CANONICAL_FACETS, CanonicalQuery
+from esmporium.esgf.canonical import CANONICAL_FACETS, CanonicalQuery
 
 
 class UnknownEraError(ValueError):

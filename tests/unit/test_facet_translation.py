@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import pytest
 
-from esmporium.db.esgf import (
+from esmporium.esgf import (
     ESGFQuery,
     ESGFQueryCMIP5,
     ESGFQueryCMIP6,

@@ -10,8 +10,8 @@ era renders that back out to its native facet names, so `N` input dialects and
 This layer is facet-only: it builds native param dicts, it does not search.
 """
 
-from esmporium.db.esgf.canonical import CANONICAL_FACETS, CanonicalQuery
-from esmporium.db.esgf.mip_translation import (
+from esmporium.esgf.canonical import CANONICAL_FACETS, CanonicalQuery
+from esmporium.esgf.mip_translation import (
     CMIP5_PROFILE,
     CMIP6_PROFILE,
     CMIP7_PROFILE,
@@ -20,13 +20,13 @@ from esmporium.db.esgf.mip_translation import (
     UnknownEraError,
     get_profile,
 )
-from esmporium.db.esgf.query_models import (
+from esmporium.esgf.query_models import (
     ESGFQuery,
     ESGFQueryCMIP5,
     ESGFQueryCMIP6,
     ESGFQueryCMIP7,
 )
-from esmporium.db.esgf.translate import NoTargetErasError, translate
+from esmporium.esgf.translate import NoTargetErasError, translate
 
 __all__ = [
     "CANONICAL_FACETS",

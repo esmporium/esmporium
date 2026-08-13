@@ -8,14 +8,14 @@ CMIP5 skin with `project=("CMIP5", "CMIP6")` searches both), or from an explicit
 
 Per the current design this is deliberately strict: if any one era cannot express
 the query, the whole call raises (see
-[`FacetNotRepresentableError`][esmporium.db.esgf.mip_translation.FacetNotRepresentableError])
+[`FacetNotRepresentableError`][esmporium.esgf.mip_translation.FacetNotRepresentableError])
 so the user decides how to adjust it. Graceful per-era handling is future work.
 """
 
 from collections.abc import Collection
 
-from esmporium.db.esgf.mip_translation import get_profile
-from esmporium.db.esgf.query_models import _ESGFQueryBase
+from esmporium.esgf.mip_translation import get_profile
+from esmporium.esgf.query_models import _ESGFQueryBase
 
 
 class NoTargetErasError(ValueError):

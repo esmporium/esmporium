@@ -3,7 +3,7 @@ Input dialect skins — the in-adapters (the "N" side of hub-and-spoke).
 
 Each skin is an ergonomic front door in one MIP dialect's vocabulary. Every skin
 implements exactly one method, `to_canonical()`, which lowers it into the shared
-[`CanonicalQuery`][esmporium.db.esgf.canonical.CanonicalQuery]. There are no
+[`CanonicalQuery`][esmporium.esgf.canonical.CanonicalQuery]. There are no
 `to_<other_era>` methods anywhere: a cross-era journey is composed by lowering to
 canonical and rendering back out through an era profile.
 
@@ -21,12 +21,12 @@ from typing import ClassVar
 
 from pydantic import BaseModel, ValidationInfo, field_validator
 
-from esmporium.db.esgf.canonical import (
+from esmporium.esgf.canonical import (
     CANONICAL_FACETS,
     CanonicalQuery,
     _normalise_facet_values,
 )
-from esmporium.db.esgf.mip_translation import get_profile
+from esmporium.esgf.mip_translation import get_profile
 
 
 class _ESGFQueryBase(BaseModel):

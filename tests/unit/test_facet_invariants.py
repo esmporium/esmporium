@@ -2,8 +2,8 @@
 Structural invariants of the facet vocabulary and the era profiles.
 
 These tests never translate a real query. They check that the *configuration* in
-[`canonical`][esmporium.db.esgf.canonical] and
-[`mip_translation`][esmporium.db.esgf.mip_translation] is internally consistent,
+[`canonical`][esmporium.esgf.canonical] and
+[`mip_translation`][esmporium.esgf.mip_translation] is internally consistent,
 so that a mistake in a `field_map` or an `absent_facets` set is caught here — at
 the source of the error — rather than surfacing later as a baffling wrong
 translation.
@@ -17,8 +17,8 @@ from __future__ import annotations
 
 import pytest
 
-from esmporium.db.esgf.canonical import CANONICAL_FACETS, CanonicalQuery
-from esmporium.db.esgf.mip_translation import (
+from esmporium.esgf.canonical import CANONICAL_FACETS, CanonicalQuery
+from esmporium.esgf.mip_translation import (
     _PROFILE_REGISTRY,
     CMIP5_PROFILE,
     CMIP6_PROFILE,

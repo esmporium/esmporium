@@ -1,9 +1,9 @@
 """
 The canonical intermediate representation (IR) — the hub of hub-and-spoke.
 
-Every input dialect (see [`query_models`][esmporium.db.esgf.query_models]) lowers
-into a [`CanonicalQuery`][esmporium.db.esgf.canonical.CanonicalQuery], and every
-era profile (see [`mip_translation`][esmporium.db.esgf.mip_translation]) renders a
+Every input dialect (see [`query_models`][esmporium.esgf.query_models]) lowers
+into a [`CanonicalQuery`][esmporium.esgf.canonical.CanonicalQuery], and every
+era profile (see [`mip_translation`][esmporium.esgf.mip_translation]) renders a
 `CanonicalQuery` back out to that era's native facet names. A journey
 `dialect X -> era Y` is therefore *composed* as `render_Y(to_canonical(X))`; there
 is never a dedicated `X -> Y` translator.
@@ -81,7 +81,7 @@ class CanonicalQuery(BaseModel):
 
     This is the IR: the single neutral form that every dialect lowers into and
     that every era renders out of. It is internal — users construct one of the
-    dialect skins in [`query_models`][esmporium.db.esgf.query_models], not this.
+    dialect skins in [`query_models`][esmporium.esgf.query_models], not this.
 
     Facet fields are tuples: the values within a facet are OR-ed, different facets
     are AND-ed. An empty tuple means the facet was not set.
@@ -108,7 +108,7 @@ class CanonicalQuery(BaseModel):
     Passthrough bucket for facets the canonical vocabulary does not name.
 
     This holds two kinds of facet, distinguished only at render time by the era
-    profiles (see [`mip_translation`][esmporium.db.esgf.mip_translation]):
+    profiles (see [`mip_translation`][esmporium.esgf.mip_translation]):
 
     - category-3 era-specific facets a dialect skin declared but could not map to
       a canonical name (e.g. CMIP5 `product`), and
