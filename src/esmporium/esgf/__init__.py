@@ -1,23 +1,23 @@
 """
 ESGF facet query and translation.
 
-A user writes a query in whichever MIP dialect they prefer (one of the
-`ESGFQuery*` skins) and translates it to one or more MIP eras with `translate`.
+A user writes a query in whichever project dialect they prefer (one of the
+`ESGFQuery*` skins) and translates it to one or more projects with `translate`.
 Every dialect lowers to a single canonical intermediate representation, and every
-era renders that back out to its native facet names, so `N` input dialects and
-`M` eras cover `N x M` journeys with `N + M` pieces of code.
+project renders that back out to its native facet names, so `N` input dialects and
+`M` projects cover `N x M` journeys with `N + M` pieces of code.
 
 This layer is facet-only: it builds native param dicts, it does not search.
 """
 
 from esmporium.esgf.canonical import CANONICAL_FACETS, CanonicalQuery
-from esmporium.esgf.mip_translation import (
+from esmporium.esgf.project_translation_maps import (
     CMIP5_PROFILE,
     CMIP6_PROFILE,
     CMIP7_PROFILE,
-    EraProfile,
     FacetNotRepresentableError,
-    UnknownEraError,
+    ProjectProfile,
+    UnknownProjectError,
     get_profile,
 )
 from esmporium.esgf.query_models import (
@@ -26,7 +26,7 @@ from esmporium.esgf.query_models import (
     ESGFQueryCMIP6,
     ESGFQueryCMIP7,
 )
-from esmporium.esgf.translate import NoTargetErasError, translate
+from esmporium.esgf.translate import NoTargetProjectError, translate
 
 __all__ = [
     "CANONICAL_FACETS",
@@ -38,10 +38,10 @@ __all__ = [
     "ESGFQueryCMIP5",
     "ESGFQueryCMIP6",
     "ESGFQueryCMIP7",
-    "EraProfile",
     "FacetNotRepresentableError",
-    "NoTargetErasError",
-    "UnknownEraError",
+    "NoTargetProjectError",
+    "ProjectProfile",
+    "UnknownProjectError",
     "get_profile",
     "translate",
 ]

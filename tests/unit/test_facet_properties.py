@@ -27,13 +27,13 @@ from esmporium.esgf import (
     ESGFQueryCMIP7,
     translate,
 )
-from esmporium.esgf.mip_translation import (
+from esmporium.esgf.project_translation_maps import (
     CMIP5_PROFILE,
     CMIP6_PROFILE,
     CMIP7_PROFILE,
 )
 
-ERAS = ("CMIP5", "CMIP6", "CMIP7")
+PROJECTS = ("CMIP5", "CMIP6", "CMIP7")
 
 # A tiny, comma-free value alphabet. Values are opaque, so variety buys nothing;
 # a comma would collide with the OR-separator in a rendered param.
@@ -42,7 +42,7 @@ TOKEN = st.text(
 )
 VALUES = st.lists(TOKEN, min_size=1, max_size=3, unique=True).map(tuple)
 
-# Facets present in *every* era (nothing here can trip the fail-loud rule).
+# Facets present in *every* project (nothing here can trip the fail-loud rule).
 _ABSENT_ANYWHERE = (
     CMIP5_PROFILE.absent_facets
     | CMIP6_PROFILE.absent_facets
@@ -50,7 +50,7 @@ _ABSENT_ANYWHERE = (
 )
 COMMON_FACETS = sorted(CANONICAL_FACETS - _ABSENT_ANYWHERE)
 
-ERA_SKINS = {
+PROJECT_SKINS = {
     "CMIP5": ESGFQueryCMIP5,
     "CMIP6": ESGFQueryCMIP6,
     "CMIP7": ESGFQueryCMIP7,
@@ -69,26 +69,27 @@ def canonical_content(draw) -> dict[str, tuple[str, ...]]:
     return {facet: draw(VALUES) for facet in chosen}
 
 
-@pytest.mark.parametrize("era", ERAS, ids=ERAS)
+@pytest.mark.parametrize("project", PROJECTS, ids=PROJECTS)
 @given(data=st.data())
-def test_round_trip_identity(era: str, data: st.DataObject):
+def test_round_trip_identity(project: str, data: st.DataObject):
     """
-    Law 1: an era's own query, rendered back to that era, is unchanged.
+    Law 1: a project's own query, rendered back to that project, is unchanged.
 
-    Building a skin in era X's native words and rendering to X reproduces exactly
-    those words and values (plus the `project` selector). This is `to_canonical`
-    then `render_X` composing to the identity on era X's vocabulary.
+    Building a skin in project X's native words and rendering to X reproduces
+    exactly those words and values (plus the `project` selector). This is
+    `to_canonical` then `render_X` composing to the identity on project X's
+    vocabulary.
     """
-    skin_cls = ERA_SKINS[era]
+    skin_cls = PROJECT_SKINS[project]
     fields = [n for n in skin_cls.model_fields if n not in ("project", "other_terms")]
 
     chosen = data.draw(st.lists(st.sampled_from(fields), unique=True, min_size=1))
     content = {field: data.draw(VALUES) for field in chosen}
 
-    result = translate(skin_cls(**content))[era]
+    result = translate(skin_cls(**content))[project]
 
     expected = {field: ",".join(values) for field, values in content.items()}
-    expected["project"] = era
+    expected["project"] = project
     assert result == expected
 
 
@@ -96,10 +97,10 @@ def test_round_trip_identity(era: str, data: st.DataObject):
 def test_hub_law_result_independent_of_input_dialect(content):
     """
     Law 2 (the heart of the design): output depends only on canonical content and
-    target era — never on which input dialect typed it.
+    target project — never on which input dialect typed it.
 
     The same content, expressed via the unified skin, the CMIP5 skin and the CMIP6
-    skin, must render identically to every era.
+    skin, must render identically to every project.
     """
     unified = ESGFQuery(**content)
     via_cmip5 = ESGFQueryCMIP5(
@@ -109,10 +110,10 @@ def test_hub_law_result_independent_of_input_dialect(content):
         **{CMIP6_PROFILE.native_facet(f): v for f, v in content.items()}
     )
 
-    for era in ERAS:
-        baseline = translate(unified, projects=[era])[era]
-        assert translate(via_cmip5, projects=[era])[era] == baseline
-        assert translate(via_cmip6, projects=[era])[era] == baseline
+    for project in PROJECTS:
+        baseline = translate(unified, projects=[project])[project]
+        assert translate(via_cmip5, projects=[project])[project] == baseline
+        assert translate(via_cmip6, projects=[project])[project] == baseline
 
 
 @given(value=TOKEN)
@@ -120,11 +121,11 @@ def test_values_are_never_rewritten(value: str):
     """
     Law 3: names are ours, values are yours.
 
-    A facet value comes out byte-identical in every era; only the facet *name*
+    A facet value comes out byte-identical in every project; only the facet *name*
     changes (`experiment` -> `experiment_id`).
     """
     query = ESGFQuery(experiment=value)
 
-    for era in ERAS:
-        native = PROFILES[era].native_facet("experiment")
-        assert translate(query, projects=[era])[era][native] == value
+    for project in PROJECTS:
+        native = PROFILES[project].native_facet("experiment")
+        assert translate(query, projects=[project])[project][native] == value
