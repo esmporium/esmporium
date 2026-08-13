@@ -187,6 +187,7 @@ Finding dataset ancestry
 
 Will require adding the parent information to our dataset version table
 Will require adding the file header query logic and parallelisation and node selection and health monitoring too
+Will require adding some concept of fixes (initially do it in this package e.g. `src/esmporium/fixes`, can split out later) so we can inject corrected metadata on the fly
 
 Tests:
 
@@ -205,7 +206,7 @@ Integration tests:
     1. key cases to cover
         1. CMIP5 abrupt4xCO2
         1. CMIP5 scenario
-        1. CMIP6 abrupt4xCO2
+        1. CMIP6 abrupt4xCO2 (pick a simulation with broken parent information here to test the fixes path)
         1. CMIP6 scenario (or maybe even better, g6solar)
         1. CMIP7 abrupt4xCO2
         1. CMIP7 scenario
