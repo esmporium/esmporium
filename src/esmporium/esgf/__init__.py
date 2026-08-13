@@ -6,8 +6,6 @@ A user writes a query in whichever project dialect they prefer (one of the
 Every dialect lowers to a single canonical intermediate representation, and every
 project renders that back out to its native facet names, so `N` input dialects and
 `M` projects cover `N x M` journeys with `N + M` pieces of code.
-
-This layer is facet-only: it builds native param dicts, it does not search.
 """
 
 from esmporium.esgf.canonical import CANONICAL_FACETS, CanonicalQuery

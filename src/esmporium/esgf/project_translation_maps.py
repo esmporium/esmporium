@@ -224,6 +224,29 @@ CMIP7_PROFILE = ProjectProfile(
     ),
 )
 
+IDENTITY_PROFILE = ProjectProfile(
+    project="unified",
+    project_param="unified",
+    # Empty field_map: every native name that is a canonical facet lowers to
+    # itself, and anything else lowers to None (extra_facets). This makes
+    # `canonical_facet` behave as the identity on the canonical vocabulary, which
+    # is exactly what the unified skin needs.
+    field_map={},
+    absent_facets=frozenset(),
+    project_specific_facets=frozenset(),
+)
+"""
+The lowering profile for the unified, neutral-vocabulary skin.
+
+The unified skin already types in canonical names, so lowering it is the identity
+on the canonical vocabulary. Rather than special-casing that skin, it carries this
+profile like any other dialect, so every skin lowers by the same rule.
+
+Not registered in `_PROFILE_REGISTRY`: it is a *lowering* profile only (its
+`project`/`project_param` are never rendered), so `get_profile` and the
+fail-loud rules never see it.
+"""
+
 _PROFILE_REGISTRY: dict[str, ProjectProfile] = {
     profile.project: profile
     for profile in (CMIP5_PROFILE, CMIP6_PROFILE, CMIP7_PROFILE)

@@ -3,8 +3,9 @@ Facet search input dialects — the vocabulary a user types their query in.
 
 Users can choose which project language to search in, regardless of which
 project they search for. Each search class acts as a skin in one project
-dialect's vocabulary. Every skin implements exactly one method,
-`to_canonical()`, which lowers it into the shared
+dialect's vocabulary, differing only in its native field names and the
+translation profile (`_profile`) it carries. A single shared `to_canonical()`
+lowers any skin into the shared
 [`CanonicalQuery`][esmporium.esgf.canonical.CanonicalQuery]. There are no
 `to_<other_project>` methods anywhere: a cross-project journey is composed by
 lowering to canonical and rendering back out through a project profile.
@@ -23,12 +24,60 @@ from typing import ClassVar
 
 from pydantic import BaseModel, ValidationInfo, field_validator
 
-from esmporium.esgf.canonical import (
-    CANONICAL_FACETS,
-    CanonicalQuery,
-    _normalise_facet_values,
+from esmporium.esgf.canonical import CanonicalQuery, _normalise_facet_values
+from esmporium.esgf.project_translation_maps import (
+    CMIP5_PROFILE,
+    CMIP6_PROFILE,
+    CMIP7_PROFILE,
+    IDENTITY_PROFILE,
+    ProjectProfile,
 )
-from esmporium.esgf.project_translation_maps import get_profile
+
+
+def lower_to_canonical(
+    typed_facets: dict[str, tuple[str, ...]],
+    profile: ProjectProfile,
+    dialect: str,
+    other_terms: dict[str, tuple[str, ...]],
+) -> CanonicalQuery:
+    """
+    Build a `CanonicalQuery` from a dialect's set facets — a plain function, no `self`.
+
+    This is the lowering behaviour on its own, independent of any skin class. A
+    native facet is placed on a canonical field when `profile` maps it to a
+    canonical one, and otherwise passed through in `extra_facets` (this is how
+    project-specific facets like CMIP5 `product` travel). `other_terms` are always
+    passthrough. The original per-dialect input is retained in `source_spec`.
+
+    `profile` is the dialect's translation data (see
+    [`ProjectProfile`][esmporium.esgf.project_translation_maps.ProjectProfile]);
+    its `canonical_facet` maps each native name to a canonical one (or `None`).
+    Passing the profile in as data — rather than resolving a mapping from a
+    subclass through `self` — is what lets this be a function.
+    """
+    canonical_fields: dict[str, tuple[str, ...]] = {}
+    extra_facets: dict[str, tuple[str, ...]] = {}
+
+    for native, values in typed_facets.items():
+        canonical = profile.canonical_facet(native)
+        if canonical is not None:
+            canonical_fields[canonical] = values
+        else:
+            extra_facets[native] = values
+
+    # other_terms are always passthrough (best-effort).
+    for name, values in other_terms.items():
+        extra_facets[name] = values
+
+    return CanonicalQuery(
+        **canonical_fields,
+        extra_facets=extra_facets,
+        source_spec={
+            "dialect": dialect,
+            "facets": dict(typed_facets),
+            "other_terms": dict(other_terms),
+        },
+    )
 
 
 class _ESGFQueryBase(BaseModel):
@@ -38,8 +87,13 @@ class _ESGFQueryBase(BaseModel):
     Holds the two non-facet fields (`project`, `other_terms`), normalises all
     inputs, and provides the generic `to_canonical()` lowering. Subclasses add
     their dialect's facet fields (named with that project's native facet names) and
-    say how a native name maps to a canonical one.
+    set `_profile` to the profile that maps those names to canonical ones.
     """
+
+    # The dialect's translation data. Each concrete skin sets this to its profile
+    # (the unified skin uses IDENTITY_PROFILE); `to_canonical` hands it to
+    # `lower_to_canonical`. Not a field — class-level data, not user input.
+    _profile: ClassVar[ProjectProfile]
 
     # The project(s) whose data to search. A tuple so multi-project handling is
     # uniform; each project skin overrides the default with its own project.
@@ -69,16 +123,6 @@ class _ESGFQueryBase(BaseModel):
             if name not in ("project", "other_terms")
         ]
 
-    def _dialect(self) -> str:
-        """Return a label for the input dialect, recorded in the IR's `source_spec`."""
-        raise NotImplementedError
-
-    def _canonical_name(self, native: str) -> str | None:
-        """Map one of this skin's native facet names to a canonical name, or `None`."""
-        raise NotImplementedError(
-            f"{type(self).__name__} must implement _canonical_name (native={native!r})"
-        )
-
     def to_canonical(self) -> CanonicalQuery:
         """
         Lower this dialect query into the canonical IR.
@@ -89,47 +133,17 @@ class _ESGFQueryBase(BaseModel):
         query, exactly as typed, is recorded in `source_spec` so nothing is ever
         lost from the record.
         """
-        canonical_fields: dict[str, tuple[str, ...]] = {}
-        extra_facets: dict[str, tuple[str, ...]] = {}
-        typed_facets: dict[str, tuple[str, ...]] = {}
-
-        for native in self._facet_field_names():
-            values = getattr(self, native)
-            if not values:
-                continue
-            typed_facets[native] = values
-            canonical = self._canonical_name(native)
-            if canonical is not None:
-                canonical_fields[canonical] = values
-            else:
-                extra_facets[native] = values
-
-        # other_terms are always passthrough (best-effort).
-        for name, values in self.other_terms.items():
-            extra_facets[name] = values
-
-        return CanonicalQuery(
-            **canonical_fields,
-            extra_facets=extra_facets,
-            source_spec={
-                "dialect": self._dialect(),
-                "facets": typed_facets,
-                "other_terms": dict(self.other_terms),
-            },
+        typed_facets = {
+            native: getattr(self, native)
+            for native in self._facet_field_names()
+            if getattr(self, native)
+        }
+        return lower_to_canonical(
+            typed_facets,
+            profile=self._profile,
+            dialect=self._profile.project,
+            other_terms=self.other_terms,
         )
-
-
-class _ESGFQueryProject(_ESGFQueryBase):
-    """A skin whose native names are translated via that project's profile."""
-
-    # The native project of this dialect (NOT the target — that is `project`).
-    _project: ClassVar[str]
-
-    def _dialect(self) -> str:
-        return self._project
-
-    def _canonical_name(self, native: str) -> str | None:
-        return get_profile(self._project).canonical_facet(native)
 
 
 class ESGFQuery(_ESGFQueryBase):
@@ -140,6 +154,8 @@ class ESGFQuery(_ESGFQueryBase):
     `project` has no default: being project-neutral, it is where you say which
     project(s) to search.
     """
+
+    _profile: ClassVar[ProjectProfile] = IDENTITY_PROFILE
 
     model: tuple[str, ...] = ()
     """See [`model`][esmporium.db.schema.Dataset.model]."""
@@ -164,15 +180,8 @@ class ESGFQuery(_ESGFQueryBase):
     realm: tuple[str, ...] = ()
     """See [`realm`][esmporium.esgf.canonical.CanonicalQuery.realm]."""
 
-    def _dialect(self) -> str:
-        return "unified"
 
-    def _canonical_name(self, native: str) -> str | None:
-        # The unified skin's names are canonical names.
-        return native if native in CANONICAL_FACETS else None
-
-
-class ESGFQueryCMIP5(_ESGFQueryProject):
+class ESGFQueryCMIP5(_ESGFQueryBase):
     """
     Type a query in CMIP5's native vocabulary (`institute`, `ensemble`, ...).
 
@@ -182,7 +191,7 @@ class ESGFQueryCMIP5(_ESGFQueryProject):
     canonical facet it maps to.
     """
 
-    _project: ClassVar[str] = "CMIP5"
+    _profile: ClassVar[ProjectProfile] = CMIP5_PROFILE
     project: tuple[str, ...] = ("CMIP5",)
 
     model: tuple[str, ...] = ()
@@ -205,7 +214,7 @@ class ESGFQueryCMIP5(_ESGFQueryProject):
     """CMIP5-only facet (e.g. `output1`); has no equivalent in other projects."""
 
 
-class ESGFQueryCMIP6(_ESGFQueryProject):
+class ESGFQueryCMIP6(_ESGFQueryBase):
     """
     Type a query in CMIP6's native vocabulary (`source_id`, `table_id`, ...).
 
@@ -215,7 +224,7 @@ class ESGFQueryCMIP6(_ESGFQueryProject):
     canonical facet it maps to.
     """
 
-    _project: ClassVar[str] = "CMIP6"
+    _profile: ClassVar[ProjectProfile] = CMIP6_PROFILE
     project: tuple[str, ...] = ("CMIP6",)
 
     source_id: tuple[str, ...] = ()
@@ -242,7 +251,7 @@ class ESGFQueryCMIP6(_ESGFQueryProject):
     """See [`realm`][esmporium.esgf.canonical.CanonicalQuery.realm]."""
 
 
-class ESGFQueryCMIP7(_ESGFQueryProject):
+class ESGFQueryCMIP7(_ESGFQueryBase):
     """
     Type a query in CMIP7's native vocabulary (as CMIP6 but `branding_suffix`).
 
@@ -252,7 +261,7 @@ class ESGFQueryCMIP7(_ESGFQueryProject):
     canonical facet it maps to.
     """
 
-    _project: ClassVar[str] = "CMIP7"
+    _profile: ClassVar[ProjectProfile] = CMIP7_PROFILE
     project: tuple[str, ...] = ("CMIP7",)
 
     source_id: tuple[str, ...] = ()
