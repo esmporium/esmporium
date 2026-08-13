@@ -41,9 +41,9 @@ def lower_to_canonical(
     other_terms: dict[str, tuple[str, ...]],
 ) -> CanonicalQuery:
     """
-    Build a `CanonicalQuery` from a dialect's set facets — a plain function, no `self`.
+    Build a `CanonicalQuery` from a dialect's set facets
 
-    This is the lowering behaviour on its own, independent of any skin class. A
+    This is the lowering behaviour on its own, independent of any ESGFQuery* class. A
     native facet is placed on a canonical field when `profile` maps it to a
     canonical one, and otherwise passed through in `extra_facets` (this is how
     project-specific facets like CMIP5 `product` travel). `other_terms` are always
