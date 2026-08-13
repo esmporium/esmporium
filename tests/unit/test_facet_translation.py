@@ -1,17 +1,17 @@
 """
-Golden translation tests — exact, hand-verified native params.
+Test translation cases using real project-specific values as inputs.
 
-Where the invariant tests (`test_facet_invariants.py`) prove the *config* is
-consistent, these prove the *mappings are correct*: for concrete queries, the
-native params that come out are exactly what a human checked against the DRS of
-each project. They double as documentation of what a translation looks like.
+For concrete queries, thenative params that come out are exactly what a
+human checked against the DRS of ach project. They double as
+documentation of what a translation looks like.
 
 Two layers of coverage:
 
-- the `N x M` journey grid, run on the facets every project shares (so no arm hits
-  the fail-loud rule), and
-- each skin fully populated and rendered back to its own project (exercising the
-  project-only facets: `grid_label`/`activity`/`resolution`, CMIP5 `product`).
+- Every project can be translated to every other project - run on the facets
+every project shares (so no arm hits the fail-loud rule), and
+- each facet query class (skin) fully populated and rendered back to its own project
+(exercising the project-only facets: `grid_label`/`activity`/`resolution`,
+CMIP5 `product`).
 
 plus the edge cases: fail-loud, passthrough, retention, normalisation.
 """
@@ -29,13 +29,7 @@ from esmporium.esgf import (
     translate,
 )
 
-# --------------------------------------------------------------------------- #
-# The N x M grid, on the subset of facets shared by every project.
-# --------------------------------------------------------------------------- #
-
-# One query per input dialect, all describing the *same* thing in that dialect's
-# words. CMIP5 has no grid/activity/resolution, so we stay on the common subset
-# here and cover the project-only facets in the identity tests below.
+# Define facets shared by every project and the unified (common) language
 COMMON_INPUTS = {
     "unified": ESGFQuery(
         model="ACCESS-CM2",
@@ -123,7 +117,7 @@ def test_common_subset_journeys(dialect: str, target: str):
     """
     Every input dialect renders to every project's native words, via the hub.
 
-    This is the `N x M` grid. The input dialect is independent of the target project:
+    The input dialect is independent of the target project:
     a CMIP5 skin can render CMIP7 params and vice versa, because both go through
     the same canonical form.
     """
@@ -134,12 +128,8 @@ def test_common_subset_journeys(dialect: str, target: str):
     assert result[target] == COMMON_EXPECTED[target]
 
 
-# --------------------------------------------------------------------------- #
 # Each skin fully populated, rendered back to its own project (identity round-trip).
 # Covers the project-only facets the common grid above cannot.
-# --------------------------------------------------------------------------- #
-
-
 def test_cmip5_full_identity():
     """A fully-populated CMIP5 query (incl. `product`) renders to CMIP5 unchanged."""
     query = ESGFQueryCMIP5(
@@ -232,11 +222,8 @@ def test_cmip7_full_identity():
     }
 
 
-# --------------------------------------------------------------------------- #
-# Fail-loud edge cases.
-# --------------------------------------------------------------------------- #
-
-
+# Edge cases that will fail by our definition.
+# i.e. asserting facets that are not defined in a project's native facet search.
 @pytest.mark.parametrize(
     "query",
     [
@@ -253,7 +240,7 @@ def test_canonical_facet_absent_in_target_raises(query):
 
 
 def test_project_specific_facet_wrong_project_raises():
-    """A CMIP5 `product` sent to CMIP6 raises (rule 2a), rather than being dropped."""
+    """A CMIP5 `product` sent to CMIP6 raises, rather than being dropped."""
     query = ESGFQueryCMIP5(model="ACCESS-CM2", product="output1", project=["CMIP6"])
 
     with pytest.raises(FacetNotRepresentableError) as excinfo:
@@ -264,7 +251,7 @@ def test_project_specific_facet_wrong_project_raises():
 
 
 def test_project_specific_facet_own_project_emits():
-    """The same `product` renders fine to CMIP5, the project that owns it (rule 2b)."""
+    """The same `product` renders fine to CMIP5, the project that owns it."""
     query = ESGFQueryCMIP5(model="ACCESS-CM2", product="output1", project=["CMIP5"])
 
     assert translate(query)["CMIP5"] == {
@@ -274,6 +261,7 @@ def test_project_specific_facet_own_project_emits():
     }
 
 
+# TODO: @Zeb: we want users to be able to search across multiple projects, right?
 def test_multi_project_fails_if_any_arm_fails():
     """If one requested project cannot express the query, the whole call raises."""
     query = ESGFQueryCMIP5(
@@ -284,11 +272,7 @@ def test_multi_project_fails_if_any_arm_fails():
         translate(query)
 
 
-# --------------------------------------------------------------------------- #
 # Passthrough, retention, normalisation.
-# --------------------------------------------------------------------------- #
-
-
 def test_other_terms_pass_through_best_effort():
     """An unmodelled `other_terms` facet is emitted as-is to any project, no error."""
     query = ESGFQuery(
@@ -303,7 +287,10 @@ def test_other_terms_pass_through_best_effort():
 
 
 def test_source_spec_retains_the_original_as_typed():
-    """The original query, including a dropped-in-render facet, is kept on the IR."""
+    """
+    The original query, including a dropped-in-render facet, is kept on
+    the intermediate response.
+    """
     query = ESGFQueryCMIP5(model="ACCESS-CM2", product="output1")
 
     spec = query.to_canonical().source_spec

@@ -1,14 +1,14 @@
 """
-Property-based tests of the translation *laws* (Hypothesis).
+Property-based tests of the translation "laws" (using Hypothesis package).
 
-Where the golden tests check exact outputs for chosen inputs, these check the
-algebraic laws the hub-and-spoke design promises, over many randomly generated
-queries — without hand-writing an expected dict for each. They are the cheapest
-way to gain confidence the architecture holds for combinations no one enumerated.
+(1) a project's own query, rendered back to that project is unchanged.
+(2)output depends only on canonical content and target project — never
+on which input dialect typed it.
+(3) facet search values (e.g. 'tas' for variable) is never changed.
 
-Facet values are opaque (we never rewrite them), so the meaningful axis is *which
-facets are set*, not the values; the value alphabet is deliberately tiny, and
-excludes commas because commas are our OR-separator in a rendered param.
+Hypothesis tests over many randomly generated queries — without hand-writing
+an expected dict for each. They are the cheapest way to gain confidence the
+architecture holds for combinations no one enumerated.
 """
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ TOKEN = st.text(
 )
 VALUES = st.lists(TOKEN, min_size=1, max_size=3, unique=True).map(tuple)
 
-# Facets present in *every* project (nothing here can trip the fail-loud rule).
+# Facets present in every project (nothing here can trip the fail-loud rule).
 _ABSENT_ANYWHERE = (
     CMIP5_PROFILE.absent_facets
     | CMIP6_PROFILE.absent_facets
@@ -94,9 +94,9 @@ def test_round_trip_identity(project: str, data: st.DataObject):
 
 
 @given(content=canonical_content())
-def test_hub_law_result_independent_of_input_dialect(content):
+def test_result_independent_of_input_dialect(content):
     """
-    Law 2 (the heart of the design): output depends only on canonical content and
+    Law 2: output depends only on canonical content and
     target project — never on which input dialect typed it.
 
     The same content, expressed via the unified skin, the CMIP5 skin and the CMIP6
@@ -119,9 +119,9 @@ def test_hub_law_result_independent_of_input_dialect(content):
 @given(value=TOKEN)
 def test_values_are_never_rewritten(value: str):
     """
-    Law 3: names are ours, values are yours.
+    Law 3: names are ours, values are users.
 
-    A facet value comes out byte-identical in every project; only the facet *name*
+    A facet value comes out byte-identical in every project; only the facet name
     changes (`experiment` -> `experiment_id`).
     """
     query = ESGFQuery(experiment=value)

@@ -1,16 +1,13 @@
 """
-Structural invariants of the facet vocabulary and the era profiles.
+Structural invariants of the facet vocabulary and the project profiles.
 
-These tests never translate a real query. They check that the *configuration* in
+These tests never translate a real query. They check that the configuration in
 [`canonical`][esmporium.esgf.canonical] and
 [`project_translation_maps`][esmporium.esgf.project_translation_maps] is internally
 consistent, so that a mistake in a `field_map` or an `absent_facets` set is caught
-here — at the source of the error — rather than surfacing later as a baffling wrong
+here — at the source of the error — rather than surfacing later as a wrong
 translation.
 
-They are the facet-translation analogue of `test_facet_columns_are_the_declared_facets`
-in `test_schema.py`: the thing that screams when someone adds a project, or a facet,
-and forgets to keep the pieces in step.
 """
 
 from __future__ import annotations
@@ -37,7 +34,8 @@ by_profile = pytest.mark.parametrize(
 
 def test_canonical_facets_match_query_fields():
     """
-    The canonical vocabulary and the IR's fields must be exactly the same set.
+    The canonical vocabulary and the intermediate response's fields must be
+    exactly the same set.
 
     `CANONICAL_FACETS` and the fields on `CanonicalQuery` are written out
     separately (pydantic needs literal field names, and the `field_validator`
@@ -77,7 +75,8 @@ def test_mapped_and_absent_facets_are_disjoint(profile: ProjectProfile):
     A canonical facet is either renamed, absent, or identity — never two of these.
 
     `field_map` keys (renamed) and `absent_facets` (missing) must not overlap;
-    what remains is the identity set (same name, e.g. `realm`). Together, they
+    what remains is the identity set (facets which do not need to be renamed,
+    such as `realm`, which is shared across CMIP5/6/7). Together, they
     partition the canonical vocabulary, which is what lets `to_native_params`
     reason about every facet unambiguously.
     """
@@ -134,10 +133,13 @@ def test_native_and_canonical_facet_are_inverses(profile: ProjectProfile):
     Rendering out then lowering back in recovers the canonical name.
 
     For every canonical facet the project actually has (i.e. not absent),
-    `canonical_facet(native_facet(c)) == c`. This is the round-trip property the
-    whole hub-and-spoke design relies on, checked here at the level of a single
+    `canonical_facet(native_facet(c)) == c`. This is the round-trip property our
+    translation model relies on, checked here at the level of a single
     project's rename helpers.
     """
+    # TODO: does this handle the round trip case for extra_facets?
+    # Are there any round trip circumstances that could drop a facet that need to
+    # be checked?
     for canonical in CANONICAL_FACETS - profile.absent_facets:
         native = profile.native_facet(canonical)
 
