@@ -13,6 +13,10 @@ dependencies = [
     # so the user's own process is the only thing
     # that can ever migrate it to a newer schema.
     "alembic>=1.13.0",
+    # HTTP client for querying ESGF search APIs (ESGF1 Solr and ESGF-NG STAC).
+    # httpx over requests because it gives a drop-in async path later
+    # and cleanly does both the Solr GET and the STAC POST/JSON.
+    "httpx>=0.28.0",
     # If you use numpy, we suggest pinning to >2.1.0
     # based on the minimum supported python version
     "pandas>=2.2.0", # pin based on minimum supported python version
@@ -179,6 +183,14 @@ addopts = [
     # and is meaningless outside an alembic invocation,
     # so `--doctest-modules` must not collect it.
     "--ignore=src/esmporium/db/migrations",
+    # Keep the default suite fast: tests that hit live ESGF index nodes over the
+    # network are opt-in. Run them with `pytest -m SearchESGF` (the command-line
+    # `-m` overrides this default one). See the `SearchESGF` marker below.
+    "-m",
+    "not SearchESGF",
+]
+markers = [
+    "SearchESGF: hits live ESGF index nodes over the network; deselected by default",
 ]
 
 [tool.ruff]

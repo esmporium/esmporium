@@ -796,6 +796,7 @@ version = "0.1.2.post1"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },
+    { name = "httpx" },
     { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "pandas", version = "3.0.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "sqlmodel" },
@@ -889,6 +890,7 @@ tests-min = [
 requires-dist = [
     { name = "alembic", specifier = ">=1.13.0" },
     { name = "esmporium", extras = ["plots"], marker = "extra == 'full'" },
+    { name = "httpx", specifier = ">=0.28.0" },
     { name = "matplotlib", marker = "extra == 'plots'", specifier = ">=3.7.1" },
     { name = "pandas", specifier = ">=2.2.0" },
     { name = "sqlmodel", specifier = ">=0.0.39" },

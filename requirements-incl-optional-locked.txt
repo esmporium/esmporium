@@ -4,16 +4,34 @@ alembic==1.19.0
     # via esmporium
 annotated-types==0.8.0
     # via pydantic
+anyio==4.14.2
+    # via httpx
+certifi==2026.7.22
+    # via
+    #   httpcore
+    #   httpx
 contourpy==1.3.2 ; python_full_version < '3.11'
     # via matplotlib
 contourpy==1.3.3 ; python_full_version >= '3.11'
     # via matplotlib
 cycler==0.12.1
     # via matplotlib
+exceptiongroup==1.3.1 ; python_full_version < '3.11'
+    # via anyio
 fonttools==4.63.0
     # via matplotlib
 greenlet==3.5.4 ; platform_machine == 'AMD64' or platform_machine == 'WIN32' or platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'ppc64le' or platform_machine == 'win32' or platform_machine == 'x86_64'
     # via sqlalchemy
+h11==0.16.0
+    # via httpcore
+httpcore==1.0.9
+    # via httpx
+httpx==0.28.1
+    # via esmporium
+idna==3.18
+    # via
+    #   anyio
+    #   httpx
 kiwisolver==1.5.0
     # via matplotlib
 mako==1.4.0
@@ -72,6 +90,8 @@ tomli==2.2.1 ; python_full_version < '3.11'
 typing-extensions==4.16.0
     # via
     #   alembic
+    #   anyio
+    #   exceptiongroup
     #   pydantic
     #   pydantic-core
     #   sqlalchemy
