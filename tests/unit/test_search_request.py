@@ -128,6 +128,46 @@ def test_stac_limit_is_at_least_one():
     assert request.json_body["limit"] >= 1
 
 
+# ---------------------------------------------------------- STAC extra_facets
+
+
+def test_stac_prefixes_an_unprefixed_extra_facet():
+    # A passthrough facet (project-native name) is namespaced with the project
+    # prefix and emitted as an `in` clause, like a canonical one.
+    canonical = CanonicalQuery(extra_facets={"sub_experiment_id": ("s1990",)})
+    request = build_request(canonical, "CMIP6", STAC)
+    props = _properties(request.json_body["filter"])
+    assert props == {"cmip6:sub_experiment_id": ["s1990"]}
+
+
+def test_stac_leaves_an_already_prefixed_extra_facet_untouched():
+    # If the caller already namespaced the key, we must not double-prefix it.
+    canonical = CanonicalQuery(extra_facets={"cmip6:sub_experiment_id": ("s1990",)})
+    request = build_request(canonical, "CMIP6", STAC)
+    props = _properties(request.json_body["filter"])
+    assert "cmip6:sub_experiment_id" in props
+    assert "cmip6:cmip6:sub_experiment_id" not in props
+
+
+def test_stac_extra_facet_uses_the_target_projects_prefix():
+    # The prefix follows the project being searched, not the query's dialect.
+    canonical = CanonicalQuery(extra_facets={"region": ("global",)})
+    request = build_request(canonical, "CMIP7", STAC)
+    props = _properties(request.json_body["filter"])
+    assert props == {"cmip7:region": ["global"]}
+
+
+def test_stac_extra_facets_are_anded_with_canonical_facets():
+    canonical = CanonicalQuery(
+        model=("UKESM1-0-LL",), extra_facets={"sub_experiment_id": ("s1990",)}
+    )
+    request = build_request(canonical, "CMIP6", STAC)
+    assert request.json_body["filter"]["op"] == "and"
+    props = _properties(request.json_body["filter"])
+    assert props["cmip6:source_id"] == ["UKESM1-0-LL"]
+    assert props["cmip6:sub_experiment_id"] == ["s1990"]
+
+
 # ------------------------------------------------------------- unrepresentable
 
 
