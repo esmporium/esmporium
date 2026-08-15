@@ -317,7 +317,7 @@ def translate_to_projects(
     ...         return facet_values_from_attributes(self)
     >>>
     >>> # Now we have everything we need to translate.
-    >>> # Firstly, out of our language, into other ones we know:
+    >>> # Firstly, out of our query class, into other ones we know:
     >>> start = QueryMIP1(esm=("ACCESS-ESM1-5",))
     >>> mip1_translated = translate_to_projects(start, projects=["CMIP5", "CMIP6"])
     >>> mip1_translated["CMIP5"].model
@@ -325,7 +325,7 @@ def translate_to_projects(
     >>> mip1_translated["CMIP6"].source_id
     ('ACCESS-ESM1-5',)
     >>>
-    >>> # Into our language, by specifying that a given project uses our query class
+    >>> # Into our query class, by specifying that a given project uses our query class
     >>> mip1_translated_to = translate_to_projects(
     ...     query,
     ...     projects=["CMIP5", "MIP1"],

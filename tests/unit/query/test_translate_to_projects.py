@@ -154,7 +154,7 @@ def test_multi_project_fails_if_any_arm_fails():
 
 
 def test_unknown_project_raises():
-    """A project we have no language for raises, listing the ones we do have."""
+    """A project we have no query class for raises, listing the ones we do have."""
     query = Query(model="ACCESS-CM2")
 
     with pytest.raises(

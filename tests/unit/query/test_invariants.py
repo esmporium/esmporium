@@ -1,12 +1,11 @@
 """
 Structural invariants of the facet vocabulary and the query classes.
 
-These tests never translate a real query. They check that the configuration in
-[`canonical`][esmporium.query.canonical],
-[`languages`][esmporium.query.languages] and
-[`translate`][esmporium.query.translate] is internally consistent, so that a
-mistake in a query class's annotations is caught here — at the source of the
-error — rather than surfacing later as a wrong translation.
+These tests never translate a real query.
+They check that the configuration is internally consistent,
+so that a mistake in a query class's annotations is caught here
+— at the source of the error
+— rather than surfacing later as a wrong translation.
 
 Most of what this file used to check is now unwriteable rather than untested: a
 query class declares how each of its facets translates, in the field's own
@@ -94,9 +93,9 @@ def test_absent_facets(query_class):
 
 
 @by_query
-def test_language_specific_facets_are_not_rename_targets(query_class):
+def test_query_specific_facets_are_not_rename_targets(query_class):
     """
-    A native name is a rename target or a language-specific facet, not both.
+    A native name is a rename target or a query-specific facet, not both.
     """
     spec = facet_spec(query_class)
 
@@ -114,7 +113,7 @@ def test_native_and_canonical_facet_are_inverses(query_class):
 
 
 @by_query
-def test_language_specific_facets_do_not_have_a_canonical_equivalent(query_class):
+def test_query_specific_facets_do_not_have_a_canonical_equivalent(query_class):
     spec = facet_spec(query_class)
 
     for facet in spec.language_specific_facets:
@@ -249,7 +248,7 @@ def test_a_field_with_more_than_one_query_facet_raises():
     assert excinfo.value.declared == (QueryFacet("model"), QueryFacet("experiment"))
 
 
-def test_a_field_annotated_as_both_a_facet_and_language_specific_raises():
+def test_a_field_annotated_as_both_a_facet_and_query_specific_raises():
     """A `QueryFacet(None)` alongside a named one is just as ambiguous."""
 
     @dataclass

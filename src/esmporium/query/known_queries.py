@@ -5,10 +5,10 @@ The only thing each query has to declare is its own fields.
 This handles definition of all key information:
 
 - the normalisation of each facet's values should be handled by the type
-  [FacetValues][esmporium.query.canonical.FacetValues]
+  [FacetValues][esmporium.query.canonical_query.FacetValues]
   or an equivalent
 - how a facet translates is defined by its
-  [QueryFacet][esmporium.query.canonical.QueryFacet] annotation
+  [QueryFacet][esmporium.query.canonical_query.QueryFacet] annotation
 - moving a query to and from the canonical form is handled by
   [esmporium.query.translate][]
 """
@@ -33,7 +33,7 @@ from esmporium.query.protocol import QueryProtocol, SourceQuery
 NON_FACET_FIELDS: frozenset[str] = frozenset({"other_terms", "source_query"})
 """
 The fields of a query which are allowed to carry no
-[QueryFacet][esmporium.query.canonical.QueryFacet]
+[QueryFacet][esmporium.query.canonical_query.QueryFacet]
 
 Every other field must be annotated.
 """
@@ -77,7 +77,7 @@ class UnannotatedFacetError(TypeError):
 
         fields
             The fields of `query_class` which carry no
-            [QueryFacet][esmporium.query.canonical.QueryFacet]
+            [QueryFacet][esmporium.query.canonical_query.QueryFacet]
         """
         self.query_class = query_class
         self.fields = tuple(sorted(fields))
@@ -128,7 +128,7 @@ class MultipleFacetAnnotationsError(TypeError):
             The field of `query_class` which carries more than one annotation
 
         declared
-            The [QueryFacet][esmporium.query.canonical.QueryFacet]
+            The [QueryFacet][esmporium.query.canonical_query.QueryFacet]
             annotations `field` carries, in the order they are declared
         """
         self.query_class = query_class
@@ -218,7 +218,7 @@ class FacetSpec:
 
 def _declared_facets(query_class: type) -> dict[str, QueryFacet]:
     """
-    Read the [QueryFacet][esmporium.query.canonical.QueryFacet] annotations off a class
+    Read a class's [QueryFacet][esmporium.query.canonical_query.QueryFacet] annotations
 
     Parameters
     ----------
@@ -234,11 +234,11 @@ def _declared_facets(query_class: type) -> dict[str, QueryFacet]:
     ------
     UnannotatedFacetError
         `query_class` has a field which is neither annotated nor in
-        [NON_FACET_FIELDS][esmporium.query.languages.NON_FACET_FIELDS]
+        [NON_FACET_FIELDS][esmporium.query.known_queries.NON_FACET_FIELDS]
 
     MultipleFacetAnnotationsError
         A field of `query_class` carries more than one
-        [QueryFacet][esmporium.query.canonical.QueryFacet]
+        [QueryFacet][esmporium.query.canonical_query.QueryFacet]
     """
     # `include_extras` is what keeps the `Annotated` metadata;
     # without it the annotations come back as bare types
@@ -297,12 +297,12 @@ def facet_spec(query_class: type) -> FacetSpec:
     ------
     UnannotatedFacetError
         `query_class` has a field which is neither annotated with
-        [QueryFacet][esmporium.query.canonical.QueryFacet] nor in
-        [NON_FACET_FIELDS][esmporium.query.languages.NON_FACET_FIELDS]
+        [QueryFacet][esmporium.query.canonical_query.QueryFacet] nor in
+        [NON_FACET_FIELDS][esmporium.query.known_queries.NON_FACET_FIELDS]
 
     MultipleFacetAnnotationsError
         A field of `query_class` carries more than one
-        [QueryFacet][esmporium.query.canonical.QueryFacet]
+        [QueryFacet][esmporium.query.canonical_query.QueryFacet]
 
     NoFacetsDeclaredError
         `query_class` declares no facets at all
@@ -366,7 +366,7 @@ def facet_values_from_attributes(query: QueryProtocol) -> dict[str, tuple[str, .
     Returns
     -------
     :
-        The facets which are set, keyed by their name in `query`'s language
+        The facets which are set, keyed by the name used in `query`
     """
     spec = facet_spec(type(query))
 
@@ -380,7 +380,7 @@ class Query(BaseModel):
     Query in our vocabulary (i.e. in line with [Dataset][esmporium.db.schema.Dataset])
 
     Every facet is its own canonical equivalent,
-    which is what makes this the language every other one translates through.
+    which is what makes this the class every other one translates through.
     """
 
     model_config = DEFAULT_QUERY_MODEL_CONFIG
@@ -412,16 +412,16 @@ class Query(BaseModel):
     """See [Dataset.processing_id][esmporium.db.schema.Dataset.processing_id]."""
 
     activity: Annotated[FacetValues, QueryFacet("activity")] = ()
-    """See [Dataset.activity][esmporium.query.canonical.QueryCanonical.activity]."""
+    """See [Dataset.activity][esmporium.query.canonical_query.QueryCanonical.activity]."""  # noqa: E501
 
     resolution: Annotated[FacetValues, QueryFacet("resolution")] = ()
-    """See [Dataset.resolution][esmporium.query.canonical.QueryCanonical.resolution]."""
+    """See [Dataset.resolution][esmporium.query.canonical_query.QueryCanonical.resolution]."""  # noqa: E501
 
     grid_label: Annotated[FacetValues, QueryFacet("grid_label")] = ()
     """See [Dataset.grid_label][esmporium.db.schema.Dataset.grid_label]."""
 
     realm: Annotated[FacetValues, QueryFacet("realm")] = ()
-    """See [Dataset.realm][esmporium.query.canonical.QueryCanonical.realm]."""
+    """See [Dataset.realm][esmporium.query.canonical_query.QueryCanonical.realm]."""
 
     other_terms: FacetValuesByName = {}
     """
@@ -439,7 +439,7 @@ class Query(BaseModel):
     """
 
     def facet_values(self) -> dict[str, tuple[str, ...]]:
-        """See [QueryProtocol.facet_values][esmporium.query.languages.QueryProtocol.facet_values]."""  # noqa: E501
+        """See [QueryProtocol.facet_values][esmporium.query.protocol.QueryProtocol.facet_values]."""  # noqa: E501
         return facet_values_from_attributes(self)
 
 
@@ -477,7 +477,7 @@ class QueryCMIP5(BaseModel):
     """See [Dataset.processing_id][esmporium.db.schema.Dataset.processing_id]."""
 
     realm: Annotated[FacetValues, QueryFacet("realm")] = ()
-    """See [Dataset.realm][esmporium.query.canonical.QueryCanonical.realm]."""
+    """See [Dataset.realm][esmporium.query.canonical_query.QueryCanonical.realm]."""
 
     product: Annotated[FacetValues, QueryFacet(None)] = ()
     """
@@ -495,7 +495,7 @@ class QueryCMIP5(BaseModel):
     """See [Query.source_query][(m).Query.source_query]."""
 
     def facet_values(self) -> dict[str, tuple[str, ...]]:
-        """See [QueryProtocol.facet_values][esmporium.query.languages.QueryProtocol.facet_values]."""  # noqa: E501
+        """See [QueryProtocol.facet_values][esmporium.query.protocol.QueryProtocol.facet_values]."""  # noqa: E501
         return facet_values_from_attributes(self)
 
 
@@ -536,13 +536,13 @@ class QueryCMIP6(BaseModel):
     """See [Dataset.processing_id][esmporium.db.schema.Dataset.processing_id]."""
 
     activity_id: Annotated[FacetValues, QueryFacet("activity")] = ()
-    """See [Dataset.activity][esmporium.query.canonical.QueryCanonical.activity]."""
+    """See [Dataset.activity][esmporium.query.canonical_query.QueryCanonical.activity]."""  # noqa: E501
 
     nominal_resolution: Annotated[FacetValues, QueryFacet("resolution")] = ()
-    """See [Dataset.resolution][esmporium.query.canonical.QueryCanonical.resolution]."""
+    """See [Dataset.resolution][esmporium.query.canonical_query.QueryCanonical.resolution]."""  # noqa: E501
 
     realm: Annotated[FacetValues, QueryFacet("realm")] = ()
-    """See [Dataset.realm][esmporium.query.canonical.QueryCanonical.realm]."""
+    """See [Dataset.realm][esmporium.query.canonical_query.QueryCanonical.realm]."""
 
     sub_experiment_id: Annotated[FacetValues, QueryFacet(None)] = ()
     """
@@ -559,7 +559,7 @@ class QueryCMIP6(BaseModel):
     """See [Query.source_query][(m).Query.source_query]."""
 
     def facet_values(self) -> dict[str, tuple[str, ...]]:
-        """See [QueryProtocol.facet_values][esmporium.query.languages.QueryProtocol.facet_values]."""  # noqa: E501
+        """See [QueryProtocol.facet_values][esmporium.query.protocol.QueryProtocol.facet_values]."""  # noqa: E501
         return facet_values_from_attributes(self)
 
 
@@ -600,13 +600,13 @@ class QueryCMIP7(BaseModel):
     """See [Dataset.processing_id][esmporium.db.schema.Dataset.processing_id]."""
 
     activity_id: Annotated[FacetValues, QueryFacet("activity")] = ()
-    """See [Dataset.activity][esmporium.query.canonical.QueryCanonical.activity]."""
+    """See [Dataset.activity][esmporium.query.canonical_query.QueryCanonical.activity]."""  # noqa: E501
 
     nominal_resolution: Annotated[FacetValues, QueryFacet("resolution")] = ()
-    """See [Dataset.resolution][esmporium.query.canonical.QueryCanonical.resolution]."""
+    """See [Dataset.resolution][esmporium.query.canonical_query.QueryCanonical.resolution]."""  # noqa: E501
 
     realm: Annotated[FacetValues, QueryFacet("realm")] = ()
-    """See [Dataset.realm][esmporium.query.canonical.QueryCanonical.realm]."""
+    """See [Dataset.realm][esmporium.query.canonical_query.QueryCanonical.realm]."""
 
     temporal_label: Annotated[FacetValues, QueryFacet(None)] = ()
     """Temporal part of CMIP7's branding suffix, e.g. "tavg"."""
@@ -630,5 +630,5 @@ class QueryCMIP7(BaseModel):
     """See [Query.source_query][(m).Query.source_query]."""
 
     def facet_values(self) -> dict[str, tuple[str, ...]]:
-        """See [QueryProtocol.facet_values][esmporium.query.languages.QueryProtocol.facet_values]."""  # noqa: E501
+        """See [QueryProtocol.facet_values][esmporium.query.protocol.QueryProtocol.facet_values]."""  # noqa: E501
         return facet_values_from_attributes(self)

@@ -1,8 +1,8 @@
 """
 The canonical representation of queries
 
-All translations between specific languages
-(see [esmporium.query.languages][])
+All translations between specific queries
+(see [esmporium.query.known_queries][])
 go through this canonical representation
 to keep maintenance manageable.
 """
@@ -43,7 +43,7 @@ The canonical facet vocabulary
 
 Aligns as far as possible with [Dataset][esmporium.db.schema.Dataset].
 
-Language-specific facets are deliberately not here.
+Query class-specific facets are deliberately not here.
 """
 
 
@@ -58,7 +58,7 @@ class NotACanonicalFacetError(ValueError):
         ----------
         canonical_equivalent
             The claimed canonical facet, which is not one of
-            [CANONICAL_FACETS][esmporium.query.canonical.CANONICAL_FACETS]
+            [CANONICAL_FACETS][esmporium.query.canonical_query.CANONICAL_FACETS]
         """
         self.canonical_equivalent = canonical_equivalent
         supported = ", ".join(sorted(CANONICAL_FACETS))
@@ -96,7 +96,7 @@ class QueryFacet:
         # A different name in the canonical vocabulary
         ensemble: Annotated[FacetValues, QueryFacet("variant_label")] = ()
 
-        # No canonical equivalent: i.e. this facet is specific to this language
+        # No canonical equivalent: i.e. this facet is specific to this query class
         product: Annotated[FacetValues, QueryFacet(None)] = ()
     ```
     """
@@ -106,8 +106,8 @@ class QueryFacet:
     This facet's name in the canonical vocabulary
 
     Must be one of
-    [CANONICAL_FACETS][esmporium.query.canonical.CANONICAL_FACETS],
-    or `None` if the facet is specific to this language.
+    [CANONICAL_FACETS][esmporium.query.canonical_query.CANONICAL_FACETS],
+    or `None` if the facet is specific to this query class.
     """
 
     def __post_init__(self) -> None:
@@ -246,7 +246,7 @@ def normalise_facet_values_by_name(value: object) -> object:
 
     Only the mapping itself is handled here.
     Each facet's values are normalised (and reported on, if they are wrong)
-    by [FacetValues][esmporium.query.canonical.FacetValues],
+    by [FacetValues][esmporium.query.canonical_query.FacetValues],
     which is the mapping's value type.
 
     Parameters
@@ -346,10 +346,11 @@ class QueryCanonical(BaseModel):
 
     language_specific_facets: FacetValuesByName = {}
     """
-    Facets which one language names but the canonical vocabulary does not.
+    Facets which one this query names but the canonical vocabulary does not.
 
-    For example, CMIP5's `product`. These are held under their native names,
+    These are held under their native names,
     untranslated, because there is nothing to translate them to.
+    For example, CMIP5's `product`.
     """
 
     other_terms: FacetValuesByName = {}

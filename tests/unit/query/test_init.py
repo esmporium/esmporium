@@ -24,9 +24,9 @@ def test_single_string_becomes_one_tuple():
 @pytest.mark.parametrize(
     "query_cls, facet",
     [
-        pytest.param(Query, "model", id="canonical-language"),
-        pytest.param(QueryCMIP6, "source_id", id="cmip6-language"),
-        pytest.param(QueryCanonical, "model", id="canonical-form"),
+        pytest.param(Query, "model", id="base"),
+        pytest.param(QueryCMIP6, "source_id", id="cmip6"),
+        pytest.param(QueryCanonical, "model", id="canonical"),
     ],
 )
 def test_error_names_the_value_the_user_passed(query_cls, facet: str):
@@ -95,7 +95,7 @@ def test_bytes_facet_value_is_one_value():
 
 def test_unknown_facet_is_not_silently_accepted():
     """
-    A facet a language does not have is a typo, so it must not be quietly ignored.
+    A facet a query does not have is a typo, so it must not be quietly ignored.
 
     `other_terms` is the deliberate escape hatch for facets we have not modelled.
     """
@@ -113,7 +113,7 @@ def test_other_terms_none_is_no_other_terms():
 )
 def test_facet_extras_must_be_mappings(mapping_attribute: str):
     """
-    Language specific facets and other terms must be mappings
+    Query specific facets and other terms must be mappings
     """
     with pytest.raises(
         ValidationError,
@@ -182,8 +182,8 @@ def test_source_query_is_not_validated():
     "source_query",
     [
         pytest.param(None, id="none"),
-        pytest.param(Query(model="ACCESS-CM2"), id="canonical-language"),
-        pytest.param(QueryCMIP6(source_id="ACCESS-CM2"), id="cmip6-language"),
+        pytest.param(Query(model="ACCESS-CM2"), id="base"),
+        pytest.param(QueryCMIP6(source_id="ACCESS-CM2"), id="cmip6"),
     ],
 )
 def test_source_query_accepts_a_query_or_nothing(source_query):

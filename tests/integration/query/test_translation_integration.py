@@ -102,7 +102,7 @@ def test_round_trip_identity(project: str, data: st.DataObject):
 
 
 @given(content=canonical_content())
-def test_result_independent_of_input_language(content):
+def test_result_independent_of_input_query(content):
     """
     No matter how we go from one project to another, the result is the same
     """

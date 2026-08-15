@@ -28,7 +28,7 @@ def test_project_facet_translates_like_any_other_facet():
         pytest.param(QueryCMIP5(model="ACCESS-CM2"), id="translatable-facets-only"),
         pytest.param(
             QueryCMIP5(model="ACCESS-CM2", product="output1"),
-            id="with-a-language-specific-facet",
+            id="with-a-query-specific-facet",
         ),
     ],
 )
@@ -42,7 +42,7 @@ def test_a_facet_is_renamed_values_are_unchanged():
     assert canonical.variant_label == ("r1i1p1f1", "r2i1p1f1")
 
 
-def test_a_language_specific_facet_stays_put():
+def test_a_query_specific_facet_stays_put():
     """
     A facet with no canonical equivalent is held under its native name.
 
@@ -62,12 +62,12 @@ def test_other_terms_are_carried_across_untouched():
     assert canonical.other_terms == {"made_up_facet": ("foo",)}
 
 
-def test_empty_language_specific_facet_does_not_trip_fail_loud():
+def test_empty_query_specific_facet_does_not_trip_fail_loud():
     """
-    A language-specific facet with no values asks for nothing, so don't fail
+    A query-specific facet with no values asks for nothing, so don't fail
     """
     # If the user builds QueryCanonical by hand
-    # and includes language-specific values that aren't used, don't raise.
+    # and includes query-specific values that aren't used, don't raise.
     canonical = QueryCanonical(
         model="ACCESS-CM2", language_specific_facets={"product": ()}
     )

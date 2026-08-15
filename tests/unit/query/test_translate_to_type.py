@@ -21,23 +21,24 @@ from esmporium.query import (
     translate_to_type,
 )
 
-START_LANGUAGES = ("canonical", "CMIP5", "CMIP6", "CMIP7")
-TARGET_LANGUAGES = ("CMIP5", "CMIP6", "CMIP7")
+START_PROJECTS = ("canonical", "CMIP5", "CMIP6", "CMIP7")
+TARGET_PROJECTS = ("CMIP5", "CMIP6", "CMIP7")
 
 
-def test_the_language_lists_match_the_shared_queries(common_inputs, common_expected):
+def test_the_project_lists_match_the_shared_queries(common_inputs, common_expected):
     """
     Guard: the lists we parametrise over must stay in step with the fixtures.
 
-    Otherwise a language added to the fixtures would silently go untested.
+    Otherwise a project (and associated query class)
+    added to the fixtures would silently go untested.
     """
-    assert set(START_LANGUAGES) == set(common_inputs)
-    assert set(TARGET_LANGUAGES) == set(common_expected)
+    assert set(START_PROJECTS) == set(common_inputs)
+    assert set(TARGET_PROJECTS) == set(common_expected)
 
 
-@pytest.mark.parametrize("target_key", TARGET_LANGUAGES)
-@pytest.mark.parametrize("start_key", START_LANGUAGES)
-def test_every_language_translates_to_every_other(
+@pytest.mark.parametrize("target_key", TARGET_PROJECTS)
+@pytest.mark.parametrize("start_key", START_PROJECTS)
+def test_every_query_class_translates_to_every_other(
     start_key: str, target_key: str, common_inputs, common_expected
 ):
     query_start = common_inputs[start_key]
@@ -91,7 +92,7 @@ def test_source_query_is_preserved(to_type):
 def test_can_roundtrip_to_another_project():
     query_cmip6 = QueryCMIP6(
         source_id="ACCESS-CM2",
-        # Use CMIP6 query language, but say you want to search for CMIP7
+        # Use CMIP6 query, but say you want to search for CMIP7
         project=["CMIP7"],
     )
 
@@ -171,7 +172,7 @@ def test_full_identity(query):
     """
     A fully-populated query, translated to its own project, comes back unchanged
 
-    This makes sure that we don't lose language-specific facets
+    This makes sure that we don't lose query-specific facets
     if we just go to canonical and back.
     """
     assert (
@@ -199,7 +200,7 @@ def test_canonical_facet_absent_in_target_raises(query):
         translate_to_type(query, to=QueryCMIP5)
 
 
-def test_language_specific_facet_wrong_project_raises():
+def test_query_specific_facet_wrong_project_raises():
     query = QueryCMIP5(model="ACCESS-CM2", product="output1")
 
     with pytest.raises(
@@ -212,7 +213,7 @@ def test_language_specific_facet_wrong_project_raises():
     assert excinfo.value.query_class == "QueryCMIP6"
 
 
-def test_language_specific_facet_round_trips():
+def test_query_specific_facet_round_trips():
     query = QueryCMIP5(model="ACCESS-CM2", product="output1")
 
     assert (
@@ -275,7 +276,7 @@ def test_a_query_we_did_not_write_can_be_translated():
             """See `QueryProtocol.facet_values`"""
             return facet_values_from_attributes(self)
 
-    # Out of our languages into theirs, language-specific facet and all
+    # Out of our query class into theirs, query-specific facet and all
     start = QueryMIP1(esm=("ACCESS-CM2",), vintage=("2026",))
 
     assert translate_to_type(start, to=QueryMIP1) == QueryMIP1(
