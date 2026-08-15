@@ -4,11 +4,11 @@ Notes that can help us shape future docs.
 
 When we come to writing search docs,
 that is where we should go through the fact that users can write queries
-in the language they are used to and we handle the translation.
+in the query class they are used to and we handle the translation.
 
-E.g. The key idea here is that we support specifying queries in multiple different 'languages'.
-We have our own canonical language, implemented by [Query],
-but users can also write queries in the language they are most familiar with,
+E.g. The key idea here is that we support specifying queries in multiple different ways.
+We have our own way, implemented by [Query],
+but users can also write queries in the form they are most familiar with,
 e.g. [QueryCMIP5], which uses `ensemble` rather than `variant_label`,
 [QueryCMIP6], which uses `source_id` rather than `model`
 or [QueryCMIP7], which uses `branding_suffix` rather than `processing_id`.

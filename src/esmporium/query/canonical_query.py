@@ -344,9 +344,9 @@ class QueryCanonical(BaseModel):
     For example: atmos, ocean, land.
     """
 
-    language_specific_facets: FacetValuesByName = {}
+    query_specific_facets: FacetValuesByName = {}
     """
-    Facets which one this query names but the canonical vocabulary does not.
+    Facets which this query names but the canonical vocabulary does not.
 
     These are held under their native names,
     untranslated, because there is nothing to translate them to.

@@ -80,17 +80,17 @@ def to_canonical(query: QueryProtocol) -> QueryCanonical:
     spec = facet_spec(type(query))
 
     canonical_fields: dict[str, tuple[str, ...]] = {}
-    language_specific: dict[str, tuple[str, ...]] = {}
+    query_specific: dict[str, tuple[str, ...]] = {}
     for native, values in query.facet_values().items():
         canonical = spec.native_to_canonical.get(native)
         if canonical is None:
-            language_specific[native] = values
+            query_specific[native] = values
         else:
             canonical_fields[canonical] = values
 
     return QueryCanonical(
         **canonical_fields,
-        language_specific_facets=language_specific,
+        query_specific_facets=query_specific,
         other_terms=query.other_terms,
         source_query=query,
     )
@@ -138,11 +138,11 @@ def from_canonical(
 
         facets[native] = values
 
-    for facet, values in canonical.language_specific_facets.items():
+    for facet, values in canonical.query_specific_facets.items():
         if not values:
             continue
 
-        if facet not in spec.language_specific_facets:
+        if facet not in spec.query_specific_facets:
             raise FacetNotExpressibleError(facet, spec.name)
 
         facets[facet] = values

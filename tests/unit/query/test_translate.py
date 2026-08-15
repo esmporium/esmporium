@@ -50,7 +50,7 @@ def test_a_query_specific_facet_stays_put():
     """
     canonical = to_canonical(QueryCMIP5(model="ACCESS-CM2", product="output1"))
 
-    assert canonical.language_specific_facets == {"product": ("output1",)}
+    assert canonical.query_specific_facets == {"product": ("output1",)}
 
 
 def test_other_terms_are_carried_across_untouched():
@@ -69,7 +69,7 @@ def test_empty_query_specific_facet_does_not_trip_fail_loud():
     # If the user builds QueryCanonical by hand
     # and includes query-specific values that aren't used, don't raise.
     canonical = QueryCanonical(
-        model="ACCESS-CM2", language_specific_facets={"product": ()}
+        model="ACCESS-CM2", query_specific_facets={"product": ()}
     )
 
     assert from_canonical(canonical=canonical, to=QueryCMIP6) == QueryCMIP6(

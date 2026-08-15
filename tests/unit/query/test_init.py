@@ -108,9 +108,7 @@ def test_other_terms_none_is_no_other_terms():
     assert Query(other_terms=None).other_terms == Query().other_terms == {}
 
 
-@pytest.mark.parametrize(
-    "mapping_attribute", ["language_specific_facets", "other_terms"]
-)
+@pytest.mark.parametrize("mapping_attribute", ["query_specific_facets", "other_terms"])
 def test_facet_extras_must_be_mappings(mapping_attribute: str):
     """
     Query specific facets and other terms must be mappings
@@ -127,9 +125,7 @@ def test_facet_extras_must_be_mappings(mapping_attribute: str):
     assert error["input"] == "made_up_facet"
 
 
-@pytest.mark.parametrize(
-    "mapping_attribute", ["language_specific_facets", "other_terms"]
-)
+@pytest.mark.parametrize("mapping_attribute", ["query_specific_facets", "other_terms"])
 def test_facet_bucket_values_are_reported_under_their_own_facet(
     mapping_attribute: str,
 ):

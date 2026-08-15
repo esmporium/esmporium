@@ -203,7 +203,7 @@ class FacetSpec:
     The inverse of `canonical_to_native`.
     """
 
-    language_specific_facets: frozenset[str]
+    query_specific_facets: frozenset[str]
     """
     Facets this query class names which have no canonical equivalent
     """
@@ -316,11 +316,11 @@ def facet_spec(query_class: type) -> FacetSpec:
 
     canonical_to_native: dict[str, str] = {}
     native_to_canonical: dict[str, str] = {}
-    language_specific: list[str] = []
+    query_specific: list[str] = []
     for native, facet in declared.items():
         canonical = facet.canonical_equivalent
         if canonical is None:
-            language_specific.append(native)
+            query_specific.append(native)
             continue
 
         if canonical in canonical_to_native:
@@ -336,7 +336,7 @@ def facet_spec(query_class: type) -> FacetSpec:
         facet_names=tuple(declared),
         canonical_to_native=canonical_to_native,
         native_to_canonical=native_to_canonical,
-        language_specific_facets=frozenset(language_specific),
+        query_specific_facets=frozenset(query_specific),
     )
 
 
@@ -427,7 +427,7 @@ class Query(BaseModel):
     """
     Facets we have not modelled, passed through untranslated.
 
-    The escape hatch for anything this language's fields do not name.
+    The escape hatch for anything this query's fields do not name.
     Never checked, that is up to you to manage.
     """
 

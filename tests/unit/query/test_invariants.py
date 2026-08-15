@@ -55,7 +55,7 @@ def test_canonical_facets_match_query_fields():
     """
     facet_fields = set(QueryCanonical.model_fields) - {
         # fields that aren't facets
-        "language_specific_facets",
+        "query_specific_facets",
         "other_terms",
         "source_query",
     }
@@ -68,7 +68,7 @@ def test_the_canonical_query_names_every_canonical_facet():
 
     assert set(spec.canonical_to_native) == set(CANONICAL_FACETS)
     assert not spec.absent_canonical_facets
-    assert not spec.language_specific_facets
+    assert not spec.query_specific_facets
 
 
 def test_the_canonical_query_maps_each_facet_to_itself():
@@ -99,9 +99,7 @@ def test_query_specific_facets_are_not_rename_targets(query_class):
     """
     spec = facet_spec(query_class)
 
-    assert spec.language_specific_facets.isdisjoint(
-        set(spec.canonical_to_native.values())
-    )
+    assert spec.query_specific_facets.isdisjoint(set(spec.canonical_to_native.values()))
 
 
 @by_query
@@ -116,7 +114,7 @@ def test_native_and_canonical_facet_are_inverses(query_class):
 def test_query_specific_facets_do_not_have_a_canonical_equivalent(query_class):
     spec = facet_spec(query_class)
 
-    for facet in spec.language_specific_facets:
+    for facet in spec.query_specific_facets:
         assert facet not in spec.native_to_canonical
 
 
