@@ -218,6 +218,17 @@ def translate_to_projects(
     Unlike [translate_to_type][esmporium.query.translate.translate_to_type],
     each result has its `project` facet set to the project it was rendered for.
 
+    This project creates a coupling between projects and queries
+    (encoded via the `project_query_map` argument)
+    and produces one query per project.
+    This is convenient in many cases.
+    However, this coupling may be inconvenient or unnecessary in some cases
+    (e.g. searching both data from the CMIP6 and CMIP6Plus projects,
+    where a single search could find data from both
+    as they can be searched using the same query).
+    If you need a different coupling, please use the lower-level
+    functions used in this function and available in this module.
+
     Parameters
     ----------
     query
