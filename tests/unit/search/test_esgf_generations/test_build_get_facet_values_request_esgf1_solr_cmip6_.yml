@@ -1,0 +1,10 @@
+json_body: null
+method: GET
+params:
+  distrib: 'true'
+  facets: frequency,source_id,variable_id
+  format: application/solr+json
+  limit: 1
+  project:
+  - CMIP6
+path: /esg-search/search

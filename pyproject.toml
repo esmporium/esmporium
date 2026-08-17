@@ -13,10 +13,14 @@ dependencies = [
     # so the user's own process is the only thing
     # that can ever migrate it to a newer schema.
     "alembic>=1.13.0",
+    # HTTP client for searching live ESGF endpoints.
+    "httpx>=0.28.0",
     # If you use numpy, we suggest pinning to >2.1.0
     # based on the minimum supported python version
     "pandas>=2.2.0", # pin based on minimum supported python version
     "sqlmodel>=0.0.39",
+    # Declarative retry policies for the ESGF search clients.
+    "tenacity>=8.0.0",
 ]
 readme = "README.md"
 classifiers = [
@@ -179,6 +183,10 @@ addopts = [
     # and is meaningless outside an alembic invocation,
     # so `--doctest-modules` must not collect it.
     "--ignore=src/esmporium/db/migrations",
+]
+markers = [
+    "network: test which needs network access, for something not worth naming more specifically",
+    "hits_esgf_search_api: test which talks to the live ESGF search APIs",
 ]
 
 [tool.ruff]

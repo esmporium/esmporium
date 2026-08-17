@@ -1,0 +1,413 @@
+{
+  "features": [
+    {
+      "assets": {
+        "tas_Amon_UKESM1-0-LL_historical_r15i1p1f2_gn_185001-194912.nc": {
+          "alternate:name": "ceda.ac.uk",
+          "cmip6:tracking_id": "hdl:21.14100/0fd04828-3c8a-4191-b254-0c8d60646e3f",
+          "created": "2020-05-12T08:49:51Z",
+          "description": "HTTPServer Link",
+          "file:checksum": "12200f63e0dba20128138896947da92f6a36852db8f929954ff02db08dec520a2213",
+          "file:local_path": "CMIP6/CMIP/NIMS-KMA/UKESM1-0-LL/historical/r15i1p1f2/Amon/tas/gn/v20210426/tas_Amon_UKESM1-0-LL_historical_r15i1p1f2_gn_185001-194912.nc",
+          "file:size": 67429259,
+          "href": "https://dap.ceda.ac.uk/badc/cmip6/data/CMIP6/CMIP/NIMS-KMA/UKESM1-0-LL/historical/r15i1p1f2/Amon/tas/gn/v20210426/tas_Amon_UKESM1-0-LL_historical_r15i1p1f2_gn_185001-194912.nc",
+          "protocol": "https",
+          "roles": [
+            "data"
+          ],
+          "type": "application/netcdf",
+          "updated": "2021-04-26T04:00:11Z"
+        },
+        "tas_Amon_UKESM1-0-LL_historical_r15i1p1f2_gn_195001-201412.nc": {
+          "alternate:name": "ceda.ac.uk",
+          "cmip6:tracking_id": "hdl:21.14100/62043b0c-aaee-4188-8e01-3ac8cc515a1e",
+          "created": "2020-05-14T18:50:13Z",
+          "description": "HTTPServer Link",
+          "file:checksum": "1220e903e1f7f0618b2083e46c113bcd3fbbcdadea115f159f52b42398471a16e32f",
+          "file:local_path": "CMIP6/CMIP/NIMS-KMA/UKESM1-0-LL/historical/r15i1p1f2/Amon/tas/gn/v20210426/tas_Amon_UKESM1-0-LL_historical_r15i1p1f2_gn_195001-201412.nc",
+          "file:size": 43834346,
+          "href": "https://dap.ceda.ac.uk/badc/cmip6/data/CMIP6/CMIP/NIMS-KMA/UKESM1-0-LL/historical/r15i1p1f2/Amon/tas/gn/v20210426/tas_Amon_UKESM1-0-LL_historical_r15i1p1f2_gn_195001-201412.nc",
+          "protocol": "https",
+          "roles": [
+            "data"
+          ],
+          "type": "application/netcdf",
+          "updated": "2021-04-26T04:00:12Z"
+        }
+      },
+      "bbox": [
+        -179.0625,
+        -89.375,
+        179.0625,
+        89.375
+      ],
+      "collection": "CMIP6",
+      "geometry": {
+        "coordinates": [
+          [
+            [
+              -179.0625,
+              -89.375
+            ],
+            [
+              179.0625,
+              -89.375
+            ],
+            [
+              179.0625,
+              89.375
+            ],
+            [
+              -179.0625,
+              89.375
+            ],
+            [
+              -179.0625,
+              -89.375
+            ]
+          ]
+        ],
+        "type": "Polygon"
+      },
+      "id": "CMIP6.CMIP.NIMS-KMA.UKESM1-0-LL.historical.r15i1p1f2.Amon.tas.gn.v20210426",
+      "links": [
+        {
+          "href": "https://search.east.esgf.io/collections/CMIP6/items/CMIP6.CMIP.NIMS-KMA.UKESM1-0-LL.historical.r15i1p1f2.Amon.tas.gn.v20210426",
+          "rel": "self",
+          "type": "application/geo+json"
+        },
+        {
+          "href": "https://search.east.esgf.io/collections/CMIP6",
+          "rel": "parent",
+          "type": "application/json"
+        },
+        {
+          "href": "https://search.east.esgf.io/collections/CMIP6",
+          "rel": "collection",
+          "type": "application/json"
+        },
+        {
+          "href": "https://search.east.esgf.io/",
+          "rel": "root",
+          "type": "application/json"
+        },
+        {
+          "href": "http://cera-www.dkrz.de/WDCC/meta/CMIP6/CMIP6.CMIP.NIMS-KMA.UKESM1-0-LL.historical.r15i1p1f2.Amon.tas.gn.v20210426.json",
+          "rel": "cite-as",
+          "title": "Citation URL",
+          "type": "application/json"
+        },
+        {
+          "href": "https://furtherinfo.es-doc.org/CMIP6.NIMS-KMA.UKESM1-0-LL.historical.none.r15i1p1f2",
+          "rel": "describedby",
+          "title": "ES-DOC",
+          "type": "text/html"
+        }
+      ],
+      "properties": {
+        "base_id": "CMIP6.CMIP.NIMS-KMA.UKESM1-0-LL.historical.r15i1p1f2.Amon.tas.gn",
+        "cmip6:Conventions": [
+          "CF-1.7",
+          "CMIP-6.2"
+        ],
+        "cmip6:activity_id": [
+          "CMIP"
+        ],
+        "cmip6:data_specs_version": "01.00.29",
+        "cmip6:experiment": "Extension beyond 2014 of the CMIP6 historical",
+        "cmip6:experiment_id": "historical",
+        "cmip6:forcing_index": "2",
+        "cmip6:frequency": "mon",
+        "cmip6:grid_label": "gn",
+        "cmip6:initialization_index": "1",
+        "cmip6:institution": "National Institute of Meteorological Sciences/Korea Meteorological Administration, Climate Research Division, Seoho-bukro 33, Seogwipo-si, Jejudo 63568, Republic of Korea",
+        "cmip6:institution_id": "NIMS-KMA",
+        "cmip6:member_id": "s2020-r15i1p1f2",
+        "cmip6:mip_era": "CMIP6",
+        "cmip6:nominal_resolution": "250 km",
+        "cmip6:physics_index": "1",
+        "cmip6:pid": "hdl:21.14100/644731bf-4a51-3148-8ab4-8a7917d98ac9",
+        "cmip6:product": "model-output",
+        "cmip6:realization_index": "15",
+        "cmip6:realm": [
+          "atmos"
+        ],
+        "cmip6:source": "UKESM1.0-N96ORCA1",
+        "cmip6:source_id": "UKESM1-0-LL",
+        "cmip6:source_type": [
+          "AOGCM",
+          "BGC",
+          "AER",
+          "CHEM"
+        ],
+        "cmip6:sub_experiment": "none",
+        "cmip6:sub_experiment_id": "none",
+        "cmip6:table_id": "Amon",
+        "cmip6:variable_cf_standard_name": "air_temperature",
+        "cmip6:variable_id": "tas",
+        "cmip6:variable_long_name": "Near-Surface Air Temperature",
+        "cmip6:variable_units": "K",
+        "cmip6:variant_label": "r15i1p1f2",
+        "created": "2026-07-21T15:01:52.320905Z",
+        "datetime": null,
+        "end_datetime": "2014-12-16T00:00:00Z",
+        "latest": true,
+        "license": "CC0-1.0",
+        "retracted": false,
+        "size": 111263605,
+        "start_datetime": "1850-01-16T00:00:00Z",
+        "title": "CMIP6.CMIP.NIMS-KMA.UKESM1-0-LL.historical.r15i1p1f2.Amon.tas.gn",
+        "updated": "2026-07-21T15:01:52.327635Z",
+        "version": "20210426"
+      },
+      "stac_extensions": [
+        "https://stac-extensions.github.io/alternate-assets/v1.2.0/schema.json",
+        "https://stac-extensions.github.io/file/v2.1.0/schema.json",
+        "https://esgf.github.io/stac-transaction-api/cmip6/v2.0.0/schema.json"
+      ],
+      "stac_version": "1.1.0",
+      "type": "Feature"
+    },
+    {
+      "assets": {
+        "tas_Amon_UKESM1-0-LL_historical_r14i1p1f2_gn_185001-194912.nc": {
+          "alternate:name": "ceda.ac.uk",
+          "cmip6:tracking_id": "hdl:21.14100/9d3542f3-8ef7-4cc3-ac19-b54659aa19ab",
+          "created": "2020-04-08T19:20:43Z",
+          "description": "HTTPServer Link",
+          "file:checksum": "1220e85962e604394ed47b1d0c7df83ff63d0983ae1a26b89b6b79b36cb2363fd855",
+          "file:local_path": "CMIP6/CMIP/NIMS-KMA/UKESM1-0-LL/historical/r14i1p1f2/Amon/tas/gn/v20200805/tas_Amon_UKESM1-0-LL_historical_r14i1p1f2_gn_185001-194912.nc",
+          "file:size": 67434054,
+          "href": "https://dap.ceda.ac.uk/badc/cmip6/data/CMIP6/CMIP/NIMS-KMA/UKESM1-0-LL/historical/r14i1p1f2/Amon/tas/gn/v20200805/tas_Amon_UKESM1-0-LL_historical_r14i1p1f2_gn_185001-194912.nc",
+          "protocol": "https",
+          "roles": [
+            "data"
+          ],
+          "type": "application/netcdf",
+          "updated": "2020-08-05T06:24:16Z"
+        },
+        "tas_Amon_UKESM1-0-LL_historical_r14i1p1f2_gn_195001-201412.nc": {
+          "alternate:name": "ceda.ac.uk",
+          "cmip6:tracking_id": "hdl:21.14100/a96254da-ec48-4a1d-bb75-936a3747c9e8",
+          "created": "2020-04-10T08:22:41Z",
+          "description": "HTTPServer Link",
+          "file:checksum": "122067808c34898afe48b23d74df49f4bbde905b4f15510fa9e116cbd335e3c9cf75",
+          "file:local_path": "CMIP6/CMIP/NIMS-KMA/UKESM1-0-LL/historical/r14i1p1f2/Amon/tas/gn/v20200805/tas_Amon_UKESM1-0-LL_historical_r14i1p1f2_gn_195001-201412.nc",
+          "file:size": 43838859,
+          "href": "https://dap.ceda.ac.uk/badc/cmip6/data/CMIP6/CMIP/NIMS-KMA/UKESM1-0-LL/historical/r14i1p1f2/Amon/tas/gn/v20200805/tas_Amon_UKESM1-0-LL_historical_r14i1p1f2_gn_195001-201412.nc",
+          "protocol": "https",
+          "roles": [
+            "data"
+          ],
+          "type": "application/netcdf",
+          "updated": "2020-08-05T06:24:15Z"
+        }
+      },
+      "bbox": [
+        -179.0625,
+        -89.375,
+        179.0625,
+        89.375
+      ],
+      "collection": "CMIP6",
+      "geometry": {
+        "coordinates": [
+          [
+            [
+              -179.0625,
+              -89.375
+            ],
+            [
+              179.0625,
+              -89.375
+            ],
+            [
+              179.0625,
+              89.375
+            ],
+            [
+              -179.0625,
+              89.375
+            ],
+            [
+              -179.0625,
+              -89.375
+            ]
+          ]
+        ],
+        "type": "Polygon"
+      },
+      "id": "CMIP6.CMIP.NIMS-KMA.UKESM1-0-LL.historical.r14i1p1f2.Amon.tas.gn.v20200805",
+      "links": [
+        {
+          "href": "https://search.east.esgf.io/collections/CMIP6/items/CMIP6.CMIP.NIMS-KMA.UKESM1-0-LL.historical.r14i1p1f2.Amon.tas.gn.v20200805",
+          "rel": "self",
+          "type": "application/geo+json"
+        },
+        {
+          "href": "https://search.east.esgf.io/collections/CMIP6",
+          "rel": "parent",
+          "type": "application/json"
+        },
+        {
+          "href": "https://search.east.esgf.io/collections/CMIP6",
+          "rel": "collection",
+          "type": "application/json"
+        },
+        {
+          "href": "https://search.east.esgf.io/",
+          "rel": "root",
+          "type": "application/json"
+        },
+        {
+          "href": "http://cera-www.dkrz.de/WDCC/meta/CMIP6/CMIP6.CMIP.NIMS-KMA.UKESM1-0-LL.historical.r14i1p1f2.Amon.tas.gn.v20200805.json",
+          "rel": "cite-as",
+          "title": "Citation URL",
+          "type": "application/json"
+        },
+        {
+          "href": "https://furtherinfo.es-doc.org/CMIP6.NIMS-KMA.UKESM1-0-LL.historical.none.r14i1p1f2",
+          "rel": "describedby",
+          "title": "ES-DOC",
+          "type": "text/html"
+        }
+      ],
+      "properties": {
+        "base_id": "CMIP6.CMIP.NIMS-KMA.UKESM1-0-LL.historical.r14i1p1f2.Amon.tas.gn",
+        "cmip6:Conventions": [
+          "CF-1.7",
+          "CMIP-6.2"
+        ],
+        "cmip6:activity_id": [
+          "CMIP"
+        ],
+        "cmip6:data_specs_version": "01.00.29",
+        "cmip6:experiment": "Extension beyond 2014 of the CMIP6 historical",
+        "cmip6:experiment_id": "historical",
+        "cmip6:forcing_index": "2",
+        "cmip6:frequency": "mon",
+        "cmip6:grid_label": "gn",
+        "cmip6:initialization_index": "1",
+        "cmip6:institution": "National Institute of Meteorological Sciences/Korea Meteorological Administration, Climate Research Division, Seoho-bukro 33, Seogwipo-si, Jejudo 63568, Republic of Korea",
+        "cmip6:institution_id": "NIMS-KMA",
+        "cmip6:member_id": "s2020-r14i1p1f2",
+        "cmip6:mip_era": "CMIP6",
+        "cmip6:nominal_resolution": "250 km",
+        "cmip6:physics_index": "1",
+        "cmip6:pid": "hdl:21.14100/e124144c-9479-39b8-a318-a26ce8a7e8ba",
+        "cmip6:product": "model-output",
+        "cmip6:realization_index": "14",
+        "cmip6:realm": [
+          "atmos"
+        ],
+        "cmip6:source": "UKESM1.0-N96ORCA1",
+        "cmip6:source_id": "UKESM1-0-LL",
+        "cmip6:source_type": [
+          "AOGCM",
+          "BGC",
+          "AER",
+          "CHEM"
+        ],
+        "cmip6:sub_experiment": "none",
+        "cmip6:sub_experiment_id": "none",
+        "cmip6:table_id": "Amon",
+        "cmip6:variable_cf_standard_name": "air_temperature",
+        "cmip6:variable_id": "tas",
+        "cmip6:variable_long_name": "Near-Surface Air Temperature",
+        "cmip6:variable_units": "K",
+        "cmip6:variant_label": "r14i1p1f2",
+        "created": "2026-07-21T15:14:15.270177Z",
+        "datetime": null,
+        "end_datetime": "2014-12-16T00:00:00Z",
+        "latest": true,
+        "license": "CC0-1.0",
+        "retracted": false,
+        "size": 111272913,
+        "start_datetime": "1850-01-16T00:00:00Z",
+        "title": "CMIP6.CMIP.NIMS-KMA.UKESM1-0-LL.historical.r14i1p1f2.Amon.tas.gn",
+        "updated": "2026-07-21T15:14:15.277136Z",
+        "version": "20200805"
+      },
+      "stac_extensions": [
+        "https://stac-extensions.github.io/alternate-assets/v1.2.0/schema.json",
+        "https://stac-extensions.github.io/file/v2.1.0/schema.json",
+        "https://esgf.github.io/stac-transaction-api/cmip6/v2.0.0/schema.json"
+      ],
+      "stac_version": "1.1.0",
+      "type": "Feature"
+    }
+  ],
+  "links": [
+    {
+      "body": {
+        "filter": {
+          "args": [
+            {
+              "args": [
+                {
+                  "property": "collection"
+                },
+                "CMIP6"
+              ],
+              "op": "="
+            },
+            {
+              "args": [
+                {
+                  "property": "cmip6:experiment_id"
+                },
+                [
+                  "historical"
+                ]
+              ],
+              "op": "in"
+            },
+            {
+              "args": [
+                {
+                  "property": "cmip6:variable_id"
+                },
+                [
+                  "tas"
+                ]
+              ],
+              "op": "in"
+            },
+            {
+              "args": [
+                {
+                  "property": "cmip6:frequency"
+                },
+                [
+                  "mon"
+                ]
+              ],
+              "op": "in"
+            }
+          ],
+          "op": "and"
+        },
+        "filter-lang": "cql2-json",
+        "limit": 2,
+        "token": "Wy05MjIzMzcyMDM2ODU0Nzc1ODA4LCJDTUlQNi5DTUlQLk5JTVMtS01BLlVLRVNNMS0wLUxMLmhpc3RvcmljYWwucjE0aTFwMWYyLkFtb24udGFzLmduLnYyMDIwMDgwNSIsIkNNSVA2Il0="
+      },
+      "href": "https://search.east.esgf.io/search",
+      "method": "POST",
+      "rel": "next",
+      "type": "application/json"
+    },
+    {
+      "href": "https://search.east.esgf.io/",
+      "rel": "root",
+      "type": "application/json"
+    },
+    {
+      "href": "https://search.east.esgf.io/search",
+      "rel": "self",
+      "type": "application/json"
+    }
+  ],
+  "numberMatched": 113,
+  "numberReturned": 2,
+  "type": "FeatureCollection"
+}

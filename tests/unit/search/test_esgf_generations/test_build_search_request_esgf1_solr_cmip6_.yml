@@ -1,0 +1,20 @@
+json_body: null
+method: GET
+params:
+  distrib: 'true'
+  experiment_id:
+  - historical
+  - ssp126
+  format: application/solr+json
+  frequency:
+  - mon
+  limit: 25
+  project:
+  - CMIP6
+  sub_experiment_id:
+  - none
+  table_id:
+  - Amon
+  variable_id:
+  - tas
+path: /esg-search/search

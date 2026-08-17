@@ -1,0 +1,8 @@
+json_body: null
+method: GET
+params:
+  facets: model,time_frequency,variable
+  format: application/solr+json
+  limit: 1
+  project: CMIP5
+path: /esgf-1-5-bridge/
