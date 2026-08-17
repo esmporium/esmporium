@@ -446,6 +446,9 @@ class Query(BaseModel):
 class QueryCMIP5(BaseModel):
     """
     A query in CMIP5's native vocabulary
+
+    Facet definitions and language found in:
+    https://pcmdi.llnl.gov/mips/cmip5/docs/cmip5_data_reference_syntax_v1-02_clean.pdf?id=25
     """
 
     model_config = DEFAULT_QUERY_MODEL_CONFIG
@@ -502,6 +505,9 @@ class QueryCMIP5(BaseModel):
 class QueryCMIP6(BaseModel):
     """
     A query in CMIP6's native vocabulary
+
+    Facet definitions and language found in:
+    https://docs.google.com/document/d/1h0r8RZr_f3-8egBMMh7aqLwy3snpD6_MrDz1q8n5XUk/edit?tab=t.0
     """
 
     model_config = DEFAULT_QUERY_MODEL_CONFIG
@@ -566,6 +572,9 @@ class QueryCMIP6(BaseModel):
 class QueryCMIP7(BaseModel):
     """
     A query in CMIP7's native vocabulary
+
+    Facet definitions and language found in:
+    https://wcrp-cmip.github.io/cmip7-guidance/docs/CMIP7/Global_Attributes/
     """
 
     model_config = DEFAULT_QUERY_MODEL_CONFIG
