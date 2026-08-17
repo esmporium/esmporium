@@ -294,6 +294,9 @@ class SearchAPI:
 
 # Generations for the CMIP5 example: each handed its params (and prefix).
 SOLR_CMIP5 = Esgf1Solr(params=SolrCMIP5)
+# Should we just put prefix on the classes like StacCMIP5?
+# They feel tightly coupled to me so it would be clearer if they were defined together,
+# but maybe there is a reason not to add this coupling.
 STAC_CMIP5 = EsgfNgStac(params=StacCMIP5, prefix="cmip5")
 
 # The retry/preference plan, top to bottom. ORNL is dead for ESGF1 (serves a web
@@ -394,6 +397,9 @@ def tour(query: QueryCMIP5 = EXAMPLE, limit: int = 2) -> None:
     )
 
     with httpx.Client(follow_redirects=True) as client:
+        # Let's add our client selector function now
+        # and add searching different projects too
+        # to see how things go once we break that flow out.
         for api in DEFAULT_SEARCH_APIS:
             request = api.generation.build_request(canonical, limit)
             raw = fire(client, api, request)
