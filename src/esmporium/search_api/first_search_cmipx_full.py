@@ -79,7 +79,7 @@ from esmporium.query import (
 # canonical facet it is.
 # =============================================================================
 # Add Parameters or Facets to end of all these names?
-class SolrCMIP5(BaseModel):
+class SolrCMIP5Parameters(BaseModel):
     """CMIP5 facet values under their ESGF1/Solr param names."""
 
     model_config = ConfigDict(extra="forbid")
@@ -114,7 +114,7 @@ class StacParams(QueryProtocol, Protocol):
     prefix: ClassVar[str]
 
 
-class StacCMIP5(BaseModel):
+class StacCMIP5Parameters(BaseModel):
     """
     CMIP5 facet values under their ESGF-NG/STAC property STEMS.
 
@@ -145,7 +145,7 @@ class StacCMIP5(BaseModel):
         return facet_values_from_attributes(self)
 
 
-class SolrCMIP6(BaseModel):
+class SolrCMIP6Parameters(BaseModel):
     """
     CMIP6 facet values under their ESGF1/Solr param names.
 
@@ -177,7 +177,7 @@ class SolrCMIP6(BaseModel):
         return facet_values_from_attributes(self)
 
 
-class SolrCMIP7(BaseModel):
+class SolrCMIP7Parameters(BaseModel):
     """
     CMIP7 facet values under ESGF1/Solr param names (best-guess).
 
@@ -208,7 +208,7 @@ class SolrCMIP7(BaseModel):
         return facet_values_from_attributes(self)
 
 
-class StacCMIP6(BaseModel):
+class StacCMIP6Parameters(BaseModel):
     """CMIP6 facet values under their ESGF-NG/STAC property stems."""
 
     model_config = ConfigDict(extra="forbid")
@@ -235,7 +235,7 @@ class StacCMIP6(BaseModel):
         return facet_values_from_attributes(self)
 
 
-class StacCMIP7(BaseModel):
+class StacCMIP7Parameters(BaseModel):
     """
     CMIP7 facet values under their ESGF-NG/STAC property stems.
 
@@ -419,12 +419,12 @@ class SearchAPI:
 # One generation per (wire-format, project). Each is handed its params class; for
 # STAC the cmipN: prefix rides on the params (StacCMIP*.prefix), so a params class
 # can never be paired with the wrong prefix.
-SOLR_CMIP5 = Esgf1Solr(params=SolrCMIP5)
-STAC_CMIP5 = EsgfNgStac(params=StacCMIP5)
-SOLR_CMIP6 = Esgf1Solr(params=SolrCMIP6)
-STAC_CMIP6 = EsgfNgStac(params=StacCMIP6)
-SOLR_CMIP7 = Esgf1Solr(params=SolrCMIP7)
-STAC_CMIP7 = EsgfNgStac(params=StacCMIP7)
+SOLR_CMIP5 = Esgf1Solr(params=SolrCMIP5Parameters)
+STAC_CMIP5 = EsgfNgStac(params=StacCMIP5Parameters)
+SOLR_CMIP6 = Esgf1Solr(params=SolrCMIP6Parameters)
+STAC_CMIP6 = EsgfNgStac(params=StacCMIP6Parameters)
+SOLR_CMIP7 = Esgf1Solr(params=SolrCMIP7Parameters)
+STAC_CMIP7 = EsgfNgStac(params=StacCMIP7Parameters)
 
 # Per-project rankings. We attempt EVERY node, so the ORDER here is preference
 # (try these first), not a stop condition. ORNL is dead for ESGF1, so DKRZ is the
