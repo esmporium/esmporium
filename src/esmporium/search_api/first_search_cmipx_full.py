@@ -68,7 +68,6 @@ from esmporium.query import (
     to_canonical,
 )
 
-
 # =============================================================================
 # Param classes: one per (wire-format, project). Same annotated idiom as the
 # query classes, and, like them, NO shared base class: each is a standalone
@@ -78,7 +77,8 @@ from esmporium.query import (
 # classes independent. The wire name is the FIELD name; QueryFacet says which
 # canonical facet it is.
 # =============================================================================
-# Add Parameters or Facets to end of all these names?
+
+
 class SolrCMIP5Parameters(BaseModel):
     """CMIP5 facet values under their ESGF1/Solr param names."""
 
@@ -302,8 +302,7 @@ class SearchAPIGeneration(Protocol):
 
 
 @dataclass(frozen=True)
-# Rename to ESGF1Solr
-class Esgf1Solr:
+class ESGF1Solr:
     """ESGF1 / Solr (esg-search). Flat GET; multiple values -> repeated params."""
 
     params: type[QueryProtocol]
@@ -324,8 +323,7 @@ class Esgf1Solr:
 
 
 @dataclass(frozen=True)
-# Rename to ESGFNGStac
-class EsgfNgStac:
+class ESGFNGStac:
     """ESGF-NG / STAC 1.0 + CQL2. JSON POST; values -> a CQL2 AND-of-IN tree."""
 
     params: type[StacParams]
@@ -337,11 +335,6 @@ class EsgfNgStac:
         # Taken as the user gave it (assumed already in the correct case, e.g.
         # "CMIP5"); we do not second-guess it.
 
-        # TODO: @znicholls will need to specify to user that values are case
-        # sensitive? Else, this is pulled up in the suggested fixes?
-        # Yes but only in docstring
-        # How will suggested fixes work? Will we store all potential search
-        # results somehow to compare against?
         collection = canonical.project[0]
         without_project = canonical.model_copy(update={"project": ()})
         native = from_canonical(canonical=without_project, to=self.params)
@@ -362,6 +355,7 @@ class EsgfNgStac:
 
         body = {
             "filter-lang": "cql2-json",
+            # here that we want to raise error rather than silently ...
             "limit": max(limit, 1),  # STAC rejects limit=0; Solr allows it
             "filter": {"op": "and", "args": and_clauses},
         }
@@ -407,7 +401,6 @@ class SearchAPI:
     """One endpoint we can hit."""
 
     host: str
-    # URL
     generation: SearchAPIGeneration
     retrying: Retrying
 
@@ -419,12 +412,12 @@ class SearchAPI:
 # One generation per (wire-format, project). Each is handed its params class; for
 # STAC the cmipN: prefix rides on the params (StacCMIP*.prefix), so a params class
 # can never be paired with the wrong prefix.
-SOLR_CMIP5 = Esgf1Solr(params=SolrCMIP5Parameters)
-STAC_CMIP5 = EsgfNgStac(params=StacCMIP5Parameters)
-SOLR_CMIP6 = Esgf1Solr(params=SolrCMIP6Parameters)
-STAC_CMIP6 = EsgfNgStac(params=StacCMIP6Parameters)
-SOLR_CMIP7 = Esgf1Solr(params=SolrCMIP7Parameters)
-STAC_CMIP7 = EsgfNgStac(params=StacCMIP7Parameters)
+SOLR_CMIP5 = ESGF1Solr(params=SolrCMIP5Parameters)
+STAC_CMIP5 = ESGFNGStac(params=StacCMIP5Parameters)
+SOLR_CMIP6 = ESGF1Solr(params=SolrCMIP6Parameters)
+STAC_CMIP6 = ESGFNGStac(params=StacCMIP6Parameters)
+SOLR_CMIP7 = ESGF1Solr(params=SolrCMIP7Parameters)
+STAC_CMIP7 = ESGFNGStac(params=StacCMIP7Parameters)
 
 # Per-project rankings. We attempt EVERY node, so the ORDER here is preference
 # (try these first), not a stop condition. ORNL is dead for ESGF1, so DKRZ is the
@@ -530,14 +523,27 @@ DEFAULT_SELECTOR = project_ranked_selector(PROJECT_PLANS)
 def search(
     query: QueryProtocol,
     selector: SearchAPISelector = DEFAULT_SELECTOR,
-    # Still unclear what this is.
-    # Might be that 10_000 is the hard limit,
-    # and none of the APIs support that
-    # so a limit greater than 10_000 should be an error,
-    # a limit less than that should be allowed,
-    # our default should be something sensible (1_000?)
-    # and a limit of zero for stac should raise
-    # not be silently coerced.
+    # NOTE (design decisions for the next PR):
+    # `limit` is the PAGE SIZE (records per request) -- not the total, not a
+    # filter. The total that matched is numFound (Solr) == numberMatched (STAC):
+    # same concept, different key (west omits numberMatched, so result_count
+    # falls back to len(features)).
+    #
+    # Verified live -- both wire formats cap ONE page at 10_000:
+    #   Solr: min 0, max 10_000; limit > 10_000 -> HARD 400.
+    #   STAC: min 1, max 10_000; limit = 0 -> 422; limit > 10_000 -> SILENT
+    #         truncation to 10_000 (the dangerous case -- looks complete, isn't).
+    # So: define MAX_LIMIT = 10_000 and RAISE our own error above it (never rely
+    # on Solr's opaque 400 or STAC's silent truncation). Keep the min handling
+    # per generation (Solr allows 0; STAC's max(limit, 1) bumps 0 -> 1, though we
+    # may prefer to raise rather than coerce). Pick a sensible default (~1_000).
+    #
+    # Fetching MORE than one page (total > page size) is PAGINATION (Solr offset,
+    # STAC next/token) at page_size 10_000 to completeness -- a retrieval tool
+    # wants every match -- guarded by a `max_results` that raises "narrow your
+    # query" for pathological totals. Because we attempt ALL nodes, pagination
+    # means heavy cross-node overlap, so it pairs with the merge/dedup + DB
+    # recorder also deferred to that PR.
     limit: int = 10,
 ) -> dict[str, Any]:
     """
