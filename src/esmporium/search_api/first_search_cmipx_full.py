@@ -1,5 +1,5 @@
 """
-One concrete, RUNNING example: QueryCMIP5 -> canonical -> live ESGF -> raw JSON.
+Concrete, RUNNING examples: QueryCMIP{5,6,7} -> canonical -> live ESGF -> raw JSON.
 
 Full-code companion to `first_search_cmip5_walkthrough.py` (the narrated design
 doc). Still a single hard-coded example: we want to watch the whole thing work
@@ -24,22 +24,23 @@ Design decisions baked in here:
      A host speaks exactly one wire format, and carries its own tenacity retry
      policy. The default plan is just an ordered list of these.
 
-  4. Any project on any generation is EXPRESSIBLE.
-     We define SolrCMIP7 (CMIP7 -> ESGF1) as well, to prove we do not bake in an
-     assumption that a client cannot host a project. Our DEFAULT plan still
-     assumes the usual homes (CMIP5 lives on ESGF1; NG has no CMIP5 yet, which is
-     fine) -- a user who knows otherwise injects their own `SearchAPI` list.
+  4. The selector ranks endpoints by the query's PROJECT.
+     Every project is expressible on every generation (one params class per
+     (wire, project), so nothing assumes a client cannot host a project). The
+     default selector ranks: CMIP5 -> ESGF1 first (NG has no CMIP5, so those come
+     back empty, fine); CMIP6 and CMIP7 -> NG first, ESGF1 as fallback. Every
+     node is still attempted -- the ranking is preference, not a stop condition.
 
          SearchAPIGeneration (interface)
               +-- Esgf1Solr(params)          -> Solr GET,  bare names, repeated params
               +-- EsgfNgStac(params)          -> STAC POST, prefix:name, CQL2 tree
 
-Run it:  uv run python -m esmporium.search_api.first_search_cmip5_full
+Run it:  uv run python -m esmporium.search_api.first_search_cmipx_full
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Annotated, Any, ClassVar, Protocol
 
@@ -57,6 +58,8 @@ from esmporium.query import (
     FacetValuesByName,
     QueryCanonical,
     QueryCMIP5,
+    QueryCMIP6,
+    QueryCMIP7,
     QueryFacet,
     QueryProtocol,
     SourceQuery,
@@ -204,6 +207,67 @@ class SolrCMIP7(BaseModel):
         return facet_values_from_attributes(self)
 
 
+class StacCMIP6(BaseModel):
+    """CMIP6 facet values under their ESGF-NG/STAC property stems."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    prefix: ClassVar[str] = "cmip6"
+
+    source_id: Annotated[FacetValues, QueryFacet("model")] = ()
+    institution_id: Annotated[FacetValues, QueryFacet("institution")] = ()
+    experiment_id: Annotated[FacetValues, QueryFacet("experiment")] = ()
+    variant_label: Annotated[FacetValues, QueryFacet("variant_label")] = ()
+    variable_id: Annotated[FacetValues, QueryFacet("variable")] = ()
+    frequency: Annotated[FacetValues, QueryFacet("reporting_interval")] = ()
+    table_id: Annotated[FacetValues, QueryFacet("processing_id")] = ()
+    activity_id: Annotated[FacetValues, QueryFacet("activity")] = ()
+    nominal_resolution: Annotated[FacetValues, QueryFacet("resolution")] = ()
+    grid_label: Annotated[FacetValues, QueryFacet("grid_label")] = ()
+    realm: Annotated[FacetValues, QueryFacet("realm")] = ()
+
+    other_terms: FacetValuesByName = {}
+    source_query: SourceQuery = None
+
+    def facet_values(self) -> dict[str, tuple[str, ...]]:
+        """Facets that are set, keyed by this class's own (stem) names."""
+        return facet_values_from_attributes(self)
+
+
+class StacCMIP7(BaseModel):
+    """
+    CMIP7 facet values under their ESGF-NG/STAC property stems.
+
+    Note the drift: CMIP7's processing_id is `variable_branding_suffix` on the
+    STAC wire (-> cmip7:variable_branding_suffix), not `branding_suffix` as the
+    CMIP7 dialect and Solr name have it. This is exactly why generations own
+    their OWN vocabularies instead of reusing the dialect's.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    prefix: ClassVar[str] = "cmip7"
+
+    source_id: Annotated[FacetValues, QueryFacet("model")] = ()
+    institution_id: Annotated[FacetValues, QueryFacet("institution")] = ()
+    experiment_id: Annotated[FacetValues, QueryFacet("experiment")] = ()
+    variant_label: Annotated[FacetValues, QueryFacet("variant_label")] = ()
+    variable_id: Annotated[FacetValues, QueryFacet("variable")] = ()
+    frequency: Annotated[FacetValues, QueryFacet("reporting_interval")] = ()
+    variable_branding_suffix: Annotated[FacetValues, QueryFacet("processing_id")] = ()
+    activity_id: Annotated[FacetValues, QueryFacet("activity")] = ()
+    nominal_resolution: Annotated[FacetValues, QueryFacet("resolution")] = ()
+    grid_label: Annotated[FacetValues, QueryFacet("grid_label")] = ()
+    realm: Annotated[FacetValues, QueryFacet("realm")] = ()
+
+    other_terms: FacetValuesByName = {}
+    source_query: SourceQuery = None
+
+    def facet_values(self) -> dict[str, tuple[str, ...]]:
+        """Facets that are set, keyed by this class's own (stem) names."""
+        return facet_values_from_attributes(self)
+
+
 # =============================================================================
 # The request a generation produces. `method` carries the GET/POST difference,
 # so the fire loop never has to branch on it.
@@ -269,6 +333,11 @@ class EsgfNgStac:
         # project is the collection id, not a property, so translate WITHOUT it.
         # Taken as the user gave it (assumed already in the correct case, e.g.
         # "CMIP5"); we do not second-guess it.
+
+        # TODO: @znicholls will need to specify to user that values are case
+        # sensitive? Else, this is pulled up in the suggested fixes?
+        # How will suggested fixes work? Will we store all potential search
+        # results somehow to compare against?
         collection = canonical.project[0]
         without_project = canonical.model_copy(update={"project": ()})
         native = from_canonical(canonical=without_project, to=self.params)
@@ -342,29 +411,43 @@ class SearchAPI:
         return f"https://{self.host}{request.path}"
 
 
-# Generations for the CMIP5 example: each handed its params class. The STAC
-# prefix rides on the params class (StacCMIP5.prefix), so there is no way to pair
-# a params class with the wrong prefix.
+# One generation per (wire-format, project). Each is handed its params class; for
+# STAC the cmipN: prefix rides on the params (StacCMIP*.prefix), so a params class
+# can never be paired with the wrong prefix.
 SOLR_CMIP5 = Esgf1Solr(params=SolrCMIP5)
 STAC_CMIP5 = EsgfNgStac(params=StacCMIP5)
+SOLR_CMIP6 = Esgf1Solr(params=SolrCMIP6)
+STAC_CMIP6 = EsgfNgStac(params=StacCMIP6)
+SOLR_CMIP7 = Esgf1Solr(params=SolrCMIP7)
+STAC_CMIP7 = EsgfNgStac(params=StacCMIP7)
 
-# The retry/preference plan, top to bottom. ORNL is dead for ESGF1 (serves a web
-# app now), so DKRZ is the live fallback.
-# NCI is tried a few times, then DKRZ; NG east/west are empty for CMIP5 (fine).
-DEFAULT_SEARCH_APIS: list[SearchAPI] = [
+# Per-project rankings. We attempt EVERY node, so the ORDER here is preference
+# (try these first), not a stop condition. ORNL is dead for ESGF1, so DKRZ is the
+# live ESGF1 fallback.
+CMIP5_APIS: list[SearchAPI] = [  # ESGF1 first; NG has no CMIP5 (empty, fine)
     SearchAPI("esgf.nci.org.au", SOLR_CMIP5, transient_retry(4)),
     SearchAPI("esgf-data.dkrz.de", SOLR_CMIP5, transient_retry(2)),
     SearchAPI("search.east.esgf.io", STAC_CMIP5, transient_retry(2)),
     SearchAPI("search.west.esgf.io", STAC_CMIP5, transient_retry(2)),
 ]
+CMIP6_APIS: list[SearchAPI] = [  # NG first, fall back to ESGF1 (data on both)
+    SearchAPI("search.east.esgf.io", STAC_CMIP6, transient_retry(2)),
+    SearchAPI("search.west.esgf.io", STAC_CMIP6, transient_retry(2)),
+    SearchAPI("esgf.nci.org.au", SOLR_CMIP6, transient_retry(3)),
+    SearchAPI("esgf-data.dkrz.de", SOLR_CMIP6, transient_retry(2)),
+]
+CMIP7_APIS: list[SearchAPI] = [  # NG first; ESGF1 fallback (unlikely, but allowed)
+    SearchAPI("search.east.esgf.io", STAC_CMIP7, transient_retry(2)),
+    SearchAPI("search.west.esgf.io", STAC_CMIP7, transient_retry(2)),
+    SearchAPI("esgf.nci.org.au", SOLR_CMIP7, transient_retry(2)),
+    SearchAPI("esgf-data.dkrz.de", SOLR_CMIP7, transient_retry(2)),
+]
 
-# We do NOT assume a client cannot host a project. To search, say, CMIP7 on an
-# ESGF1 node (not our default assumption), a user injects their own list:
-#
-#   cmip7_on_esgf1 = SearchAPI(
-#       "some-esgf1-host", Esgf1Solr(params=SolrCMIP7), transient_retry(2)
-#   )
-#   search(some_cmip7_query, apis=[cmip7_on_esgf1])
+PROJECT_PLANS: Mapping[str, Sequence[SearchAPI]] = {
+    "CMIP5": CMIP5_APIS,
+    "CMIP6": CMIP6_APIS,
+    "CMIP7": CMIP7_APIS,
+}
 
 
 # =============================================================================
@@ -398,16 +481,17 @@ def fire(
 
 
 # =============================================================================
-# The endpoint selector: given the canonical query and a 0-based attempt index,
+# The endpoint selector: given the CANONICAL query and a 0-based attempt index,
 # return the next SearchAPI to try, or None to stop. Injectable, so the choice
-# and order of endpoints (a fixed list now; project-aware or health-based later)
-# can vary without touching the search loop.
+# and order of endpoints can vary without touching the search loop. Our default
+# ranks endpoints by the query's PROJECT (CMIP5 -> ESGF1 first; CMIP6/CMIP7 ->
+# NG first, ESGF1 as fallback); health-based ranking could slot in later.
 # =============================================================================
 SearchAPISelector = Callable[[QueryCanonical, int], SearchAPI | None]
 
 
 def list_selector(apis: Sequence[SearchAPI]) -> SearchAPISelector:
-    """Build a selector that yields `apis` in order, then stops."""
+    """Build a selector that yields `apis` in order, then stops (ignores project)."""
 
     def select(canonical: QueryCanonical, attempt: int) -> SearchAPI | None:
         return apis[attempt] if attempt < len(apis) else None
@@ -415,7 +499,21 @@ def list_selector(apis: Sequence[SearchAPI]) -> SearchAPISelector:
     return select
 
 
-DEFAULT_SELECTOR = list_selector(DEFAULT_SEARCH_APIS)
+def project_ranked_selector(
+    plans: Mapping[str, Sequence[SearchAPI]],
+) -> SearchAPISelector:
+    """Build a selector that yields a per-project ranking of endpoints."""
+
+    def select(canonical: QueryCanonical, attempt: int) -> SearchAPI | None:
+        apis = plans.get(canonical.project[0])
+        if apis is None:
+            return None  # a project we have no plan for -> nothing to try
+        return apis[attempt] if attempt < len(apis) else None
+
+    return select
+
+
+DEFAULT_SELECTOR = project_ranked_selector(PROJECT_PLANS)
 
 
 # =============================================================================
@@ -425,7 +523,7 @@ DEFAULT_SELECTOR = list_selector(DEFAULT_SEARCH_APIS)
 # writes it to the DB as the node is tried.)
 # =============================================================================
 def search(
-    query: QueryCMIP5,
+    query: QueryProtocol,
     selector: SearchAPISelector = DEFAULT_SELECTOR,
     limit: int = 10,
 ) -> dict[str, Any]:
@@ -459,8 +557,24 @@ EXAMPLE = QueryCMIP5(
     ensemble="r1i1p1",
 )
 
+# CMIP6 in its own dialect: source_id / experiment_id / variable_id / frequency.
+# Deliberately NOT pinned to a variant_label: NG east has historical+tas+mon
+# (~79) but lacks the r1i1p1f1 variant that ESGF1 has (192) -- a live example of
+# index nodes holding different data, which is exactly why we attempt them all.
+EXAMPLE_CMIP6 = QueryCMIP6(
+    experiment_id="historical",
+    variable_id="tas",
+    frequency="mon",
+)
 
-def tour(query: QueryCMIP5 = EXAMPLE, limit: int = 2) -> None:
+# CMIP7 in its own dialect. Data is very sparse (NG east has ~16 datasets total),
+# so we keep the query broad to get a hit; an empty result would be fine too.
+EXAMPLE_CMIP7 = QueryCMIP7(
+    variable_id="tas",
+)
+
+
+def tour(query: QueryProtocol = EXAMPLE, limit: int = 2) -> None:
     """Walk every endpoint the selector yields, printing each node's result."""
     canonical = to_canonical(query)
     print(f"query      : {query!r}")
@@ -504,4 +618,6 @@ def node_count_summary(raw: dict[str, Any]) -> str:
 
 
 if __name__ == "__main__":
-    tour()
+    for example in (EXAMPLE, EXAMPLE_CMIP6, EXAMPLE_CMIP7):
+        tour(example)
+        print("\n" + "=" * 72 + "\n")
