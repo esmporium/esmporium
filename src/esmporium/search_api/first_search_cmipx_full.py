@@ -67,6 +67,7 @@ from esmporium.query import (
     QueryFacet,
     QueryProtocol,
     SourceQuery,
+    facet_spec,
     facet_values_from_attributes,
     from_canonical,
     to_canonical,
@@ -325,10 +326,68 @@ class SearchAPIGeneration(Protocol):
         """Read the match count out of a raw response (for logging/emptiness)."""
         ...
 
+    def build_facets_request(
+        self, canonical: QueryCanonical, facets: set[str]
+    ) -> Request:
+        """
+        Build a "list the values of these facets" request, PROJECT-SCOPED.
+
+        `facets` are CANONICAL facet names. The request scopes to the query's
+        project ONLY -- NOT the user's other (possibly-typo'd) values -- so one
+        facet's mistake can never make another look invalid. Wires that cannot
+        enumerate values raise FacetListingNotSupported.
+        """
+        ...
+
+    def parse_facet_values(
+        self, raw: dict[str, Any], facets: set[str]
+    ) -> dict[str, set[str]]:
+        """Read {canonical facet: set of available values} from a facets response."""
+        ...
+
 
 def solr_num_found(raw: dict[str, Any]) -> int | None:
     """Read `numFound` from a Solr-shaped reply (esg-search or the 1.5 bridge)."""
     return raw.get("response", {}).get("numFound")
+
+
+class FacetListingNotSupported(RuntimeError):
+    """
+    A generation whose wire API cannot enumerate a facet's possible values.
+
+    ESGF-NG/STAC is the live example: its aggregation extension exposes only
+    generic aggregations (never per-facet value lists) and its queryables carry
+    property names without enums -- verified against data-rich CMIP6, so this is
+    an API limit, not a data-sparsity artifact. CMIP7 value-checking therefore
+    routes to the controlled-vocabulary source, not to this generation.
+    """
+
+    def __init__(
+        self,
+        msg: str = "this wire API cannot list facet values; check against the CV",
+    ) -> None:
+        """Initialise with a default explanation callers can override."""
+        super().__init__(msg)
+
+
+def solr_facet_values(
+    raw: dict[str, Any], params: type[QueryProtocol], facets: set[str]
+) -> dict[str, set[str]]:
+    """
+    Read a Solr `facet_counts.facet_fields` block into {canonical facet: values}.
+
+    The block is keyed by WIRE names, each value a flat [val, count, val, count,
+    ...] list; we take the values (even indices) and map the wire name back to its
+    canonical facet, keeping only the facets we asked about.
+    """
+    spec = facet_spec(params)
+    fields = raw.get("facet_counts", {}).get("facet_fields", {})
+    out: dict[str, set[str]] = {}
+    for wire_name, flat in fields.items():
+        canonical = spec.native_to_canonical.get(wire_name)
+        if canonical in facets:
+            out[canonical] = set(flat[0::2])
+    return out
 
 
 @dataclass(frozen=True)
@@ -354,6 +413,31 @@ class ESGF1Solr:
     def result_count(self, raw: dict[str, Any]) -> int | None:
         """Read Solr's `numFound` out of a raw response."""
         return solr_num_found(raw)
+
+    def build_facets_request(
+        self, canonical: QueryCanonical, facets: set[str]
+    ) -> Request:
+        """List the given facets' values, scoped to the query's project only."""
+        spec = facet_spec(self.params)
+        wire = sorted(
+            spec.canonical_to_native[f] for f in facets if f in spec.canonical_to_native
+        )
+        query: dict[str, Any] = {
+            "format": "application/solr+json",
+            "facets": ",".join(wire),  # facets= is a comma list on BOTH Solr wires
+            "limit": 0,  # count-only: we want the vocabulary, not the docs
+            "distrib": "true",
+        }
+        project_wire = spec.canonical_to_native.get("project")
+        if project_wire and canonical.project:
+            query[project_wire] = list(canonical.project)  # scope, not a value filter
+        return Request("GET", "/esg-search/search", params=query)
+
+    def parse_facet_values(
+        self, raw: dict[str, Any], facets: set[str]
+    ) -> dict[str, set[str]]:
+        """Read {canonical facet: available values} from the facet_counts block."""
+        return solr_facet_values(raw, self.params, facets)
 
 
 @dataclass(frozen=True)
@@ -386,6 +470,36 @@ class ESGF15Bridge:
     def result_count(self, raw: dict[str, Any]) -> int | None:
         """Read the match count (bridge replies are Solr-shaped)."""
         return solr_num_found(raw)
+
+    def build_facets_request(
+        self, canonical: QueryCanonical, facets: set[str]
+    ) -> Request:
+        """
+        List the given facets' values on the 1.5 bridge, project-scoped.
+
+        NOTE: facets= support on the bridge is UNVERIFIED. In the default plans the
+        bridge is never the top-ranked node, and the value-checker asks attempt 0,
+        so it hits esg-search, not this. Verify live before relying on this path.
+        """
+        spec = facet_spec(self.params)
+        wire = sorted(
+            spec.canonical_to_native[f] for f in facets if f in spec.canonical_to_native
+        )
+        query: dict[str, Any] = {
+            "format": "application/solr+json",
+            "facets": ",".join(wire),
+            "limit": 0,
+        }
+        project_wire = spec.canonical_to_native.get("project")
+        if project_wire and canonical.project:
+            query[project_wire] = ",".join(canonical.project)  # bridge ORs on comma
+        return Request("GET", "/esgf-1-5-bridge/", params=query)
+
+    def parse_facet_values(
+        self, raw: dict[str, Any], facets: set[str]
+    ) -> dict[str, set[str]]:
+        """Read {canonical facet: available values} (bridge replies are Solr-shaped)."""
+        return solr_facet_values(raw, self.params, facets)
 
 
 @dataclass(frozen=True)
@@ -434,6 +548,18 @@ class ESGFNGStac:
         if matched is not None:
             return matched
         return len(raw.get("features", []))
+
+    def build_facets_request(
+        self, canonical: QueryCanonical, facets: set[str]
+    ) -> Request:
+        """STAC cannot enumerate facet values -- see FacetListingNotSupported."""
+        raise FacetListingNotSupported
+
+    def parse_facet_values(
+        self, raw: dict[str, Any], facets: set[str]
+    ) -> dict[str, set[str]]:
+        """STAC cannot enumerate facet values -- see FacetListingNotSupported."""
+        raise FacetListingNotSupported
 
 
 # =============================================================================
