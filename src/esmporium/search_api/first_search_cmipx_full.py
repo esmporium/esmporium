@@ -326,6 +326,11 @@ class SearchAPIGeneration(Protocol):
         ...
 
 
+def solr_num_found(raw: dict[str, Any]) -> int | None:
+    """Read `numFound` from a Solr-shaped reply (esg-search or the 1.5 bridge)."""
+    return raw.get("response", {}).get("numFound")
+
+
 @dataclass(frozen=True)
 class ESGF1Solr:
     """ESGF1 / Solr (esg-search). Flat GET; multiple values -> repeated params."""
@@ -348,7 +353,39 @@ class ESGF1Solr:
 
     def result_count(self, raw: dict[str, Any]) -> int | None:
         """Read Solr's `numFound` out of a raw response."""
-        return raw.get("response", {}).get("numFound")
+        return solr_num_found(raw)
+
+
+@dataclass(frozen=True)
+class ESGF15Bridge:
+    """
+    ESGF 1.5 bridge (ORNL). Solr-shaped REPLIES but a stricter request dialect.
+
+    Same param NAMES as ESGF1/Solr, so it reuses the same params class -- only the
+    ENCODING differs: multi-value facets are COMMA-joined (repeated params would
+    be silently reduced to one value), no `distrib` (it is a single consolidated
+    ESGF-1.5 index, not a federation), and it answers at its own path. `retracted`
+    is likewise not accepted (422), so inclusion is left to the bridge's default.
+    """
+
+    params: type[QueryProtocol]
+    name: str = "ESGF15"
+
+    def build_request(self, canonical: QueryCanonical, limit: int) -> Request:
+        """Render `canonical` as an ESGF-1.5-bridge GET request."""
+        native = from_canonical(canonical=canonical, to=self.params)
+
+        query: dict[str, Any] = {
+            "format": "application/solr+json",
+            "limit": limit,  # Solr floor is 0 (count-only); cap enforced in search()
+        }
+        for wire_name, values in native.facet_values().items():
+            query[wire_name] = ",".join(values)  # bridge ORs on COMMA, not repeats
+        return Request("GET", "/esgf-1-5-bridge/", params=query)
+
+    def result_count(self, raw: dict[str, Any]) -> int | None:
+        """Read the match count (bridge replies are Solr-shaped)."""
+        return solr_num_found(raw)
 
 
 @dataclass(frozen=True)
@@ -449,23 +486,29 @@ STAC_CMIP6 = ESGFNGStac(params=StacCMIP6Parameters)
 SOLR_CMIP7 = ESGF1Solr(params=SolrCMIP7Parameters)
 STAC_CMIP7 = ESGFNGStac(params=StacCMIP7Parameters)
 
+# ORNL's ESGF-1.5 bridge reuses the SAME Solr param name tables (names match);
+# only the request encoding differs, which the generation handles.
+BRIDGE_CMIP5 = ESGF15Bridge(params=SolrCMIP5Parameters)
+BRIDGE_CMIP6 = ESGF15Bridge(params=SolrCMIP6Parameters)
+
 # Per-project rankings, ORDERED BY MEASURED UNIQUE-DATASET COVERAGE (a live
 # historical/tas probe: unique master_id, latest & not-retracted). By default
 # search() stops at the first node that answers, so this order decides who that
 # is; it is also the fallback chain when the top node is down. ORNL's live
-# "1.5-bridge" would rank ~2nd for CMIP6, but it speaks a DIFFERENT request
-# dialect (comma-joined multi-value, no `retracted` param) and would silently
-# drop facet values under our Solr encoding -- deferred to its own generation.
-CMIP5_APIS: list[SearchAPI] = [  # LIU > NCI > CEDA > DKRZ; NG has no CMIP5 (empty)
+# "1.5-bridge" (ESGF15Bridge -- Solr-shaped replies, comma-joined request
+# dialect) is included at its measured rank (CMIP6 2nd, CMIP5 3rd).
+CMIP5_APIS: list[SearchAPI] = [  # LIU > NCI > ORNL > CEDA > DKRZ; NG has no CMIP5
     SearchAPI("esg-dn1.nsc.liu.se", SOLR_CMIP5, transient_retry(3)),
     SearchAPI("esgf.nci.org.au", SOLR_CMIP5, transient_retry(4)),
+    SearchAPI("esgf-node.ornl.gov", BRIDGE_CMIP5, transient_retry(2)),
     SearchAPI("esgf.ceda.ac.uk", SOLR_CMIP5, transient_retry(2)),
     SearchAPI("esgf-data.dkrz.de", SOLR_CMIP5, transient_retry(2)),
     SearchAPI("search.east.esgf.io", STAC_CMIP5, transient_retry(2)),
     SearchAPI("search.west.esgf.io", STAC_CMIP5, transient_retry(2)),
 ]
-CMIP6_APIS: list[SearchAPI] = [  # LIU > NCI > CEDA > DKRZ Solr, then NG/STAC
+CMIP6_APIS: list[SearchAPI] = [  # LIU > ORNL > NCI > CEDA > DKRZ, then NG/STAC
     SearchAPI("esg-dn1.nsc.liu.se", SOLR_CMIP6, transient_retry(3)),
+    SearchAPI("esgf-node.ornl.gov", BRIDGE_CMIP6, transient_retry(2)),
     SearchAPI("esgf.nci.org.au", SOLR_CMIP6, transient_retry(3)),
     SearchAPI("esgf.ceda.ac.uk", SOLR_CMIP6, transient_retry(2)),
     SearchAPI("esgf-data.dkrz.de", SOLR_CMIP6, transient_retry(2)),
@@ -661,7 +704,7 @@ def tour(query: QueryProtocol = EXAMPLE, limit: int = 2) -> None:
                 print(f"[{api.generation.name:8}] {api.host:22} EXHAUSTED (no answer)")
                 continue
             count = api.generation.result_count(raw)
-            top = _first_id(api.generation, raw)
+            top = _first_id(raw)
             print(f"[{api.generation.name:8}] {api.host:22} count={count} first={top}")
 
     print("\n--- search() default: stop at the first node that answers ---")
@@ -673,8 +716,8 @@ def tour(query: QueryProtocol = EXAMPLE, limit: int = 2) -> None:
         print(f"{host:22} {node_count_summary(raw)}")
 
 
-def _first_id(generation: SearchAPIGeneration, raw: dict[str, Any]) -> str | None:
-    if generation.name == "ESGF1":
+def _first_id(raw: dict[str, Any]) -> str | None:
+    if "response" in raw:  # Solr-shaped (ESGF1 esg-search or the ESGF-1.5 bridge)
         docs = raw.get("response", {}).get("docs", [])
         return docs[0].get("id") if docs else None
     feats = raw.get("features", [])
