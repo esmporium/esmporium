@@ -27,9 +27,13 @@ Design decisions baked in here:
   4. The selector ranks endpoints by the query's PROJECT.
      Every project is expressible on every generation (one params class per
      (wire, project), so nothing assumes a client cannot host a project). The
-     default selector ranks: CMIP5 -> ESGF1 first (NG has no CMIP5, so those come
-     back empty, fine); CMIP6 and CMIP7 -> NG first, ESGF1 as fallback. Every
-     node is still attempted -- the ranking is preference, not a stop condition.
+     default order is the MEASURED unique-dataset ranking per project: CMIP5 and
+     CMIP6 -> ESGF1 Solr, widest-coverage node first (LIU currently leads its
+     distrib sweep), then the NG/STAC catalogs; CMIP7 -> NG first (that is where
+     CMIP7 lives), ESGF1 as fallback. By default search() STOPS at the first node
+     that answers -- index nodes are stable and largely mirror each other -- but
+     stop_at_first_result=False fans out across the whole ranking and collects
+     every node's raw JSON for later merge/dedup.
 
          SearchAPIGeneration (interface)
               +-- Esgf1Solr(params)          -> Solr GET,  bare names, repeated params
@@ -67,6 +71,27 @@ from esmporium.query import (
     from_canonical,
     to_canonical,
 )
+
+# =============================================================================
+# Page-size (`limit`) rules, verified live against both wire formats.
+# `limit` is the PAGE SIZE -- the max records in ONE response -- not the total
+# match count (that is numFound / numberMatched). Both wires cap a page at
+# 10_000. The two APIs chose different FLOORS: Solr accepts 0 (a "count only"
+# request -- what every probe here uses), while STAC's floor is 1 (limit=0 ->
+# HTTP 422). So a 0 that is fine for Solr must be bumped to 1 on the STAC path --
+# that is the ONLY reason for the max(limit, STAC_MIN_LIMIT) coercion below.
+# =============================================================================
+MAX_LIMIT = 10_000  # >10_000 -> Solr HARD 400 / STAC SILENT truncation; we raise
+DEFAULT_LIMIT = 10_000  # take a full page by default
+SOLR_MIN_LIMIT = 0  # Solr allows a 0-doc "just the count" request
+STAC_MIN_LIMIT = 1  # STAC rejects limit=0 (422); smallest valid page is 1
+
+
+def _limit_error(limit: int) -> ValueError:
+    """Build the error raised when a requested page exceeds MAX_LIMIT."""
+    msg = f"limit {limit} exceeds MAX_LIMIT {MAX_LIMIT}; paginate instead"
+    return ValueError(msg)
+
 
 # =============================================================================
 # Param classes: one per (wire-format, project). Same annotated idiom as the
@@ -312,7 +337,11 @@ class ESGF1Solr:
         """Render `canonical` as a Solr GET request."""
         native = from_canonical(canonical=canonical, to=self.params)
 
-        query: dict[str, Any] = {"format": "application/solr+json", "limit": limit}
+        query: dict[str, Any] = {
+            "format": "application/solr+json",
+            "limit": limit,  # Solr floor is 0 (count-only); cap enforced in search()
+            "distrib": "true",  # federated sweep: this node mirrors the federation
+        }
         for wire_name, values in native.facet_values().items():
             query[wire_name] = list(values)  # httpx repeats list params
         return Request("GET", "/esg-search/search", params=query)
@@ -355,8 +384,9 @@ class ESGFNGStac:
 
         body = {
             "filter-lang": "cql2-json",
-            # here that we want to raise error rather than silently ...
-            "limit": max(limit, 1),  # STAC rejects limit=0; Solr allows it
+            # STAC's floor is 1 (limit=0 -> 422); Solr's floor is 0 ("count
+            # only"), so a 0 that Solr accepts must be bumped here for STAC.
+            "limit": max(limit, STAC_MIN_LIMIT),
             "filter": {"op": "and", "args": and_clauses},
         }
         return Request("POST", "/search", json_body=body)
@@ -419,22 +449,30 @@ STAC_CMIP6 = ESGFNGStac(params=StacCMIP6Parameters)
 SOLR_CMIP7 = ESGF1Solr(params=SolrCMIP7Parameters)
 STAC_CMIP7 = ESGFNGStac(params=StacCMIP7Parameters)
 
-# Per-project rankings. We attempt EVERY node, so the ORDER here is preference
-# (try these first), not a stop condition. ORNL is dead for ESGF1, so DKRZ is the
-# live ESGF1 fallback.
-CMIP5_APIS: list[SearchAPI] = [  # ESGF1 first; NG has no CMIP5 (empty, fine)
+# Per-project rankings, ORDERED BY MEASURED UNIQUE-DATASET COVERAGE (a live
+# historical/tas probe: unique master_id, latest & not-retracted). By default
+# search() stops at the first node that answers, so this order decides who that
+# is; it is also the fallback chain when the top node is down. ORNL's live
+# "1.5-bridge" would rank ~2nd for CMIP6, but it speaks a DIFFERENT request
+# dialect (comma-joined multi-value, no `retracted` param) and would silently
+# drop facet values under our Solr encoding -- deferred to its own generation.
+CMIP5_APIS: list[SearchAPI] = [  # LIU > NCI > CEDA > DKRZ; NG has no CMIP5 (empty)
+    SearchAPI("esg-dn1.nsc.liu.se", SOLR_CMIP5, transient_retry(3)),
     SearchAPI("esgf.nci.org.au", SOLR_CMIP5, transient_retry(4)),
+    SearchAPI("esgf.ceda.ac.uk", SOLR_CMIP5, transient_retry(2)),
     SearchAPI("esgf-data.dkrz.de", SOLR_CMIP5, transient_retry(2)),
     SearchAPI("search.east.esgf.io", STAC_CMIP5, transient_retry(2)),
     SearchAPI("search.west.esgf.io", STAC_CMIP5, transient_retry(2)),
 ]
-CMIP6_APIS: list[SearchAPI] = [  # NG first, fall back to ESGF1 (data on both)
+CMIP6_APIS: list[SearchAPI] = [  # LIU > NCI > CEDA > DKRZ Solr, then NG/STAC
+    SearchAPI("esg-dn1.nsc.liu.se", SOLR_CMIP6, transient_retry(3)),
+    SearchAPI("esgf.nci.org.au", SOLR_CMIP6, transient_retry(3)),
+    SearchAPI("esgf.ceda.ac.uk", SOLR_CMIP6, transient_retry(2)),
+    SearchAPI("esgf-data.dkrz.de", SOLR_CMIP6, transient_retry(2)),
     SearchAPI("search.east.esgf.io", STAC_CMIP6, transient_retry(2)),
     SearchAPI("search.west.esgf.io", STAC_CMIP6, transient_retry(2)),
-    SearchAPI("esgf.nci.org.au", SOLR_CMIP6, transient_retry(3)),
-    SearchAPI("esgf-data.dkrz.de", SOLR_CMIP6, transient_retry(2)),
 ]
-CMIP7_APIS: list[SearchAPI] = [  # NG first; ESGF1 fallback (unlikely, but allowed)
+CMIP7_APIS: list[SearchAPI] = [  # NG first (CMIP7 lives there); ESGF1 fallback
     SearchAPI("search.east.esgf.io", STAC_CMIP7, transient_retry(2)),
     SearchAPI("search.west.esgf.io", STAC_CMIP7, transient_retry(2)),
     SearchAPI("esgf.nci.org.au", SOLR_CMIP7, transient_retry(2)),
@@ -515,43 +553,51 @@ DEFAULT_SELECTOR = project_ranked_selector(PROJECT_PLANS)
 
 
 # =============================================================================
-# Walk EVERY endpoint the selector yields, collecting each node's raw JSON. We
-# do NOT stop at the first hit: different index nodes hold different data, so
-# every node is attempted. (Next PR: hand each node's raw JSON to a recorder that
-# writes it to the DB as the node is tried.)
+# By DEFAULT stop at the first node that answers: index nodes are stable and
+# largely mirror one another, so one good answer is usually enough. Set
+# stop_at_first_result=False to walk the WHOLE ranking and collect every node's
+# raw JSON keyed by host -- their coverage differs (see the unique-count test),
+# so the union is more complete. (Next PR: hand each node's raw JSON to a recorder
+# that writes it to the DB, then merge/dedup by master_id across the union.)
 # =============================================================================
 def search(
     query: QueryProtocol,
     selector: SearchAPISelector = DEFAULT_SELECTOR,
-    # NOTE (design decisions for the next PR):
-    # `limit` is the PAGE SIZE (records per request) -- not the total, not a
-    # filter. The total that matched is numFound (Solr) == numberMatched (STAC):
-    # same concept, different key (west omits numberMatched, so result_count
-    # falls back to len(features)).
-    #
-    # Verified live -- both wire formats cap ONE page at 10_000:
-    #   Solr: min 0, max 10_000; limit > 10_000 -> HARD 400.
-    #   STAC: min 1, max 10_000; limit = 0 -> 422; limit > 10_000 -> SILENT
-    #         truncation to 10_000 (the dangerous case -- looks complete, isn't).
-    # So: define MAX_LIMIT = 10_000 and RAISE our own error above it (never rely
-    # on Solr's opaque 400 or STAC's silent truncation). Keep the min handling
-    # per generation (Solr allows 0; STAC's max(limit, 1) bumps 0 -> 1, though we
-    # may prefer to raise rather than coerce). Pick a sensible default (~1_000).
-    #
-    # Fetching MORE than one page (total > page size) is PAGINATION (Solr offset,
-    # STAC next/token) at page_size 10_000 to completeness -- a retrieval tool
-    # wants every match -- guarded by a `max_results` that raises "narrow your
-    # query" for pathological totals. Because we attempt ALL nodes, pagination
-    # means heavy cross-node overlap, so it pairs with the merge/dedup + DB
-    # recorder also deferred to that PR.
-    limit: int = 10,
+    *,
+    stop_at_first_result: bool = True,
+    limit: int = DEFAULT_LIMIT,
 ) -> dict[str, Any]:
     """
-    Search every endpoint the selector yields; return each node's raw JSON.
+    Search the ranked endpoints; return raw JSON keyed by host.
 
-    Keyed by host. A node that never answers (exhausted / non-transient error)
-    is left out; empty-but-valid responses are kept.
+    Parameters
+    ----------
+    query
+        The facet query, in any dialect; translated to canonical internally.
+    selector
+        Chooses which endpoint to try at each attempt (ranked by project).
+    stop_at_first_result
+        If True (default), return as soon as one node answers -- index nodes are
+        stable and largely mirror each other, so one good answer usually suffices.
+        If False, walk the WHOLE ranking and collect every node's raw JSON; their
+        coverage differs, so the union is more complete (dedup/merge by master_id
+        is the next layer).
+    limit
+        PAGE SIZE (records per response), NOT the total -- the total matched is
+        numFound (Solr) == numberMatched (STAC). Capped at MAX_LIMIT; we raise
+        above it rather than trust Solr's 400 or STAC's silent truncation. Floors
+        differ per generation (Solr 0, STAC 1). Fetching beyond one page is
+        pagination, deferred to the next PR with the merge/dedup + DB recorder.
+
+    Returns
+    -------
+    :
+        Raw JSON per host. A node that never answers (exhausted / non-transient
+        error) is omitted; empty-but-valid responses are kept.
     """
+    if limit > MAX_LIMIT:
+        raise _limit_error(limit)
+
     canonical = to_canonical(query)
     results: dict[str, Any] = {}
     attempt = 0
@@ -561,6 +607,8 @@ def search(
             raw = fire(client, api, request)
             if raw is not None:
                 results[api.host] = raw
+                if stop_at_first_result:
+                    break
             attempt += 1
     return results
 
@@ -577,9 +625,9 @@ EXAMPLE = QueryCMIP5(
 )
 
 # CMIP6 in its own dialect: source_id / experiment_id / variable_id / frequency.
-# Deliberately NOT pinned to a variant_label: NG east has historical+tas+mon
-# (~79) but lacks the r1i1p1f1 variant that ESGF1 has (192) -- a live example of
-# index nodes holding different data, which is exactly why we attempt them all.
+# Deliberately NOT pinned to a variant_label: NG east holds far fewer CMIP6
+# records than the ESGF1 Solr federation for this query -- a live reminder that
+# coverage differs by node, which is why stop_at_first_result=False (union) exists.
 EXAMPLE_CMIP6 = QueryCMIP6(
     experiment_id="historical",
     variable_id="tas",
@@ -616,8 +664,12 @@ def tour(query: QueryProtocol = EXAMPLE, limit: int = 2) -> None:
             top = _first_id(api.generation, raw)
             print(f"[{api.generation.name:8}] {api.host:22} count={count} first={top}")
 
-    print("\n--- search() collects every node's raw JSON ---")
+    print("\n--- search() default: stop at the first node that answers ---")
     for host, raw in search(query, limit=limit).items():
+        print(f"{host:22} {node_count_summary(raw)}")
+
+    print("\n--- search(stop_at_first_result=False): every node, keyed by host ---")
+    for host, raw in search(query, stop_at_first_result=False, limit=limit).items():
         print(f"{host:22} {node_count_summary(raw)}")
 
 
