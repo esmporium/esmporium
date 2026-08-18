@@ -14,10 +14,11 @@ Design decisions baked in here:
      validated. No hand-written rename dicts.
 
   2. A generation is a pure translator, handed its vocabulary.
-     `Esgf1Solr(params=...)` and `EsgfNgStac(params=..., prefix="cmip5")` carry a
-     SINGLE params class (and, for STAC, a single prefix string) -- not a
-     {project: ...} mapping. Nothing in the generation is keyed by project name,
-     so a generation is not coupled to any particular project.
+     `Esgf1Solr(params=...)` and `EsgfNgStac(params=...)` carry a SINGLE params
+     class -- not a {project: ...} mapping. For STAC the `cmipN:` prefix rides on
+     the params class (`StacCMIP5.prefix`), and the collection id is taken
+     straight from the query's project. Nothing in the generation is keyed by
+     project name, so a generation is not coupled to any particular project.
 
   3. Host + generation + retry are coupled on `SearchAPI` (was `IndexNode`).
      A host speaks exactly one wire format, and carries its own tenacity retry
@@ -31,7 +32,7 @@ Design decisions baked in here:
 
          SearchAPIGeneration (interface)
               +-- Esgf1Solr(params)          -> Solr GET,  bare names, repeated params
-              +-- EsgfNgStac(params, prefix)  -> STAC POST, prefix:name, CQL2 tree
+              +-- EsgfNgStac(params)          -> STAC POST, prefix:name, CQL2 tree
 
 Run it:  uv run python -m esmporium.search_api.first_search_cmip5_full
 """
@@ -40,7 +41,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Annotated, Any, Protocol
+from typing import Annotated, Any, ClassVar, Protocol
 
 import httpx
 from pydantic import BaseModel, ConfigDict
@@ -98,16 +99,29 @@ class SolrCMIP5(BaseModel):
         return facet_values_from_attributes(self)
 
 
+class StacParams(QueryProtocol, Protocol):
+    """
+    A STAC params class: a query vocabulary that also names its `cmipN:` prefix.
+
+    The prefix lives with the params class because it co-varies exactly with the
+    (STAC, project) pair the class already represents; the generation applies it.
+    """
+
+    prefix: ClassVar[str]
+
+
 class StacCMIP5(BaseModel):
     """
     CMIP5 facet values under their ESGF-NG/STAC property STEMS.
 
     No `project` field: on STAC the project is the collection id, handled by the
-    generation, not sent as a property. The `cmipN:` prefix is added by the
-    generation too, so these are bare stems.
+    generation, not sent as a property. Fields are bare stems; the `prefix` below
+    is what the generation prepends to each to form the `cmipN:` property name.
     """
 
     model_config = ConfigDict(extra="forbid")
+
+    prefix: ClassVar[str] = "cmip5"
 
     model: Annotated[FacetValues, QueryFacet("model")] = ()
     institute: Annotated[FacetValues, QueryFacet("institution")] = ()
@@ -206,7 +220,7 @@ class Request:
 
 # =============================================================================
 # The generation interface + its two implementations. Each is handed a single
-# params class (and, for STAC, a single prefix); nothing is keyed by project.
+# params class; nothing is keyed by project (STAC's prefix rides on the params).
 # =============================================================================
 class SearchAPIGeneration(Protocol):
     """The wire format of a family of endpoints."""
@@ -247,26 +261,29 @@ class Esgf1Solr:
 class EsgfNgStac:
     """ESGF-NG / STAC 1.0 + CQL2. JSON POST; values -> a CQL2 AND-of-IN tree."""
 
-    params: type[QueryProtocol]
-    prefix: str
+    params: type[StacParams]
     name: str = "ESGF_NG"
 
     def build_request(self, canonical: QueryCanonical, limit: int) -> Request:
         """Render `canonical` as a STAC/CQL2 POST request."""
         # project is the collection id, not a property, so translate WITHOUT it.
-        project = canonical.project[0]
+        # Taken as the user gave it (assumed already in the correct case, e.g.
+        # "CMIP5"); we do not second-guess it.
+        collection = canonical.project[0]
         without_project = canonical.model_copy(update={"project": ()})
         native = from_canonical(canonical=without_project, to=self.params)
 
-        # collection id is UPPERCASE.
         and_clauses: list[dict[str, Any]] = [
-            {"op": "=", "args": [{"property": "collection"}, project.upper()]},
+            {"op": "=", "args": [{"property": "collection"}, collection]},
         ]
         for stem, values in native.facet_values().items():
             and_clauses.append(
                 {
                     "op": "in",
-                    "args": [{"property": f"{self.prefix}:{stem}"}, list(values)],
+                    "args": [
+                        {"property": f"{self.params.prefix}:{stem}"},
+                        list(values),
+                    ],
                 }
             )
 
@@ -325,12 +342,11 @@ class SearchAPI:
         return f"https://{self.host}{request.path}"
 
 
-# Generations for the CMIP5 example: each handed its params (and prefix).
+# Generations for the CMIP5 example: each handed its params class. The STAC
+# prefix rides on the params class (StacCMIP5.prefix), so there is no way to pair
+# a params class with the wrong prefix.
 SOLR_CMIP5 = Esgf1Solr(params=SolrCMIP5)
-# Should we just put prefix on the classes like StacCMIP5?
-# They feel tightly coupled to me so it would be clearer if they were defined together,
-# but maybe there is a reason not to add this coupling.
-STAC_CMIP5 = EsgfNgStac(params=StacCMIP5, prefix="cmip5")
+STAC_CMIP5 = EsgfNgStac(params=StacCMIP5)
 
 # The retry/preference plan, top to bottom. ORNL is dead for ESGF1 (serves a web
 # app now), so DKRZ is the live fallback.
