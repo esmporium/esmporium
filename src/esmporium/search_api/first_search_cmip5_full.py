@@ -126,6 +126,38 @@ class StacCMIP5(BaseModel):
         return facet_values_from_attributes(self)
 
 
+class SolrCMIP6(BaseModel):
+    """
+    CMIP6 facet values under their ESGF1/Solr param names.
+
+    ESGF1 genuinely still hosts CMIP6 (live-confirmed), so this is a real,
+    usable mapping -- not just a proof of expressibility. Not in the default
+    CMIP5 plan; injected when searching CMIP6 on an ESGF1 node.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    project: Annotated[FacetValues, QueryFacet("project")] = ()
+    source_id: Annotated[FacetValues, QueryFacet("model")] = ()
+    institution_id: Annotated[FacetValues, QueryFacet("institution")] = ()
+    experiment_id: Annotated[FacetValues, QueryFacet("experiment")] = ()
+    variant_label: Annotated[FacetValues, QueryFacet("variant_label")] = ()
+    variable_id: Annotated[FacetValues, QueryFacet("variable")] = ()
+    frequency: Annotated[FacetValues, QueryFacet("reporting_interval")] = ()
+    table_id: Annotated[FacetValues, QueryFacet("processing_id")] = ()
+    activity_id: Annotated[FacetValues, QueryFacet("activity")] = ()
+    nominal_resolution: Annotated[FacetValues, QueryFacet("resolution")] = ()
+    grid_label: Annotated[FacetValues, QueryFacet("grid_label")] = ()
+    realm: Annotated[FacetValues, QueryFacet("realm")] = ()
+
+    other_terms: FacetValuesByName = {}
+    source_query: SourceQuery = None
+
+    def facet_values(self) -> dict[str, tuple[str, ...]]:
+        """Facets that are set, keyed by this class's own (wire) names."""
+        return facet_values_from_attributes(self)
+
+
 class SolrCMIP7(BaseModel):
     """
     CMIP7 facet values under ESGF1/Solr param names (best-guess).
