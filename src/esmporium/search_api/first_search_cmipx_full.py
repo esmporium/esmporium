@@ -78,6 +78,7 @@ from esmporium.query import (
 # classes independent. The wire name is the FIELD name; QueryFacet says which
 # canonical facet it is.
 # =============================================================================
+# Add Parameters or Facets to end of all these names?
 class SolrCMIP5(BaseModel):
     """CMIP5 facet values under their ESGF1/Solr param names."""
 
@@ -301,6 +302,7 @@ class SearchAPIGeneration(Protocol):
 
 
 @dataclass(frozen=True)
+# Rename to ESGF1Solr
 class Esgf1Solr:
     """ESGF1 / Solr (esg-search). Flat GET; multiple values -> repeated params."""
 
@@ -322,6 +324,7 @@ class Esgf1Solr:
 
 
 @dataclass(frozen=True)
+# Rename to ESGFNGStac
 class EsgfNgStac:
     """ESGF-NG / STAC 1.0 + CQL2. JSON POST; values -> a CQL2 AND-of-IN tree."""
 
@@ -336,6 +339,7 @@ class EsgfNgStac:
 
         # TODO: @znicholls will need to specify to user that values are case
         # sensitive? Else, this is pulled up in the suggested fixes?
+        # Yes but only in docstring
         # How will suggested fixes work? Will we store all potential search
         # results somehow to compare against?
         collection = canonical.project[0]
@@ -403,6 +407,7 @@ class SearchAPI:
     """One endpoint we can hit."""
 
     host: str
+    # URL
     generation: SearchAPIGeneration
     retrying: Retrying
 
@@ -525,6 +530,14 @@ DEFAULT_SELECTOR = project_ranked_selector(PROJECT_PLANS)
 def search(
     query: QueryProtocol,
     selector: SearchAPISelector = DEFAULT_SELECTOR,
+    # Still unclear what this is.
+    # Might be that 10_000 is the hard limit,
+    # and none of the APIs support that
+    # so a limit greater than 10_000 should be an error,
+    # a limit less than that should be allowed,
+    # our default should be something sensible (1_000?)
+    # and a limit of zero for stac should raise
+    # not be silently coerced.
     limit: int = 10,
 ) -> dict[str, Any]:
     """
