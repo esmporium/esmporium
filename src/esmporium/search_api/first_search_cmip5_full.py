@@ -38,6 +38,7 @@ Run it:  uv run python -m esmporium.search_api.first_search_cmip5_full
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Annotated, Any, Protocol
 
@@ -381,34 +382,59 @@ def fire(
 
 
 # =============================================================================
-# Production shape: walk the plan, first API that answers wins.
+# The endpoint selector: given the canonical query and a 0-based attempt index,
+# return the next SearchAPI to try, or None to stop. Injectable, so the choice
+# and order of endpoints (a fixed list now; project-aware or health-based later)
+# can vary without touching the search loop.
 # =============================================================================
-_ALL_APIS_EXHAUSTED = "every search API in the plan was exhausted"
+SearchAPISelector = Callable[[QueryCanonical, int], SearchAPI | None]
 
 
+def list_selector(apis: Sequence[SearchAPI]) -> SearchAPISelector:
+    """Build a selector that yields `apis` in order, then stops."""
+
+    def select(canonical: QueryCanonical, attempt: int) -> SearchAPI | None:
+        return apis[attempt] if attempt < len(apis) else None
+
+    return select
+
+
+DEFAULT_SELECTOR = list_selector(DEFAULT_SEARCH_APIS)
+
+
+# =============================================================================
+# Walk EVERY endpoint the selector yields, collecting each node's raw JSON. We
+# do NOT stop at the first hit: different index nodes hold different data, so
+# every node is attempted. (Next PR: hand each node's raw JSON to a recorder that
+# writes it to the DB as the node is tried.)
+# =============================================================================
 def search(
     query: QueryCMIP5,
-    apis: list[SearchAPI] = DEFAULT_SEARCH_APIS,
+    selector: SearchAPISelector = DEFAULT_SELECTOR,
     limit: int = 10,
 ) -> dict[str, Any]:
     """
-    Search for a CMIP5 query and return raw JSON, keyed by project.
+    Search every endpoint the selector yields; return each node's raw JSON.
 
-    First API that returns a (non-error) response wins.
+    Keyed by host. A node that never answers (exhausted / non-transient error)
+    is left out; empty-but-valid responses are kept.
     """
     canonical = to_canonical(query)
+    results: dict[str, Any] = {}
+    attempt = 0
     with httpx.Client(follow_redirects=True) as client:
-        for api in apis:
+        while (api := selector(canonical, attempt)) is not None:
             request = api.generation.build_request(canonical, limit)
             raw = fire(client, api, request)
             if raw is not None:
-                return {canonical.project[0]: raw}
-    raise RuntimeError(_ALL_APIS_EXHAUSTED)
+                results[api.host] = raw
+            attempt += 1
+    return results
 
 
 # =============================================================================
-# Demo: hit EVERY API so we can watch each generation's raw JSON, then show the
-# production first-success result. (The tour is illustration; `search` is real.)
+# Demo: walk every endpoint the selector yields, printing each node's raw JSON,
+# then show search() collecting all of them.
 # =============================================================================
 EXAMPLE = QueryCMIP5(
     experiment="historical",
@@ -419,7 +445,7 @@ EXAMPLE = QueryCMIP5(
 
 
 def tour(query: QueryCMIP5 = EXAMPLE, limit: int = 2) -> None:
-    """Hit every API and print each generation's raw result, then run `search`."""
+    """Walk every endpoint the selector yields, printing each node's result."""
     canonical = to_canonical(query)
     print(f"query      : {query!r}")
     print(
@@ -429,12 +455,11 @@ def tour(query: QueryCMIP5 = EXAMPLE, limit: int = 2) -> None:
     )
 
     with httpx.Client(follow_redirects=True) as client:
-        # Let's add our client selector function now
-        # and add searching different projects too
-        # to see how things go once we break that flow out.
-        for api in DEFAULT_SEARCH_APIS:
+        attempt = 0
+        while (api := DEFAULT_SELECTOR(canonical, attempt)) is not None:
             request = api.generation.build_request(canonical, limit)
             raw = fire(client, api, request)
+            attempt += 1
             if raw is None:
                 print(f"[{api.generation.name:8}] {api.host:22} EXHAUSTED (no answer)")
                 continue
@@ -442,13 +467,9 @@ def tour(query: QueryCMIP5 = EXAMPLE, limit: int = 2) -> None:
             top = _first_id(api.generation, raw)
             print(f"[{api.generation.name:8}] {api.host:22} count={count} first={top}")
 
-    print("\n--- production search() (first success wins) ---")
-    result = search(query, limit=limit)
-    ((project, raw),) = result.items()
-    print(
-        f"returned raw JSON for project {project!r}: "
-        f"{node_count_summary(raw)}  keys={list(raw)[:6]}"
-    )
+    print("\n--- search() collects every node's raw JSON ---")
+    for host, raw in search(query, limit=limit).items():
+        print(f"{host:22} {node_count_summary(raw)}")
 
 
 def _first_id(generation: SearchAPIGeneration, raw: dict[str, Any]) -> str | None:
