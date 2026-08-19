@@ -99,6 +99,11 @@ MAX_SUGGESTIONS = 3
 # data_specs_version and cannot shift mid-session. TODO: pin a real release tag
 # (align with the STAC items' cmip7:data_specs_version, e.g. MIPDS7-0p0p1);
 # "main" is a stand-in until we confirm the tag naming.
+# Note that the data_specs_version, despite the name, doesn't actually pin the values.
+# Let's see if claude can find a way to infer what schema was used for a given API response.
+# If not, we'll just have to pin (and allow user to override if they want)
+# the tag to use and I will go asking in the ESGF slack
+# if there's a better way to do this.
 CMIP7_CV_TAG = "main"
 CMIP7_CV_URL = (
     "https://raw.githubusercontent.com/WCRP-CMIP/CMIP7-CVs/{tag}/cmip7-stac.json"
@@ -158,6 +163,11 @@ def compare_values(
                 findings.append(FacetFinding(facet, value, "case", (cased,)))
                 continue
             close = tuple(
+                # TODO: allow this to be injectable,
+                # I guess the type is
+                # Callable[[str, set[str]], tuple[str, ...]]
+                # i.e. give in the value and the known values,
+                # get back the close matches.
                 difflib.get_close_matches(
                     value, allowed, n=MAX_SUGGESTIONS, cutoff=TYPO_CUTOFF
                 )

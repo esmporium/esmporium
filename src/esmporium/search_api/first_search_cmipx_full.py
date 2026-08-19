@@ -553,6 +553,8 @@ class ESGFNGStac:
         self, canonical: QueryCanonical, facets: set[str]
     ) -> Request:
         """STAC cannot enumerate facet values -- see FacetListingNotSupported."""
+        # TODO: use esgvoc or, if esgvoc doesn't serve this (although I think it should)
+        # https://github.com/WCRP-CMIP/CMIP7-CVs/blob/main/cmip7-stac.json
         raise FacetListingNotSupported
 
     def parse_facet_values(
