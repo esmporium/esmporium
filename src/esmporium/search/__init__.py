@@ -41,13 +41,13 @@ from esmporium.search.esgf_generations import (
     stac_summary_values,
     unexpressible_facets,
 )
-from esmporium.search.retry import transient_retry
+from esmporium.search.retry import build_transient_retrying
 from esmporium.search.search_api import (
     DEFAULT_SELECTOR,
     SearchAPI,
     SearchAPISelector,
-    list_selector,
-    project_ranked_selector,
+    build_list_selector,
+    build_project_list_selector,
 )
 
 __all__ = [
@@ -75,6 +75,9 @@ __all__ = [
     "StacCMIP7Parameters",
     "StacParams",
     "UnaskableFacetError",
+    "build_list_selector",
+    "build_project_list_selector",
+    "build_transient_retrying",
     "check_facets_askable",
     "check_facets_expressible",
     "check_limit",
@@ -86,6 +89,5 @@ __all__ = [
     "solr_num_found",
     "stac_collection",
     "stac_summary_values",
-    "transient_retry",
     "unexpressible_facets",
 ]

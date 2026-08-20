@@ -1,13 +1,16 @@
 """
-The search APIs we can talk to, and how we pick between them
+Search API implementation
 
-A [SearchAPI][esmporium.search.search_api.SearchAPI] is one endpoint we can hit:
-a host, the [generation][esmporium.search.esgf_generations.SearchAPIGeneration]
-(wire format) it speaks, and its own retry policy.
-A host speaks exactly one wire format, so these travel together.
+This contains our search API interface,
+the pre-built search APIs we know how to talk to
+and pre-built options for how to pick between them.
 
-A [selector][esmporium.search.search_api.SearchAPISelector] turns a query into an
-ordered choice of endpoints to try.
+Note that, in our implementaiton, generation objects are tightly coupled to projects
+which is why there is e.g. [SOLR_CMIP5][(m).] and [SOLR_CMIP6][(m).],
+rather than just a single SOLR generation instance.
+This choice is made so that error handling and reporting is much simpler,
+but costs extra requests if we want to search more than one project.
+This is a tradeoff we are ok making.
 """
 
 from __future__ import annotations
@@ -31,7 +34,7 @@ from esmporium.search.esgf_generations import (
     StacCMIP6Parameters,
     StacCMIP7Parameters,
 )
-from esmporium.search.retry import transient_retry
+from esmporium.search.retry import build_transient_retrying
 
 
 @dataclass(frozen=True)
@@ -44,17 +47,18 @@ class SearchAPI:
     """The host to send requests to, e.g. `esgf.nci.org.au`"""
 
     generation: SearchAPIGeneration
-    """The wire format this host speaks, handed the vocabulary to speak it in"""
+    """
+    The (request/wire) format this host speaks
+
+    This also handles the vocabulary that this API understands
+    """
 
     retrying: Retrying
-    """The retry policy to send under"""
+    """The retry policy to use when hitting this API"""
 
     scheme: str = "https"
     """
     The URL scheme to reach this host over
-
-    Almost every node speaks `https`; this exists so that a host which only
-    offers `http` can be reached without hard-coding the scheme into `url`.
     """
 
     def url(self, request: Request) -> str:
@@ -64,7 +68,7 @@ class SearchAPI:
         Parameters
         ----------
         request
-            The request whose path to put on this host
+            The request to make to this host
 
         Returns
         -------
@@ -74,80 +78,36 @@ class SearchAPI:
         return f"{self.scheme}://{self.host}{request.path}"
 
 
-# One generation per (wire-format, project). Each is handed its params class; for
-# STAC the cmipN: prefix rides on the params (StacCMIP*.prefix), so a params class
-# can never be paired with the wrong prefix.
+# Pre-built search API generations.
+# See note in docstring at the top of the module for why it is like this.
 SOLR_CMIP5 = ESGF1Solr(params=SolrCMIP5Parameters)
-STAC_CMIP5 = ESGFNGStac(params=StacCMIP5Parameters)
 SOLR_CMIP6 = ESGF1Solr(params=SolrCMIP6Parameters)
-STAC_CMIP6 = ESGFNGStac(params=StacCMIP6Parameters)
 SOLR_CMIP7 = ESGF1Solr(params=SolrCMIP7Parameters)
-STAC_CMIP7 = ESGFNGStac(params=StacCMIP7Parameters)
 
-# ORNL's ESGF-1.5 bridge reuses the SAME Solr param name tables (names match);
-# only the request encoding differs, which the generation handles.
 BRIDGE_CMIP5 = ESGF15Bridge(params=SolrCMIP5Parameters)
 BRIDGE_CMIP6 = ESGF15Bridge(params=SolrCMIP6Parameters)
 
-# Per-project rankings, ORDERED BY MEASURED UNIQUE-DATASET COVERAGE (a live
-# historical/tas probe: unique master_id, latest & not-retracted). By default
-# search() stops at the first node that answers, so this order decides who that
-# is; it is also the fallback chain when the top node is down. ORNL's live
-# "1.5-bridge" (ESGF15Bridge -- Solr-shaped replies, comma-joined request
-# dialect) is included at its measured rank (CMIP6 2nd, CMIP5 3rd).
-# TODOZeb: remove a lot of these comments above? The ordering was based on
-# live searching but that ordering could change in the future?
-# Also should these defaults live here or in __init__.py?
-CMIP5_APIS: list[SearchAPI] = [  # LIU > NCI > ORNL > CEDA > DKRZ; NG has no CMIP5
-    SearchAPI("esg-dn1.nsc.liu.se", SOLR_CMIP5, transient_retry(2)),
-    SearchAPI("esgf.nci.org.au", SOLR_CMIP5, transient_retry(2)),
-    SearchAPI("esgf-node.ornl.gov", BRIDGE_CMIP5, transient_retry(2)),
-    SearchAPI("esgf.ceda.ac.uk", SOLR_CMIP5, transient_retry(2)),
-    SearchAPI("esgf-data.dkrz.de", SOLR_CMIP5, transient_retry(2)),
-    SearchAPI("search.east.esgf.io", STAC_CMIP5, transient_retry(2)),
-    SearchAPI("search.west.esgf.io", STAC_CMIP5, transient_retry(2)),
-]
-CMIP6_APIS: list[SearchAPI] = [  # LIU > ORNL > NCI > CEDA > DKRZ, then NG/STAC
-    SearchAPI("esg-dn1.nsc.liu.se", SOLR_CMIP6, transient_retry(2)),
-    SearchAPI("esgf-node.ornl.gov", BRIDGE_CMIP6, transient_retry(2)),
-    SearchAPI("esgf.nci.org.au", SOLR_CMIP6, transient_retry(2)),
-    SearchAPI("esgf.ceda.ac.uk", SOLR_CMIP6, transient_retry(2)),
-    SearchAPI("esgf-data.dkrz.de", SOLR_CMIP6, transient_retry(2)),
-    SearchAPI("search.east.esgf.io", STAC_CMIP6, transient_retry(2)),
-    SearchAPI("search.west.esgf.io", STAC_CMIP6, transient_retry(2)),
-]
-CMIP7_APIS: list[SearchAPI] = [  # NG first (CMIP7 lives there); ESGF1 fallback
-    SearchAPI("search.east.esgf.io", STAC_CMIP7, transient_retry(2)),
-    SearchAPI("search.west.esgf.io", STAC_CMIP7, transient_retry(2)),
-    SearchAPI("esgf.nci.org.au", SOLR_CMIP7, transient_retry(2)),
-    SearchAPI("esgf-data.dkrz.de", SOLR_CMIP7, transient_retry(2)),
-]
-
-PROJECT_PLANS: Mapping[str, Sequence[SearchAPI]] = {
-    "CMIP5": CMIP5_APIS,
-    "CMIP6": CMIP6_APIS,
-    "CMIP7": CMIP7_APIS,
-}
-"""The default per-project ranking of endpoints to try"""
+STAC_CMIP5 = ESGFNGStac(params=StacCMIP5Parameters)
+STAC_CMIP6 = ESGFNGStac(params=StacCMIP6Parameters)
+STAC_CMIP7 = ESGFNGStac(params=StacCMIP7Parameters)
 
 
-SearchAPISelector = Callable[[QueryCanonical, int], SearchAPI | None]
+# Why can't we do the below?
+# SearchAPISelector = Callable[[QueryCanonical, int], SearchAPI | None]
+SearchAPISelector = Callable[[QueryCanonical, int], "SearchAPI | None"]
 """
 Chooses which endpoint to try next
 
 Given the canonical query and a 0-based attempt index, returns the next
-[SearchAPI][esmporium.search.search_api.SearchAPI] to try, or None to stop.
-Injectable, so the choice and order of endpoints can vary
-without touching the search loop.
-Our default ranks endpoints by the query's project
+[SearchAPI][esmporium.search.search_api.SearchAPI] to try, or `None` to stop.
 """
 
 
-def list_selector(apis: Sequence[SearchAPI]) -> SearchAPISelector:
+def build_list_selector(apis: Sequence[SearchAPI]) -> SearchAPISelector:
     """
     Build a selector that yields the given endpoints in order, then stops
 
-    The project is ignored: every query gets the same list.
+    Every query works through the same list.
 
     Parameters
     ----------
@@ -166,32 +126,116 @@ def list_selector(apis: Sequence[SearchAPI]) -> SearchAPISelector:
     return select
 
 
-def project_ranked_selector(
-    plans: Mapping[str, Sequence[SearchAPI]],
+def build_project_list_selector(
+    project_lists: Mapping[str, Sequence[SearchAPI]],
 ) -> SearchAPISelector:
     """
-    Build a selector that yields a per-project ranking of endpoints
+    Build a selector that works through a project specific list of endpoints
 
     Parameters
     ----------
-    plans
+    project_lists
         The endpoints to yield for each project, in order
 
     Returns
     -------
     :
-        A selector which yields `plans` for the query's project,
-        or nothing for a project it has no plan for
+        A selector which yields APIs in an order specific to the query's project
     """
 
     def select(canonical: QueryCanonical, attempt: int) -> SearchAPI | None:
-        apis = plans.get(canonical.project[0])
-        if apis is None:
-            return None  # a project we have no plan for -> nothing to try
+        """
+        Select search API to use
+
+        Parameters
+        ----------
+        canonical
+            Query (in canonical form)
+
+        attempt
+            Search attempt
+
+        Returns
+        -------
+        :
+            [SearchAPI][(m).] to use
+
+            If we have run out of APIs to try, we return `None`
+
+        Raises
+        ------
+        ValueError
+            The query specifies a search that is not for exactly one project
+
+        KeyError
+            We do not have a list for the input project
+        """
+        if len(canonical.project) != 1:
+            msg = (
+                "We can only unambiguously pick the SearchAPI list "
+                "if there is exactly one project, "
+                f"received: {canonical.project}"
+            )
+            raise ValueError(msg)
+
+        project = canonical.project[0]
+
+        apis = project_lists[project]
+
         return apis[attempt] if attempt < len(apis) else None
 
     return select
 
 
-DEFAULT_SELECTOR = project_ranked_selector(PROJECT_PLANS)
+CMIP5_APIS: list[SearchAPI] = [
+    SearchAPI("esg-dn1.nsc.liu.se", SOLR_CMIP5, build_transient_retrying(2)),
+    SearchAPI("esgf.nci.org.au", SOLR_CMIP5, build_transient_retrying(2)),
+    SearchAPI("esgf-node.ornl.gov", BRIDGE_CMIP5, build_transient_retrying(2)),
+    SearchAPI("esgf.ceda.ac.uk", SOLR_CMIP5, build_transient_retrying(2)),
+    SearchAPI("esgf-data.dkrz.de", SOLR_CMIP5, build_transient_retrying(2)),
+    SearchAPI("search.east.esgf.io", STAC_CMIP5, build_transient_retrying(2)),
+    SearchAPI("search.west.esgf.io", STAC_CMIP5, build_transient_retrying(2)),
+]
+"""
+Known CMIP5 search APIs
+
+These are sorted in order of greatest to least results,
+when we checked.
+"""
+
+CMIP6_APIS: list[SearchAPI] = [
+    SearchAPI("esg-dn1.nsc.liu.se", SOLR_CMIP6, build_transient_retrying(2)),
+    SearchAPI("esgf-node.ornl.gov", BRIDGE_CMIP6, build_transient_retrying(2)),
+    SearchAPI("esgf.nci.org.au", SOLR_CMIP6, build_transient_retrying(2)),
+    SearchAPI("esgf.ceda.ac.uk", SOLR_CMIP6, build_transient_retrying(2)),
+    SearchAPI("esgf-data.dkrz.de", SOLR_CMIP6, build_transient_retrying(2)),
+    SearchAPI("search.east.esgf.io", STAC_CMIP6, build_transient_retrying(2)),
+    SearchAPI("search.west.esgf.io", STAC_CMIP6, build_transient_retrying(2)),
+]
+"""
+Known CMIP6 search APIs
+
+These are sorted in order of greatest to least results,
+when we checked.
+"""
+CMIP7_APIS: list[SearchAPI] = [
+    SearchAPI("search.east.esgf.io", STAC_CMIP7, build_transient_retrying(2)),
+    SearchAPI("search.west.esgf.io", STAC_CMIP7, build_transient_retrying(2)),
+    SearchAPI("esgf.nci.org.au", SOLR_CMIP7, build_transient_retrying(2)),
+    SearchAPI("esgf-data.dkrz.de", SOLR_CMIP7, build_transient_retrying(2)),
+]
+"""
+Known CMIP7 search APIs
+
+These are sorted in order of greatest to least results,
+when we checked.
+"""
+
+DEFAULT_SELECTOR = build_project_list_selector(
+    {
+        "CMIP5": CMIP5_APIS,
+        "CMIP6": CMIP6_APIS,
+        "CMIP7": CMIP7_APIS,
+    }
+)
 """The selector used when the caller does not choose one"""

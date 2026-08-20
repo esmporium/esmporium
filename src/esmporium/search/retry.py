@@ -1,9 +1,5 @@
 """
-Retry policy for talking to the live ESGF search APIs
-
-A 5xx from a node means a load-balanced backend is flapping,
-so it (and transport errors) are transient and worth retrying;
-a 4xx is a real "no" and is not retried.
+Retry policies for search requests
 """
 
 from __future__ import annotations
@@ -16,18 +12,18 @@ from tenacity import (
     wait_exponential,
 )
 
-_TRANSIENT_STATUS_FLOOR = 500
-"""At and above this status code the failure is the node's, so we retry it"""
 
-
-def _is_transient(exc: BaseException) -> bool:
+def _is_transient(exc: BaseException, transient_status_floor: int = 500) -> bool:
     """
-    Decide whether a failure is worth retrying
+    Decide whether a failure is worth retrying because it is transient
 
     Parameters
     ----------
     exc
         The exception raised while sending a request
+
+    transient_status_floor
+        Floor (i.e. minimum) value for status codes which are transient
 
     Returns
     -------
@@ -35,13 +31,14 @@ def _is_transient(exc: BaseException) -> bool:
         Whether `exc` is a transient failure we should retry
     """
     if isinstance(exc, httpx.HTTPStatusError):
-        return exc.response.status_code >= _TRANSIENT_STATUS_FLOOR
+        return exc.response.status_code >= transient_status_floor
+
     return isinstance(exc, httpx.TransportError)
 
 
-def transient_retry(attempts: int) -> Retrying:
+def build_transient_retrying(attempts: int) -> Retrying:
     """
-    Build a tenacity policy that retries transient failures with backoff
+    Build a tenacity retrying policy that retries transient failures with backoff
 
     Parameters
     ----------
