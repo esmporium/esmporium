@@ -41,9 +41,18 @@ from esmporium.search.esgf_generations import (
     stac_summary_values,
     unexpressible_facets,
 )
+from esmporium.search.retry import transient_retry
+from esmporium.search.search_api import (
+    DEFAULT_SELECTOR,
+    SearchAPI,
+    SearchAPISelector,
+    list_selector,
+    project_ranked_selector,
+)
 
 __all__ = [
     "DEFAULT_LIMIT",
+    "DEFAULT_SELECTOR",
     "MAX_LIMIT",
     "MIN_LIMIT",
     "ESGF1Solr",
@@ -55,7 +64,9 @@ __all__ = [
     "OneProjectRequiredError",
     "ProjectPrefixMismatchError",
     "Request",
+    "SearchAPI",
     "SearchAPIGeneration",
+    "SearchAPISelector",
     "SolrCMIP5Parameters",
     "SolrCMIP6Parameters",
     "SolrCMIP7Parameters",
@@ -67,11 +78,14 @@ __all__ = [
     "check_facets_askable",
     "check_facets_expressible",
     "check_limit",
+    "list_selector",
     "native_facet_names",
+    "project_ranked_selector",
     "solr_bool",
     "solr_facet_values",
     "solr_num_found",
     "stac_collection",
     "stac_summary_values",
+    "transient_retry",
     "unexpressible_facets",
 ]

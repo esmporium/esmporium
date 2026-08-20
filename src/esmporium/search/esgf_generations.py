@@ -694,8 +694,10 @@ class SearchAPIGeneration(Protocol):
     The wire format spoken by a family of ESGF search endpoints
     """
 
-    name: str
-    """What to call this generation in a message to the user"""
+    @property
+    def name(self) -> str:
+        """What to call this generation in a message to the user"""
+        ...
 
     def build_search_request(self, canonical: QueryCanonical, limit: int) -> Request:
         """
@@ -1185,7 +1187,7 @@ class ESGF1Solr:
 
         return Request("GET", "/esg-search/search", params=params)
 
-    def result_count(self, raw: dict[str, Any]) -> int | None:
+    def result_count(self, raw: dict[str, Any]) -> int:
         """See [SearchAPIGeneration.result_count][esmporium.search.esgf_generations.SearchAPIGeneration.result_count]."""  # noqa: E501
         return solr_num_found(raw)
 
@@ -1251,7 +1253,7 @@ class ESGF15Bridge:
 
         return Request("GET", "/esgf-1-5-bridge/", params=params)
 
-    def result_count(self, raw: dict[str, Any]) -> int | None:
+    def result_count(self, raw: dict[str, Any]) -> int:
         """See [SearchAPIGeneration.result_count][esmporium.search.esgf_generations.SearchAPIGeneration.result_count]."""  # noqa: E501
         return solr_num_found(raw)
 

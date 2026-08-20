@@ -46,20 +46,11 @@ Run it:  uv run python scripts/first_search_cmipx_full.py
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
 from typing import Any
 
 import httpx
-from tenacity import (
-    Retrying,
-    retry_if_exception,
-    stop_after_attempt,
-    wait_exponential,
-)
 
 from esmporium.query import (
-    QueryCanonical,
     QueryCMIP5,
     QueryCMIP6,
     QueryCMIP7,
@@ -67,117 +58,17 @@ from esmporium.query import (
     to_canonical,
 )
 
-# The generations (wire formats) and the param classes (one per
-# (wire-format, project)) now live in `esmporium.search.esgf_generations`.
-# What is left here is everything a generation deliberately does NOT know about:
-# which hosts exist, what to do when one does not answer, and in what order to
-# try them.
+# The generations, the parameter classes, and now the endpoints (SearchAPI), the
+# default plan and the selectors all live in `esmporium.search`. What is left in
+# this script is the search loop (fire/search) and a runnable demo, which move
+# out in a later step until only an example remains.
 from esmporium.search import (
     DEFAULT_LIMIT,
-    ESGF1Solr,
-    ESGF15Bridge,
-    ESGFNGStac,
+    DEFAULT_SELECTOR,
     Request,
-    SearchAPIGeneration,
-    SolrCMIP5Parameters,
-    SolrCMIP6Parameters,
-    SolrCMIP7Parameters,
-    StacCMIP5Parameters,
-    StacCMIP6Parameters,
-    StacCMIP7Parameters,
+    SearchAPI,
+    SearchAPISelector,
 )
-
-# =============================================================================
-# Retry policy, via tenacity. A 5xx from ESGF1 means a load-balanced backend is
-# flapping, so it (and transport errors) are transient and retried; a 4xx is a
-# real "no" and is not retried.
-# =============================================================================
-_TRANSIENT_STATUS_FLOOR = 500
-
-
-def _is_transient(exc: BaseException) -> bool:
-    if isinstance(exc, httpx.HTTPStatusError):
-        return exc.response.status_code >= _TRANSIENT_STATUS_FLOOR
-    return isinstance(exc, httpx.TransportError)
-
-
-def transient_retry(attempts: int) -> Retrying:
-    """Build a tenacity policy that retries transient failures with backoff."""
-    return Retrying(
-        stop=stop_after_attempt(attempts),
-        wait=wait_exponential(multiplier=0.5, max=8),
-        retry=retry_if_exception(_is_transient),
-        reraise=True,
-    )
-
-
-# =============================================================================
-# A SearchAPI = a host + the generation it speaks + its own retry policy.
-# =============================================================================
-@dataclass(frozen=True)
-class SearchAPI:
-    """One endpoint we can hit."""
-
-    host: str
-    generation: SearchAPIGeneration
-    retrying: Retrying
-
-    def url(self, request: Request) -> str:
-        """Build the full URL for `request` against this host."""
-        return f"https://{self.host}{request.path}"
-
-
-# One generation per (wire-format, project). Each is handed its params class; for
-# STAC the cmipN: prefix rides on the params (StacCMIP*.prefix), so a params class
-# can never be paired with the wrong prefix.
-SOLR_CMIP5 = ESGF1Solr(params=SolrCMIP5Parameters)
-STAC_CMIP5 = ESGFNGStac(params=StacCMIP5Parameters)
-SOLR_CMIP6 = ESGF1Solr(params=SolrCMIP6Parameters)
-STAC_CMIP6 = ESGFNGStac(params=StacCMIP6Parameters)
-SOLR_CMIP7 = ESGF1Solr(params=SolrCMIP7Parameters)
-STAC_CMIP7 = ESGFNGStac(params=StacCMIP7Parameters)
-
-# ORNL's ESGF-1.5 bridge reuses the SAME Solr param name tables (names match);
-# only the request encoding differs, which the generation handles.
-BRIDGE_CMIP5 = ESGF15Bridge(params=SolrCMIP5Parameters)
-BRIDGE_CMIP6 = ESGF15Bridge(params=SolrCMIP6Parameters)
-
-# Per-project rankings, ORDERED BY MEASURED UNIQUE-DATASET COVERAGE (a live
-# historical/tas probe: unique master_id, latest & not-retracted). By default
-# search() stops at the first node that answers, so this order decides who that
-# is; it is also the fallback chain when the top node is down. ORNL's live
-# "1.5-bridge" (ESGF15Bridge -- Solr-shaped replies, comma-joined request
-# dialect) is included at its measured rank (CMIP6 2nd, CMIP5 3rd).
-CMIP5_APIS: list[SearchAPI] = [  # LIU > NCI > ORNL > CEDA > DKRZ; NG has no CMIP5
-    SearchAPI("esg-dn1.nsc.liu.se", SOLR_CMIP5, transient_retry(3)),
-    SearchAPI("esgf.nci.org.au", SOLR_CMIP5, transient_retry(4)),
-    SearchAPI("esgf-node.ornl.gov", BRIDGE_CMIP5, transient_retry(2)),
-    SearchAPI("esgf.ceda.ac.uk", SOLR_CMIP5, transient_retry(2)),
-    SearchAPI("esgf-data.dkrz.de", SOLR_CMIP5, transient_retry(2)),
-    SearchAPI("search.east.esgf.io", STAC_CMIP5, transient_retry(2)),
-    SearchAPI("search.west.esgf.io", STAC_CMIP5, transient_retry(2)),
-]
-CMIP6_APIS: list[SearchAPI] = [  # LIU > ORNL > NCI > CEDA > DKRZ, then NG/STAC
-    SearchAPI("esg-dn1.nsc.liu.se", SOLR_CMIP6, transient_retry(3)),
-    SearchAPI("esgf-node.ornl.gov", BRIDGE_CMIP6, transient_retry(2)),
-    SearchAPI("esgf.nci.org.au", SOLR_CMIP6, transient_retry(3)),
-    SearchAPI("esgf.ceda.ac.uk", SOLR_CMIP6, transient_retry(2)),
-    SearchAPI("esgf-data.dkrz.de", SOLR_CMIP6, transient_retry(2)),
-    SearchAPI("search.east.esgf.io", STAC_CMIP6, transient_retry(2)),
-    SearchAPI("search.west.esgf.io", STAC_CMIP6, transient_retry(2)),
-]
-CMIP7_APIS: list[SearchAPI] = [  # NG first (CMIP7 lives there); ESGF1 fallback
-    SearchAPI("search.east.esgf.io", STAC_CMIP7, transient_retry(2)),
-    SearchAPI("search.west.esgf.io", STAC_CMIP7, transient_retry(2)),
-    SearchAPI("esgf.nci.org.au", SOLR_CMIP7, transient_retry(2)),
-    SearchAPI("esgf-data.dkrz.de", SOLR_CMIP7, transient_retry(2)),
-]
-
-PROJECT_PLANS: Mapping[str, Sequence[SearchAPI]] = {
-    "CMIP5": CMIP5_APIS,
-    "CMIP6": CMIP6_APIS,
-    "CMIP7": CMIP7_APIS,
-}
 
 
 # =============================================================================
@@ -208,42 +99,6 @@ def fire(
         return api.retrying(_once)
     except (httpx.HTTPError, ValueError):
         return None
-
-
-# =============================================================================
-# The endpoint selector: given the CANONICAL query and a 0-based attempt index,
-# return the next SearchAPI to try, or None to stop. Injectable, so the choice
-# and order of endpoints can vary without touching the search loop. Our default
-# ranks endpoints by the query's PROJECT (CMIP5 -> ESGF1 first; CMIP6/CMIP7 ->
-# NG first, ESGF1 as fallback); health-based ranking could slot in later.
-# =============================================================================
-SearchAPISelector = Callable[[QueryCanonical, int], SearchAPI | None]
-
-
-def list_selector(apis: Sequence[SearchAPI]) -> SearchAPISelector:
-    """Build a selector that yields `apis` in order, then stops (ignores project)."""
-
-    def select(canonical: QueryCanonical, attempt: int) -> SearchAPI | None:
-        return apis[attempt] if attempt < len(apis) else None
-
-    return select
-
-
-def project_ranked_selector(
-    plans: Mapping[str, Sequence[SearchAPI]],
-) -> SearchAPISelector:
-    """Build a selector that yields a per-project ranking of endpoints."""
-
-    def select(canonical: QueryCanonical, attempt: int) -> SearchAPI | None:
-        apis = plans.get(canonical.project[0])
-        if apis is None:
-            return None  # a project we have no plan for -> nothing to try
-        return apis[attempt] if attempt < len(apis) else None
-
-    return select
-
-
-DEFAULT_SELECTOR = project_ranked_selector(PROJECT_PLANS)
 
 
 # =============================================================================
