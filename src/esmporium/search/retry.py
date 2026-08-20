@@ -46,8 +46,7 @@ def transient_retry(attempts: int) -> Retrying:
     Parameters
     ----------
     attempts
-        The most times to try in total,
-        i.e. one initial try plus that many minus one retries
+        The most times to try in total
 
     Returns
     -------

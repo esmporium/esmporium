@@ -8,9 +8,6 @@ A host speaks exactly one wire format, so these travel together.
 
 A [selector][esmporium.search.search_api.SearchAPISelector] turns a query into an
 ordered choice of endpoints to try.
-The default ranks them by the query's project,
-using a measured unique-dataset coverage order
-(see the comments on the per-project plans below).
 """
 
 from __future__ import annotations
@@ -41,9 +38,6 @@ from esmporium.search.retry import transient_retry
 class SearchAPI:
     """
     One search endpoint we can hit
-
-    A host speaks exactly one wire format and carries its own retry policy,
-    so the three are bound together here.
     """
 
     host: str
@@ -61,10 +55,6 @@ class SearchAPI:
 
     Almost every node speaks `https`; this exists so that a host which only
     offers `http` can be reached without hard-coding the scheme into `url`.
-
-    Not to be confused with a STAC parameter class's `prefix`
-    (see [StacParams.prefix][esmporium.search.esgf_generations.StacParams.prefix]),
-    which is a facet-name prefix and unrelated to how we reach the host.
     """
 
     def url(self, request: Request) -> str:
@@ -105,9 +95,12 @@ BRIDGE_CMIP6 = ESGF15Bridge(params=SolrCMIP6Parameters)
 # is; it is also the fallback chain when the top node is down. ORNL's live
 # "1.5-bridge" (ESGF15Bridge -- Solr-shaped replies, comma-joined request
 # dialect) is included at its measured rank (CMIP6 2nd, CMIP5 3rd).
+# TODOZeb: remove a lot of these comments above? The ordering was based on
+# live searching but that ordering could change in the future?
+# Also should these defaults live here or in __init__.py?
 CMIP5_APIS: list[SearchAPI] = [  # LIU > NCI > ORNL > CEDA > DKRZ; NG has no CMIP5
-    SearchAPI("esg-dn1.nsc.liu.se", SOLR_CMIP5, transient_retry(3)),
-    SearchAPI("esgf.nci.org.au", SOLR_CMIP5, transient_retry(4)),
+    SearchAPI("esg-dn1.nsc.liu.se", SOLR_CMIP5, transient_retry(2)),
+    SearchAPI("esgf.nci.org.au", SOLR_CMIP5, transient_retry(2)),
     SearchAPI("esgf-node.ornl.gov", BRIDGE_CMIP5, transient_retry(2)),
     SearchAPI("esgf.ceda.ac.uk", SOLR_CMIP5, transient_retry(2)),
     SearchAPI("esgf-data.dkrz.de", SOLR_CMIP5, transient_retry(2)),
@@ -115,9 +108,9 @@ CMIP5_APIS: list[SearchAPI] = [  # LIU > NCI > ORNL > CEDA > DKRZ; NG has no CMI
     SearchAPI("search.west.esgf.io", STAC_CMIP5, transient_retry(2)),
 ]
 CMIP6_APIS: list[SearchAPI] = [  # LIU > ORNL > NCI > CEDA > DKRZ, then NG/STAC
-    SearchAPI("esg-dn1.nsc.liu.se", SOLR_CMIP6, transient_retry(3)),
+    SearchAPI("esg-dn1.nsc.liu.se", SOLR_CMIP6, transient_retry(2)),
     SearchAPI("esgf-node.ornl.gov", BRIDGE_CMIP6, transient_retry(2)),
-    SearchAPI("esgf.nci.org.au", SOLR_CMIP6, transient_retry(3)),
+    SearchAPI("esgf.nci.org.au", SOLR_CMIP6, transient_retry(2)),
     SearchAPI("esgf.ceda.ac.uk", SOLR_CMIP6, transient_retry(2)),
     SearchAPI("esgf-data.dkrz.de", SOLR_CMIP6, transient_retry(2)),
     SearchAPI("search.east.esgf.io", STAC_CMIP6, transient_retry(2)),
@@ -147,8 +140,6 @@ Given the canonical query and a 0-based attempt index, returns the next
 Injectable, so the choice and order of endpoints can vary
 without touching the search loop.
 Our default ranks endpoints by the query's project
-(CMIP5/CMIP6 -> ESGF1 first; CMIP7 -> NG first, ESGF1 as fallback);
-health-based ranking could slot in later.
 """
 
 
