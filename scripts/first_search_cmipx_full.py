@@ -11,7 +11,9 @@ Design decisions baked in here:
      Each (wire-format, project) name table is an ANNOTATED class -- the same
      `Annotated[FacetValues, QueryFacet("<canonical>")]` idiom as the query
      classes -- so `from_canonical` populates it for free and every mapping is
-     validated. No hand-written rename dicts.
+     validated. No hand-written rename dicts. These now live in
+     `esmporium.search.esgf_generations`, which is where the generations
+     themselves are headed too.
 
   2. A generation is a pure translator, handed its vocabulary.
      `Esgf1Solr(params=...)` and `EsgfNgStac(params=...)` carry a SINGLE params
@@ -39,17 +41,16 @@ Design decisions baked in here:
               +-- Esgf1Solr(params)          -> Solr GET,  bare names, repeated params
               +-- EsgfNgStac(params)          -> STAC POST, prefix:name, CQL2 tree
 
-Run it:  uv run python -m esmporium.search_api.first_search_cmipx_full
+Run it:  uv run python scripts/first_search_cmipx_full.py
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Annotated, Any, ClassVar, Protocol
+from typing import Any, Protocol
 
 import httpx
-from pydantic import BaseModel, ConfigDict
 from tenacity import (
     Retrying,
     retry_if_exception,
@@ -58,19 +59,29 @@ from tenacity import (
 )
 
 from esmporium.query import (
-    FacetValues,
-    FacetValuesByName,
     QueryCanonical,
     QueryCMIP5,
     QueryCMIP6,
     QueryCMIP7,
-    QueryFacet,
     QueryProtocol,
-    SourceQuery,
     facet_spec,
-    facet_values_from_attributes,
     from_canonical,
     to_canonical,
+)
+
+# The param classes: one per (wire-format, project). Same annotated idiom as the
+# query classes, and, like them, NO shared base class: each is a standalone
+# BaseModel that conforms to QueryProtocol structurally and delegates its one
+# behaviour (`facet_values`) to the shared free function. The wire name is the
+# FIELD name; QueryFacet says which canonical facet it is.
+from esmporium.search import (
+    SolrCMIP5Parameters,
+    SolrCMIP6Parameters,
+    SolrCMIP7Parameters,
+    StacCMIP5Parameters,
+    StacCMIP6Parameters,
+    StacCMIP7Parameters,
+    StacParams,
 )
 
 # =============================================================================
@@ -92,207 +103,6 @@ def _limit_error(limit: int) -> ValueError:
     """Build the error raised when a requested page exceeds MAX_LIMIT."""
     msg = f"limit {limit} exceeds MAX_LIMIT {MAX_LIMIT}; paginate instead"
     return ValueError(msg)
-
-
-# =============================================================================
-# Param classes: one per (wire-format, project). Same annotated idiom as the
-# query classes, and, like them, NO shared base class: each is a standalone
-# BaseModel that conforms to QueryProtocol structurally and delegates its one
-# behaviour (`facet_values`) to the shared free function. Composition, not
-# inheritance -- the four boilerplate lines are repeated on purpose to keep the
-# classes independent. The wire name is the FIELD name; QueryFacet says which
-# canonical facet it is.
-# =============================================================================
-
-
-class SolrCMIP5Parameters(BaseModel):
-    """CMIP5 facet values under their ESGF1/Solr param names."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    project: Annotated[FacetValues, QueryFacet("project")] = ()
-    model: Annotated[FacetValues, QueryFacet("model")] = ()
-    institute: Annotated[FacetValues, QueryFacet("institution")] = ()
-    experiment: Annotated[FacetValues, QueryFacet("experiment")] = ()
-    variable: Annotated[FacetValues, QueryFacet("variable")] = ()
-    ensemble: Annotated[FacetValues, QueryFacet("variant_label")] = ()
-    time_frequency: Annotated[FacetValues, QueryFacet("reporting_interval")] = ()
-    cmor_table: Annotated[FacetValues, QueryFacet("processing_id")] = ()
-    realm: Annotated[FacetValues, QueryFacet("realm")] = ()
-    product: Annotated[FacetValues, QueryFacet(None)] = ()
-
-    other_terms: FacetValuesByName = {}
-    source_query: SourceQuery = None
-
-    def facet_values(self) -> dict[str, tuple[str, ...]]:
-        """Facets that are set, keyed by this class's own (wire) names."""
-        return facet_values_from_attributes(self)
-
-
-class StacParams(QueryProtocol, Protocol):
-    """
-    A STAC params class: a query vocabulary that also names its `cmipN:` prefix.
-
-    The prefix lives with the params class because it co-varies exactly with the
-    (STAC, project) pair the class already represents; the generation applies it.
-    """
-
-    prefix: ClassVar[str]
-
-
-class StacCMIP5Parameters(BaseModel):
-    """
-    CMIP5 facet values under their ESGF-NG/STAC property STEMS.
-
-    No `project` field: on STAC the project is the collection id, handled by the
-    generation, not sent as a property. Fields are bare stems; the `prefix` below
-    is what the generation prepends to each to form the `cmipN:` property name.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    prefix: ClassVar[str] = "cmip5"
-
-    model: Annotated[FacetValues, QueryFacet("model")] = ()
-    institute: Annotated[FacetValues, QueryFacet("institution")] = ()
-    experiment: Annotated[FacetValues, QueryFacet("experiment")] = ()
-    variable: Annotated[FacetValues, QueryFacet("variable")] = ()
-    ensemble: Annotated[FacetValues, QueryFacet("variant_label")] = ()
-    time_frequency: Annotated[FacetValues, QueryFacet("reporting_interval")] = ()
-    cmor_table: Annotated[FacetValues, QueryFacet("processing_id")] = ()
-    realm: Annotated[FacetValues, QueryFacet("realm")] = ()
-    product: Annotated[FacetValues, QueryFacet(None)] = ()
-
-    other_terms: FacetValuesByName = {}
-    source_query: SourceQuery = None
-
-    def facet_values(self) -> dict[str, tuple[str, ...]]:
-        """Facets that are set, keyed by this class's own (stem) names."""
-        return facet_values_from_attributes(self)
-
-
-class SolrCMIP6Parameters(BaseModel):
-    """
-    CMIP6 facet values under their ESGF1/Solr param names.
-
-    ESGF1 genuinely still hosts CMIP6 (live-confirmed), so this is a real,
-    usable mapping -- not just a proof of expressibility. Not in the default
-    CMIP5 plan; injected when searching CMIP6 on an ESGF1 node.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    project: Annotated[FacetValues, QueryFacet("project")] = ()
-    source_id: Annotated[FacetValues, QueryFacet("model")] = ()
-    institution_id: Annotated[FacetValues, QueryFacet("institution")] = ()
-    experiment_id: Annotated[FacetValues, QueryFacet("experiment")] = ()
-    variant_label: Annotated[FacetValues, QueryFacet("variant_label")] = ()
-    variable_id: Annotated[FacetValues, QueryFacet("variable")] = ()
-    frequency: Annotated[FacetValues, QueryFacet("reporting_interval")] = ()
-    table_id: Annotated[FacetValues, QueryFacet("processing_id")] = ()
-    activity_id: Annotated[FacetValues, QueryFacet("activity")] = ()
-    nominal_resolution: Annotated[FacetValues, QueryFacet("resolution")] = ()
-    grid_label: Annotated[FacetValues, QueryFacet("grid_label")] = ()
-    realm: Annotated[FacetValues, QueryFacet("realm")] = ()
-
-    other_terms: FacetValuesByName = {}
-    source_query: SourceQuery = None
-
-    def facet_values(self) -> dict[str, tuple[str, ...]]:
-        """Facets that are set, keyed by this class's own (wire) names."""
-        return facet_values_from_attributes(self)
-
-
-class SolrCMIP7Parameters(BaseModel):
-    """
-    CMIP7 facet values under ESGF1/Solr param names (best-guess).
-
-    Defined to prove that any project is expressible on any generation -- we do
-    NOT assume ESGF1 cannot host CMIP7. Not part of the default plan.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    project: Annotated[FacetValues, QueryFacet("project")] = ()
-    source_id: Annotated[FacetValues, QueryFacet("model")] = ()
-    institution_id: Annotated[FacetValues, QueryFacet("institution")] = ()
-    experiment_id: Annotated[FacetValues, QueryFacet("experiment")] = ()
-    variable_id: Annotated[FacetValues, QueryFacet("variable")] = ()
-    variant_label: Annotated[FacetValues, QueryFacet("variant_label")] = ()
-    frequency: Annotated[FacetValues, QueryFacet("reporting_interval")] = ()
-    branding_suffix: Annotated[FacetValues, QueryFacet("processing_id")] = ()
-    activity_id: Annotated[FacetValues, QueryFacet("activity")] = ()
-    grid_label: Annotated[FacetValues, QueryFacet("grid_label")] = ()
-    nominal_resolution: Annotated[FacetValues, QueryFacet("resolution")] = ()
-    realm: Annotated[FacetValues, QueryFacet("realm")] = ()
-
-    other_terms: FacetValuesByName = {}
-    source_query: SourceQuery = None
-
-    def facet_values(self) -> dict[str, tuple[str, ...]]:
-        """Facets that are set, keyed by this class's own (wire) names."""
-        return facet_values_from_attributes(self)
-
-
-class StacCMIP6Parameters(BaseModel):
-    """CMIP6 facet values under their ESGF-NG/STAC property stems."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    prefix: ClassVar[str] = "cmip6"
-
-    source_id: Annotated[FacetValues, QueryFacet("model")] = ()
-    institution_id: Annotated[FacetValues, QueryFacet("institution")] = ()
-    experiment_id: Annotated[FacetValues, QueryFacet("experiment")] = ()
-    variant_label: Annotated[FacetValues, QueryFacet("variant_label")] = ()
-    variable_id: Annotated[FacetValues, QueryFacet("variable")] = ()
-    frequency: Annotated[FacetValues, QueryFacet("reporting_interval")] = ()
-    table_id: Annotated[FacetValues, QueryFacet("processing_id")] = ()
-    activity_id: Annotated[FacetValues, QueryFacet("activity")] = ()
-    nominal_resolution: Annotated[FacetValues, QueryFacet("resolution")] = ()
-    grid_label: Annotated[FacetValues, QueryFacet("grid_label")] = ()
-    realm: Annotated[FacetValues, QueryFacet("realm")] = ()
-
-    other_terms: FacetValuesByName = {}
-    source_query: SourceQuery = None
-
-    def facet_values(self) -> dict[str, tuple[str, ...]]:
-        """Facets that are set, keyed by this class's own (stem) names."""
-        return facet_values_from_attributes(self)
-
-
-class StacCMIP7Parameters(BaseModel):
-    """
-    CMIP7 facet values under their ESGF-NG/STAC property stems.
-
-    Note the drift: CMIP7's processing_id is `variable_branding_suffix` on the
-    STAC wire (-> cmip7:variable_branding_suffix), not `branding_suffix` as the
-    CMIP7 dialect and Solr name have it. This is exactly why generations own
-    their OWN vocabularies instead of reusing the dialect's.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    prefix: ClassVar[str] = "cmip7"
-
-    source_id: Annotated[FacetValues, QueryFacet("model")] = ()
-    institution_id: Annotated[FacetValues, QueryFacet("institution")] = ()
-    experiment_id: Annotated[FacetValues, QueryFacet("experiment")] = ()
-    variant_label: Annotated[FacetValues, QueryFacet("variant_label")] = ()
-    variable_id: Annotated[FacetValues, QueryFacet("variable")] = ()
-    frequency: Annotated[FacetValues, QueryFacet("reporting_interval")] = ()
-    variable_branding_suffix: Annotated[FacetValues, QueryFacet("processing_id")] = ()
-    activity_id: Annotated[FacetValues, QueryFacet("activity")] = ()
-    nominal_resolution: Annotated[FacetValues, QueryFacet("resolution")] = ()
-    grid_label: Annotated[FacetValues, QueryFacet("grid_label")] = ()
-    realm: Annotated[FacetValues, QueryFacet("realm")] = ()
-
-    other_terms: FacetValuesByName = {}
-    source_query: SourceQuery = None
-
-    def facet_values(self) -> dict[str, tuple[str, ...]]:
-        """Facets that are set, keyed by this class's own (stem) names."""
-        return facet_values_from_attributes(self)
 
 
 # =============================================================================

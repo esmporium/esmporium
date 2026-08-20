@@ -1,25 +1,29 @@
+"""
+Here we define some pieces shared by the translation tests
+"""
+
 from __future__ import annotations
 
 import pytest
 
 from esmporium.query import Query, QueryCMIP5, QueryCMIP6, QueryCMIP7
 
-"""
-Here we define some pieces shared by the translation tests
-
-Specifically, the same query, written in each query class we support,
-plus what it should look like once rendered into each other query class.
-
-Only the facets which every query class can express are set, so these can be
-translated in any direction without tripping the fail-loud rule.
-Tests which care about a facet some query does not support need to set it up themselves.
-"""
-
 
 @pytest.fixture
 def common_inputs() -> dict[str, object]:
     """
     The same query, written in each query class
+
+    The expected outputs for translations using these inputs
+    is captured in [common_expected][].
+
+    Specifically, the same query, written in each query class we support,
+    plus what it should look like once rendered into each other query class.
+
+    Only the facets which every query class can express are set, so these can be
+    translated in any direction without tripping the fail-loud rule.
+    Tests which care about a facet some query does not support
+    need to set it up themselves.
     """
     return {
         "canonical": Query(
