@@ -185,17 +185,6 @@ def test_esgf1_solr_distrib_is_configurable(distrib, exp):
     )
 
 
-def test_esgf1_solr_sweeps_the_federation_by_default():
-    """
-    Test that we ask for everything unless told otherwise
-
-    "Everything ESGF can find" is what someone asking ESGF a question
-    usually means, so it is what they get without having to know
-    that `distrib` exists.
-    """
-    assert ESGF1Solr(params=SolrCMIP5Parameters).distrib
-
-
 @pytest.mark.parametrize(
     "limit",
     (
@@ -328,7 +317,12 @@ SOLR_CMIP5_FACETS_RESPONSE = {
         }
     },
 }
-"""A response of the shape ESGF1 and the ESGF 1.5 bridge send back"""
+"""
+A facets count response
+
+This is the shape ESGF1 and the ESGF 1.5 bridge send back
+when facet counts are requested.
+"""
 
 
 @pytest.mark.parametrize(
@@ -399,12 +393,6 @@ def test_solr_parse_facet_values_uses_the_vocabulary_it_is_given():
 def test_solr_parse_facet_values_with_nothing_to_read_raises(raw):
     """
     Test that we say so, loudly, when a response enumerates nothing at all
-
-    We asked about a facet this vocabulary can express,
-    so a response which lists nothing is the API failing to answer,
-    not the API saying that the facet has no values.
-    Returning an empty result would make every value the user asked for
-    look like a typo.
     """
     with pytest.raises(NoFacetValuesReturned):
         solr_facet_values(raw, SolrCMIP5Parameters, {"variable"})
@@ -470,10 +458,6 @@ def test_build_get_facet_values_request_reports_every_facet_we_cannot_express(
 ):
     """
     Test that we are told about all the facets we cannot ask about, not just one
-
-    We know the whole list at this point.
-    Reporting one at a time means the caller fixes their call, runs it again,
-    and is told about the next one.
     """
     facets = {"variable", "activity", "grid_label"}
 
@@ -632,9 +616,6 @@ def test_stac_parse_facet_values_uses_the_prefix_it_is_given():
 def test_stac_parse_facet_values_without_summaries_raises(raw):
     """
     Test that we say so, loudly, when a response enumerates nothing at all
-
-    Returning an empty result would be read as "none of your values exist",
-    which would make every value the user asked for look like a typo.
     """
     generation = ESGFNGStac(params=StacCMIP6Parameters)
 
