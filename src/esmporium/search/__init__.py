@@ -42,6 +42,7 @@ from esmporium.search.esgf_generations import (
     unexpressible_facets,
 )
 from esmporium.search.retry import build_transient_retrying
+from esmporium.search.search import fire, search
 from esmporium.search.search_api import (
     DEFAULT_SELECTOR,
     SearchAPI,
@@ -81,9 +82,9 @@ __all__ = [
     "check_facets_askable",
     "check_facets_expressible",
     "check_limit",
-    "list_selector",
+    "fire",
     "native_facet_names",
-    "project_ranked_selector",
+    "search",
     "solr_bool",
     "solr_facet_values",
     "solr_num_found",

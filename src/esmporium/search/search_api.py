@@ -92,9 +92,7 @@ STAC_CMIP6 = ESGFNGStac(params=StacCMIP6Parameters)
 STAC_CMIP7 = ESGFNGStac(params=StacCMIP7Parameters)
 
 
-# Why can't we do the below?
-# SearchAPISelector = Callable[[QueryCanonical, int], SearchAPI | None]
-SearchAPISelector = Callable[[QueryCanonical, int], "SearchAPI | None"]
+SearchAPISelector = Callable[[QueryCanonical, int], SearchAPI | None]
 """
 Chooses which endpoint to try next
 
