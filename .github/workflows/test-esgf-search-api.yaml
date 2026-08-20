@@ -1,0 +1,54 @@
+# Test that we can still talk to the live ESGF search APIs.
+#
+# These tests are opt in (see `OPT_IN_MARKERS` in `tests/conftest.py`),
+# so nothing else runs them. They live here, rather than in `ci.yaml`,
+# because a failure here means something different from a failure there:
+# an API we do not control changed, went down, or started answering
+# differently. Our unit tests cover the same code without a network
+# connection, so if this workflow is red and CI is green,
+# the change is on their end.
+#
+# That is also why this does not run on pull requests.
+# A pull request going red because somebody else's server is having a bad day
+# tells the author nothing they can act on,
+# and teaches everyone to ignore a red tick.
+name: Test ESGF search API
+
+on:
+  # So you can check by hand, e.g. before relying on a search in anger.
+  workflow_dispatch:
+  # Every merge to main, so a change which breaks our end is caught
+  # close to when it landed.
+  push:
+    branches: [main]
+  schedule:
+    # * is a special character in YAML so you have to quote this string
+    # This means At 03:00 on Wednesday,
+    # the same time as the PyPI install tests
+    # (see `install-pypi.yaml`, which deliberately does not run these).
+    - cron: '0 3 * * 3'
+
+jobs:
+  tests-esgf-search-api:
+    name: Test the ESGF search APIs
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ "ubuntu-latest" ]
+        # One Python version is plenty.
+        # This is testing somebody else's server, not our support matrix.
+        python-version: [ "3.11" ]
+    runs-on: "${{ matrix.os }}"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+      - uses: ./.github/actions/setup
+        with:
+          python-version: ${{ matrix.python-version }}
+          uv-dependency-install-flags: "--group tests --all-extras"
+      - name: Run the tests which talk to the live ESGF search APIs
+        run: |
+          uv run --group tests pytest tests -r a -v --run-hits-esgf-search-api -m hits_esgf_search_api

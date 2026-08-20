@@ -118,7 +118,12 @@ jobs:
           # Don't need interactive plots
           MPLBACKEND: Agg
         run: |
-          uv run --group tests pytest -r a -v src tests --doctest-modules --doctest-report ndiff --cov=esmporium --cov-report=term-missing --cov-report=xml
+          # `--run-network` picks up the tests which need ordinary network access,
+          # e.g. installing a previous release from PyPI to check that a database
+          # it wrote can still be migrated. Those are worth running on every
+          # change. The ESGF search API tests are NOT included: they have their
+          # own workflow, on their own schedule.
+          uv run --group tests pytest -r a -v src tests --run-network --doctest-modules --doctest-report ndiff --cov=esmporium --cov-report=term-missing --cov-report=xml
           uv run --group dev coverage report
       - name: Upload coverage reports to Codecov with GitHub Action
         uses: codecov/codecov-action@v6
@@ -173,7 +178,11 @@ jobs:
           # Don't need interactive plots
           MPLBACKEND: Agg
         run: |
-          uv run --no-sync pytest tests -r a -v
+          # `--run-network` as in the `tests` job above:
+          # the tests which need ordinary network access are opt in.
+          # The ESGF search API tests are not included here either;
+          # they have their own workflow.
+          uv run --no-sync pytest tests -r a -v --run-network
 
   tests-without-extras:
     # Run the tests without installing extras.
@@ -213,7 +222,11 @@ jobs:
           # Don't need interactive plots
           MPLBACKEND: Agg
         run: |
-          pytest tests -r a -vv tests
+          # `--run-network` as in the `tests` job above:
+          # the tests which need ordinary network access are opt in.
+          # The ESGF search API tests are not included here either;
+          # they have their own workflow.
+          pytest tests -r a -vv tests --run-network
 
   imports-without-extras:
     strategy:

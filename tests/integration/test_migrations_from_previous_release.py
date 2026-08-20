@@ -33,6 +33,11 @@ from sqlmodel import Session
 
 from esmporium.db import Dataset, migrate
 
+# Installing the previous release means going to PyPI.
+# That is ordinary network access rather than an API we care about in its own
+# right, so it gets the generic marker.
+pytestmark = pytest.mark.network
+
 FIRST_RELEASE_WITH_A_DATABASE: str | None = None
 """
 First released version of esmporium that ships a database
@@ -176,6 +181,34 @@ def test_database_from_previous_release_can_be_migrated(
     The fix is in the migration, not in this test:
     a migration that has to cope with existing rows has to say what to do with them
     (see the notes on data migrations in `docs/development.md`).
+
+    Before this starts running for real, i.e. before
+    `FIRST_RELEASE_WITH_A_DATABASE` is set, work out how to install the previous
+    release without `uv`.
+
+    `create_database_with_previous_release` shells out to `uv run --with`,
+    which is by far the neatest way to get a throwaway environment holding a
+    different version of ourselves. The catch is CI: the `tests-without-extras`
+    job builds its environment with `setup-python` and pip, deliberately, to
+    mirror what a plain PyPI install gives someone, and there is no `uv` on the
+    path there. Today that does not matter, because the skip above means this
+    test never runs. On the day it does, that job would go red for a reason
+    that has nothing to do with what it is meant to be checking.
+
+    Adding `uv` to that job would fix the symptom and spoil the job: the whole
+    point of it is that it does not have our tooling. So the change belongs
+    here. Options, roughly in order of how much we like them:
+
+    - build the environment with `pip install --target` into a temporary
+      directory and run the script with that on `PYTHONPATH`;
+      pip is there in every environment which can run pytest at all
+    - keep `uv` when it is on the path and fall back to pip when it is not,
+      which works everywhere but means two code paths to keep honest
+    - skip when `uv` is missing, which keeps this simple and quietly gives up
+      exactly the coverage the job was added for
+
+    Whichever we pick, `--run-network` can stay on `tests-without-extras`
+    (see `.github/workflows/ci.yaml`) and that job can stay as it is.
     """
     releases = get_releases()
     if FIRST_RELEASE_WITH_A_DATABASE not in releases:

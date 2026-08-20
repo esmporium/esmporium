@@ -1,0 +1,34 @@
+json_body:
+  filter:
+    args:
+    - args:
+      - property: collection
+      - CMIP6
+      op: '='
+    - args:
+      - property: cmip6:experiment_id
+      - - historical
+        - ssp126
+      op: in
+    - args:
+      - property: cmip6:variable_id
+      - - tas
+      op: in
+    - args:
+      - property: cmip6:frequency
+      - - mon
+      op: in
+    - args:
+      - property: cmip6:table_id
+      - - Amon
+      op: in
+    - args:
+      - property: cmip6:sub_experiment_id
+      - - none
+      op: in
+    op: and
+  filter-lang: cql2-json
+  limit: 25
+method: POST
+params: null
+path: /search

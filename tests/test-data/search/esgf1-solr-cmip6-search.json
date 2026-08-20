@@ -1,0 +1,314 @@
+{
+  "facet_counts": {
+    "facet_fields": {},
+    "facet_heatmaps": {},
+    "facet_intervals": {},
+    "facet_queries": {},
+    "facet_ranges": {}
+  },
+  "response": {
+    "docs": [
+      {
+        "_timestamp": "2020-07-26T20:06:10.166Z",
+        "_version_": 1803475733099577344,
+        "access": [
+          "HTTPServer",
+          "OPENDAP"
+        ],
+        "activity_drs": [
+          "CMIP"
+        ],
+        "activity_id": [
+          "CMIP"
+        ],
+        "cf_standard_name": [
+          "air_temperature"
+        ],
+        "citation_url": [
+          "http://cera-www.dkrz.de/WDCC/meta/CMIP6/CMIP6.CMIP.AS-RCEC.TaiESM1.historical.r1i1p1f1.Amon.tas.gn.v20200218.json"
+        ],
+        "data_node": "esgf.ceda.ac.uk",
+        "data_specs_version": [
+          "01.00.31"
+        ],
+        "dataset_id_template_": [
+          "%(mip_era)s.%(activity_drs)s.%(institution_id)s.%(source_id)s.%(experiment_id)s.%(member_id)s.%(table_id)s.%(variable_id)s.%(grid_label)s"
+        ],
+        "datetime_start": "1850-01-16T12:00:00Z",
+        "datetime_stop": "2014-12-16T12:00:00Z",
+        "directory_format_template_": [
+          "%(root)s/%(mip_era)s/%(activity_drs)s/%(institution_id)s/%(source_id)s/%(experiment_id)s/%(member_id)s/%(table_id)s/%(variable_id)s/%(grid_label)s/%(version)s"
+        ],
+        "east_degrees": 358.75,
+        "experiment_id": [
+          "historical"
+        ],
+        "experiment_title": [
+          "all-forcing simulation of the recent past"
+        ],
+        "frequency": [
+          "mon"
+        ],
+        "further_info_url": [
+          "https://furtherinfo.es-doc.org/CMIP6.AS-RCEC.TaiESM1.historical.none.r1i1p1f1"
+        ],
+        "geo": [
+          "ENVELOPE(-180.0, -1.25, 90.0, -90.0)",
+          "ENVELOPE(0.0, 180.0, 90.0, -90.0)"
+        ],
+        "geo_units": [
+          "degrees_east"
+        ],
+        "grid": [
+          "finite-volume grid with 0.9x1.25 degree lat/lon resolution"
+        ],
+        "grid_label": [
+          "gn"
+        ],
+        "id": "CMIP6.CMIP.AS-RCEC.TaiESM1.historical.r1i1p1f1.Amon.tas.gn.v20200218|esgf.ceda.ac.uk",
+        "index_node": "esgf.ceda.ac.uk",
+        "instance_id": "CMIP6.CMIP.AS-RCEC.TaiESM1.historical.r1i1p1f1.Amon.tas.gn.v20200218",
+        "institution_id": [
+          "AS-RCEC"
+        ],
+        "latest": false,
+        "master_id": "CMIP6.CMIP.AS-RCEC.TaiESM1.historical.r1i1p1f1.Amon.tas.gn",
+        "member_id": [
+          "r1i1p1f1"
+        ],
+        "mip_era": [
+          "CMIP6"
+        ],
+        "model_cohort": [
+          "Registered"
+        ],
+        "nominal_resolution": [
+          "100 km"
+        ],
+        "north_degrees": 90.0,
+        "number_of_files": 1,
+        "pid": [
+          "hdl:21.14100/1998f277-44f4-308c-af59-3e3bb67213c7"
+        ],
+        "product": [
+          "model-output"
+        ],
+        "project": [
+          "CMIP6"
+        ],
+        "realm": [
+          "atmos"
+        ],
+        "replica": true,
+        "retracted": true,
+        "score": 1.0,
+        "size": 243091512,
+        "source_id": [
+          "TaiESM1"
+        ],
+        "source_type": [
+          "AOGCM",
+          "AER",
+          "BGC"
+        ],
+        "south_degrees": -90.0,
+        "sub_experiment_id": [
+          "none"
+        ],
+        "table_id": [
+          "Amon"
+        ],
+        "title": "CMIP6.CMIP.AS-RCEC.TaiESM1.historical.r1i1p1f1.Amon.tas.gn",
+        "type": "Dataset",
+        "variable": [
+          "tas"
+        ],
+        "variable_id": [
+          "tas"
+        ],
+        "variable_long_name": [
+          "Near-Surface Air Temperature"
+        ],
+        "variable_units": [
+          "K"
+        ],
+        "variant_label": [
+          "r1i1p1f1"
+        ],
+        "version": "20200218",
+        "west_degrees": 0.0,
+        "xlink": [
+          "http://cera-www.dkrz.de/WDCC/meta/CMIP6/CMIP6.CMIP.AS-RCEC.TaiESM1.historical.r1i1p1f1.Amon.tas.gn.v20200218.json|Citation|citation",
+          "http://hdl.handle.net/hdl:21.14100/1998f277-44f4-308c-af59-3e3bb67213c7|PID|pid"
+        ]
+      },
+      {
+        "_timestamp": "2020-07-26T20:06:10.154Z",
+        "_version_": 1803475733100625920,
+        "access": [
+          "HTTPServer",
+          "OPENDAP"
+        ],
+        "activity_drs": [
+          "CMIP"
+        ],
+        "activity_id": [
+          "CMIP"
+        ],
+        "cf_standard_name": [
+          "air_temperature"
+        ],
+        "citation_url": [
+          "http://cera-www.dkrz.de/WDCC/meta/CMIP6/CMIP6.CMIP.AS-RCEC.TaiESM1.historical.r1i1p1f1.Amon.tas.gn.v20200623.json"
+        ],
+        "data_node": "esgf.ceda.ac.uk",
+        "data_specs_version": [
+          "01.00.31"
+        ],
+        "dataset_id_template_": [
+          "%(mip_era)s.%(activity_drs)s.%(institution_id)s.%(source_id)s.%(experiment_id)s.%(member_id)s.%(table_id)s.%(variable_id)s.%(grid_label)s"
+        ],
+        "datetime_start": "1850-01-16T12:00:00Z",
+        "datetime_stop": "2014-12-16T12:00:00Z",
+        "directory_format_template_": [
+          "%(root)s/%(mip_era)s/%(activity_drs)s/%(institution_id)s/%(source_id)s/%(experiment_id)s/%(member_id)s/%(table_id)s/%(variable_id)s/%(grid_label)s/%(version)s"
+        ],
+        "east_degrees": 358.75,
+        "experiment_id": [
+          "historical"
+        ],
+        "experiment_title": [
+          "all-forcing simulation of the recent past"
+        ],
+        "frequency": [
+          "mon"
+        ],
+        "further_info_url": [
+          "https://furtherinfo.es-doc.org/CMIP6.AS-RCEC.TaiESM1.historical.none.r1i1p1f1"
+        ],
+        "geo": [
+          "ENVELOPE(-180.0, -1.25, 90.0, -90.0)",
+          "ENVELOPE(0.0, 180.0, 90.0, -90.0)"
+        ],
+        "geo_units": [
+          "degrees_east"
+        ],
+        "grid": [
+          "finite-volume grid with 0.9x1.25 degree lat/lon resolution"
+        ],
+        "grid_label": [
+          "gn"
+        ],
+        "id": "CMIP6.CMIP.AS-RCEC.TaiESM1.historical.r1i1p1f1.Amon.tas.gn.v20200623|esgf.ceda.ac.uk",
+        "index_node": "esgf.ceda.ac.uk",
+        "instance_id": "CMIP6.CMIP.AS-RCEC.TaiESM1.historical.r1i1p1f1.Amon.tas.gn.v20200623",
+        "institution_id": [
+          "AS-RCEC"
+        ],
+        "latest": true,
+        "master_id": "CMIP6.CMIP.AS-RCEC.TaiESM1.historical.r1i1p1f1.Amon.tas.gn",
+        "member_id": [
+          "r1i1p1f1"
+        ],
+        "mip_era": [
+          "CMIP6"
+        ],
+        "model_cohort": [
+          "Registered"
+        ],
+        "nominal_resolution": [
+          "100 km"
+        ],
+        "north_degrees": 90.0,
+        "number_of_files": 1,
+        "pid": [
+          "hdl:21.14100/3ad422a9-f2ea-3341-a5d0-75495c051003"
+        ],
+        "product": [
+          "model-output"
+        ],
+        "project": [
+          "CMIP6"
+        ],
+        "realm": [
+          "atmos"
+        ],
+        "replica": true,
+        "retracted": false,
+        "score": 1.0,
+        "size": 243056081,
+        "source_id": [
+          "TaiESM1"
+        ],
+        "source_type": [
+          "AOGCM",
+          "AER",
+          "BGC"
+        ],
+        "south_degrees": -90.0,
+        "sub_experiment_id": [
+          "none"
+        ],
+        "table_id": [
+          "Amon"
+        ],
+        "title": "CMIP6.CMIP.AS-RCEC.TaiESM1.historical.r1i1p1f1.Amon.tas.gn",
+        "type": "Dataset",
+        "variable": [
+          "tas"
+        ],
+        "variable_id": [
+          "tas"
+        ],
+        "variable_long_name": [
+          "Near-Surface Air Temperature"
+        ],
+        "variable_units": [
+          "K"
+        ],
+        "variant_label": [
+          "r1i1p1f1"
+        ],
+        "version": "20200623",
+        "west_degrees": 0.0,
+        "xlink": [
+          "http://cera-www.dkrz.de/WDCC/meta/CMIP6/CMIP6.CMIP.AS-RCEC.TaiESM1.historical.r1i1p1f1.Amon.tas.gn.v20200623.json|Citation|citation",
+          "http://hdl.handle.net/hdl:21.14100/3ad422a9-f2ea-3341-a5d0-75495c051003|PID|pid"
+        ]
+      }
+    ],
+    "maxScore": 1.0,
+    "numFound": 2322,
+    "start": 0
+  },
+  "responseHeader": {
+    "QTime": 25,
+    "params": {
+      "df": "text",
+      "echoParams": "all",
+      "facet": "true",
+      "facet.limit": "-1",
+      "facet.method": "enum",
+      "facet.mincount": "1",
+      "facet.sort": "lex",
+      "fl": "*,score",
+      "fq": [
+        "type:Dataset",
+        "project:\"CMIP6\"",
+        "experiment_id:\"historical\"",
+        "variable_id:\"tas\"",
+        "frequency:\"mon\""
+      ],
+      "indent": "true",
+      "q": "*:*",
+      "q.alt": "*:*",
+      "qf": "text",
+      "rows": "2",
+      "shards": "solr-slave:8983/solr/datasets,solr-replica-ceda:8983/solr/datasets,solr-replica-dkrz:8983/solr/datasets,solr-replica-ipsl:8983/solr/datasets,solr-replica-liu:8983/solr/datasets,solr-replica-noaa:8983/solr/datasets",
+      "start": "0",
+      "tie": "0.01",
+      "wt": "json"
+    },
+    "status": 0
+  }
+}

@@ -1,0 +1,34 @@
+json_body:
+  filter:
+    args:
+    - args:
+      - property: collection
+      - CMIP5
+      op: '='
+    - args:
+      - property: cmip5:experiment
+      - - historical
+        - rcp85
+      op: in
+    - args:
+      - property: cmip5:variable
+      - - tas
+      op: in
+    - args:
+      - property: cmip5:ensemble
+      - - r1i1p1
+      op: in
+    - args:
+      - property: cmip5:time_frequency
+      - - mon
+      op: in
+    - args:
+      - property: cmip5:product
+      - - output1
+      op: in
+    op: and
+  filter-lang: cql2-json
+  limit: 25
+method: POST
+params: null
+path: /search

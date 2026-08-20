@@ -48,7 +48,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any
 
 import httpx
 from tenacity import (
@@ -64,315 +64,28 @@ from esmporium.query import (
     QueryCMIP6,
     QueryCMIP7,
     QueryProtocol,
-    facet_spec,
-    from_canonical,
     to_canonical,
 )
 
-# The param classes: one per (wire-format, project). Same annotated idiom as the
-# query classes, and, like them, NO shared base class: each is a standalone
-# BaseModel that conforms to QueryProtocol structurally and delegates its one
-# behaviour (`facet_values`) to the shared free function. The wire name is the
-# FIELD name; QueryFacet says which canonical facet it is.
+# The generations (wire formats) and the param classes (one per
+# (wire-format, project)) now live in `esmporium.search.esgf_generations`.
+# What is left here is everything a generation deliberately does NOT know about:
+# which hosts exist, what to do when one does not answer, and in what order to
+# try them.
 from esmporium.search import (
+    DEFAULT_LIMIT,
+    ESGF1Solr,
+    ESGF15Bridge,
+    ESGFNGStac,
+    Request,
+    SearchAPIGeneration,
     SolrCMIP5Parameters,
     SolrCMIP6Parameters,
     SolrCMIP7Parameters,
     StacCMIP5Parameters,
     StacCMIP6Parameters,
     StacCMIP7Parameters,
-    StacParams,
 )
-
-# =============================================================================
-# Page-size (`limit`) rules, verified live against both wire formats.
-# `limit` is the PAGE SIZE -- the max records in ONE response -- not the total
-# match count (that is numFound / numberMatched). Both wires cap a page at
-# 10_000. The two APIs chose different FLOORS: Solr accepts 0 (a "count only"
-# request -- what every probe here uses), while STAC's floor is 1 (limit=0 ->
-# HTTP 422). So a 0 that is fine for Solr must be bumped to 1 on the STAC path --
-# that is the ONLY reason for the max(limit, STAC_MIN_LIMIT) coercion below.
-# =============================================================================
-MAX_LIMIT = 10_000  # >10_000 -> Solr HARD 400 / STAC SILENT truncation; we raise
-DEFAULT_LIMIT = 10_000  # take a full page by default
-SOLR_MIN_LIMIT = 0  # Solr allows a 0-doc "just the count" request
-STAC_MIN_LIMIT = 1  # STAC rejects limit=0 (422); smallest valid page is 1
-
-
-def _limit_error(limit: int) -> ValueError:
-    """Build the error raised when a requested page exceeds MAX_LIMIT."""
-    msg = f"limit {limit} exceeds MAX_LIMIT {MAX_LIMIT}; paginate instead"
-    return ValueError(msg)
-
-
-# =============================================================================
-# The request a generation produces. `method` carries the GET/POST difference,
-# so the fire loop never has to branch on it.
-# =============================================================================
-@dataclass(frozen=True)
-class Request:
-    """A ready-to-send HTTP request, minus the host."""
-
-    method: str
-    path: str
-    params: dict[str, Any] | None = None
-    json_body: dict[str, Any] | None = None
-
-
-# =============================================================================
-# The generation interface + its two implementations. Each is handed a single
-# params class; nothing is keyed by project (STAC's prefix rides on the params).
-# =============================================================================
-class SearchAPIGeneration(Protocol):
-    """The wire format of a family of endpoints."""
-
-    name: str
-
-    def build_request(self, canonical: QueryCanonical, limit: int) -> Request:
-        """Turn a canonical query into a request in this generation's format."""
-        ...
-
-    def result_count(self, raw: dict[str, Any]) -> int | None:
-        """Read the match count out of a raw response (for logging/emptiness)."""
-        ...
-
-    def build_facets_request(
-        self, canonical: QueryCanonical, facets: set[str]
-    ) -> Request:
-        """
-        Build a "list the values of these facets" request, PROJECT-SCOPED.
-
-        `facets` are CANONICAL facet names. The request scopes to the query's
-        project ONLY -- NOT the user's other (possibly-typo'd) values -- so one
-        facet's mistake can never make another look invalid. Wires that cannot
-        enumerate values raise FacetListingNotSupported.
-        """
-        ...
-
-    def parse_facet_values(
-        self, raw: dict[str, Any], facets: set[str]
-    ) -> dict[str, set[str]]:
-        """Read {canonical facet: set of available values} from a facets response."""
-        ...
-
-
-def solr_num_found(raw: dict[str, Any]) -> int | None:
-    """Read `numFound` from a Solr-shaped reply (esg-search or the 1.5 bridge)."""
-    return raw.get("response", {}).get("numFound")
-
-
-class FacetListingNotSupported(RuntimeError):
-    """
-    A generation whose wire API cannot enumerate a facet's possible values.
-
-    ESGF-NG/STAC is the live example: its aggregation extension exposes only
-    generic aggregations (never per-facet value lists) and its queryables carry
-    property names without enums -- verified against data-rich CMIP6, so this is
-    an API limit, not a data-sparsity artifact. CMIP7 value-checking therefore
-    routes to the controlled-vocabulary source, not to this generation.
-    """
-
-    def __init__(
-        self,
-        msg: str = "this wire API cannot list facet values; check against the CV",
-    ) -> None:
-        """Initialise with a default explanation callers can override."""
-        super().__init__(msg)
-
-
-def solr_facet_values(
-    raw: dict[str, Any], params: type[QueryProtocol], facets: set[str]
-) -> dict[str, set[str]]:
-    """
-    Read a Solr `facet_counts.facet_fields` block into {canonical facet: values}.
-
-    The block is keyed by WIRE names, each value a flat [val, count, val, count,
-    ...] list; we take the values (even indices) and map the wire name back to its
-    canonical facet, keeping only the facets we asked about.
-    """
-    spec = facet_spec(params)
-    fields = raw.get("facet_counts", {}).get("facet_fields", {})
-    out: dict[str, set[str]] = {}
-    for wire_name, flat in fields.items():
-        canonical = spec.native_to_canonical.get(wire_name)
-        if canonical in facets:
-            out[canonical] = set(flat[0::2])
-    return out
-
-
-@dataclass(frozen=True)
-class ESGF1Solr:
-    """ESGF1 / Solr (esg-search). Flat GET; multiple values -> repeated params."""
-
-    params: type[QueryProtocol]
-    name: str = "ESGF1"
-
-    def build_request(self, canonical: QueryCanonical, limit: int) -> Request:
-        """Render `canonical` as a Solr GET request."""
-        native = from_canonical(canonical=canonical, to=self.params)
-
-        query: dict[str, Any] = {
-            "format": "application/solr+json",
-            "limit": limit,  # Solr floor is 0 (count-only); cap enforced in search()
-            "distrib": "true",  # federated sweep: this node mirrors the federation
-        }
-        for wire_name, values in native.facet_values().items():
-            query[wire_name] = list(values)  # httpx repeats list params
-        return Request("GET", "/esg-search/search", params=query)
-
-    def result_count(self, raw: dict[str, Any]) -> int | None:
-        """Read Solr's `numFound` out of a raw response."""
-        return solr_num_found(raw)
-
-    def build_facets_request(
-        self, canonical: QueryCanonical, facets: set[str]
-    ) -> Request:
-        """List the given facets' values, scoped to the query's project only."""
-        spec = facet_spec(self.params)
-        wire = sorted(
-            spec.canonical_to_native[f] for f in facets if f in spec.canonical_to_native
-        )
-        query: dict[str, Any] = {
-            "format": "application/solr+json",
-            "facets": ",".join(wire),  # facets= is a comma list on BOTH Solr wires
-            "limit": 0,  # count-only: we want the vocabulary, not the docs
-            "distrib": "true",
-        }
-        project_wire = spec.canonical_to_native.get("project")
-        if project_wire and canonical.project:
-            query[project_wire] = list(canonical.project)  # scope, not a value filter
-        return Request("GET", "/esg-search/search", params=query)
-
-    def parse_facet_values(
-        self, raw: dict[str, Any], facets: set[str]
-    ) -> dict[str, set[str]]:
-        """Read {canonical facet: available values} from the facet_counts block."""
-        return solr_facet_values(raw, self.params, facets)
-
-
-@dataclass(frozen=True)
-class ESGF15Bridge:
-    """
-    ESGF 1.5 bridge (ORNL). Solr-shaped REPLIES but a stricter request dialect.
-
-    Same param NAMES as ESGF1/Solr, so it reuses the same params class -- only the
-    ENCODING differs: multi-value facets are COMMA-joined (repeated params would
-    be silently reduced to one value), no `distrib` (it is a single consolidated
-    ESGF-1.5 index, not a federation), and it answers at its own path. `retracted`
-    is likewise not accepted (422), so inclusion is left to the bridge's default.
-    """
-
-    params: type[QueryProtocol]
-    name: str = "ESGF15"
-
-    def build_request(self, canonical: QueryCanonical, limit: int) -> Request:
-        """Render `canonical` as an ESGF-1.5-bridge GET request."""
-        native = from_canonical(canonical=canonical, to=self.params)
-
-        query: dict[str, Any] = {
-            "format": "application/solr+json",
-            "limit": limit,  # Solr floor is 0 (count-only); cap enforced in search()
-        }
-        for wire_name, values in native.facet_values().items():
-            query[wire_name] = ",".join(values)  # bridge ORs on COMMA, not repeats
-        return Request("GET", "/esgf-1-5-bridge/", params=query)
-
-    def result_count(self, raw: dict[str, Any]) -> int | None:
-        """Read the match count (bridge replies are Solr-shaped)."""
-        return solr_num_found(raw)
-
-    def build_facets_request(
-        self, canonical: QueryCanonical, facets: set[str]
-    ) -> Request:
-        """
-        List the given facets' values on the 1.5 bridge, project-scoped.
-
-        NOTE: facets= support on the bridge is UNVERIFIED. In the default plans the
-        bridge is never the top-ranked node, and the value-checker asks attempt 0,
-        so it hits esg-search, not this. Verify live before relying on this path.
-        """
-        spec = facet_spec(self.params)
-        wire = sorted(
-            spec.canonical_to_native[f] for f in facets if f in spec.canonical_to_native
-        )
-        query: dict[str, Any] = {
-            "format": "application/solr+json",
-            "facets": ",".join(wire),
-            "limit": 0,
-        }
-        project_wire = spec.canonical_to_native.get("project")
-        if project_wire and canonical.project:
-            query[project_wire] = ",".join(canonical.project)  # bridge ORs on comma
-        return Request("GET", "/esgf-1-5-bridge/", params=query)
-
-    def parse_facet_values(
-        self, raw: dict[str, Any], facets: set[str]
-    ) -> dict[str, set[str]]:
-        """Read {canonical facet: available values} (bridge replies are Solr-shaped)."""
-        return solr_facet_values(raw, self.params, facets)
-
-
-@dataclass(frozen=True)
-class ESGFNGStac:
-    """ESGF-NG / STAC 1.0 + CQL2. JSON POST; values -> a CQL2 AND-of-IN tree."""
-
-    params: type[StacParams]
-    name: str = "ESGF_NG"
-
-    def build_request(self, canonical: QueryCanonical, limit: int) -> Request:
-        """Render `canonical` as a STAC/CQL2 POST request."""
-        # project is the collection id, not a property, so translate WITHOUT it.
-        # Taken as the user gave it (assumed already in the correct case, e.g.
-        # "CMIP5"); we do not second-guess it.
-
-        collection = canonical.project[0]
-        without_project = canonical.model_copy(update={"project": ()})
-        native = from_canonical(canonical=without_project, to=self.params)
-
-        and_clauses: list[dict[str, Any]] = [
-            {"op": "=", "args": [{"property": "collection"}, collection]},
-        ]
-        for stem, values in native.facet_values().items():
-            and_clauses.append(
-                {
-                    "op": "in",
-                    "args": [
-                        {"property": f"{self.params.prefix}:{stem}"},
-                        list(values),
-                    ],
-                }
-            )
-
-        body = {
-            "filter-lang": "cql2-json",
-            # STAC's floor is 1 (limit=0 -> 422); Solr's floor is 0 ("count
-            # only"), so a 0 that Solr accepts must be bumped here for STAC.
-            "limit": max(limit, STAC_MIN_LIMIT),
-            "filter": {"op": "and", "args": and_clauses},
-        }
-        return Request("POST", "/search", json_body=body)
-
-    def result_count(self, raw: dict[str, Any]) -> int | None:
-        """Read the match count, falling back to the feature count for west."""
-        matched = raw.get("numberMatched")
-        if matched is not None:
-            return matched
-        return len(raw.get("features", []))
-
-    def build_facets_request(
-        self, canonical: QueryCanonical, facets: set[str]
-    ) -> Request:
-        """STAC cannot enumerate facet values -- see FacetListingNotSupported."""
-        # TODO: use esgvoc or, if esgvoc doesn't serve this (although I think it should)
-        # https://github.com/WCRP-CMIP/CMIP7-CVs/blob/main/cmip7-stac.json
-        raise FacetListingNotSupported
-
-    def parse_facet_values(
-        self, raw: dict[str, Any], facets: set[str]
-    ) -> dict[str, set[str]]:
-        """STAC cannot enumerate facet values -- see FacetListingNotSupported."""
-        raise FacetListingNotSupported
-
 
 # =============================================================================
 # Retry policy, via tenacity. A 5xx from ESGF1 means a load-balanced backend is
@@ -565,10 +278,10 @@ def search(
         is the next layer).
     limit
         PAGE SIZE (records per response), NOT the total -- the total matched is
-        numFound (Solr) == numberMatched (STAC). Capped at MAX_LIMIT; we raise
-        above it rather than trust Solr's 400 or STAC's silent truncation. Floors
-        differ per generation (Solr 0, STAC 1). Fetching beyond one page is
-        pagination, deferred to the next PR with the merge/dedup + DB recorder.
+        numFound (Solr) == numberMatched (STAC). The generation checks it against
+        MIN_LIMIT/MAX_LIMIT and raises rather than trusting Solr's 400 or STAC's
+        silent truncation. Fetching beyond one page is pagination, deferred to the
+        next PR with the merge/dedup + DB recorder.
 
     Returns
     -------
@@ -576,9 +289,6 @@ def search(
         Raw JSON per host. A node that never answers (exhausted / non-transient
         error) is omitted; empty-but-valid responses are kept.
     """
-    if limit > MAX_LIMIT:
-        raise _limit_error(limit)
-
     canonical = to_canonical(query)
     results: dict[str, Any] = {}
     attempt = 0

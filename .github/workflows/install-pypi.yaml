@@ -82,6 +82,15 @@ jobs:
         # rather than a super thorough integration test.
         # You will have to make sure that your tests run
         # without all the extras installed for this to pass.
+        #
+        # Note that the tests which hit the ESGF search API are deliberately
+        # not run here (they are opt in, so a plain `pytest` leaves them out).
+        # This workflow is a 30-job matrix, and we are not pointing 30 jobs at
+        # somebody else's search API at once. Even if we did, the result would
+        # be noise in this context: this workflow answers "does installing from
+        # PyPI give a working install", and whether ESGF happens to be up says
+        # nothing about that. Those tests have their own workflow,
+        # `test-esgf-search-api.yaml`, which runs on the same weekly schedule.
         pytest tests -r a -vv tests
     - name: Install all test dependencies
       run: |

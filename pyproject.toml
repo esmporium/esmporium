@@ -184,6 +184,13 @@ addopts = [
     # so `--doctest-modules` must not collect it.
     "--ignore=src/esmporium/db/migrations",
 ]
+markers = [
+    # These are opt in, not opt out: they are skipped
+    # unless their `--run-<marker-with-dashes>` flag is given.
+    # See `OPT_IN_MARKERS` in `tests/conftest.py`.
+    "network: test which needs network access, for something not worth naming",
+    "hits_esgf_search_api: test which talks to the live ESGF search APIs",
+]
 
 [tool.ruff]
 src = [
