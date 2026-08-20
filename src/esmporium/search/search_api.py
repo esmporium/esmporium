@@ -131,7 +131,7 @@ PROJECT_PLANS: Mapping[str, Sequence[SearchAPI]] = {
 """The default per-project ranking of endpoints to try"""
 
 
-SearchAPISelector = Callable[[QueryCanonical, int], "SearchAPI | None"]
+SearchAPISelector = Callable[[QueryCanonical, int], SearchAPI | None]
 """
 Chooses which endpoint to try next
 
