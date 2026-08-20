@@ -37,6 +37,7 @@ from esmporium.search import (
     SolrCMIP6Parameters,
     StacCMIP6Parameters,
     StacCMIP7Parameters,
+    native_facet_names,
 )
 
 pytestmark = pytest.mark.hits_esgf_search_api
@@ -154,7 +155,7 @@ def fire(client, host, request):
 @pytest.mark.parametrize("host, generation, query, native_facet", LIVE_CASES)
 def test_search_finds_data(client, host, generation, query, native_facet):
     """Test that a query we expect to match something does match something"""
-    request = generation.build_request(to_canonical(query), limit=5)
+    request = generation.build_search_request(to_canonical(query), limit=5)
 
     raw = fire(client, host, request)
 
@@ -176,7 +177,7 @@ def test_search_applies_the_facets_we_send(
     and every search we build with it is quietly unfiltered.
     """
     nonsense = query.model_copy(update={native_facet: (NOT_A_REAL_VALUE,)})
-    request = generation.build_request(to_canonical(nonsense), limit=5)
+    request = generation.build_search_request(to_canonical(nonsense), limit=5)
 
     raw = fire(client, host, request)
 
@@ -191,7 +192,7 @@ def test_facet_values_can_be_listed(client, host, generation, query, native_face
     `tas` is used as the probe because every project publishes it.
     """
     facets = {"variable", "reporting_interval", "model"}
-    request = generation.build_facets_request(to_canonical(query), facets)
+    request = generation.build_get_facet_values_request(to_canonical(query), facets)
 
     raw = fire(client, host, request)
     res = generation.parse_facet_values(raw, facets)
@@ -207,7 +208,12 @@ def every_facet(generation):
     Get every facet a generation's vocabulary can express
 
     Asking about one it cannot is an error rather than a request,
-    so "everything" has to mean everything this vocabulary has a name for.
+    so "everything" has to mean everything this vocabulary has a name for:
+    the canonical facets it maps, plus the ones which are its own
+    (`product` on CMIP5, `sub_experiment_id` on CMIP6, and so on).
+    Including the second kind is the point of asking for everything here:
+    the dialect-specific names are the ones we guessed at,
+    so these are the tests which find out whether we guessed right.
 
     Parameters
     ----------
@@ -217,12 +223,14 @@ def every_facet(generation):
     Returns
     -------
     :
-        The facets it can express, named in the canonical vocabulary
+        The facets it can express, named the way they are asked for
     """
-    res = set(facet_spec(generation.params).canonical_to_native)
-    assert res <= CANONICAL_FACETS
+    spec = facet_spec(generation.params)
 
-    return res
+    canonical = set(spec.canonical_to_native)
+    assert canonical <= CANONICAL_FACETS
+
+    return canonical | set(spec.query_specific_facets)
 
 
 @pytest.mark.parametrize("host, generation, query, native_facet", LIVE_CASES)
@@ -240,7 +248,7 @@ def test_facet_values_are_well_formed(client, host, generation, query, native_fa
     if we cannot list a facet's values, we leave it out.
     """
     facets = every_facet(generation)
-    request = generation.build_facets_request(to_canonical(query), facets)
+    request = generation.build_get_facet_values_request(to_canonical(query), facets)
 
     raw = fire(client, host, request)
     res = generation.parse_facet_values(raw, facets)
@@ -269,19 +277,21 @@ def test_facets_which_are_not_enumerated_are_left_out(
     if the API starts listing something it used to describe as a pattern.
     """
     facets = every_facet(generation)
-    request = generation.build_facets_request(to_canonical(query), facets)
+    request = generation.build_get_facet_values_request(to_canonical(query), facets)
 
     raw = fire(client, host, request)
     res = generation.parse_facet_values(raw, facets)
 
-    spec = facet_spec(generation.params)
     prefix = f"{generation.params.prefix}:"
+    asked_for = {
+        native: asked
+        for asked, native in native_facet_names(generation.params, facets).items()
+    }
     not_enumerated = {
-        canonical
+        asked
         for property_name, summary in raw["summaries"].items()
         if property_name.startswith(prefix)
-        and (canonical := spec.native_to_canonical.get(property_name[len(prefix) :]))
-        in facets
+        and (asked := asked_for.get(property_name[len(prefix) :])) is not None
         and not (
             isinstance(summary, list)
             and any(isinstance(value, str) for value in summary)

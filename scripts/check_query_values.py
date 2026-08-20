@@ -221,7 +221,7 @@ class SolrVocabularySource:
         self, canonical: QueryCanonical, facets: set[str]
     ) -> dict[str, set[str]]:
         """One project-scoped facets= request to the node; {} if it never answers."""
-        request = self.api.generation.build_facets_request(canonical, facets)
+        request = self.api.generation.build_get_facet_values_request(canonical, facets)
         with httpx.Client(follow_redirects=True) as client:
             raw = fire(client, self.api, request)
         if raw is None:  # node down / non-transient no -> nothing to check against

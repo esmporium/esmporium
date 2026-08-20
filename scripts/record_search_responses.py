@@ -145,14 +145,16 @@ def main() -> None:
 
             write(
                 f"{name}-search",
-                fetch(client, host, generation.build_request(canonical, LIMIT)),
+                fetch(client, host, generation.build_search_request(canonical, LIMIT)),
             )
             write(
                 f"{name}-facets",
                 fetch(
                     client,
                     host,
-                    generation.build_facets_request(canonical, FACETS_TO_LIST),
+                    generation.build_get_facet_values_request(
+                        canonical, FACETS_TO_LIST
+                    ),
                 ),
             )
 

@@ -26,21 +26,32 @@ class FacetNotExpressibleError(ValueError):
     Raised when a query facet cannot be expressed by a requested query class.
     """
 
-    def __init__(self, facet: str, query_class: str) -> None:
+    def __init__(self, facets: str | Collection[str], query_class: str) -> None:
         """
         Initialise the error
 
         Parameters
         ----------
-        facet
-            The facet under consideration
+        facets
+            The facet(s) under consideration
+
+            A single facet may be passed on its own.
+            Pass all of them when they are all known at once:
+            being told about one facet at a time
+            means fixing them one at a time.
 
         query_class
-            The name of the query class in which `facet` cannot be expressed
+            The name of the query class in which `facets` cannot be expressed
         """
-        self.facet = facet
+        if isinstance(facets, str):
+            facets = (facets,)
+
+        self.facets = tuple(sorted(facets))
         self.query_class = query_class
-        super().__init__(f"facet {facet!r} cannot be represented in {query_class}")
+
+        noun = "facet" if len(self.facets) == 1 else "facets"
+        named = ", ".join(repr(facet) for facet in self.facets)
+        super().__init__(f"{noun} {named} cannot be represented in {query_class}")
 
 
 class NoTargetProjectError(ValueError):

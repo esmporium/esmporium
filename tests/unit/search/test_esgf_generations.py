@@ -34,8 +34,9 @@ from esmporium.search import (
     ESGF1Solr,
     ESGF15Bridge,
     ESGFNGStac,
-    FacetListingNotSupported,
     LimitOutOfRangeError,
+    NoFacetValuesReturned,
+    NoResultCountReturned,
     OneProjectRequiredError,
     ProjectPrefixMismatchError,
     SolrCMIP5Parameters,
@@ -114,7 +115,7 @@ SOLR_GENERATION_CASES = tuple(
 
 
 @pytest.mark.parametrize("generation, query", GENERATION_CASES)
-def test_build_request(generation, query, data_regression):
+def test_build_search_request(generation, query, data_regression):
     """
     Test that the request we build for a search hasn't changed unnoticed
 
@@ -122,29 +123,29 @@ def test_build_request(generation, query, data_regression):
     describes is one the API would understand.
     If it is, regenerate with `--force-regen` (from pytest-regressions).
     """
-    request = generation.build_request(to_canonical(query), limit=25)
+    request = generation.build_search_request(to_canonical(query), limit=25)
 
     data_regression.check(asdict(request))
 
 
 @pytest.mark.parametrize("generation, query", GENERATION_CASES)
-def test_build_facets_request(generation, query, data_regression):
+def test_build_get_facet_values_request(generation, query, data_regression):
     """
     Test that the request we build to list facet values hasn't changed unnoticed
 
     Only facets every vocabulary here can express are asked for.
     Asking for one a vocabulary cannot express is an error, not a request:
-    see `test_build_facets_request_for_a_facet_we_cannot_express`.
+    see `test_build_get_facet_values_request_for_a_facet_we_cannot_express`.
     """
     facets = {"variable", "reporting_interval", "model"}
 
-    request = generation.build_facets_request(to_canonical(query), facets)
+    request = generation.build_get_facet_values_request(to_canonical(query), facets)
 
     data_regression.check(asdict(request))
 
 
 @pytest.mark.parametrize("generation, query", SOLR_GENERATION_CASES)
-def test_build_facets_request_without_a_project(generation, query):
+def test_build_get_facet_values_request_without_a_project(generation, query):
     """
     Test that a query with no project asks the API for everything it has
 
@@ -153,9 +154,46 @@ def test_build_facets_request_without_a_project(generation, query):
     """
     canonical = to_canonical(query).model_copy(update={"project": ()})
 
-    request = generation.build_facets_request(canonical, {"variable"})
+    request = generation.build_get_facet_values_request(canonical, {"variable"})
 
     assert "project" not in request.params
+
+
+@pytest.mark.parametrize(
+    "distrib, exp",
+    (
+        pytest.param(True, "true", id="sweep-the-federation"),
+        pytest.param(False, "false", id="this-node-only"),
+    ),
+)
+def test_esgf1_solr_distrib_is_configurable(distrib, exp):
+    """
+    Test that the caller can choose whether to sweep the federation
+
+    Both requests carry it, because "which node am I asking" is a property
+    of the conversation rather than of the question being asked.
+    """
+    generation = ESGF1Solr(params=SolrCMIP5Parameters, distrib=distrib)
+    canonical = to_canonical(QUERY_CMIP5)
+
+    assert generation.build_search_request(canonical, limit=25).params["distrib"] == exp
+    assert (
+        generation.build_get_facet_values_request(canonical, {"variable"}).params[
+            "distrib"
+        ]
+        == exp
+    )
+
+
+def test_esgf1_solr_sweeps_the_federation_by_default():
+    """
+    Test that we ask for everything unless told otherwise
+
+    "Everything ESGF can find" is what someone asking ESGF a question
+    usually means, so it is what they get without having to know
+    that `distrib` exists.
+    """
+    assert ESGF1Solr(params=SolrCMIP5Parameters).distrib
 
 
 @pytest.mark.parametrize(
@@ -166,7 +204,7 @@ def test_build_facets_request_without_a_project(generation, query):
     ),
 )
 @pytest.mark.parametrize("generation, query", GENERATION_CASES)
-def test_build_request_with_an_impossible_limit(generation, query, limit):
+def test_build_search_request_with_an_impossible_limit(generation, query, limit):
     """
     Test that we refuse a page size no API will honour, rather than clamping
 
@@ -174,14 +212,14 @@ def test_build_request_with_an_impossible_limit(generation, query, limit):
     has no way to tell that they only received part of the answer.
     """
     with pytest.raises(LimitOutOfRangeError):
-        generation.build_request(to_canonical(query), limit=limit)
+        generation.build_search_request(to_canonical(query), limit=limit)
 
 
 @pytest.mark.parametrize("generation, query", GENERATION_CASES)
-def test_build_request_at_the_limits(generation, query):
+def test_build_search_request_at_the_limits(generation, query):
     """Test that the ends of the accepted range are themselves accepted"""
     for limit in (MIN_LIMIT, MAX_LIMIT):
-        request = generation.build_request(to_canonical(query), limit=limit)
+        request = generation.build_search_request(to_canonical(query), limit=limit)
 
         sent = (
             request.params["limit"]
@@ -198,15 +236,31 @@ def test_build_request_at_the_limits(generation, query):
             {"response": {"numFound": 3, "docs": [{"id": "a"}]}}, 3, id="a-count"
         ),
         pytest.param({"response": {"numFound": 0, "docs": []}}, 0, id="no-matches"),
-        pytest.param({"response": {"docs": []}}, None, id="no-count-reported"),
-        pytest.param({}, None, id="nothing-we-recognise"),
-        pytest.param(
-            {"response": {"numFound": "3"}}, None, id="a-count-we-cannot-read"
-        ),
     ),
 )
 def test_solr_num_found(raw, exp):
     assert solr_num_found(raw) == exp
+
+
+@pytest.mark.parametrize(
+    "raw",
+    (
+        pytest.param({"response": {"docs": []}}, id="no-count-reported"),
+        pytest.param({}, id="nothing-we-recognise"),
+        pytest.param({"response": {"numFound": "3"}}, id="a-count-we-cannot-read"),
+    ),
+)
+def test_solr_num_found_with_no_count_we_can_read(raw):
+    """
+    Test that we say so when a response does not tell us how many matched
+
+    Every search API we know of reports a count,
+    so a response we cannot read one out of is a response we have not understood.
+    Returning `None` and letting the caller decide what that means
+    ends with somebody being told their query matched nothing.
+    """
+    with pytest.raises(NoResultCountReturned, match="Expected to read the count from"):
+        solr_num_found(raw)
 
 
 @pytest.mark.parametrize("generation, query", SOLR_GENERATION_CASES)
@@ -229,7 +283,6 @@ def test_solr_result_count(generation, query):
             id="fall-back-to-counting-this-page",
         ),
         pytest.param({"features": []}, 0, id="no-matches"),
-        pytest.param({}, 0, id="nothing-we-recognise"),
     ),
 )
 def test_stac_result_count(raw, exp):
@@ -244,6 +297,19 @@ def test_stac_result_count(raw, exp):
     assert generation.result_count(raw) == exp
 
 
+def test_stac_result_count_with_no_count_we_can_read():
+    """
+    Test that a response with neither a count nor records is an error
+
+    Same rule as the Solr path: a response we cannot read a count out of
+    is not a response which matched nothing.
+    """
+    generation = ESGFNGStac(params=StacCMIP6Parameters)
+
+    with pytest.raises(NoResultCountReturned, match="Expected to read the count from"):
+        generation.result_count({})
+
+
 SOLR_CMIP5_FACETS_RESPONSE = {
     "responseHeader": {"status": 0},
     "response": {"numFound": 0, "docs": []},
@@ -255,7 +321,9 @@ SOLR_CMIP5_FACETS_RESPONSE = {
             "time_frequency": ["mon", 12, "day", 3],
             # Not asked for, so not reported.
             "cmor_table": ["Amon", 12],
-            # No canonical equivalent, so there is nothing to report it under.
+            # Specific to this vocabulary, so it has no canonical name
+            # and is only reported when it is asked for by its own name
+            # (see `test_solr_parse_facet_values_of_a_dialect_specific_facet`).
             "product": ["output1", 12],
         }
     },
@@ -338,7 +406,7 @@ def test_solr_parse_facet_values_with_nothing_to_read_raises(raw):
     Returning an empty result would make every value the user asked for
     look like a typo.
     """
-    with pytest.raises(FacetListingNotSupported):
+    with pytest.raises(NoFacetValuesReturned):
         solr_facet_values(raw, SolrCMIP5Parameters, {"variable"})
 
 
@@ -372,7 +440,9 @@ CMIP5_GENERATION_CASES = tuple(
 
 
 @pytest.mark.parametrize("generation, query", CMIP5_GENERATION_CASES)
-def test_build_facets_request_for_a_facet_we_cannot_express(generation, query):
+def test_build_get_facet_values_request_for_a_facet_we_cannot_express(
+    generation, query
+):
     """
     Test that asking about a facet the vocabulary does not have is an error
 
@@ -391,11 +461,36 @@ def test_build_facets_request_for_a_facet_we_cannot_express(generation, query):
             f"facet 'activity' cannot be represented in {generation.params.__name__}"
         ),
     ):
-        generation.build_facets_request(to_canonical(query), facets)
+        generation.build_get_facet_values_request(to_canonical(query), facets)
+
+
+@pytest.mark.parametrize("generation, query", CMIP5_GENERATION_CASES)
+def test_build_get_facet_values_request_reports_every_facet_we_cannot_express(
+    generation, query
+):
+    """
+    Test that we are told about all the facets we cannot ask about, not just one
+
+    We know the whole list at this point.
+    Reporting one at a time means the caller fixes their call, runs it again,
+    and is told about the next one.
+    """
+    facets = {"variable", "activity", "grid_label"}
+
+    with pytest.raises(
+        FacetNotExpressibleError,
+        match=(
+            "facets 'activity', 'grid_label' cannot be represented in "
+            f"{generation.params.__name__}"
+        ),
+    ):
+        generation.build_get_facet_values_request(to_canonical(query), facets)
 
 
 @pytest.mark.parametrize("generation, query", GENERATION_CASES)
-def test_build_facets_request_for_a_facet_which_does_not_exist(generation, query):
+def test_build_get_facet_values_request_for_a_facet_which_does_not_exist(
+    generation, query
+):
     """
     Test that we refuse to build a facets request we could never ask
 
@@ -403,7 +498,57 @@ def test_build_facets_request_for_a_facet_which_does_not_exist(generation, query
     where it was made, and no pointless request is sent.
     """
     with pytest.raises(FacetNotExpressibleError):
-        generation.build_facets_request(to_canonical(query), {"esmporium-made-this-up"})
+        generation.build_get_facet_values_request(
+            to_canonical(query), {"esmporium-made-this-up"}
+        )
+
+
+@pytest.mark.parametrize(
+    "generation",
+    (
+        pytest.param(ESGF1Solr(params=SolrCMIP5Parameters), id="esgf1-solr-cmip5"),
+        pytest.param(
+            ESGF15Bridge(params=SolrCMIP5Parameters), id="esgf15-bridge-cmip5"
+        ),
+    ),
+)
+def test_build_get_facet_values_request_for_a_dialect_specific_facet(generation):
+    """
+    Test that we can ask about a facet which only this vocabulary has
+
+    `product` is CMIP5's alone, so it has no canonical name
+    and is asked for by the name CMIP5 uses, exactly as it would be in a query.
+    These are the facets a caller is least likely to know the values of,
+    so they are the last ones which should be unaskable.
+    """
+    request = generation.build_get_facet_values_request(
+        to_canonical(QUERY_CMIP5), {"variable", "product"}
+    )
+
+    assert request.params["facets"] == "product,variable"
+
+
+@pytest.mark.parametrize(
+    "generation",
+    (
+        pytest.param(ESGF1Solr(params=SolrCMIP5Parameters), id="esgf1-solr-cmip5"),
+        pytest.param(
+            ESGF15Bridge(params=SolrCMIP5Parameters), id="esgf15-bridge-cmip5"
+        ),
+    ),
+)
+def test_solr_parse_facet_values_of_a_dialect_specific_facet(generation):
+    """
+    Test that a facet only this vocabulary has comes back under its own name
+
+    It has no canonical name to come back under,
+    and the caller asked for it by this name, so this is the name they get.
+    """
+    res = generation.parse_facet_values(
+        SOLR_CMIP5_FACETS_RESPONSE, {"variable", "product"}
+    )
+
+    assert res == {"variable": {"tas", "pr"}, "product": {"output1"}}
 
 
 STAC_CMIP6_COLLECTION = {
@@ -421,6 +566,9 @@ STAC_CMIP6_COLLECTION = {
         "cmip6:grid_label": [{"pattern": "^g.*$"}],
         # Not asked for, so not reported.
         "cmip6:table_id": ["Amon", "day"],
+        # Specific to this vocabulary, so it is asked for, and reported,
+        # under the name this vocabulary uses.
+        "cmip6:sub_experiment_id": ["none", "s1960"],
         # Another project's properties, which this collection would not carry,
         # but which must not be read with this vocabulary if it did.
         "cmip7:variable_id": ["should-not-be-read"],
@@ -450,6 +598,23 @@ def test_stac_parse_facet_values():
     }
 
 
+def test_stac_parse_facet_values_of_a_dialect_specific_facet():
+    """
+    Test that a facet only this vocabulary has comes back under its own name
+
+    Same rule as on the Solr side
+    (`test_solr_parse_facet_values_of_a_dialect_specific_facet`),
+    with the property carrying this vocabulary's prefix on the way in.
+    """
+    generation = ESGFNGStac(params=StacCMIP6Parameters)
+
+    res = generation.parse_facet_values(
+        STAC_CMIP6_COLLECTION, {"variable", "sub_experiment_id"}
+    )
+
+    assert res == {"variable": {"tas", "pr"}, "sub_experiment_id": {"none", "s1960"}}
+
+
 def test_stac_parse_facet_values_uses_the_prefix_it_is_given():
     """Test that a vocabulary only reads the properties which carry its prefix"""
     res = stac_summary_values(STAC_CMIP6_COLLECTION, StacCMIP7Parameters, {"variable"})
@@ -473,7 +638,7 @@ def test_stac_parse_facet_values_without_summaries_raises(raw):
     """
     generation = ESGFNGStac(params=StacCMIP6Parameters)
 
-    with pytest.raises(FacetListingNotSupported):
+    with pytest.raises(NoFacetValuesReturned):
         generation.parse_facet_values(raw, {"variable"})
 
 
@@ -507,14 +672,16 @@ def test_stac_parse_facet_values_without_summaries_raises(raw):
     "build",
     (
         pytest.param(
-            lambda generation, canonical: generation.build_request(canonical, limit=1),
-            id="build_request",
+            lambda generation, canonical: generation.build_search_request(
+                canonical, limit=1
+            ),
+            id="build_search_request",
         ),
         pytest.param(
-            lambda generation, canonical: generation.build_facets_request(
+            lambda generation, canonical: generation.build_get_facet_values_request(
                 canonical, {"variable"}
             ),
-            id="build_facets_request",
+            id="build_get_facet_values_request",
         ),
     ),
 )

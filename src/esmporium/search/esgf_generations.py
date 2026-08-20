@@ -528,7 +528,7 @@ class UnaskableFacetError(AssertionError):
 
         facets
             The facets which could not have been asked about,
-            named in the canonical vocabulary
+            named as [native_facet_names][(m).native_facet_names] describes
         """
         self.params = params
         self.facets = facets
@@ -540,7 +540,7 @@ class UnaskableFacetError(AssertionError):
         )
 
 
-class FacetListingNotSupported(NotImplementedError):
+class NoFacetValuesReturned(ValueError):
     """
     Raised when a response does not enumerate facet values at all
 
@@ -562,6 +562,34 @@ class FacetListingNotSupported(NotImplementedError):
             The message to show the user
         """
         super().__init__(msg)
+
+
+class NoResultCountReturned(ValueError):
+    """
+    Raised when a search response does not say how many records matched
+    """
+
+    def __init__(self, raw: dict[str, Any], expected_at: str) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        raw
+            The response we could not read a count out of
+
+        expected_at
+            Where in `raw` we looked for the count
+        """
+        self.raw = raw
+        self.expected_at = expected_at
+
+        keys = ", ".join(sorted(raw)) if raw else "nothing at all"
+        super().__init__(
+            "This response does not report how many records matched. "
+            f"Expected to read the count from {expected_at!r}, "
+            f"but the response's top-level keys are: {keys}."
+        )
 
 
 class OneProjectRequiredError(ValueError):
@@ -669,7 +697,7 @@ class SearchAPIGeneration(Protocol):
     name: str
     """What to call this generation in a message to the user"""
 
-    def build_request(self, canonical: QueryCanonical, limit: int) -> Request:
+    def build_search_request(self, canonical: QueryCanonical, limit: int) -> Request:
         """
         Turn a canonical query into a request in this generation's format
 
@@ -699,7 +727,7 @@ class SearchAPIGeneration(Protocol):
         """
         ...
 
-    def result_count(self, raw: dict[str, Any]) -> int | None:
+    def result_count(self, raw: dict[str, Any]) -> int:
         """
         Read the total number of matches out of a raw response
 
@@ -711,12 +739,16 @@ class SearchAPIGeneration(Protocol):
         Returns
         -------
         :
-            The number of records which matched,
-            or `None` if the response does not say.
+            The number of records which matched
+
+        Raises
+        ------
+        NoResultCountReturned
+            `raw` does not report a count we can read
         """
         ...
 
-    def build_facets_request(
+    def build_get_facet_values_request(
         self, canonical: QueryCanonical, facets: set[str]
     ) -> Request:
         """
@@ -728,7 +760,9 @@ class SearchAPIGeneration(Protocol):
             The query whose project to scope to
 
         facets
-            The facets to list the values of, named in the canonical vocabulary.
+            The facets to list the values of, named as
+            [native_facet_names][esmporium.search.esgf_generations.native_facet_names]
+            describes.
 
             Every one of them has to be a facet this generation's vocabulary
             can express, because there is no way to ask about one that is not.
@@ -754,18 +788,21 @@ class SearchAPIGeneration(Protocol):
         Parameters
         ----------
         raw
-            The response to read,
-            i.e. the answer to a [build_facets_request][(c).build_facets_request]
+            The response to read, i.e. the answer to a
+            [build_get_facet_values_request][(c).build_get_facet_values_request]
 
         facets
-            The facets we asked about, named in the canonical vocabulary.
+            The facets we asked about, named as
+            [native_facet_names][esmporium.search.esgf_generations.native_facet_names]
+            describes.
 
             Anything else in `raw` is ignored.
 
         Returns
         -------
         :
-            The values which are available, keyed by canonical facet name
+            The values which are available,
+            keyed by the name the facet was asked for under
 
             A facet whose values the API does not enumerate is left out,
             rather than reported as having no values,
@@ -773,7 +810,7 @@ class SearchAPIGeneration(Protocol):
 
         Raises
         ------
-        FacetListingNotSupported
+        NoFacetValuesReturned
             The response does not enumerate facet values at all
 
         UnaskableFacetError
@@ -781,6 +818,44 @@ class SearchAPIGeneration(Protocol):
             so this response was never going to answer the question
         """
         ...
+
+
+def native_facet_names(params: type[QueryProtocol], facets: set[str]) -> dict[str, str]:
+    """
+    Work out what a vocabulary calls each of the facets being asked about
+
+    Parameters
+    ----------
+    params
+        The vocabulary to translate into
+
+    facets
+        The facets to translate, named as above
+
+    Returns
+    -------
+    :
+        The name `params` uses for each facet it can express,
+        keyed by the name it was asked for
+
+        Facets `params` cannot express are left out,
+        so the caller can see which ones went missing.
+    """
+    spec = facet_spec(params)
+
+    res: dict[str, str] = {}
+    for facet in facets:
+        canonical_native = spec.canonical_to_native.get(facet)
+        if canonical_native is not None:
+            res[facet] = canonical_native
+
+        elif facet in spec.query_specific_facets:
+            res[facet] = facet
+
+        # Facets not handled above are dropped,
+        # we expect the caller to check for and handle this.
+
+    return res
 
 
 def unexpressible_facets(params: type[QueryProtocol], facets: set[str]) -> set[str]:
@@ -793,19 +868,15 @@ def unexpressible_facets(params: type[QueryProtocol], facets: set[str]) -> set[s
         The vocabulary to check against
 
     facets
-        The facets to check, named in the canonical vocabulary
+        The facets to check, named as
+        [native_facet_names][(m).native_facet_names] describes
 
     Returns
     -------
     :
         The facets which `params` cannot express
     """
-    spec = facet_spec(params)
-
-    # TODOClaude: does this only check canonical facets?
-    # What about a query specific facet?
-    # Does that get identified as expressible or unexpressible with this function?
-    return {facet for facet in facets if facet not in spec.canonical_to_native}
+    return set(facets) - set(native_facet_names(params, facets))
 
 
 def check_facets_expressible(params: type[QueryProtocol], facets: set[str]) -> None:
@@ -818,20 +889,17 @@ def check_facets_expressible(params: type[QueryProtocol], facets: set[str]) -> N
         The vocabulary to check against
 
     facets
-        The facets to check, named in the canonical vocabulary
+        The facets to check, named as
+        [native_facet_names][(m).native_facet_names] describes
 
     Raises
     ------
     FacetNotExpressibleError
-        `params` cannot express one of `facets`
+        `params` cannot express one or more of `facets`
     """
     unexpressible = unexpressible_facets(params, facets)
     if unexpressible:
-        # Sorted so that a failure is reported deterministically.
-        # TODOClaude: why not just report all the unexpressible facets?
-        raise FacetNotExpressibleError(
-            sorted(unexpressible)[0], facet_spec(params).name
-        )
+        raise FacetNotExpressibleError(unexpressible, facet_spec(params).name)
 
 
 def check_facets_askable(params: type[QueryProtocol], facets: set[str]) -> None:
@@ -851,7 +919,8 @@ def check_facets_askable(params: type[QueryProtocol], facets: set[str]) -> None:
         The vocabulary the response is written in
 
     facets
-        The facets being read, named in the canonical vocabulary
+        The facets being read, named as
+        [native_facet_names][(m).native_facet_names] describes
 
     Raises
     ------
@@ -863,7 +932,7 @@ def check_facets_askable(params: type[QueryProtocol], facets: set[str]) -> None:
         raise UnaskableFacetError(params, unexpressible)
 
 
-def solr_num_found(raw: dict[str, Any]) -> int | None:
+def solr_num_found(raw: dict[str, Any]) -> int:
     """
     Read the number of matches out of a Solr-shaped response
 
@@ -875,22 +944,18 @@ def solr_num_found(raw: dict[str, Any]) -> int | None:
     Returns
     -------
     :
-        The number of records which matched,
-        or `None` if the response does not say.
+        The number of records which matched
 
-        We also return `None` if the response says something
-        we cannot read as a count,
-        because guessing what the API meant would be worse
-        than telling the caller we do not know.
+    Raises
+    ------
+    NoResultCountReturned
+        `raw` does not report a count we can read
     """
     num_found = raw.get("response", {}).get("numFound")
     if isinstance(num_found, int):
         return num_found
 
-    # TODOClaude: why return None here?
-    # Wouldn't it be better to raise an error
-    # so we know that we expected to get a count, but didn't
-    return None
+    raise NoResultCountReturned(raw, "response.numFound")
 
 
 def solr_facet_values(
@@ -899,8 +964,8 @@ def solr_facet_values(
     """
     Read the available facet values out of a Solr-shaped response
 
-    We take the values, translate the API's names back to canonical ones,
-    and keep only the facets which were asked about.
+    We take the values, translate the API's names back into the names
+    they were asked for under, and keep only the facets which were asked about.
 
     Parameters
     ----------
@@ -912,36 +977,39 @@ def solr_facet_values(
         i.e. the parameter class used to build the request
 
     facets
-        The facets we asked about, named in the canonical vocabulary
+        The facets we asked about, named as
+        [native_facet_names][(m).native_facet_names] describes
 
     Returns
     -------
     :
-        The values which are available, keyed by canonical facet name
+        The values which are available,
+        keyed by the name the facet was asked for under
 
     Raises
     ------
-    FacetListingNotSupported
+    NoFacetValuesReturned
         `raw` enumerates nothing at all,
         even though we asked about a facet this vocabulary can express
 
     UnaskableFacetError
         `params` cannot express one of `facets`
     """
-    spec = facet_spec(params)
-
     # Raises if this response was never going to be able to answer the question.
     check_facets_askable(params, facets)
 
     fields = raw.get("facet_counts", {}).get("facet_fields", {})
     if not fields:
-        raise FacetListingNotSupported
+        raise NoFacetValuesReturned
+
+    asked_for = {
+        native: asked for asked, native in native_facet_names(params, facets).items()
+    }
 
     res: dict[str, set[str]] = {}
     for api_name, flat in fields.items():
-        canonical = spec.native_to_canonical.get(api_name)
-        if canonical in facets:
-            res[canonical] = set(flat[0::2])
+        if api_name in asked_for:
+            res[asked_for[api_name]] = set(flat[0::2])
 
     return res
 
@@ -970,16 +1038,18 @@ def stac_summary_values(
         i.e. the parameter class used to build the request
 
     facets
-        The facets we asked about, named in the canonical vocabulary
+        The facets we asked about, named as
+        [native_facet_names][(m).native_facet_names] describes
 
     Returns
     -------
     :
-        The values which are available, keyed by canonical facet name
+        The values which are available,
+        keyed by the name the facet was asked for under
 
     Raises
     ------
-    FacetListingNotSupported
+    NoFacetValuesReturned
         `raw` summarises nothing at all,
         so this deployment cannot tell us anything about any facet
 
@@ -992,18 +1062,20 @@ def stac_summary_values(
     # An empty block is as useless to us as a missing one:
     # either way this deployment has told us nothing it knows.
     if not raw.get("summaries"):
-        raise FacetListingNotSupported
+        raise NoFacetValuesReturned
 
-    spec = facet_spec(params)
     prefix = f"{params.prefix}:"
+    asked_for = {
+        native: asked for asked, native in native_facet_names(params, facets).items()
+    }
 
     res: dict[str, set[str]] = {}
     for property_name, summary in raw["summaries"].items():
         if not property_name.startswith(prefix):
             continue
 
-        canonical = spec.native_to_canonical.get(property_name[len(prefix) :])
-        if canonical not in facets:
+        asked = asked_for.get(property_name[len(prefix) :])
+        if asked is None:
             continue
 
         if not isinstance(summary, list):
@@ -1012,14 +1084,38 @@ def stac_summary_values(
 
         values = {value for value in summary if isinstance(value, str)}
         if values:
-            res[canonical] = values
+            res[asked] = values
 
     return res
 
 
+def solr_bool(value: bool) -> str:
+    """
+    Write a boolean the way the Solr-shaped APIs expect to read it
+
+    Parameters
+    ----------
+    value
+        The value to write
+
+    Returns
+    -------
+    :
+        `value`, as these APIs spell it
+
+    Examples
+    --------
+    >>> solr_bool(True)
+    'true'
+    >>> solr_bool(False)
+    'false'
+    """
+    return "true" if value else "false"
+
+
 def solr_facets_to_list(params: type[QueryProtocol], facets: set[str]) -> list[str]:
     """
-    Translate canonical facet names into the API's names, for a `facets=` list
+    Translate facet names into the API's names, for a `facets=` list
 
     Parameters
     ----------
@@ -1027,12 +1123,15 @@ def solr_facets_to_list(params: type[QueryProtocol], facets: set[str]) -> list[s
         The vocabulary to write the facet names in
 
     facets
-        The facets to list the values of, named in the canonical vocabulary
+        The facets to list the values of, named as
+        [native_facet_names][(m).native_facet_names] describes
 
     Returns
     -------
     :
         The facets, named as this API names them
+
+        Sorted, so that the request we build is deterministic.
 
     Raises
     ------
@@ -1040,9 +1139,8 @@ def solr_facets_to_list(params: type[QueryProtocol], facets: set[str]) -> list[s
         `params` cannot express one of `facets`
     """
     check_facets_expressible(params, facets)
-    spec = facet_spec(params)
 
-    return sorted(spec.canonical_to_native[facet] for facet in facets)
+    return sorted(native_facet_names(params, facets).values())
 
 
 @dataclass(frozen=True)
@@ -1057,19 +1155,29 @@ class ESGF1Solr:
     name: str = "ESGF1"
     """See [SearchAPIGeneration.name][esmporium.search.esgf_generations.SearchAPIGeneration.name]."""  # noqa: E501
 
-    def build_request(self, canonical: QueryCanonical, limit: int) -> Request:
-        """See [SearchAPIGeneration.build_request][esmporium.search.esgf_generations.SearchAPIGeneration.build_request]."""  # noqa: E501
+    distrib: bool = True
+    """
+    Whether to ask the node to sweep the federation it mirrors
+
+    With this on, a node answers for every node it knows about,
+    which is what makes "search ESGF" a single request rather than one per node.
+    Turning this off asks the node only about the data it holds itself,
+    which is what you want when you are asking about a specific node
+    (does this mirror have the data yet?).
+
+    Defaults to on because "everything we can find" is what a user asking
+    ESGF a question usually means.
+    """
+
+    def build_search_request(self, canonical: QueryCanonical, limit: int) -> Request:
+        """See [SearchAPIGeneration.build_search_request][esmporium.search.esgf_generations.SearchAPIGeneration.build_search_request]."""  # noqa: E501
         check_limit(limit)
         native = from_canonical(canonical=canonical, to=self.params)
 
         params: dict[str, Any] = {
             "format": "application/solr+json",
             "limit": limit,
-            # Ask this node to sweep the federation it mirrors,
-            # rather than only answering for itself.
-            # TODOClaude: make this user-defined rather than hard-coding.
-            # Use a default of True.
-            "distrib": "true",
+            "distrib": solr_bool(self.distrib),
         }
         for api_name, values in native.facet_values().items():
             # A list becomes a repeated parameter, which is how this API ORs.
@@ -1081,20 +1189,22 @@ class ESGF1Solr:
         """See [SearchAPIGeneration.result_count][esmporium.search.esgf_generations.SearchAPIGeneration.result_count]."""  # noqa: E501
         return solr_num_found(raw)
 
-    def build_facets_request(
+    def build_get_facet_values_request(
         self, canonical: QueryCanonical, facets: set[str]
     ) -> Request:
-        """See [SearchAPIGeneration.build_facets_request][esmporium.search.esgf_generations.SearchAPIGeneration.build_facets_request]."""  # noqa: E501
+        """See [SearchAPIGeneration.build_get_facet_values_request][esmporium.search.esgf_generations.SearchAPIGeneration.build_get_facet_values_request]."""  # noqa: E501
         spec = facet_spec(self.params)
 
         params: dict[str, Any] = {
             "format": "application/solr+json",
             "facets": ",".join(solr_facets_to_list(self.params, facets)),
-            # TODOClaude: Should we just hard-code 1 here?
-            # This will fail if MIN_LIMIT is ever not 1, right?
+            # We want the vocabulary, not the records,
+            # so we ask for the smallest page we are allowed to ask for.
+            # That is what `MIN_LIMIT` is, hence using it rather than writing 1:
+            # if the floor ever moves, a hard-coded 1 is the thing
+            # which would start being rejected.
             "limit": MIN_LIMIT,
-            # As above: make user configured.
-            "distrib": "true",
+            "distrib": solr_bool(self.distrib),
         }
 
         project_api_name = spec.canonical_to_native.get("project")
@@ -1126,8 +1236,8 @@ class ESGF15Bridge:
     name: str = "ESGF15"
     """See [SearchAPIGeneration.name][esmporium.search.esgf_generations.SearchAPIGeneration.name]."""  # noqa: E501
 
-    def build_request(self, canonical: QueryCanonical, limit: int) -> Request:
-        """See [SearchAPIGeneration.build_request][esmporium.search.esgf_generations.SearchAPIGeneration.build_request]."""  # noqa: E501
+    def build_search_request(self, canonical: QueryCanonical, limit: int) -> Request:
+        """See [SearchAPIGeneration.build_search_request][esmporium.search.esgf_generations.SearchAPIGeneration.build_search_request]."""  # noqa: E501
         check_limit(limit)
         native = from_canonical(canonical=canonical, to=self.params)
 
@@ -1145,17 +1255,16 @@ class ESGF15Bridge:
         """See [SearchAPIGeneration.result_count][esmporium.search.esgf_generations.SearchAPIGeneration.result_count]."""  # noqa: E501
         return solr_num_found(raw)
 
-    def build_facets_request(
+    def build_get_facet_values_request(
         self, canonical: QueryCanonical, facets: set[str]
     ) -> Request:
-        """See [SearchAPIGeneration.build_facets_request][esmporium.search.esgf_generations.SearchAPIGeneration.build_facets_request]."""  # noqa: E501
+        """See [SearchAPIGeneration.build_get_facet_values_request][esmporium.search.esgf_generations.SearchAPIGeneration.build_get_facet_values_request]."""  # noqa: E501
         spec = facet_spec(self.params)
 
         params: dict[str, Any] = {
             "format": "application/solr+json",
             "facets": ",".join(solr_facets_to_list(self.params, facets)),
-            # TODOClaude: Should we just hard-code 1 here?
-            # This will fail if MIN_LIMIT is ever not 1, right?
+            # See the note on the equivalent line in `ESGF1Solr`.
             "limit": MIN_LIMIT,
         }
 
@@ -1188,9 +1297,9 @@ class ESGFNGStac:
     name: str = "ESGF_NG"
     """See [SearchAPIGeneration.name][esmporium.search.esgf_generations.SearchAPIGeneration.name]."""  # noqa: E501
 
-    def build_request(self, canonical: QueryCanonical, limit: int) -> Request:
+    def build_search_request(self, canonical: QueryCanonical, limit: int) -> Request:
         """
-        See [SearchAPIGeneration.build_request][esmporium.search.esgf_generations.SearchAPIGeneration.build_request].
+        See [SearchAPIGeneration.build_search_request][esmporium.search.esgf_generations.SearchAPIGeneration.build_search_request].
         """  # noqa: E501
         check_limit(limit)
 
@@ -1222,7 +1331,7 @@ class ESGFNGStac:
 
         return Request("POST", "/search", json_body=json_body)
 
-    def result_count(self, raw: dict[str, Any]) -> int | None:
+    def result_count(self, raw: dict[str, Any]) -> int:
         """
         See [SearchAPIGeneration.result_count][esmporium.search.esgf_generations.SearchAPIGeneration.result_count].
         """  # noqa: E501
@@ -1237,13 +1346,20 @@ class ESGFNGStac:
         # TODO: find a way to get the total (i.e. go through all pages).
         # Can wait until we're actually parsing results into Datasets
         # and there's lots of results on ESGF-NG.
-        return len(raw.get("features", []))
+        features = raw.get("features")
+        if isinstance(features, list):
+            return len(features)
 
-    def build_facets_request(
+        # No count and no records: this is not a search response as we know it,
+        # and saying "zero" would be indistinguishable from a query
+        # which genuinely matched nothing.
+        raise NoResultCountReturned(raw, "numberMatched (or features)")
+
+    def build_get_facet_values_request(
         self, canonical: QueryCanonical, facets: set[str]
     ) -> Request:
         """
-        See [SearchAPIGeneration.build_facets_request][esmporium.search.esgf_generations.SearchAPIGeneration.build_facets_request].
+        See [SearchAPIGeneration.build_get_facet_values_request][esmporium.search.esgf_generations.SearchAPIGeneration.build_get_facet_values_request].
         """  # noqa: E501
         # `facets` does not shape the request, but asking about facets this
         # vocabulary cannot express is a mistake all the same,

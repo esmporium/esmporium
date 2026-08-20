@@ -294,7 +294,7 @@ def search(
     attempt = 0
     with httpx.Client(follow_redirects=True) as client:
         while (api := selector(canonical, attempt)) is not None:
-            request = api.generation.build_request(canonical, limit)
+            request = api.generation.build_search_request(canonical, limit)
             raw = fire(client, api, request)
             if raw is not None:
                 results[api.host] = raw
@@ -345,7 +345,7 @@ def tour(query: QueryProtocol = EXAMPLE, limit: int = 2) -> None:
     with httpx.Client(follow_redirects=True) as client:
         attempt = 0
         while (api := DEFAULT_SELECTOR(canonical, attempt)) is not None:
-            request = api.generation.build_request(canonical, limit)
+            request = api.generation.build_search_request(canonical, limit)
             raw = fire(client, api, request)
             attempt += 1
             if raw is None:
