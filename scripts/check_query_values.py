@@ -68,6 +68,13 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 import httpx
+from esmporium.search_api.first_search_cmipx_full import (
+    DEFAULT_SELECTOR,
+    SearchAPI,
+    SearchAPISelector,
+    StacCMIP7Parameters,
+    fire,
+)
 
 from esmporium.query import (
     CANONICAL_FACETS,
@@ -78,13 +85,6 @@ from esmporium.query import (
     QueryProtocol,
     facet_spec,
     to_canonical,
-)
-from esmporium.search_api.first_search_cmipx_full import (
-    DEFAULT_SELECTOR,
-    SearchAPI,
-    SearchAPISelector,
-    StacCMIP7Parameters,
-    fire,
 )
 
 # How close a spelling must be to count as a "did you mean" (0..1). difflib's
