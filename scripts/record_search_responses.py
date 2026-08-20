@@ -11,8 +11,6 @@ The cases here mirror those in
 `tests/integration/search/test_esgf_generations_live.py`;
 the unit tests fail loudly if a recording it expects is missing,
 so the two cannot drift apart silently.
-
-Run it:  uv run python scripts/record_search_responses.py
 """
 
 from __future__ import annotations

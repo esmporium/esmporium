@@ -1,7 +1,6 @@
 # Test that we can still talk to the live ESGF search APIs.
 #
-# These tests are opt in (see `OPT_IN_MARKERS` in `tests/conftest.py`),
-# so nothing else runs them. They live here, rather than in `ci.yaml`,
+# They live here, rather than in `ci.yaml`,
 # because a failure here means something different from a failure there:
 # an API we do not control changed, went down, or started answering
 # differently. Our unit tests cover the same code without a network
@@ -15,17 +14,12 @@
 name: Test ESGF search API
 
 on:
-  # So you can check by hand, e.g. before relying on a search in anger.
   workflow_dispatch:
-  # Every merge to main, so a change which breaks our end is caught
-  # close to when it landed.
   push:
     branches: [main]
   schedule:
     # * is a special character in YAML so you have to quote this string
-    # This means At 03:00 on Wednesday,
-    # the same time as the PyPI install tests
-    # (see `install-pypi.yaml`, which deliberately does not run these).
+    # This means At 03:00 on Wednesday.
     - cron: '0 3 * * 3'
 
 jobs:
@@ -51,4 +45,6 @@ jobs:
           uv-dependency-install-flags: "--group tests --all-extras"
       - name: Run the tests which talk to the live ESGF search APIs
         run: |
+          # --run-hits-esgf-search-api to run the search API tests.
+          # -m hits_esgf_search_api to run *only* those tests (not all the other tests)
           uv run --group tests pytest tests -r a -v --run-hits-esgf-search-api -m hits_esgf_search_api

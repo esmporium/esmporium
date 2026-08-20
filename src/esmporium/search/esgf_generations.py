@@ -3,20 +3,18 @@ Generations of ESGF search APIs that we support
 
 For example, ESGF1, ESGF1.5 bridge and ESGF-NG.
 
-Each generation is a pure translator:
-it turns a [QueryCanonical][esmporium.query.canonical_query.QueryCanonical]
-into a [Request][esmporium.search.esgf_generations.Request],
-and reads the parts we care about back out of a raw response.
-Nothing here sends anything: no host, no HTTP client, no retries.
-That keeps the bit which knows about wire formats
-separate from the bit which knows about the state of the federation,
-and it means a generation can be tested without a network connection.
-
 A generation is handed the vocabulary it should speak
 (one of the parameter classes below),
 rather than choosing one itself.
-Nothing in a generation is keyed by project,
-so a generation is not coupled to any particular project.
+Nothing in a generation is coupled to project,
+the project specificity comes when a generation
+is given the vocabulary it should speak.
+
+This project specificity is not actually a feature of ESGF1,
+but having it throughout (i.e. making each search be project specific)
+makes error handling and clarity much simpler,
+so we are ok with paying the price of having to make more than one search request
+if we need to search more than one project.
 """
 
 from __future__ import annotations
@@ -45,7 +43,7 @@ The smallest page we ask any generation for
 
 The Solr-shaped APIs do accept a page of zero, i.e. "just give me the count",
 while STAC rejects it with a 422.
-We use one floor for both rather than tracking each API's own,
+We use one floor for both rather than tracking each API's own minimum,
 because the only thing the difference buys us
 is not transferring a single record on the Solr path,
 and the price is a rule which is different depending on where you are looking.
@@ -63,8 +61,6 @@ so we check rather than trusting either.
 DEFAULT_LIMIT: int = 10_000
 """
 The page size we use if the caller does not choose one
-
-I.e. take a full page.
 """
 
 
@@ -492,18 +488,11 @@ class StacCMIP7Parameters(BaseModel):
 class Request:
     """
     A ready-to-send HTTP request, minus the host
-
-    A generation produces one of these.
-    Which host it is sent to, and what to do if that host does not answer,
-    is somebody else's problem.
     """
 
     method: str
     """
     The HTTP method to use
-
-    Carried here so that whatever sends the request
-    never has to branch on the generation.
     """
 
     path: str
@@ -518,13 +507,14 @@ class Request:
 
 class UnaskableFacetError(AssertionError):
     """
-    Raised when we read a facet we could never have asked the API about
+    Raised when we ask for a facet we could never have asked the API about
 
-    Unlike the other errors here, this one is ours rather than the caller's.
-    It means a facets request was built and sent naming a facet this vocabulary
-    has no name for, which
+    This error means a facets request was built
+    and sent naming a facet the vocabulary has no name for, which
     [check_facets_expressible][esmporium.search.esgf_generations.check_facets_expressible]
-    exists to prevent. Reaching here means something got past it.
+    exists to prevent.
+    Raising this means something got past the checks in
+    [check_facets_expressible][esmporium.search.esgf_generations.check_facets_expressible].
     """
 
     def __init__(self, params: type[QueryProtocol], facets: set[str]) -> None:
@@ -555,9 +545,8 @@ class FacetListingNotSupported(NotImplementedError):
     Raised when a response does not enumerate facet values at all
 
     This is deliberately loud.
-    The alternative, returning nothing, cannot be told apart from
-    "this API says none of your values exist",
-    which would make every value the user asked for look like a typo.
+    We don't expect this to happen,
+    but if we expect to get facet values and don't, we want to be loud about it.
     """
 
     def __init__(
@@ -733,12 +722,6 @@ class SearchAPIGeneration(Protocol):
         """
         Build a request which lists the values of the given facets
 
-        The request is scoped to `canonical`'s project and nothing else.
-        Scoping to the user's other values too
-        would mean that one facet's typo could make another look invalid,
-        which is the opposite of helpful when the point of asking
-        is to tell the user which of their values we do not recognise.
-
         Parameters
         ----------
         canonical
@@ -819,19 +802,15 @@ def unexpressible_facets(params: type[QueryProtocol], facets: set[str]) -> set[s
     """
     spec = facet_spec(params)
 
+    # TODOClaude: does this only check canonical facets?
+    # What about a query specific facet?
+    # Does that get identified as expressible or unexpressible with this function?
     return {facet for facet in facets if facet not in spec.canonical_to_native}
 
 
 def check_facets_expressible(params: type[QueryProtocol], facets: set[str]) -> None:
     """
     Check that a vocabulary can express every facet being asked about
-
-    A facet this vocabulary has no name for is a mistake, not something to
-    quietly leave out. Dropping it would answer a question the caller did not
-    ask: they would be told which models CMIP5 has, having also asked which
-    activities it has, with nothing to say that the second question went
-    nowhere. This is the same rule, and the same error, as translating a query
-    which names a facet the target cannot express.
 
     Parameters
     ----------
@@ -849,6 +828,7 @@ def check_facets_expressible(params: type[QueryProtocol], facets: set[str]) -> N
     unexpressible = unexpressible_facets(params, facets)
     if unexpressible:
         # Sorted so that a failure is reported deterministically.
+        # TODOClaude: why not just report all the unexpressible facets?
         raise FacetNotExpressibleError(
             sorted(unexpressible)[0], facet_spec(params).name
         )
@@ -887,8 +867,6 @@ def solr_num_found(raw: dict[str, Any]) -> int | None:
     """
     Read the number of matches out of a Solr-shaped response
 
-    Both ESGF1's `esg-search` and the ESGF 1.5 bridge answer in this shape.
-
     Parameters
     ----------
     raw
@@ -909,6 +887,9 @@ def solr_num_found(raw: dict[str, Any]) -> int | None:
     if isinstance(num_found, int):
         return num_found
 
+    # TODOClaude: why return None here?
+    # Wouldn't it be better to raise an error
+    # so we know that we expected to get a count, but didn't
     return None
 
 
@@ -918,9 +899,6 @@ def solr_facet_values(
     """
     Read the available facet values out of a Solr-shaped response
 
-    Solr answers with a `facet_counts.facet_fields` block,
-    keyed by the API's own facet names,
-    each holding a flat `[value, count, value, count, ...]` list.
     We take the values, translate the API's names back to canonical ones,
     and keep only the facets which were asked about.
 
@@ -973,10 +951,6 @@ def stac_summary_values(
 ) -> dict[str, set[str]]:
     """
     Read the available facet values out of a STAC collection
-
-    A collection carries a `summaries` block,
-    keyed by the same prefixed property names a search request uses,
-    which is what lets us map it back to the canonical vocabulary.
 
     Not every summary enumerates values.
     STAC also allows a summary to be a range, and this API uses
@@ -1047,10 +1021,6 @@ def solr_facets_to_list(params: type[QueryProtocol], facets: set[str]) -> list[s
     """
     Translate canonical facet names into the API's names, for a `facets=` list
 
-    Facets which `params` cannot express are dropped:
-    there is nothing we could ask the API about.
-    The result is sorted so that the request we build is deterministic.
-
     Parameters
     ----------
     params
@@ -1078,10 +1048,7 @@ def solr_facets_to_list(params: type[QueryProtocol], facets: set[str]) -> list[s
 @dataclass(frozen=True)
 class ESGF1Solr:
     """
-    The ESGF1 (`esg-search`) generation
-
-    A flat GET, where a facet with more than one value
-    is sent as a repeated parameter.
+    The ESGF1 generation
     """
 
     params: type[QueryProtocol]
@@ -1100,6 +1067,8 @@ class ESGF1Solr:
             "limit": limit,
             # Ask this node to sweep the federation it mirrors,
             # rather than only answering for itself.
+            # TODOClaude: make this user-defined rather than hard-coding.
+            # Use a default of True.
             "distrib": "true",
         }
         for api_name, values in native.facet_values().items():
@@ -1120,11 +1089,11 @@ class ESGF1Solr:
 
         params: dict[str, Any] = {
             "format": "application/solr+json",
-            # `facets=` is a comma-separated list on both Solr-shaped APIs,
-            # even though their value encoding differs.
             "facets": ",".join(solr_facets_to_list(self.params, facets)),
-            # We want the vocabulary, not the records.
+            # TODOClaude: Should we just hard-code 1 here?
+            # This will fail if MIN_LIMIT is ever not 1, right?
             "limit": MIN_LIMIT,
+            # As above: make user configured.
             "distrib": "true",
         }
 
@@ -1145,14 +1114,6 @@ class ESGF1Solr:
 class ESGF15Bridge:
     """
     The ESGF 1.5 bridge generation
-
-    The replies are Solr-shaped, but the requests are not:
-
-    - a facet with more than one value is comma-joined,
-      because a repeated parameter is silently reduced to a single value
-    - there is no `distrib`,
-      because this is one consolidated ESGF 1.5 index rather than a federation
-    - it answers at its own path
 
     The facet names are the same as ESGF1's,
     so this generation re-uses the same parameter classes.
@@ -1193,6 +1154,8 @@ class ESGF15Bridge:
         params: dict[str, Any] = {
             "format": "application/solr+json",
             "facets": ",".join(solr_facets_to_list(self.params, facets)),
+            # TODOClaude: Should we just hard-code 1 here?
+            # This will fail if MIN_LIMIT is ever not 1, right?
             "limit": MIN_LIMIT,
         }
 
@@ -1213,17 +1176,13 @@ class ESGF15Bridge:
 class ESGFNGStac:
     """
     The ESGF-NG generation, i.e. STAC 1.0 with CQL2
-
-    A JSON POST, where the facets become a CQL2 tree
-    of `in` clauses joined by `and`.
     """
 
     params: type[StacParams]
     """
     The vocabulary this generation speaks
 
-    The `cmipN:` prefix rides on the parameter class,
-    so a vocabulary can never be paired with the wrong prefix.
+    Note: the `cmipN:` prefix rides on the parameter class.
     """
 
     name: str = "ESGF_NG"
@@ -1232,13 +1191,11 @@ class ESGFNGStac:
     def build_request(self, canonical: QueryCanonical, limit: int) -> Request:
         """
         See [SearchAPIGeneration.build_request][esmporium.search.esgf_generations.SearchAPIGeneration.build_request].
-
-        With this API, the project is the collection ID rather than a property,
-        so it is translated out of the query and into a `collection` clause.
-        We take it as the user wrote it (e.g. "CMIP5"),
-        i.e. we do not second-guess their capitalisation.
         """  # noqa: E501
         check_limit(limit)
+
+        # With this API, the project is the collection ID rather than a property,
+        # so it is translated out of the query and into a `collection` clause.
         collection = stac_collection(canonical, self.params)
         without_project = canonical.model_copy(update={"project": ()})
         native = from_canonical(canonical=without_project, to=self.params)
@@ -1268,16 +1225,18 @@ class ESGFNGStac:
     def result_count(self, raw: dict[str, Any]) -> int | None:
         """
         See [SearchAPIGeneration.result_count][esmporium.search.esgf_generations.SearchAPIGeneration.result_count].
-
-        Not every deployment reports `numberMatched`,
-        so we fall back to counting what came back.
-        Note that that fall back is only a lower bound:
-        it counts one page, not the total.
         """  # noqa: E501
         matched = raw.get("numberMatched")
         if isinstance(matched, int):
             return matched
 
+        # One of east and west does not report `numberMatched`,
+        # so we fall back to counting what came back.
+        # Note that that fall back is only a lower bound:
+        # it counts one page, not the total.
+        # TODO: find a way to get the total (i.e. go through all pages).
+        # Can wait until we're actually parsing results into Datasets
+        # and there's lots of results on ESGF-NG.
         return len(raw.get("features", []))
 
     def build_facets_request(
@@ -1285,23 +1244,6 @@ class ESGFNGStac:
     ) -> Request:
         """
         See [SearchAPIGeneration.build_facets_request][esmporium.search.esgf_generations.SearchAPIGeneration.build_facets_request].
-
-        This API describes a collection's facet values in the collection itself,
-        so scoping to the project is the whole request
-        and `facets` does not narrow it:
-        one response carries every facet the collection summarises.
-
-        Because the project decides which collection we ask about,
-        it has to name exactly one, and it has to be a project this
-        vocabulary describes.
-
-        The collection also carries the values which are actually published,
-        which is the same thing the Solr-shaped APIs report,
-        rather than everything the controlled vocabularies allow.
-        The two are not the same
-        and the published set is the more useful of the two here:
-        a value which is in the vocabulary but which nobody has published
-        still finds nothing.
         """  # noqa: E501
         # `facets` does not shape the request, but asking about facets this
         # vocabulary cannot express is a mistake all the same,

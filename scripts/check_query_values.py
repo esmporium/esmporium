@@ -100,7 +100,8 @@ MAX_SUGGESTIONS = 3
 # (align with the STAC items' cmip7:data_specs_version, e.g. MIPDS7-0p0p1);
 # "main" is a stand-in until we confirm the tag naming.
 # Note that the data_specs_version, despite the name, doesn't actually pin the values.
-# Let's see if claude can find a way to infer what schema was used for a given API response.
+# Let's see if claude can find a way to infer what schema was
+# used for a given API response.
 # If not, we'll just have to pin (and allow user to override if they want)
 # the tag to use and I will go asking in the ESGF slack
 # if there's a better way to do this.

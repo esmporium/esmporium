@@ -41,18 +41,17 @@ ruff-fixes:  ## fix the code using ruff
 test:  ## run the tests
     # `--run-network` includes the tests which need ordinary network access,
     # matching what CI runs on every change.
-    # The ESGF search API tests are not included: they are slow, and they fail
-    # for reasons which have nothing to do with a change here.
-    # Run those with `make test-esgf-search-api`.
-    # For a run which touches nothing outside this machine, use `pytest tests`.
-	uv run --group tests pytest src tests -r a -v --run-network --doctest-modules --doctest-report ndiff --cov=esmporium
+	# Other live API tests are skipped.
+	# Run them with `make test-live-apis`.
+	uv run --group tests pytest src tests -r a -v --doctest-modules --doctest-report ndiff --cov=esmporium --run-network
 
 .PHONY: test-esgf-search-api
-test-esgf-search-api:  ## run the tests which talk to the live ESGF search APIs
-    # A failure here usually means an API changed, not that this repository did.
-    # The unit tests cover the same code without a network connection,
-    # so check whether they are passing before believing anything this says.
+test-esgf-search-api:  ## run only the tests which talk to the live ESGF search APIs
 	uv run --group tests pytest tests -r a -v --run-hits-esgf-search-api -m hits_esgf_search_api
+
+.PHONY: test-live-apis
+test-live-apis:  ## run the tests, including all tests that talk to live APIs
+	uv run --group tests pytest tests -r a -v --run-network --run-hits-esgf-search-api
 
 # Note on code coverage and testing:
 # You must specify cov=src.
