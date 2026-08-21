@@ -1,22 +1,13 @@
 """
 Test the search step end to end against the live ESGF search APIs
 
-These start with a query and run the whole flow through `search`, then read the
-result count back. The unit tests in `tests/unit/search/test_search.py` already
-pin the step's plumbing and every failure mode, so if those pass and these fail,
+The unit tests in `tests/unit/search/test_search.py` already
+pin the varous steps plumbing and failure modes,
+so if those pass and these fail,
 the thing that changed is on the other end of the wire.
-
-The whole flow deliberately hides the difference between a node that is down and
-a node that refused the request: both come back as "no answer". Telling a bad
-request apart from an unwell node is the job of
-`tests/integration/search/test_esgf_generations_live.py`, which drives the
-generations directly. Here, an empty result means "no node answered", which is a
-reason to skip rather than to fail.
-
-These are opt in: they only run with `--run-hits-esgf-search-api`, because they
-are slow, they depend on servers we do not run, and a red run here means
-something different from a red run anywhere else.
 """
+# TODO Anna: think about whether we need this and test_esgf_generations_live,
+# or we can just have one (perhaps combining elements of both).
 
 from __future__ import annotations
 
@@ -77,9 +68,11 @@ LIVE_CASES = (
 )
 """A search API and a query we expect it to have data for"""
 
-# The real Solr nodes we compare for the aggregation test. distrib is turned off
-# below, so each answers only for the data it holds itself, which is the whole
-# point: different nodes hold different data.
+# The real Solr nodes we compare for the aggregation test.
+# distrib is turned off below,
+# so each answers only for the data it holds itself, which is the whole point:
+# different nodes hold different data.
+# TODO Anna: shall we just inline this rather than having it as a global constant
 AGGREGATION_HOSTS = (
     "esgf.nci.org.au",
     "esgf.ceda.ac.uk",
