@@ -29,7 +29,8 @@ Four things make it the right fit:
    generated build files, no magic globals. Inputs, outputs and resources are
    declared once on the decorated function and everything else is derived — see
    [Single source of truth](#single-source-of-truth-the-decorator-is-the-only-declaration).
-   This is the Prefect property you value, without Prefect's caching model.
+   This gives Prefect's best property — decorate a function, let the tool work
+   out the graph — without Prefect's caching model.
 4. **Remote execution is available when you need it.** `pytask-parallel` accepts
    any registered `concurrent.futures.Executor`, including a Dask client, with a
    `remote=True` flag that syncs files to workers. Dask plus `dask-jobqueue`
@@ -126,6 +127,27 @@ caching on its own, promoting it to a step is a small, local change — whereas
 demoting four steps into one, after downstream code has grown to depend on the
 intermediate artifacts, is not.
 
+Concretely, promoting `_regrid` is a two-line change plus a new artifact type:
+
+```python
+class RegriddedDataset(Artifact):          # new: an identity for the intermediate
+    materialiser = NetCDF()
+
+@step(version="1")
+def regrid(raw: RawDataset) -> RegriddedDataset:     # new: was a helper call
+    return _regrid(_to_kelvin(_subset_time(raw, START, END)), TARGET_GRID)
+
+@step(version="1")
+def anomaly(ds: RegriddedDataset) -> AnomalyDataset:  # changed: input type only
+    return ds - ds.mean("time")
+```
+
+Nothing else moves. The helpers are untouched, no path is written, and the edge
+between the two steps appears purely because the types line up. Going the other
+way — merging two steps — is equally small *at the point of change*, but every
+consumer of `RegriddedDataset` must also be found and rewritten, which is the
+asymmetry that makes starting coarse the safer default.
+
 ### The corollary for versioning
 
 Coarser steps mean a code change invalidates more work. That is the real cost of
@@ -145,6 +167,38 @@ can drift.
 Give artifacts types, and let the types carry their own materialiser and path
 convention. The function signature then *is* the dependency declaration:
 
+First the artifact types, which own their format and their location:
+
+```python
+class Artifact:
+    """Base: an identity, a materialiser, and a path convention."""
+
+    materialiser: ClassVar[Materialiser]
+    subdir: ClassVar[str]
+
+    @classmethod
+    def path_for(cls, key: DatasetKey, root: Path) -> Path:
+        # The only place a path is ever constructed.
+        return root / cls.subdir / f"{key.as_slug()}.nc"
+
+
+class RawDataset(Artifact):
+    materialiser = NetCDF()
+    subdir = "raw"
+
+
+class RegriddedDataset(Artifact):
+    materialiser = NetCDF()
+    subdir = "regridded"
+
+
+class AnomalyDataset(Artifact):
+    materialiser = NetCDF()
+    subdir = "anomaly"
+```
+
+Then the steps, which mention neither format nor location:
+
 ```python
 @step(version="1", resources=Resources(memory="60GB", cpus=8, walltime="4h"))
 def regrid(raw: RawDataset) -> RegriddedDataset:
@@ -159,13 +213,20 @@ def anomaly(regridded: RegriddedDataset) -> AnomalyDataset:
 That is the whole declaration. From it, everything else is inferred:
 
 - **The DAG.** `anomaly` consumes `RegriddedDataset`; `regrid` produces it.
-  Therefore `regrid` runs first. No edge is written anywhere.
+  Therefore `regrid` runs first. No edge is ever written by hand — the graph is
+  computed by matching return types against parameter types across the registry.
 - **Materialisers.** `RegriddedDataset` knows it is netCDF and how to
   save/load/state itself.
 - **Paths.** Computed from the artifact type plus the dataset identity, by
   convention. No path is written by hand, ever.
 - **Cache keys.** Version from the decorator, input state from the artifact
-  types, params from the frozen config object.
+  types, and params from the run configuration — a frozen dataclass such as the
+  `ClientConfig` in
+  [The pattern to adopt regardless](#the-pattern-to-adopt-regardless). Frozen so
+  it is hashable and cannot drift mid-run; a dataclass so its fields are the
+  complete, inspectable set of knobs a step can be affected by. Anything that
+  changes a step's output but is not an input artifact belongs here, or it is
+  invisible to the cache.
 
 Registration enforces **one producer per artifact type**, raising at import time
 if two steps return the same type. That is the discipline that makes type-based
@@ -175,6 +236,29 @@ obvious error rather than a silent one.
 This is static inference rather than Prefect's runtime inference, which is
 better here: the entire graph can be validated before a single byte is read, and
 it can be generated from a database query.
+
+**Could runtime inference ever be needed, and how hard would the switch be?**
+
+Runtime inference means the graph emerges from actually calling the functions —
+a step calls another step, and the framework records the edge. It becomes
+necessary when the graph's *shape* depends on a computed value: recursion to
+unknown depth, or branching where which step runs next is decided by data.
+
+Phase A has exactly that shape (ancestry recursion), which is why phase A is
+ordinary Python and not in the DAG at all. Phase B does not, and it is worth
+being sceptical of arguments that it might, because "static" here is a weak
+requirement: the graph is rebuilt from the database on every invocation, so new
+datasets, new variables and new experiments all appear without any code change.
+Static means "known before *this* run starts", not "fixed forever".
+
+If it were ever needed, the migration is moderate rather than severe. Step
+bodies and materialisers are untouched; what changes is that `StepSpec`
+generation moves from an ahead-of-time pass to a recording wrapper, and
+validations that currently run at import (one producer per type) have to become
+runtime checks or be dropped. The realistic trigger would be a phase-B step whose
+output determines which further steps exist — at which point the honest answer is
+probably to keep phase B static and move that decision into phase A, rather than
+to make the whole engine lazy.
 
 ### Large outputs fit the same model
 
@@ -214,8 +298,8 @@ The decorator says "regridding takes a `RawDataset` and produces a
 that means reading *this* path and writing *that* one". You cannot maintain
 those in sync incorrectly, because only one of them is maintained.
 
-So `StepSpec` is a compilation artifact, like generated protobuf code. It
-survives your objection because it was never a source of truth.
+So `StepSpec` is a compilation artifact, like generated protobuf code. It does
+not violate single-source-of-truth because it was never a source of truth.
 
 ### Resources ride along
 
@@ -341,8 +425,9 @@ syncs files to workers.
   not the science.
 - **Execution model on clusters.** Dask via `dask-jobqueue` holds long-lived
   SLURM allocations with workers that tasks are dispatched to. That is a worse
-  fit than per-job submission for long, heterogeneous, failure-prone jobs. See
-  [When to switch to snakemake](#when-to-switch-to-snakemake).
+  fit than per-job submission for long, heterogeneous, failure-prone jobs —
+  though this is solved by using `submitit` instead of Dask, see
+  [Per-job submission without snakemake](#per-job-submission-without-snakemake).
 - **Less battle-tested at TB scale** than snakemake.
 
 ### snakemake
@@ -354,7 +439,11 @@ In its favour:
 
 - **Rerun triggers are not just mtime.** Defaults are `mtime`, `params`, `input`,
   `software-env` and `code` — a change to the rule's code, parameters, input set,
-  or conda/container environment all force a re-run.
+  or conda/container environment all force a re-run. Note that the trigger set is
+  a **fixed enum you can subtract from but not add to**: `--rerun-triggers`
+  selects a subset, and there is no plugin interface for a custom trigger. The
+  `params` field below is therefore the only extension point, which is why it
+  carries so much weight in this design.
 - **`params` gives you the checksum trick.** Put the ESGF checksum in a rule's
   `params` and invalidation becomes a database lookup that snakemake enforces.
 - **Content hashing when you want it.** Above `--max-checksum-file-size` it
@@ -364,7 +453,16 @@ In its favour:
   maintained, 2.7.1 as of June 2026), Kubernetes, Google Batch, Azure and AWS
   ParallelCluster. Critically, it submits **one job per rule**, so each step gets
   right-sized resources and failures are isolated.
-- **Field standard** in computational and climate science.
+- **Field standard** in computational and climate science. It is worth
+  understanding why the DSL is not felt as a heavy price by its main users:
+  snakemake grew up in bioinformatics, where a pipeline is a chain of *external
+  command-line tools* — aligners, variant callers, format converters — joined by
+  files. There, "everything is paths and shell commands" is not a compromise, it
+  is an accurate description of the problem, and the DSL is doing genuine work
+  that Python would do more verbosely. The cost only bites when steps are rich
+  in-process Python objects that must be serialised to cross a rule boundary,
+  which is precisely esmporium's situation and precisely not the median
+  snakemake user's.
 
 Against:
 
@@ -446,6 +544,25 @@ hashed, so editing a helper invalidates nothing.
 
 Its lazy-expression model solves dynamic graph shape, which phase B does not have.
 
+**If the dependency weight were not a concern, would it be the pick?** No, but it
+would be a genuine second place ahead of snakemake. Setting aside `boto3` and
+`textual`, two objections remain and neither is about dependencies:
+
+- **The second database.** redun keeps its own SQLAlchemy call graph. For a
+  package whose stated purpose is that everything lands in *your* database, that
+  is an architectural conflict rather than an inconvenience, and it does not go
+  away with a lighter install.
+- **Helper functions are not hashed.** Only task functions are. Under the
+  [granularity rule](#the-step-granularity-rule), steps are deliberately coarse
+  and call many helpers, so most real code changes would live in unhashed
+  helpers and silently fail to invalidate. The two designs work against each
+  other.
+
+What redun does better than pytask is output validity checking and provenance
+depth. If the project were starting from nothing, with no existing database and
+no preference against AWS, it would be a close call. Given an existing SQLModel
+schema that is the whole point of the package, it is not.
+
 ### pydoit
 
 `file_dep`/`targets` hashing with a state database is the right model, and
@@ -488,10 +605,20 @@ model proves awkward — it can be registered as a custom executor the same way.
 - **Metaflow** — content-addressed artifacts and `resume`, but no "skip if
   unchanged across runs" semantics.
 - **Kedro** — `AbstractDataset` is a good materialisation answer; no caching.
-- **Nextflow** — outstanding resume, genuinely good at this scale, but Groovy.
+- **Nextflow** — outstanding resume, genuinely good at this scale, but its
+  workflows are written in Groovy, a JVM language. That means a Java runtime in
+  the stack and pipeline logic your team cannot read or test with Python tooling;
+  Python appears only inside individual process bodies.
 - **Ploomber** — archived (May 2025).
-- **Covalent** — designed for exactly this dispatch pattern, but last release
-  May 2025. Dormant.
+- **Covalent** — designed for exactly this dispatch pattern (write locally,
+  dispatch to heterogeneous backends). Built by Agnostiq, a Toronto quantum/HPC
+  startup, and **acquired by DataRobot in February 2025** to fold its compute
+  orchestration into their agentic-AI platform. Development did not stop but did
+  change direction: `0.240.0` (May 2025) is the last stable release, with a
+  single `0.241.0rc0` in April 2026 and no stable follow-up. The last stable is
+  usable in the sense that it installs and runs, but a year without a stable
+  release under an acquirer with different priorities makes it a poor foundation
+  for infrastructure meant to last.
 - **joblib.Memory / diskcache** — memoisation at 1% of Prefect's features.
 - **Climate-REF** — worth a conversation with Jared given PR9, but it is an
   evaluation-diagnostics orchestrator, not a caching layer.
@@ -596,10 +723,10 @@ nothing else.
 
 ## Config and the process boundary
 
-You asked whether snakemake requires a CLI or script interface per step, and
-whether long-lived non-serialisable config makes that painful. The first concern
-is unfounded; the second is real and is the strongest technical argument for
-pytask.
+Two questions arise for snakemake in particular: whether it requires a CLI or
+script interface per step, and whether long-lived non-serialisable config makes
+that painful. The first turns out not to be a problem; the second is real, and is
+the strongest technical argument for pytask.
 
 ### snakemake needs neither a CLI nor a script per step
 
@@ -644,9 +771,9 @@ Two real limitations of `run:` are worth knowing, because they push you towards
 snakemake's own docs also advise keeping `run:` to a few lines and using
 `script:` beyond that.
 
-So the accurate cost is not "a script per step". It is that **every rule still
-needs a DSL stanza** declaring inputs, outputs and params, alongside the function
-that already declares them.
+So the cost is not "a script per step". It is that **every rule still needs a
+DSL stanza** declaring inputs, outputs and params, alongside the function that
+already declares them.
 
 Two honest points about that duplication, in opposite directions:
 
@@ -659,9 +786,8 @@ Two honest points about that duplication, in opposite directions:
   and map it back to the function you did write. That tax is paid on every
   confusing failure, forever, and no amount of generation removes it.
 
-Combined with the DSL itself, this is a fair and sufficient reason to prefer
-pytask, where the function *is* the declaration and there is nothing generated to
-read.
+Combined with the DSL itself, this is a sufficient reason to prefer pytask,
+where the function *is* the declaration and there is nothing generated to read.
 
 ### The config concern is real
 
@@ -710,27 +836,184 @@ makes steps trivially testable, and means moving to processes or a cluster later
 is a configuration change rather than a refactor. It is the discipline that keeps
 the door open.
 
+`ClientConfig` is the frozen dataclass here — the small, hashable description —
+while `AuthenticatedClient` is the live object that must never appear in a step
+signature. The `@lru_cache` means each process builds the client at most once, so
+the indirection costs one dictionary lookup per call.
+
+**Enforcing it** is worth doing mechanically, because the failure is silent until
+the day work moves off-process. Three checks, in descending order of value and
+ascending order of cost — the first is the one that matters:
+
+**1. Reject bad signatures at registration.** Free, runs at import, needs no CI.
+
+```python
+def _validate_signature(fn: Callable[..., Any]) -> None:
+    for name, param in inspect.signature(fn).parameters.items():
+        ann = param.annotation
+        if _is_artifact(ann) or _is_frozen_dataclass(ann):
+            continue
+        raise StepDefinitionError(
+            f"{fn.__module__}.{fn.__qualname__} parameter {name!r} is annotated "
+            f"{ann!r}. Step parameters must be an Artifact subclass or a frozen "
+            f"dataclass. Live objects (clients, sessions, connections) cannot "
+            f"cross a process boundary — pass a frozen config and build the "
+            f"object inside the step with an lru_cache'd factory."
+        )
+```
+
+This is genuine enforcement in code, not documentation. It fires the moment
+someone writes a bad step, names the offending parameter, and states the fix.
+**An error message at the point of the mistake teaches better than any
+document**, so it is worth investing in the wording rather than treating it as a
+guard clause.
+
+**2. Pickle the registry in a unit test.** Milliseconds, executes nothing:
+
+```python
+def test_all_steps_are_picklable():
+    for spec in REGISTRY.all_steps():
+        pickle.dumps(spec.fn)
+        for cfg_type in spec.config_types:
+            pickle.dumps(cfg_type)
+```
+
+This catches unpicklable closures and module-level state that signature
+inspection cannot see, without running a pipeline.
+
+**3. One two-step integration test under a `ProcessPoolExecutor`.** Seconds, on
+tiny synthetic data. It proves the wiring — that a step really does survive a
+process boundary — not the pipeline.
+
+**Running the full pipeline in CI is not required and is not suggested.** Checks
+1 and 2 do nearly all the work at nearly no cost, and check 1 in particular means
+the discipline is enforced by the code rather than resting on people having read
+the docs. Documentation should still explain *why* — the reasoning about process
+boundaries does not fit in an exception message — but it is the backstop, not the
+mechanism.
+
+## Per-job submission without snakemake
+
+The main execution argument for snakemake is that it submits **one cluster job
+per rule**, so each step gets right-sized resources and failures are isolated,
+whereas `dask-jobqueue` holds long-lived allocations with workers that tasks are
+dispatched to. That distinction matters for long, heterogeneous, failure-prone
+work — a download needing 2 GB and a regrid needing 60 GB should not share a
+worker sized for the larger.
+
+**This does not require leaving pytask.** `submitit` is a
+`concurrent.futures`-compatible executor in which *each submitted task becomes
+its own SLURM job*, batched into job arrays because schedulers handle those
+better than many individual submissions. Since `pytask-parallel` accepts any
+registered `Executor`, it plugs directly into
+[seam 2](#seam-2--concurrentfuturesexecutor-for-swapping-dask-jobqueue):
+
+```python
+import submitit
+from pytask_parallel import ParallelBackend, WorkerType, registry
+
+def build_slurm_executor(n_workers: int) -> Executor:
+    ex = submitit.AutoExecutor(folder="logs/%j")
+    ex.update_parameters(slurm_partition="compute", timeout_min=240, mem_gb=64)
+    return ex
+
+registry.register_parallel_backend(
+    ParallelBackend.CUSTOM, build_slurm_executor,
+    worker_type=WorkerType.PROCESSES, remote=False,
+)
+```
+
+It is maintained by Meta, ~1,600 stars, last release December 2025, last commit
+January 2026 — smaller than snakemake's ecosystem but healthy, and doing one
+narrow thing.
+
+### Per-task resources are achievable too
+
+A single `submitit` executor does apply one resource profile to everything
+submitted through it. But nothing requires you to use a single executor.
+
+Reading `pytask_parallel/execute.py`, tasks are submitted as:
+
+```python
+session.config["_parallel_executor"].submit(
+    wrap_task_in_process,
+    task=task,                    # <- the PTask itself, as a keyword argument
+    ...
+)
+```
+
+**The task object is therefore visible to any custom executor**, which makes a
+dispatching façade straightforward:
+
+```python
+class ResourceAwareExecutor(Executor):
+    """Route each task to a submitit executor matching its resource profile."""
+
+    def __init__(self, defaults: Resources) -> None:
+        self._defaults = defaults
+        self._by_profile: dict[Resources, submitit.AutoExecutor] = {}
+
+    def submit(self, fn, /, *args, **kwargs):
+        task = kwargs.get("task")
+        resources = REGISTRY.resources_for(task) if task else self._defaults
+        return self._executor_for(resources).submit(fn, *args, **kwargs)
+
+    def _executor_for(self, resources: Resources) -> submitit.AutoExecutor:
+        if resources not in self._by_profile:
+            ex = submitit.AutoExecutor(folder=f"logs/{resources.slug}/%j")
+            ex.update_parameters(**resources.as_submitit_kwargs())
+            self._by_profile[resources] = ex
+        return self._by_profile[resources]
+```
+
+Roughly thirty lines. Each distinct profile gets its own SLURM job array, which
+is the arrangement schedulers prefer anyway. Because the `@step` decorator
+already attaches `Resources` and generates the task, looking the profile up by
+task name in your own registry needs nothing from pytask.
+
+Three caveats worth knowing:
+
+- **`task=` is an internal detail.** Custom executors are a documented extension
+  point, but the keyword name is not a stable public contract. Read it
+  defensively (`kwargs.get("task")`) and fall back to defaults rather than
+  raising, so a pytask-parallel upgrade degrades to "everything runs with default
+  resources" instead of breaking the run.
+- **`n_workers` semantics blur.** pytask throttles submission by `n_workers`,
+  which now spans several underlying executors. Set it high and let SLURM do the
+  actual scheduling, otherwise pytask's own limit becomes the bottleneck.
+- **Long queue waits mean many pending futures** held by pytask's submission
+  loop. Fine in practice, but it is the thing to watch first if the scheduler is
+  busy.
+
+So per-step resource specification does **not** force a move to snakemake. What
+snakemake still gives is the same behaviour with no bespoke code and a
+battle-tested implementation — a maintenance argument rather than a capability
+one.
+
 ## When to switch to snakemake
 
-A concrete trigger rather than a vague caveat. Switch if **you end up needing
-per-job cluster submission with right-sized resources per step.**
+With `submitit` and a resource-aware executor façade, there is no longer a
+*capability* that forces the move. The remaining triggers are about maintenance
+and risk:
 
-The distinction is the execution model. `dask-jobqueue` submits *worker* jobs
-that hold SLURM allocations while tasks are dispatched to them. snakemake submits
-*one job per rule*. For your workload — long, heterogeneous, failure-prone steps
-where a download takes twenty minutes and a regrid takes four hours with very
-different memory needs — per-job submission is materially more robust. Workers
-holding allocations across hours of heterogeneous work is a known source of pain:
-allocations expire, workers die, the scheduler loses track.
+1. **The bespoke executor becomes a burden.** If the façade above grows past a
+   page, starts special-casing scheduler quirks, or breaks on a pytask-parallel
+   upgrade, you are maintaining cluster-submission infrastructure — which is
+   exactly what snakemake gives away for free and does better.
+2. **pytask's bus factor bites.** One primary maintainer. If development stalls
+   or a Python release breaks it, the migration should be a planned move rather
+   than an emergency.
+3. **Collaborators need to run the pipeline.** snakemake is the field standard;
+   a workflow expressed in it is legible to a much larger pool of climate and
+   computational scientists.
 
-If everything runs on one large machine, which "the CMIP6 server" in `PLAN.md`
-suggests is the near-term reality, this never arises and pytask is comfortably
-the better choice.
+If everything runs on one large machine — which "the CMIP6 server" in `PLAN.md`
+suggests is the near-term reality — none of this arises.
 
-Be aware that switching means accepting the double-declaration pattern you
-dislike — the generated Snakefile restates what the decorators already say. That
-is a real cost, and it should be paid only for a real reason, which is why the
-trigger above is specific rather than a general hedge.
+Switching means accepting a double-declaration pattern: the generated Snakefile
+restates what the decorators already say. That is a real cost, and it should be
+paid only for a real reason, which is why the triggers above are specific rather
+than a general hedge.
 
 Two things make the switch cheap if it comes:
 
@@ -739,7 +1022,7 @@ Two things make the switch cheap if it comes:
    snakemake dispatch function: `load`/`save` become its deserialise/serialise,
    and `state()` becomes a `params` entry. Mechanical, not a rewrite.
 
-The DAG generator that reads your database and emits the task graph is reusable
+The DAG generator that reads your database and emits `StepSpec`s is reusable
 either way, which is why it is worth writing early.
 
 ## Portability: what to adapt, and what not to
@@ -751,6 +1034,14 @@ The single biggest portability lever is not an adapter at all: **step bodies are
 plain Python functions with no framework imports.** That is where the thousands
 of lines will be, and it is already portable by construction. Everything below is
 second-order.
+
+By "framework imports" is meant anything from the DAG tool appearing inside a
+step body or signature: no `from pytask import ...`, no `snakemake.input`, no
+Dagster `context` parameter, no decorator from any of them beyond your own
+`@step`. A step should import `xarray`, `numpy`, your own helpers, and nothing
+else. The test is whether the function can be called directly from a test or a
+notebook with ordinary arguments and no runner present — if it can, it ports
+anywhere; if it cannot, it is welded to whichever tool it mentions.
 
 ### Seam 1 — a step IR, for swapping pytask, snakemake or Dagster
 
@@ -789,7 +1080,7 @@ portable:
 
 The direction of the dependency matters. Define your own materialiser protocol
 and have thin `PNode` subclasses call into it. If instead your materialisers
-*are* `PNode`s, pytask has leaked into the layer you were trying to protect.
+*are* `PNode`s, pytask has leaked into the layer whose purpose is to be portable.
 
 **The limit:** do not try to abstract execution semantics. Retries, resource
 requests, per-job submission and partial-failure handling differ fundamentally
@@ -824,9 +1115,21 @@ heterogeneous-cluster scenario described in
 needs 2 GB and a regrid needs 60 GB, and you want the scheduler to know that.
 
 Be clear-eyed about what this buys: the adapter makes the **code** port cheap. It
-does not make the **execution model** port cheap. If you hit the heterogeneous
-resource problem, you are changing tools, not swapping an executor, and the
-`StepSpec.resources` field is what carries you across.
+does not make the **execution model** port cheap.
+
+"Changing tools" here means replacing the whole DAG engine — moving from pytask
+to snakemake — not swapping an executor behind pytask. The distinction matters
+because the two have very different costs. Swapping an executor is a config
+change. Changing the engine means writing a new backend for `StepSpec` and
+accepting the generated-Snakefile tax, while step bodies and materialisers stay
+put. `StepSpec.resources` is what carries the per-step resource information
+across that boundary, which is why it is worth populating even while the
+executor in use ignores it.
+
+Note that the heterogeneous-resource problem does not force this: `submitit`
+plus a resource-aware executor façade gives per-job submission *and* per-step
+resources without leaving pytask — see
+[Per-job submission without snakemake](#per-job-submission-without-snakemake).
 
 ### What I would not build
 
@@ -860,7 +1163,8 @@ resource problem, you are changing tools, not swapping an executor, and the
 
 ### On Prefect specifically
 
-Your suspicion is half right, and the mechanism is worth knowing.
+Prefect is often assumed to make non-Prefect infrastructure difficult. That is
+half right, and the mechanism is worth knowing.
 
 **OSS can reach non-Prefect infrastructure.** A self-hosted server supports work
 pool types for Process, Docker, Kubernetes, AWS ECS, Azure Container Instances,
@@ -872,7 +1176,7 @@ removes the operational pain: **push work pools** (Cloud Run, ECS, ACI, Modal �
 serverless dispatch with *no worker process to run*), **managed execution**, plus
 events, automations, SSO and RBAC. On OSS you run a Postgres-backed API server
 and a long-lived worker inside every target environment. A convenience gradient
-rather than a wall, but your instinct that you were being nudged was accurate.
+rather than a wall, but a real one: the paid path is meaningfully less work.
 
 One hard gap matters more than the licensing question: **there is no SLURM or PBS
 work pool.** Prefect's infrastructure types are all container-shaped. snakemake,
@@ -977,9 +1281,23 @@ prefix, and the wider the fan-out over it, the worse the ratio.
 
 Two caveats, in fairness:
 
-- Within a single execution, the providers do their own optimisation —
-  ESMValTool's preprocessor caches intermediate output inside a recipe run. What
-  is lost is sharing *across* execution groups, not all sharing.
+- Within a single execution, providers do some of their own optimisation.
+  ESMValTool writes preprocessor output to disk between the preprocessing and
+  diagnostic phases (required anyway, since diagnostics may be written in other
+  languages), so within one recipe run, two diagnostics needing the same
+  preprocessed variable share it. Across runs there is `--resume_from`, which
+  points at a previous run's output directory and reuses preprocessing tasks that
+  completed successfully, identified by a `metadata.yml` in their output
+  directory.
+
+  Two things to note about that, because it is weaker than it sounds. It is
+  **explicit and opt-in**, not content-addressed: nothing checks that the inputs
+  or the code are unchanged, so `--resume_from` is a human assertion that reuse
+  is safe rather than a verified fact. And it is scoped to a *recipe run*. In the
+  Gregory case, if each ensemble member is solved into its own execution group,
+  each becomes its own recipe run, so the shared parent global mean is
+  preprocessed once per member regardless. Sharing within a run does not rescue
+  the fan-out; only a graph across runs would.
 - Whether this is inherent to the REF or merely how it is built today is a
   question for Jared. **If independent diagnostic execution is a hard
   architectural requirement** — and there are respectable reasons it might be,
@@ -1053,7 +1371,6 @@ class GroupConstraint(Protocol):
 and returning an empty frame means "this group is not viable, drop it". There is
 no solving in the constraint-satisfaction sense — no search, no backtracking, no
 optimisation. It is a filter, a `groupby`, and a fold over a list of validators.
-Your instinct is correct.
 
 **Where the 693 lines of `constraints.py` actually go** is eight concrete
 implementations, each individually simple:
@@ -1184,6 +1501,8 @@ abandoned, none of that work is lost.
 - [pytask-parallel — custom executors](https://pytask-parallel.readthedocs.io/en/stable/custom_executors.html)
 - [pytask-parallel — Dask backend](https://pytask-parallel.readthedocs.io/en/stable/dask.html)
 - [dask-jobqueue](https://jobqueue.dask.org/)
+- [submitit](https://github.com/facebookincubator/submitit)
+- [ESMValCore — running and `--resume_from`](https://docs.esmvaltool.org/projects/ESMValCore/en/latest/quickstart/run.html)
 - [Snakemake FAQ — rerun triggers and checksums](https://snakemake.readthedocs.io/en/stable/project_info/faq.html)
 - [Snakemake — using executor plugins](https://snakemake.readthedocs.io/en/latest/executing/executors.html)
 - [Snakemake plugin catalog](https://snakemake.github.io/snakemake-plugin-catalog/)
