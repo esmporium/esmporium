@@ -8,7 +8,7 @@ See `tests/unit/search/test_recorded_responses.py` for what is done with them.
 They go stale, which is the point:
 refresh them when an API changes and read the diff.
 The cases here mirror those in
-`tests/integration/search/test_esgf_generations_live.py`;
+`tests/integration/search/test_facet_values_live.py`;
 the unit tests fail loudly if a recording it expects is missing,
 so the two cannot drift apart silently.
 """

@@ -6,7 +6,7 @@ pin the varous steps plumbing and failure modes,
 so if those pass and these fail,
 the thing that changed is on the other end of the wire.
 """
-# TODO Anna: think about whether we need this and test_esgf_generations_live,
+# TODO Anna: think about whether we need this and test_facet_values_live,
 # or we can just have one (perhaps combining elements of both).
 
 from __future__ import annotations
@@ -23,9 +23,11 @@ from esmporium.search import (
     search,
 )
 from esmporium.search.search_api import (
+    BRIDGE_CMIP6,
     SOLR_CMIP5,
     SOLR_CMIP6,
     SOLR_CMIP7,
+    STAC_CMIP5,
     STAC_CMIP6,
     STAC_CMIP7,
     SearchAPI,
@@ -68,6 +70,65 @@ LIVE_CASES = (
 )
 """A search API and a query we expect it to have data for"""
 
+NOT_A_REAL_VALUE = "esmporium-not-a-real-facet-value"
+"""
+A facet value which no project will ever have
+
+Used to check that the API actually applied the facet we sent it.
+If we had the name wrong, the API would ignore it
+and the search would come back with everything rather than with nothing.
+"""
+
+# Each case names the query field to poison. A CMIP5 query spells its variable
+# facet `variable`; CMIP6 and CMIP7 spell it `variable_id`. Poisoning a field
+# the query class does not have would do nothing (model_copy accepts unknown
+# keys silently), so the name here has to be a real field of that class.
+FACET_NAME_CASES = (
+    pytest.param(
+        SearchAPI("esgf.nci.org.au", SOLR_CMIP5, build_transient_retrying(2)),
+        QueryCMIP5(experiment="historical", variable="tas", time_frequency="mon"),
+        "variable",
+        id="solr-cmip5",
+    ),
+    pytest.param(
+        SearchAPI("esgf.nci.org.au", SOLR_CMIP6, build_transient_retrying(2)),
+        CMIP6_QUERY,
+        "variable_id",
+        id="solr-cmip6",
+    ),
+    pytest.param(
+        SearchAPI("esgf.nci.org.au", SOLR_CMIP7, build_transient_retrying(2)),
+        QueryCMIP7(variable_id="tas"),
+        "variable_id",
+        id="solr-cmip7",
+    ),
+    pytest.param(
+        SearchAPI("esgf-node.ornl.gov", BRIDGE_CMIP6, build_transient_retrying(2)),
+        CMIP6_QUERY,
+        "variable_id",
+        id="bridge-cmip6",
+    ),
+    pytest.param(
+        SearchAPI("search.east.esgf.io", STAC_CMIP5, build_transient_retrying(2)),
+        QueryCMIP5(experiment="historical", variable="tas", time_frequency="mon"),
+        "variable",
+        id="esgf-ng-cmip5",
+    ),
+    pytest.param(
+        SearchAPI("search.east.esgf.io", STAC_CMIP6, build_transient_retrying(2)),
+        CMIP6_QUERY,
+        "variable_id",
+        id="esgf-ng-cmip6",
+    ),
+    pytest.param(
+        SearchAPI("search.east.esgf.io", STAC_CMIP7, build_transient_retrying(2)),
+        QueryCMIP7(variable_id="tas"),
+        "variable_id",
+        id="esgf-ng-cmip7",
+    ),
+)
+"""A search API, a query it matches, and the query field to poison"""
+
 # The real Solr nodes we compare for the aggregation test.
 # distrib is turned off below,
 # so each answers only for the data it holds itself, which is the whole point:
@@ -79,6 +140,72 @@ AGGREGATION_HOSTS = (
     "esgf-data.dkrz.de",
     "esg-dn1.nsc.liu.se",
 )
+
+AND_OR_VARIABLES = ("tas", "rsdt")
+"""The two variables we probe the AND/OR logic with"""
+
+AND_OR_EXPERIMENTS = ("piControl", "historical")
+"""The two experiments we probe the AND/OR logic with"""
+
+
+def and_or_query(query_cls, variable_field, experiment_field):
+    """
+    Build a query maker for a query class's own variable/experiment field names
+
+    Each project's query class spells these facets differently
+    (`variable`/`experiment` for CMIP5, `variable_id`/`experiment_id` otherwise),
+    so we close over the class and the two names and hand back a maker that just
+    takes the values.
+
+    Parameters
+    ----------
+    query_cls
+        The query class to build
+
+    variable_field
+        The name that class uses for the variable facet
+
+    experiment_field
+        The name that class uses for the experiment facet
+
+    Returns
+    -------
+    :
+        A function of `(variables, experiments)` returning a query
+    """
+
+    def make(variables, experiments):
+        return query_cls(**{variable_field: variables, experiment_field: experiments})
+
+    return make
+
+
+# TODO Anna: please add tests that check the AND/OR logic of the queries
+# for different generations.
+# Let's do a search for [tas, rsdt] for [piControl and historical].
+# We expect to get results for all combinations
+# i.e. it is OR logic within a facet and AND across facets
+# (but OR over combinations of facets).
+# Let's do esgf1-solr-cmip5, esgf15-bridge-cmip6 and esgf-ng-stac-cmip7
+# for these tests.
+AND_OR_CASES = (
+    pytest.param(
+        SearchAPI("esgf.nci.org.au", SOLR_CMIP5, build_transient_retrying(2)),
+        and_or_query(QueryCMIP5, "variable", "experiment"),
+        id="solr-cmip5",
+    ),
+    pytest.param(
+        SearchAPI("esgf-node.ornl.gov", BRIDGE_CMIP6, build_transient_retrying(2)),
+        and_or_query(QueryCMIP6, "variable_id", "experiment_id"),
+        id="bridge-cmip6",
+    ),
+    pytest.param(
+        SearchAPI("search.east.esgf.io", STAC_CMIP7, build_transient_retrying(2)),
+        and_or_query(QueryCMIP7, "variable_id", "experiment_id"),
+        id="esgf-ng-cmip7",
+    ),
+)
+"""A search API and a maker for queries in that case's project vocabulary"""
 
 
 @pytest.fixture(scope="module")
@@ -98,6 +225,27 @@ def test_search_returns_results(client, api, query):
 
     raw = results[api.host]
     assert api.generation.result_count(raw) > 0
+
+
+@pytest.mark.parametrize("api, query, poison_field", FACET_NAME_CASES)
+def test_search_applies_the_facets_we_send(client, api, query, poison_field):
+    """
+    Test that the API understood the facet names we sent it
+
+    We take the query which does match data and change one facet
+    to a value nothing can have.
+    If the API is applying that facet, nothing comes back.
+    If it came back with matches, it ignored the name we used,
+    which means our name for that facet is wrong
+    and every search we build with it is quietly unfiltered.
+    """
+    nonsense = query.model_copy(update={poison_field: (NOT_A_REAL_VALUE,)})
+    results = search(nonsense, build_list_selector([api]), limit=5, client=client)
+
+    if not results:
+        pytest.skip(f"{api.host} did not answer, so it is down or unwell")
+
+    assert api.generation.result_count(results[api.host]) == 0
 
 
 def master_ids(raw: dict) -> set[str]:
@@ -161,3 +309,41 @@ def test_aggregating_over_nodes_finds_more_than_one_node(client):
         "aggregating across nodes should find more unique datasets "
         "than the single most complete node"
     )
+
+
+@pytest.mark.parametrize("api, make_query", AND_OR_CASES)
+def test_search_ors_within_a_facet_and_ands_across_facets(client, api, make_query):
+    """
+    Test that facet values OR within a facet and facets AND across each other
+
+    We search for [tas, rsdt] over [piControl, historical] and expect data for
+    every one of the four (variable, experiment) combinations. Each combination
+    that comes back with data is a variable ANDed with an experiment, so seeing
+    all four means each variable is usable with each experiment: the facets AND
+    across each other, and both values in each facet are honoured rather than
+    one being dropped.
+
+    Note: CMIP7 is new, so some of its combinations may not be published yet;
+    this case can legitimately fail until that data exists.
+    """
+
+    def count(variables, experiments):
+        query = make_query(variables, experiments)
+        results = search(query, build_list_selector([api]), limit=1, client=client)
+        if not results:
+            pytest.skip(f"{api.host} did not answer, so it is down or unwell")
+        return api.generation.result_count(results[api.host])
+
+    for variable in AND_OR_VARIABLES:
+        for experiment in AND_OR_EXPERIMENTS:
+            found = count((variable,), (experiment,))
+            assert found > 0, (
+                f"expected data for variable={variable}, experiment={experiment}, "
+                f"but {api.host} matched none"
+            )
+
+
+# TODO: eventually will test AND/OR logic again once populating Dataset. Testing
+# what is returning (rather than simply results > 0).
+# Eventually also will have higher level wrappers for more sophisticated
+# search logic -> i.e. Malte's search example.
