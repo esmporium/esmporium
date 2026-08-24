@@ -36,6 +36,14 @@ from esmporium.search.esgf_generations import (
 )
 from esmporium.search.retry import build_transient_retrying
 
+REQUEST_TIMEOUT: float = 30.0
+"""
+How long to wait on a single request, in seconds
+
+A node which is going to answer answers quickly;
+one which does not is better retried or skipped than waited on.
+"""
+
 
 @dataclass(frozen=True)
 class SearchAPI:
@@ -55,6 +63,11 @@ class SearchAPI:
 
     retrying: Retrying
     """The retry policy to use when hitting this API"""
+
+    timeout: float = REQUEST_TIMEOUT
+    """
+    How long to wait on a single request to this host, in seconds
+    """
 
     scheme: str = "https"
     """

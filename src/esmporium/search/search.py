@@ -16,18 +16,6 @@ from esmporium.search.search_api import DEFAULT_SELECTOR, SearchAPI, SearchAPISe
 
 logger = logging.getLogger(__name__)
 
-# Make this a parameter of the function in which it is used
-# and allow it to be passed by the user, rather than being a global variable.
-# Consider making this smaller: for search, 30s wait is huge, no?
-# I would have thought that the majority of searches come back in 5s or less.
-REQUEST_TIMEOUT: float = 30.0
-"""
-How long to wait on a single request, in seconds
-
-A node which is going to answer answers quickly;
-one which does not is better retried or skipped than waited on.
-"""
-
 
 def _curl_equivalent(request: httpx.Request) -> str:
     """
@@ -97,10 +85,12 @@ def _log_request(
 
 
 def fire(
-    client: httpx.Client, api: SearchAPI, request: Request
+    client: httpx.Client,
+    api: SearchAPI,
+    request: Request,
 ) -> dict[str, Any] | None:
     """
-    Send one request to one API, using that API's retry policy
+    Send one request to one API, using that API's retry policy and timeout
 
     Parameters
     ----------
@@ -108,7 +98,7 @@ def fire(
         The HTTP client to send with
 
     api
-        The API to send to (this also carries the retry policy)
+        The API to send to (this also carries the retry policy and timeout)
 
     request
         The request to send
@@ -125,7 +115,7 @@ def fire(
         api.url(request),
         params=request.params,
         json=request.json_body,
-        timeout=REQUEST_TIMEOUT,
+        timeout=api.timeout,
     )
     _log_request(api, built)
 
@@ -180,9 +170,6 @@ def search(
         The page size to ask each endpoint for,
         i.e. the most records in one response, not the total matched.
         The total comes back in the response itself.
-        TODO Anna: can you please make sure that there is a test
-        for a case where we get more than 10_000 results
-        i.e. make sure that the pagination works.
 
     client
         The HTTP client to search with.

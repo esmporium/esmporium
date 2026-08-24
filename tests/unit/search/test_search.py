@@ -46,9 +46,9 @@ def solr_response(num_found: int) -> httpx.Response:
     return httpx.Response(200, json={"response": {"numFound": num_found, "docs": []}})
 
 
-def make_search_api(host: str, attempts: int = 1) -> SearchAPI:
+def make_search_api(host: str, attempts: int = 1, timeout: float = 30.0) -> SearchAPI:
     """Build a CMIP6-Solr SearchAPI for `host`"""
-    return SearchAPI(host, SOLR_CMIP6, fast_retrying(attempts))
+    return SearchAPI(host, SOLR_CMIP6, fast_retrying(attempts), timeout=timeout)
 
 
 # TODO Anna: please use the below prompt with claude (or just do it yourself, up to you)
@@ -64,6 +64,22 @@ def test_fire_returns_the_json_on_success():
     raw = fire(client, make_search_api("host"), request)
 
     assert raw == {"response": {"numFound": 3, "docs": []}}
+
+
+def test_fire_uses_the_apis_own_timeout():
+    """The per-node timeout on the SearchAPI is the one applied to the request"""
+    seen: list[httpx.Timeout] = []
+
+    def handler(request):
+        seen.append(request.extensions["timeout"])
+        return solr_response(1)
+
+    client = client_for(handler)
+    request = Request("GET", "/esg-search/search")
+
+    fire(client, make_search_api("host", timeout=5.0), request)
+
+    assert seen == [{"connect": 5.0, "read": 5.0, "write": 5.0, "pool": 5.0}]
 
 
 def test_fire_returns_none_on_a_client_error_without_retrying():
