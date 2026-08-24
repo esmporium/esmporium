@@ -48,10 +48,12 @@ Not included:
     - we can add in such a helper later, if we want it. We're going to wait until we want it before we do this though
 - tracking queries in our database, that comes later
 
+
 ## PR-1.5
 
 Search API health
 If this PR is small enough, consider also adding a selector function that picks the API to use based on health information (e.g. pick the API which has the fastest response with results for the given project)
+search.py logging see comment to return failure reason rather than None?
 
 Tests:
 
