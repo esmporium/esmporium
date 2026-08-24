@@ -17,9 +17,9 @@ import httpx
 from tenacity import Retrying, retry_if_exception, stop_after_attempt
 
 from esmporium.query import QueryCMIP6
-from esmporium.search import Request, SearchAPI, build_list_selector, fire, search
+from esmporium.search import SearchAPI, build_list_selector, search
 from esmporium.search.retry import _is_transient
-from esmporium.search.search_api import SOLR_CMIP6
+from esmporium.search.search_api import SOLR_CMIP6, STAC_CMIP6
 
 LOGGER_NAME = "esmporium.search.search"
 
@@ -51,22 +51,18 @@ def make_search_api(host: str, attempts: int = 1, timeout: float = 30.0) -> Sear
     return SearchAPI(host, SOLR_CMIP6, fast_retrying(attempts), timeout=timeout)
 
 
-# TODO Anna: please use the below prompt with claude (or just do it yourself, up to you)
-# Please change all the tests of fire into equivalent tests of `search`.
-# `fire` is a function that we might change or remove.
-# I want to keep these tests, but I want to keep them on the function I care about,
-# `search`, not a function that is (to me) an implementation detail i.e. `fire`.
-def test_fire_returns_the_json_on_success():
-    """A 200 with a JSON body comes back as that JSON"""
-    client = client_for(lambda request: solr_response(3))
-    request = Request("GET", "/esg-search/search", params={"limit": 2})
+def test_search_returns_the_json_on_success():
+    """A 200 with a JSON body comes back as that JSON, keyed by host"""
+    selector = build_list_selector([make_search_api("host")])
 
-    raw = fire(client, make_search_api("host"), request)
+    results = search(
+        QUERY_CMIP6, selector, client=client_for(lambda r: solr_response(3))
+    )
 
-    assert raw == {"response": {"numFound": 3, "docs": []}}
+    assert results == {"host": {"response": {"numFound": 3, "docs": []}}}
 
 
-def test_fire_uses_the_apis_own_timeout():
+def test_search_uses_the_apis_own_timeout():
     """The per-node timeout on the SearchAPI is the one applied to the request"""
     seen: list[httpx.Timeout] = []
 
@@ -74,15 +70,14 @@ def test_fire_uses_the_apis_own_timeout():
         seen.append(request.extensions["timeout"])
         return solr_response(1)
 
-    client = client_for(handler)
-    request = Request("GET", "/esg-search/search")
+    selector = build_list_selector([make_search_api("host", timeout=5.0)])
 
-    fire(client, make_search_api("host", timeout=5.0), request)
+    search(QUERY_CMIP6, selector, client=client_for(handler))
 
     assert seen == [{"connect": 5.0, "read": 5.0, "write": 5.0, "pool": 5.0}]
 
 
-def test_fire_returns_none_on_a_client_error_without_retrying():
+def test_search_returns_none_on_a_client_error_without_retrying():
     """A 4xx is a real 'no'; we do not ask again"""
     calls = 0
 
@@ -91,16 +86,15 @@ def test_fire_returns_none_on_a_client_error_without_retrying():
         calls += 1
         return httpx.Response(404)
 
-    client = client_for(handler)
-    request = Request("GET", "/esg-search/search")
+    selector = build_list_selector([make_search_api("host", attempts=3)])
 
-    raw = fire(client, make_search_api("host", attempts=3), request)
+    results = search(QUERY_CMIP6, selector, client=client_for(handler))
 
-    assert raw is None
+    assert results == {}
     assert calls == 1
 
 
-def test_fire_retries_a_transient_failure_then_gives_up():
+def test_search_retries_a_transient_failure_then_gives_up():
     """A 5xx is retried up to the policy's limit, then reported as no answer"""
     calls = 0
 
@@ -109,16 +103,15 @@ def test_fire_retries_a_transient_failure_then_gives_up():
         calls += 1
         return httpx.Response(503)
 
-    client = client_for(handler)
-    request = Request("GET", "/esg-search/search")
+    selector = build_list_selector([make_search_api("host", attempts=3)])
 
-    raw = fire(client, make_search_api("host", attempts=3), request)
+    results = search(QUERY_CMIP6, selector, client=client_for(handler))
 
-    assert raw is None
+    assert results == {}
     assert calls == 3
 
 
-def test_fire_retries_a_transient_failure_then_succeeds():
+def test_search_retries_a_transient_failure_then_succeeds():
     """A node that flaps once and then answers is retried into a success"""
     calls = 0
 
@@ -127,16 +120,15 @@ def test_fire_retries_a_transient_failure_then_succeeds():
         calls += 1
         return httpx.Response(500) if calls == 1 else solr_response(9)
 
-    client = client_for(handler)
-    request = Request("GET", "/esg-search/search")
+    selector = build_list_selector([make_search_api("host", attempts=3)])
 
-    raw = fire(client, make_search_api("host", attempts=3), request)
+    results = search(QUERY_CMIP6, selector, client=client_for(handler))
 
-    assert raw == {"response": {"numFound": 9, "docs": []}}
+    assert results == {"host": {"response": {"numFound": 9, "docs": []}}}
     assert calls == 2
 
 
-def test_fire_returns_none_when_the_body_is_not_json():
+def test_search_returns_none_when_the_body_is_not_json():
     """A 200 we cannot read as JSON is no more useful than no answer"""
     calls = 0
 
@@ -145,12 +137,11 @@ def test_fire_returns_none_when_the_body_is_not_json():
         calls += 1
         return httpx.Response(200, content=b"not json at all")
 
-    client = client_for(handler)
-    request = Request("GET", "/esg-search/search")
+    selector = build_list_selector([make_search_api("host", attempts=3)])
 
-    raw = fire(client, make_search_api("host", attempts=3), request)
+    results = search(QUERY_CMIP6, selector, client=client_for(handler))
 
-    assert raw is None
+    assert results == {}
     assert calls == 1, "an unreadable body is not a transient failure"
 
 
@@ -228,14 +219,17 @@ def test_search_builds_and_closes_its_own_client(monkeypatch):
     assert built.is_closed, "a client search built itself should be closed after"
 
 
-# TODO Anna: as above, make these focus on `search` not `fire`
-def test_fire_logs_the_request_at_debug(caplog):
+def test_search_logs_the_request_at_debug(caplog):
     """At DEBUG, the request is logged as URL, curl, and structured fields"""
-    client = client_for(lambda request: solr_response(1))
-    request = Request("GET", "/esg-search/search", params={"limit": 2})
+    selector = build_list_selector([make_search_api("esgf.example.org")])
 
     with caplog.at_level(logging.DEBUG, logger=LOGGER_NAME):
-        fire(client, make_search_api("esgf.example.org"), request)
+        search(
+            QUERY_CMIP6,
+            selector,
+            limit=2,
+            client=client_for(lambda r: solr_response(1)),
+        )
 
     records = [r for r in caplog.records if r.name == LOGGER_NAME]
     assert len(records) == 1
@@ -255,26 +249,31 @@ def test_fire_logs_the_request_at_debug(caplog):
     assert record.thread == threading.get_ident()
 
 
-def test_fire_curl_reproduces_a_post_body(caplog):
+def test_search_curl_reproduces_a_post_body(caplog):
     """The curl-equivalent of a POST carries its method and body"""
-    client = client_for(lambda request: httpx.Response(200, json={"numberMatched": 1}))
-    request = Request("POST", "/search", json_body={"filter": "keep-me"})
+    # STAC is our POST generation, so search it to exercise the POST path.
+    stac_api = SearchAPI("search.example.io", STAC_CMIP6, fast_retrying(1))
+    selector = build_list_selector([stac_api])
 
     with caplog.at_level(logging.DEBUG, logger=LOGGER_NAME):
-        fire(client, make_search_api("search.example.io"), request)
+        search(
+            QUERY_CMIP6,
+            selector,
+            client=client_for(lambda r: httpx.Response(200, json={"numberMatched": 1})),
+        )
 
     (record,) = [r for r in caplog.records if r.name == LOGGER_NAME]
     assert "-X POST" in record.http_curl
     assert "--data" in record.http_curl
-    assert "keep-me" in record.http_curl
+    # "historical" is the experiment_id from QUERY_CMIP6, so it rides in the body.
+    assert "historical" in record.http_curl
 
 
-def test_fire_does_not_log_below_debug(caplog):
+def test_search_does_not_log_below_debug(caplog):
     """Below DEBUG nothing is logged"""
-    client = client_for(lambda request: solr_response(1))
-    request = Request("GET", "/esg-search/search")
+    selector = build_list_selector([make_search_api("host")])
 
     with caplog.at_level(logging.INFO, logger=LOGGER_NAME):
-        fire(client, make_search_api("host"), request)
+        search(QUERY_CMIP6, selector, client=client_for(lambda r: solr_response(1)))
 
     assert [r for r in caplog.records if r.name == LOGGER_NAME] == []
