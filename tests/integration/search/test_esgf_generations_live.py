@@ -35,6 +35,8 @@ from esmporium.search import (
     ESGFNGStac,
     SolrCMIP5Parameters,
     SolrCMIP6Parameters,
+    SolrCMIP7Parameters,
+    StacCMIP5Parameters,
     StacCMIP6Parameters,
     StacCMIP7Parameters,
     native_facet_names,
@@ -73,11 +75,27 @@ LIVE_CASES = (
         id="esgf1-solr-cmip6",
     ),
     pytest.param(
+        "esgf.nci.org.au",
+        ESGF1Solr(params=SolrCMIP7Parameters),
+        QueryCMIP7(
+            variable_id="tas",
+        ),
+        "variable_id",
+        id="esgf1-solr-cmip7",
+    ),
+    pytest.param(
         "esgf-node.ornl.gov",
         ESGF15Bridge(params=SolrCMIP6Parameters),
         QueryCMIP6(experiment_id="historical", variable_id="tas", frequency="mon"),
         "variable_id",
         id="esgf15-bridge-cmip6",
+    ),
+    pytest.param(
+        "search.east.esgf.io",
+        ESGFNGStac(params=StacCMIP5Parameters),
+        QueryCMIP5(experiment="historical", variable="tas", time_frequency="mon"),
+        "variable_id",
+        id="esgf-ng-stac-cmip5",
     ),
     pytest.param(
         "search.east.esgf.io",
@@ -93,10 +111,6 @@ LIVE_CASES = (
         "variable_id",
         id="esgf-ng-stac-cmip7",
     ),
-    # TODO Anna: please add esgf1-solr-cmip7 and esgf-ng-stac-cmip5 here.
-    # I would like to test that if we get no results (esgf-ng-stac-cmip5),
-    # things don't explode and tracking esgf1-solr-cmip7
-    # is not a bad thing to do either.
     #
     # TODO Anna: please add tests that check the AND/OR logic of the queries
     # for different generations.
@@ -109,12 +123,72 @@ LIVE_CASES = (
 )
 """
 A host, the generation it speaks, a query we expect it to match,
-and the name of one field of that query in the generation's own vocabulary
+and the name of one field of that query in the query class's own vocabulary
 """
 
 
 STAC_LIVE_CASES = tuple(case for case in LIVE_CASES if "stac" in str(case.id))
 """The live cases whose API describes its facet values in a STAC collection"""
+
+
+AND_OR_VARIABLES = ("tas", "rsdt")
+"""The two variables we probe the AND/OR logic with"""
+
+AND_OR_EXPERIMENTS = ("piControl", "historical")
+"""The two experiments we probe the AND/OR logic with"""
+
+
+def and_or_query(query_cls, variable_field, experiment_field):
+    """
+    Build a query maker for a query class's own native facet names
+
+    Parameters
+    ----------
+    query_cls
+        The query class to build
+
+    variable_field
+        The name that class uses for the variable facet
+
+    experiment_field
+        The name that class uses for the experiment facet
+
+    Returns
+    -------
+    :
+        A function of `(variables, experiments)` returning a query
+    """
+
+    def make(variables, experiments):
+        return query_cls(**{variable_field: variables, experiment_field: experiments})
+
+    return make
+
+
+AND_OR_CASES = (
+    pytest.param(
+        "esgf.nci.org.au",
+        ESGF1Solr(params=SolrCMIP5Parameters),
+        and_or_query(QueryCMIP5, "variable", "experiment"),
+        id="esgf1-solr-cmip5",
+    ),
+    pytest.param(
+        "esgf-node.ornl.gov",
+        ESGF15Bridge(params=SolrCMIP6Parameters),
+        and_or_query(QueryCMIP6, "variable_id", "experiment_id"),
+        id="esgf15-bridge-cmip6",
+    ),
+    pytest.param(
+        "search.east.esgf.io",
+        ESGFNGStac(params=StacCMIP7Parameters),
+        and_or_query(QueryCMIP7, "variable_id", "experiment_id"),
+        id="esgf-ng-stac-cmip7",
+    ),
+)
+"""
+A host, the generation it speaks, and a maker for queries in that query class's
+own vocabulary
+"""
 
 
 @pytest.fixture(scope="module")
@@ -317,3 +391,41 @@ def test_facets_which_are_not_enumerated_are_left_out(
     assert not (not_enumerated & set(res)), (
         "a facet whose values the collection does not list was reported anyway"
     )
+
+
+@pytest.mark.parametrize("host, generation, make_query", AND_OR_CASES)
+def test_query_ors_within_a_facet_and_ands_across_facets(
+    client, host, generation, make_query
+):
+    """
+    Test that facet values OR within a facet and facets AND across each other
+
+    We search for [tas, rsdt] over [piControl, historical] and expect data for
+    every one of the four (variable, experiment) combinations. Each combination
+    that comes back with data is a variable ANDed with an experiment, so seeing
+    all four means each variable is usable with each experiment: the facets AND
+    across each other, and both values in each facet are honoured rather than
+    one being dropped.
+
+    Note: CMIP7 is new, so some of its combinations may not be published yet;
+    this case can legitimately fail until that data exists.
+    """
+
+    def count(variables, experiments):
+        query = make_query(variables, experiments)
+        request = generation.build_search_request(to_canonical(query), limit=1)
+        return generation.result_count(fire(client, host, request))
+
+    for variable in AND_OR_VARIABLES:
+        for experiment in AND_OR_EXPERIMENTS:
+            found = count((variable,), (experiment,))
+            assert found > 0, (
+                f"expected data for variable={variable}, experiment={experiment}, "
+                f"but {host} matched none"
+            )
+
+
+# TODO: eventually will test AND/OR logic again once populating Dataset. Testing
+# what is returning (rather than simply results > 0).
+# Eventually also will have higher level wrappers for more sophisticated
+# search logic -> i.e. Malte's search example.
