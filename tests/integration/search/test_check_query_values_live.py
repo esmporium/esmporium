@@ -1,26 +1,6 @@
 """
-Test the value/typo checker end-to-end against the live vocabulary sources
+Test the facet value/typo checker end-to-end against the live vocabulary sources
 
-These are the proofs the unit tests cannot give: that a deliberately-wrong value
-really does get matched to the real spelling the live sources publish today.
-`test_check_query_values.py` (unit) pins the tiering and the parsing against
-canned data; here we run the whole thing -- route by project, fetch the allowed
-values (Solr for CMIP5/6, the CMIP7 CV over GitHub), tier, and read the report.
-
-The checker is fail-soft by design: if it cannot reach a source it reports the
-facet as `unchecked` rather than raising. That is exactly what we want a down
-node to look like, so these tests treat `unchecked` as "could not check today"
-and skip, and only assert when the source actually answered. A node being down
-is not a failure of ours; a source that answers and disagrees with our ground
-truth is.
-
-The values asserted on are chosen to be stable: CMIP5 and CMIP6 are finished, so
-their experiment names do not change, and `r1i1p1f1` is the most common variant
-label there is. If one of these ever starts failing while the source is up, the
-published vocabulary -- not this code -- is what moved.
-
-These are opt in. They are skipped unless `--run-hits-esgf-search-api` is given,
-for the same reasons as the rest of the live suite.
 """
 
 from __future__ import annotations
