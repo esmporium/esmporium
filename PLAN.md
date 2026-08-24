@@ -2,7 +2,7 @@ Rough plan for PRs.
 
 Last updated: 2026-08-2- [ ](ok, this is also tracked in git, anyway)
 
-## PR- [ ] In progress,  see [TODO @Anna make PR and add link here]
+## PR-1 In progress,  see [TODO @Anna make PR and add link here]
 
 Add search
 
@@ -48,7 +48,7 @@ Not included:
     - we can add in such a helper later, if we want it. We're going to wait until we want it before we do this though
 - tracking queries in our database, that comes later
 
-## PR- [ ]5
+## PR-1.5
 
 Search API health
 If this PR is small enough, consider also adding a selector function that picks the API to use based on health information (e.g. pick the API which has the fastest response with results for the given project)
@@ -70,6 +70,7 @@ Converting search results into Datasets
 
 Check that we can parse search results into Datasets
 Check whether we can create a mermaid diagram that, by definition, stays in line with our code that we can put in our docs to show the links between things
+Include pagination in this step (currently we know the number of results found for each search, but are only recording the first 10,000 in the raw_json). STAC and SOLR will be handled differently. SOLR can be paralelised and STAC (with east and west having slightly different naming conventions), have to be handled consecutively.
 
 Tests:
 
@@ -81,10 +82,14 @@ Unit tests:
     - this will require adding the dataset version and dataset location objects (and I guess then also tables). The dataset location link may need to be nullable, because it doesn't exist for ESGF-NG?
     - I think this will also require adding in the project-specific dataset tables so we can parse CMIP5, CMIP6 and CMIP7 results properly
     - please also include a `dataset_addition_source` or similar column (I'm not sure what the best name is). In future, we will also want to add datasets e.g. from local files and I think we'll want to be able to tell whether a file was added because it was found in a query vs. because it was found in local files.
+    - Pagination: we want a unit test for the pagination behaviour
 
 Integration tests:
 
 - [ ] Update the integration tests from PR1 so that they now check the created Dataset objects, rather than the parsed raw JSON
+- Pagination: an explicit integration test for a search that returns around 30 000 results (so we need 3 queries to get everything)
+- We can get the integration test with SOLR. With STAC, we'll have to rely on mocking for now to test this and a proper integration
+test can wait until there are 10 000 records available. -> or perhaps not...
 
 Not included:
 
