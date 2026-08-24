@@ -6,8 +6,6 @@ pin the varous steps plumbing and failure modes,
 so if those pass and these fail,
 the thing that changed is on the other end of the wire.
 """
-# TODO Anna: think about whether we need this and test_facet_values_live,
-# or we can just have one (perhaps combining elements of both).
 
 from __future__ import annotations
 
@@ -129,18 +127,6 @@ FACET_NAME_CASES = (
 )
 """A search API, a query it matches, and the query field to poison"""
 
-# The real Solr nodes we compare for the aggregation test.
-# distrib is turned off below,
-# so each answers only for the data it holds itself, which is the whole point:
-# different nodes hold different data.
-# TODO Anna: shall we just inline this rather than having it as a global constant
-AGGREGATION_HOSTS = (
-    "esgf.nci.org.au",
-    "esgf.ceda.ac.uk",
-    "esgf-data.dkrz.de",
-    "esg-dn1.nsc.liu.se",
-)
-
 AND_OR_VARIABLES = ("tas", "rsdt")
 """The two variables we probe the AND/OR logic with"""
 
@@ -151,11 +137,6 @@ AND_OR_EXPERIMENTS = ("piControl", "historical")
 def and_or_query(query_cls, variable_field, experiment_field):
     """
     Build a query maker for a query class's own variable/experiment field names
-
-    Each project's query class spells these facets differently
-    (`variable`/`experiment` for CMIP5, `variable_id`/`experiment_id` otherwise),
-    so we close over the class and the two names and hand back a maker that just
-    takes the values.
 
     Parameters
     ----------
@@ -180,14 +161,6 @@ def and_or_query(query_cls, variable_field, experiment_field):
     return make
 
 
-# TODO Anna: please add tests that check the AND/OR logic of the queries
-# for different generations.
-# Let's do a search for [tas, rsdt] for [piControl and historical].
-# We expect to get results for all combinations
-# i.e. it is OR logic within a facet and AND across facets
-# (but OR over combinations of facets).
-# Let's do esgf1-solr-cmip5, esgf15-bridge-cmip6 and esgf-ng-stac-cmip7
-# for these tests.
 AND_OR_CASES = (
     pytest.param(
         SearchAPI("esgf.nci.org.au", SOLR_CMIP5, build_transient_retrying(2)),
@@ -284,7 +257,13 @@ def test_aggregating_over_nodes_finds_more_than_one_node(client):
     local_solr = ESGF1Solr(params=SolrCMIP6Parameters, distrib=False)
     nodes = [
         SearchAPI(host, local_solr, build_transient_retrying(2))
-        for host in AGGREGATION_HOSTS
+        # real solr nodes to compare aggregation (unique results per host)
+        for host in (
+            "esgf.nci.org.au",
+            "esgf.ceda.ac.uk",
+            "esgf-data.dkrz.de",
+            "esg-dn1.nsc.liu.se",
+        )
     ]
 
     results = search(
