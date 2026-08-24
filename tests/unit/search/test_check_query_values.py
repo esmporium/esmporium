@@ -1,17 +1,6 @@
 """
-Test the opt-in value/typo checker without touching the network
+Test the opt-in facet value/typo checker without touching the network
 
-The checker's heart is `compare_values`: a pure tiering of each value the user
-typed against the values a facet is allowed to have. That, plus the two
-vocabulary sources' parsing and the project routing, is what these tests pin.
-The live end-to-end proofs (does the real top node actually suggest
-"abrupt4xCO2"?) live in `tests/integration/search/test_check_query_values_live.py`
-and are opt-in; everything here runs by default and never leaves the process.
-
-Where a source has to fetch (Solr over HTTP, the CMIP7 CV over HTTP), the fetch
-is answered by an `httpx.MockTransport` or a monkeypatched `httpx.get`, so we
-still exercise the request we build and the response we parse, just without a
-server on the other end.
 """
 
 from __future__ import annotations
@@ -42,11 +31,6 @@ from esmporium.search.search_api import SOLR_CMIP6, SearchAPI
 # of the same name, which shadows the submodule for a plain import.
 checker = importlib.import_module("esmporium.search.check_query_values")
 
-# ---------------------------------------------------------------------------
-# compare_values: the pure tiering core. Feed it a query and a {facet: allowed}
-# map; it should tier each value exact -> case -> typo -> unknown.
-# ---------------------------------------------------------------------------
-
 
 def canonical_cmip6(**facets):
     """A canonical CMIP6 query, built from keyword facet values."""
@@ -70,19 +54,19 @@ def test_wrong_case_only_is_a_case_finding():
 
 def test_near_miss_is_a_typo_finding_with_ranked_suggestions():
     """A close-but-wrong spelling is a 'typo' finding carrying the closest real values."""  # noqa: E501
-    canonical = canonical_cmip6(experiment_id="abrupt-4xco2")
+    canonical = canonical_cmip6(experiment_id="abrupt4xco2")
 
     (finding,) = compare_values(
         canonical,
-        {"experiment": {"abrupt4xCO2", "abrupt2xCO2", "historical"}},
+        {"experiment": {"abrupt-4xCO2", "abrupt-2xCO2", "historical"}},
     )
 
     assert finding.facet == "experiment"
-    assert finding.value == "abrupt-4xco2"
+    assert finding.value == "abrupt4xco2"
     assert finding.kind == "typo"
     # The closest real spelling is offered, and it is offered first.
     assert finding.suggestions
-    assert finding.suggestions[0] == "abrupt4xCO2"
+    assert finding.suggestions[0] == "abrupt-4xCO2"
 
 
 def test_nonsense_is_an_unknown_finding_with_no_suggestion():
@@ -105,10 +89,8 @@ def test_suggestions_are_capped():
 
 
 def test_a_facet_not_in_available_is_left_untouched():
-    """compare_values only judges facets it was given values for; the rest are silent.
-
-    (The caller turns 'not in available' into `unchecked`; that is not this
-    function's job, so here it simply produces no finding.)
+    """compare_values only judges facets it was given values for; the
+    rest are silent.
     """
     canonical = canonical_cmip6(experiment_id="Historical", variable_id="tas")
 
@@ -120,14 +102,14 @@ def test_a_facet_not_in_available_is_left_untouched():
 
 def test_a_facet_can_carry_several_bad_values():
     """Every value a multi-value facet holds is checked, in order."""
-    canonical = canonical_cmip6(experiment_id=("Historical", "abrupt-4xco2", "tas"))
+    canonical = canonical_cmip6(experiment_id=("Historical", "abrupt4xco2", "tas"))
 
-    findings = compare_values(canonical, {"experiment": {"historical", "abrupt4xCO2"}})
+    findings = compare_values(canonical, {"experiment": {"historical", "abrupt-4xCO2"}})
 
     kinds = {(f.value, f.kind) for f in findings}
     assert kinds == {
         ("Historical", "case"),
-        ("abrupt-4xco2", "typo"),
+        ("abrupt4xco2", "typo"),
         ("tas", "unknown"),
     }
 
@@ -143,11 +125,6 @@ def test_findings_are_ordered_by_facet():
     assert [f.facet for f in findings] == ["experiment", "variable"]
 
 
-# ---------------------------------------------------------------------------
-# facets_the_user_set: which facets we should check / report on.
-# ---------------------------------------------------------------------------
-
-
 def test_facets_the_user_set_is_the_populated_canonical_facets_minus_project():
     """Only facets the user actually filled in count, and `project` never does."""
     canonical = canonical_cmip6(experiment_id="historical", variable_id="tas")
@@ -160,12 +137,6 @@ def test_facets_the_user_set_includes_query_specific_facets():
     canonical = to_canonical(QueryCMIP5(experiment="historical", product="output1"))
 
     assert facets_the_user_set(canonical) == {"experiment", "product"}
-
-
-# ---------------------------------------------------------------------------
-# SolrVocabularySource: builds a facets= request, fires it, parses the answer
-# back into canonical-facet keys. Answered here by a MockTransport, not a node.
-# ---------------------------------------------------------------------------
 
 
 def solr_client_for(handler):
@@ -192,7 +163,7 @@ def test_solr_source_lists_values_keyed_by_canonical_facet(monkeypatch):
             json={
                 "facet_counts": {
                     "facet_fields": {
-                        "experiment_id": ["historical", 5, "abrupt4xCO2", 2],
+                        "experiment_id": ["historical", 5, "abrupt-4xCO2", 2],
                         "variable_id": ["tas", 9],
                     }
                 }
@@ -209,7 +180,7 @@ def test_solr_source_lists_values_keyed_by_canonical_facet(monkeypatch):
     available = source.allowed_values(canonical, {"experiment", "variable"})
 
     assert available == {
-        "experiment": {"historical", "abrupt4xCO2"},
+        "experiment": {"historical", "abrupt-4xCO2"},
         "variable": {"tas"},
     }
     # The request named the facets under the API's spelling, sorted for determinism.
@@ -233,13 +204,8 @@ def test_solr_source_describes_itself_by_host():
     assert source.description == "esgf.example.org"
 
 
-# ---------------------------------------------------------------------------
-# Cmip7CvVocabularySource: reads enums out of the controlled-vocabulary schema.
-# A trimmed slice of cmip7-stac.json stands in for the real file.
-# ---------------------------------------------------------------------------
-
-# The real CV describes variant_label with a named-group regex; a trimmed copy of
-# it, used both here and in the render_form tests below.
+# The real controlled-vocabulary (CV) describes variant_label with a named-group regex;
+# a trimmed copy of it, used both here and in the render_form tests below.
 CV_VARIANT_PATTERN = (
     r"^r(?P<realization_index>\d+)i(?P<initialization_index>(\d{4}\d{2}[abcde]?|\d+))"
     r"p(?P<physics_index>\d+)f(?P<forcing_index>\d+)$"
@@ -329,11 +295,6 @@ def test_cv_source_has_no_pattern_for_an_enumerated_facet():
     assert source.facet_pattern("experiment") is None
 
 
-# ---------------------------------------------------------------------------
-# Routing: which source (if any) answers for a given project.
-# ---------------------------------------------------------------------------
-
-
 def test_cmip5_and_cmip6_route_to_the_selectors_first_node():
     """CMIP5/6 check against the very node the search would have hit first."""
     picked = solr_api("first.node.example")
@@ -371,13 +332,11 @@ def test_cmip5_routes_to_none_when_the_selector_is_exhausted():
     assert vocabulary_source_for(canonical, lambda c, a: None) is None
 
 
-# ---------------------------------------------------------------------------
-# The high/low entry points, over a stub source (no network at all).
-# ---------------------------------------------------------------------------
-
-
 class StubSource:
-    """A vocabulary source that returns the values (and patterns) it was handed."""
+    """
+    A vocabulary source that returns the facet values (and patterns) it
+    was handed.
+    """
 
     def __init__(self, values, description="stub-source", patterns=None):
         self._values = values
@@ -391,6 +350,8 @@ class StubSource:
         return self._patterns.get(facet)
 
 
+# TODO: I need to double check what the high/low tiering is
+# referring to, to re-name these tests
 def test_low_tiers_findings_and_reports_the_rest_as_unchecked():
     """check_query_values_low tiers what it can and lists what it could not check."""
     canonical = canonical_cmip6(experiment_id="Historical", variable_id="tas")
@@ -449,11 +410,7 @@ def test_high_routes_and_checks_via_a_stubbed_source(monkeypatch):
     )
 
 
-# ---------------------------------------------------------------------------
-# render_form / sample_values: the two ways we help with a variant label.
-# ---------------------------------------------------------------------------
-
-
+# Below are testing the pattern format of variant_label
 def test_render_form_turns_named_groups_into_a_template():
     """A regex with named groups renders as a readable `r{...}i{...}...` template."""
     assert checker.render_form(CV_VARIANT_PATTERN) == (
@@ -468,28 +425,17 @@ def test_render_form_falls_back_to_the_raw_regex_without_named_groups():
 
 
 def test_sample_values_is_sorted_and_capped():
-    """The sample is deterministic (sorted) and no bigger than MAX_SUGGESTIONS."""
+    """The sample is sorted and no bigger than MAX_SUGGESTIONS."""
     got = checker.sample_values({"r2i1p1f1", "r1i1p1f1", "r1i1p2f1", "r3i1p1f1"})
 
     assert got == ("r1i1p1f1", "r1i1p2f1", "r2i1p1f1")
 
 
 def test_sample_values_orders_numerically_and_drops_junk():
-    """Numeric order (r2 before r100), and all-digit junk sinks to the back.
-
-    Both come from real node data: variant lists sort `r100...` before `r2...`
-    under plain string sort, and at least one node serves a bare `"1"`.
-    """
+    """Numeric order by `r`, e.g. from r1 to r2 before r10"""
     got = checker.sample_values({"1", "r100i1p1f1", "r2i1p1f1", "r1i1p1f1"})
 
     assert got == ("r1i1p1f1", "r2i1p1f1", "r100i1p1f1")
-
-
-# ---------------------------------------------------------------------------
-# Generated-identifier facets (variant labels): checked by presence (a list
-# source, e.g. Solr) or by form (a grammar source, e.g. the CMIP7 CV), never by
-# difflib. See `check_generated_ids` in the module for why the two paths differ.
-# ---------------------------------------------------------------------------
 
 
 def test_variant_label_absent_from_a_list_source_is_reported_with_examples():
@@ -562,7 +508,7 @@ def test_variant_label_is_unchecked_when_the_source_offers_neither():
 
 
 def test_vocabulary_and_variant_label_are_checked_side_by_side():
-    """A vocabulary facet and a variant label are tiered by their own rules at once."""
+    """A vocabulary facet and a variant label are checked by their own rules at once."""
     canonical = canonical_cmip6(experiment_id="Historical", variant_label="r1i1pf1")
     source = StubSource({"experiment": {"historical"}, "variant_label": {"r1i1p1f1"}})
 

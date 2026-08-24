@@ -1,67 +1,9 @@
 """
-Opt-in typo/case checker for a facet query that returned NO results.
+Opt-in facet value existence checker for a facet query that returned no results.
 
-Sits BESIDE the search ([search][esmporium.search.search.search]); `search()`
-never changes.
-The intended flow: a search comes back empty -> a UI asks the user "no hits --
-check your values against ESGF for typos?" -> on yes, this runs, fetches the
-allowed values for each facet the user set, and returns a `ValueReport` of
-findings (case slips, likely typos, unknowns). It does NOT prompt and does NOT
-re-run the search -- the "did you mean X? [y/n]" glue and any re-run are the
-caller's job, so this core stays pure and testable. Motto holds: names are OURS,
-values are THEIRS (must be correct case, no typos).
-
-Two SOURCES of "allowed values", one behind the same seam, routed by project:
-
-  VocabularySource  -> {canonical facet: set of allowed values}
-       +-- SolrVocabularySource(api)    CMIP5/6: ask the LIVE index node
-       |                                (facets=<all>&limit=0, one request).
-       |                                Means "values PUBLISHED on that node" --
-       |                                right for fully-published projects.
-       +-- Cmip7CvVocabularySource()    CMIP7: read the CONTROLLED VOCABULARY
-                                        (cmip7-stac.json, fetched on demand).
-                                        Means "values the SPEC allows" -- right
-                                        because ESGF-NG CMIP7 is near-empty, so
-                                        the live index would reject legal-but-
-                                        unpublished values as "unknown", AND
-                                        ESGF-NG cannot list facet values at all.
-
-This module is library code: it hands back findings and never prints or prompts.
-A runnable demo of it (a few wrong queries checked against the live sources)
-lives in `scripts/check_query_values_demo.py`, beside the search demo.
-
-The comparison core (`compare_values`) and `ValueReport` are source-agnostic:
-both sources emit the same {facet: values} shape, so the SAME difflib-based
-tiering (exact -> case-only -> typo -> unknown) runs for every project.
-
-Lookup is PROJECT-SCOPED (each facet checked independently against the full
-project vocabulary), NOT conditioned on the user's other facets: with 2+ typos,
-conditioning makes GOOD values look unknown, and the checker only runs BECAUSE
-the query has mistakes, so that is the common case.
-
-======================================================================
-TEST NOTES (recommended; NOT yet implemented -- see the plan).
-Per repo policy: pure tests run by DEFAULT, live ones behind the `SearchESGF`
-mark, skipped by default.
-  - compare_values (PURE, fast): feed canned `available` dicts and assert each
-    tier: exact -> no finding; wrong case ("Historical" vs "historical") ->
-    kind="case", one suggestion; near miss ("abrupt-4xco2" vs "abrupt4xCO2") ->
-    kind="typo", ranked suggestions; nonsense -> kind="unknown", no suggestion;
-    a facet absent from `available` -> lands in ValueReport.unchecked, not a
-    finding. Cover multi-value facets and a facet with several bad values.
-  - Solr parsing (PURE, fast): hand `solr_facet_values` a saved
-    `facet_counts.facet_fields` blob (values interleaved with counts) and assert
-    it returns the right sets keyed by CANONICAL facet (wire -> canonical map).
-  - CV parsing (PURE, fast): vendor a TRIMMED slice of cmip7-stac.json as a
-    fixture; assert Cmip7CvVocabularySource._values_from_schema pulls the enums
-    for cmip7:experiment_id etc. and keys them by canonical facet. No network.
-  - Fail-soft (PURE, fast): CV fetch raising -> allowed_values returns {} and the
-    facets show up as `unchecked` (never an exception to the caller).
-  - Live (SearchESGF, opt-in): QueryCMIP5(experiment="abrupt-4xco2") against the
-    real top node suggests "abrupt4xCO2"; QueryCMIP7(experiment_id="abrupt-4x")
-    via the CV suggests "abrupt-4xCO2". One assertion each; these are the
-    end-to-end proofs, not the everyday suite.
-======================================================================
+Gives users the option to check input values for typos.
+This file sits beside the search ([search][esmporium.search.search.search]); `search()`
+itself never changes.
 """
 
 from __future__ import annotations
@@ -93,17 +35,16 @@ from esmporium.search.search_api import (
 TYPO_CUTOFF = 0.6
 MAX_SUGGESTIONS = 3
 
-# Facets whose values are generated identifiers with a known grammar, rather than
-# a controlled vocabulary. We never difflib these against a list of "real" values
-# -- the near neighbours are just other people's runs, which is noise, not a
-# correction. Instead we check their FORM against a grammar when a source gives us
-# one (the CMIP7 CV, a STAC collection), or their PRESENCE when a source only
-# enumerates values (Solr). See `check_generated_ids` for why the two differ.
+# Facets whose values we check against a known grammer.
+# E.g. variant_label has a known structure "generated identifier"
+# We compare a user's value against the known shape, or simply if
+# their value exists, in comparison to difflib's "did you mean"
 GENERATED_ID_FACETS: frozenset[str] = frozenset({"variant_label"})
 
 # A named capture group in a regex, e.g. `(?P<realization_index>\d+)`. The body
-# allows one level of nested parentheses, which is all the CV patterns use (the
-# initialisation index is itself a `(\d{4}\d{2}[abcde]?|\d+)` alternation).
+# allows one level of nested parentheses, which is all the controlled vocabulary
+# patterns use (the initialisation index is itself a `(\d{4}\d{2}[abcde]?|\d+)`
+# alternation).
 _NAMED_GROUP = re.compile(r"\(\?P<(?P<name>\w+)>(?:[^()]|\([^()]*\))*\)")
 
 
@@ -131,12 +72,10 @@ def render_form(pattern: str) -> str:
 
 
 def _sample_key(value: str) -> tuple[bool, list[int], str]:
-    """Sort key for picking sample values: real-looking, low-numbered ones first.
+    """Sort key for picking sample values.
 
-    Real index nodes carry the odd junk value (a bare ``"1"`` turned up live), and
-    plain string sorting puts ``r100...`` before ``r2...``. So we (1) push
-    all-digit junk to the back, then (2) order by the integers in the value, so a
-    variant label reads r1, r2, ... r10 rather than r1, r10, r2.
+    For example, for variant_label prioritise low-valued integers
+    in order next to `r` index. r1, r2, r3, instead of r1, r10, r100.
     """
     return (value.isdigit(), [int(n) for n in re.findall(r"\d+", value)], value)
 
@@ -145,6 +84,9 @@ def sample_values(values: set[str]) -> tuple[str, ...]:
     """Return a small, stable sample of real values, to show a facet's shape by eye."""
     return tuple(sorted(values, key=_sample_key)[:MAX_SUGGESTIONS])
 
+
+# TODO: I need to clean this up based on the Slack message from last week after you
+# asked your colleague about tagging
 
 # The CMIP7 controlled vocabulary: a JSON Schema whose per-facet properties carry
 # `enum`s of the allowed values. Fetched on demand (this whole feature only runs
@@ -165,12 +107,9 @@ CMIP7_CV_URL = (
 )
 
 
-# =============================================================================
-# What we hand back: findings, not prompts. The caller renders/acts on these.
-# =============================================================================
 @dataclass(frozen=True)
 class FacetFinding:
-    """One facet value that is not an exact match, plus what we suspect."""
+    """One facet value that is not an exact match, plus the suggested error"""
 
     facet: str  # canonical facet name, e.g. "experiment"
     value: str  # what the user typed
@@ -192,10 +131,6 @@ class ValueReport:
         return not self.findings
 
 
-# =============================================================================
-# The pure comparison core. No network -- feed it the query and a
-# {facet: allowed values} map and it tiers each value. This is the tested heart.
-# =============================================================================
 def compare_values(
     canonical: QueryCanonical, available: dict[str, set[str]]
 ) -> tuple[FacetFinding, ...]:
@@ -234,7 +169,7 @@ def compare_values(
 
 
 def facets_the_user_set(canonical: QueryCanonical) -> set[str]:
-    """Canonical facets the user actually populated, minus `project`.
+    """Canonical facets the user populated, minus `project`.
 
     Query-specific facets (e.g. CMIP5 `product`) are included so they surface as
     `unchecked` -- we cannot validate them, and saying so is more honest than
@@ -245,9 +180,6 @@ def facets_the_user_set(canonical: QueryCanonical) -> set[str]:
     return canonical_set | set(canonical.query_specific_facets)
 
 
-# =============================================================================
-# The seam: a vocabulary source turns a project + facets into {facet: values}.
-# =============================================================================
 class VocabularySource(Protocol):
     """Something that can list the allowed values of some facets."""
 
@@ -281,7 +213,7 @@ class SolrVocabularySource:
 
     @property
     def description(self) -> str:
-        """Where these values come from -- the node host."""
+        """Where these values come from -- the index node host."""
         return self.api.host
 
     def allowed_values(
@@ -302,7 +234,11 @@ class SolrVocabularySource:
 
 @dataclass
 class Cmip7CvVocabularySource:
-    """CMIP7: read allowed values from the controlled vocabulary (cmip7-stac.json)."""
+    """
+    CMIP7: read allowed values from the controlled vocabulary (cmip7-stac.json).
+
+    Cannot return a list of known values through STAC.
+    """
 
     tag: str = CMIP7_CV_TAG
     _cache: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -378,10 +314,6 @@ class Cmip7CvVocabularySource:
         return out
 
 
-# =============================================================================
-# Routing: pick the source by project. CMIP5/6 -> the SAME top node the search
-# used (selector attempt 0); CMIP7 -> the CV. Injectable selector, like search().
-# =============================================================================
 def vocabulary_source_for(
     canonical: QueryCanonical, selector: SearchAPISelector = DEFAULT_SELECTOR
 ) -> VocabularySource | None:
@@ -395,10 +327,6 @@ def vocabulary_source_for(
     return None  # a project we have no vocabulary source for
 
 
-# =============================================================================
-# Entry points -- the high/low split. High picks a source by project; low runs
-# a given source and tiers the results.
-# =============================================================================
 def check_query_values(
     query: QueryProtocol, selector: SearchAPISelector = DEFAULT_SELECTOR
 ) -> ValueReport:
@@ -424,15 +352,14 @@ def check_generated_ids(
     These are not a controlled vocabulary, so the honest thing to say depends on
     what the source can tell us:
 
-    - it ENUMERATES the facet (Solr, i.e. the facet is in `available`): we know
-      what exists, not the grammar, so a value that is not in the list is
-      reported `absent` with a sample of real values. A well-formed value that
+    - For SOLR, we know what facet values exist, not the grammmar, for generated-
+    identifier facets. If a user's values is not in the list of known facet values,
+    it is reported as `absent` with a sample of real values. A well-formed value that
       simply was not produced looks the same as a typo here, so we never call it
       malformed and never assign blame -- we just show what does exist.
-    - it gives a GRAMMAR (`facet_pattern`, e.g. the CMIP7 CV): we know the form,
-      not what exists, so a value that does not match is `malformed` with the
-      expected form. A well-formed value passes silently, because we cannot say
-      whether that particular run exists.
+    - For CMIP7, we know the correct grammatical form of the generated-identifier
+    facets, but not what exists. A well-formed value passes silently, because we
+    cannot say whether that particular run exists.
 
     Returns the findings and the set of facets we managed to check; a facet the
     source can neither enumerate nor describe is left for the caller's
