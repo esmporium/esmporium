@@ -93,6 +93,19 @@ LIVE_CASES = (
         "variable_id",
         id="esgf-ng-stac-cmip7",
     ),
+    # TODO Anna: please add esgf1-solr-cmip7 and esgf-ng-stac-cmip5 here.
+    # I would like to test that if we get no results (esgf-ng-stac-cmip5),
+    # things don't explode and tracking esgf1-solr-cmip7
+    # is not a bad thing to do either.
+    #
+    # TODO Anna: please add tests that check the AND/OR logic of the queries
+    # for different generations.
+    # Let's do a search for [tas, rsdt] for [piControl and historical].
+    # We expect to get results for all combinations
+    # i.e. it is OR logic within a facet and AND across facets
+    # (but OR over combinations of facets).
+    # Let's do esgf1-solr-cmip5, esgf15-bridge-cmip6 and esgf-ng-stac-cmip7
+    # for these tests.
 )
 """
 A host, the generation it speaks, a query we expect it to match,

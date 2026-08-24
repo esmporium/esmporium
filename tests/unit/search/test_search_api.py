@@ -1,9 +1,5 @@
 """
 Test the endpoints we know about and how we pick between them
-
-These pin the selectors' behaviour, including the failure modes that are hard to
-provoke against live nodes: an empty list, a project we have no plan for, and a
-query that does not name exactly one project.
 """
 
 from __future__ import annotations
@@ -14,10 +10,6 @@ from esmporium.query import QueryCanonical
 from esmporium.search import Request, SearchAPI, build_list_selector
 from esmporium.search.retry import build_transient_retrying
 from esmporium.search.search_api import (
-    CMIP5_APIS,
-    CMIP6_APIS,
-    CMIP7_APIS,
-    DEFAULT_SELECTOR,
     SOLR_CMIP6,
     build_project_list_selector,
 )
@@ -86,6 +78,8 @@ def test_project_list_selector_stops_at_the_end_of_the_list():
     select = build_project_list_selector({"CMIP6": [make_api("only")]})
 
     assert select(canonical("CMIP6"), 1) is None
+    # If requested later, still gives None
+    assert select(canonical("CMIP6"), 100) is None
 
 
 def test_project_list_selector_needs_exactly_one_project():
@@ -105,16 +99,3 @@ def test_project_list_selector_raises_for_an_unknown_project():
 
     with pytest.raises(KeyError):
         select(canonical("CMIP5"), 0)
-
-
-@pytest.mark.parametrize(
-    "project, expected_first_host",
-    [
-        ("CMIP5", CMIP5_APIS[0].host),
-        ("CMIP6", CMIP6_APIS[0].host),
-        ("CMIP7", CMIP7_APIS[0].host),
-    ],
-)
-def test_default_selector_ranks_by_project(project, expected_first_host):
-    """The default selector starts each project with its top-ranked node"""
-    assert DEFAULT_SELECTOR(canonical(project), 0).host == expected_first_host

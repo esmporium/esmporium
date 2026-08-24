@@ -1,10 +1,5 @@
 """
 Test the retry policy for search requests
-
-These pin the decision of what counts as worth retrying,
-and the shape of the policy we build,
-without sending (or retrying) a single real request.
-The retry policy running for real is exercised through `fire` in `test_search.py`.
 """
 
 from __future__ import annotations
@@ -69,3 +64,12 @@ def test_build_transient_retrying_backs_off_and_reraises():
 
     assert isinstance(retrying.wait, wait_exponential)
     assert retrying.reraise is True
+
+
+# TODO Anna: should we also have a test here that goes through the `search` function?
+# That would require mocking out some pieces,
+# but would also allow  us to see that,
+# if failures arise, we actually do retry e.g. 3 times,
+# rather than giving up or retrying more than 3 times.
+# These current tests don't do such a deep test,
+# but maybe claude saw a reason not to.

@@ -1,9 +1,10 @@
 """
-Test the search step against a mock transport, i.e. without a network
+Test the search step against a mock API
 
-These cover the paths the live integration tests cannot reach on purpose:
-what happens when a node errors, when it errors transiently, when its body
-cannot be read, when several nodes answer, and what we log on the way out.
+These cover the paths the live integration tests cannot control:
+what happens when a node errors, when it errors transiently,
+when its body cannot be read, when several nodes answer
+and what we log.
 """
 
 from __future__ import annotations
@@ -27,7 +28,7 @@ QUERY_CMIP6 = QueryCMIP6(experiment_id="historical", variable_id="tas", frequenc
 
 
 def fast_retrying(attempts: int) -> Retrying:
-    """Build a retry policy like the real one but without the backoff sleeps"""
+    """Build a retry policy without backoff sleeps"""
     return Retrying(
         stop=stop_after_attempt(attempts),
         retry=retry_if_exception(_is_transient),
@@ -45,20 +46,22 @@ def solr_response(num_found: int) -> httpx.Response:
     return httpx.Response(200, json={"response": {"numFound": num_found, "docs": []}})
 
 
-def make_api(host: str, attempts: int = 1) -> SearchAPI:
+def make_search_api(host: str, attempts: int = 1) -> SearchAPI:
     """Build a CMIP6-Solr SearchAPI for `host`"""
     return SearchAPI(host, SOLR_CMIP6, fast_retrying(attempts))
 
 
-# ---------------------------------------------------------------------------
-# fire
-# ---------------------------------------------------------------------------
+# TODO Anna: please use the below prompt with claude (or just do it yourself, up to you)
+# Please change all the tests of fire into equivalent tests of `search`.
+# `fire` is a function that we might change or remove.
+# I want to keep these tests, but I want to keep them on the function I care about,
+# `search`, not a function that is (to me) an implementation detail i.e. `fire`.
 def test_fire_returns_the_json_on_success():
     """A 200 with a JSON body comes back as that JSON"""
     client = client_for(lambda request: solr_response(3))
     request = Request("GET", "/esg-search/search", params={"limit": 2})
 
-    raw = fire(client, make_api("host"), request)
+    raw = fire(client, make_search_api("host"), request)
 
     assert raw == {"response": {"numFound": 3, "docs": []}}
 
@@ -75,7 +78,7 @@ def test_fire_returns_none_on_a_client_error_without_retrying():
     client = client_for(handler)
     request = Request("GET", "/esg-search/search")
 
-    raw = fire(client, make_api("host", attempts=3), request)
+    raw = fire(client, make_search_api("host", attempts=3), request)
 
     assert raw is None
     assert calls == 1
@@ -93,7 +96,7 @@ def test_fire_retries_a_transient_failure_then_gives_up():
     client = client_for(handler)
     request = Request("GET", "/esg-search/search")
 
-    raw = fire(client, make_api("host", attempts=3), request)
+    raw = fire(client, make_search_api("host", attempts=3), request)
 
     assert raw is None
     assert calls == 3
@@ -111,7 +114,7 @@ def test_fire_retries_a_transient_failure_then_succeeds():
     client = client_for(handler)
     request = Request("GET", "/esg-search/search")
 
-    raw = fire(client, make_api("host", attempts=3), request)
+    raw = fire(client, make_search_api("host", attempts=3), request)
 
     assert raw == {"response": {"numFound": 9, "docs": []}}
     assert calls == 2
@@ -129,15 +132,12 @@ def test_fire_returns_none_when_the_body_is_not_json():
     client = client_for(handler)
     request = Request("GET", "/esg-search/search")
 
-    raw = fire(client, make_api("host", attempts=3), request)
+    raw = fire(client, make_search_api("host", attempts=3), request)
 
     assert raw is None
     assert calls == 1, "an unreadable body is not a transient failure"
 
 
-# ---------------------------------------------------------------------------
-# search
-# ---------------------------------------------------------------------------
 def by_host(request: httpx.Request) -> httpx.Response:
     """Answer with a match count that depends on which host was asked"""
     counts = {"host-a": 5, "host-b": 7}
@@ -146,7 +146,9 @@ def by_host(request: httpx.Request) -> httpx.Response:
 
 def test_search_stops_at_the_first_answer_by_default():
     """One good answer is enough, so the second node is never asked"""
-    selector = build_list_selector([make_api("host-a"), make_api("host-b")])
+    selector = build_list_selector(
+        [make_search_api("host-a"), make_search_api("host-b")]
+    )
 
     results = search(QUERY_CMIP6, selector, client=client_for(by_host))
 
@@ -156,7 +158,9 @@ def test_search_stops_at_the_first_answer_by_default():
 
 def test_search_aggregates_every_node_when_asked_to():
     """With stop turned off, every node's answer is kept, keyed by host"""
-    selector = build_list_selector([make_api("host-a"), make_api("host-b")])
+    selector = build_list_selector(
+        [make_search_api("host-a"), make_search_api("host-b")]
+    )
 
     results = search(
         QUERY_CMIP6, selector, stop_at_first_result=False, client=client_for(by_host)
@@ -175,16 +179,19 @@ def test_search_skips_a_node_that_does_not_answer():
             return httpx.Response(404)
         return solr_response(4)
 
-    selector = build_list_selector([make_api("host-a"), make_api("host-b")])
+    selector = build_list_selector(
+        [make_search_api("host-a"), make_search_api("host-b")]
+    )
 
     results = search(QUERY_CMIP6, selector, client=client_for(handler))
 
     assert list(results) == ["host-b"]
+    assert results["host-b"]["response"]["numFound"] == 4
 
 
 def test_search_keeps_an_empty_but_valid_answer():
     """'Nothing matched' is an answer, so it is kept"""
-    selector = build_list_selector([make_api("host-a")])
+    selector = build_list_selector([make_search_api("host-a")])
 
     results = search(
         QUERY_CMIP6, selector, client=client_for(lambda request: solr_response(0))
@@ -198,23 +205,21 @@ def test_search_builds_and_closes_its_own_client(monkeypatch):
     built = client_for(lambda request: solr_response(2))
     monkeypatch.setattr(httpx, "Client", lambda **kwargs: built)
 
-    selector = build_list_selector([make_api("host-a")])
+    selector = build_list_selector([make_search_api("host-a")])
     results = search(QUERY_CMIP6, selector)
 
     assert results["host-a"]["response"]["numFound"] == 2
     assert built.is_closed, "a client search built itself should be closed after"
 
 
-# ---------------------------------------------------------------------------
-# logging
-# ---------------------------------------------------------------------------
+# TODO Anna: as above, make these focus on `search` not `fire`
 def test_fire_logs_the_request_at_debug(caplog):
     """At DEBUG, the request is logged as URL, curl, and structured fields"""
     client = client_for(lambda request: solr_response(1))
     request = Request("GET", "/esg-search/search", params={"limit": 2})
 
     with caplog.at_level(logging.DEBUG, logger=LOGGER_NAME):
-        fire(client, make_api("esgf.example.org"), request)
+        fire(client, make_search_api("esgf.example.org"), request)
 
     records = [r for r in caplog.records if r.name == LOGGER_NAME]
     assert len(records) == 1
@@ -240,7 +245,7 @@ def test_fire_curl_reproduces_a_post_body(caplog):
     request = Request("POST", "/search", json_body={"filter": "keep-me"})
 
     with caplog.at_level(logging.DEBUG, logger=LOGGER_NAME):
-        fire(client, make_api("search.example.io"), request)
+        fire(client, make_search_api("search.example.io"), request)
 
     (record,) = [r for r in caplog.records if r.name == LOGGER_NAME]
     assert "-X POST" in record.http_curl
@@ -249,11 +254,11 @@ def test_fire_curl_reproduces_a_post_body(caplog):
 
 
 def test_fire_does_not_log_below_debug(caplog):
-    """Below DEBUG nothing is logged, and the curl string is not even built"""
+    """Below DEBUG nothing is logged"""
     client = client_for(lambda request: solr_response(1))
     request = Request("GET", "/esg-search/search")
 
     with caplog.at_level(logging.INFO, logger=LOGGER_NAME):
-        fire(client, make_api("host"), request)
+        fire(client, make_search_api("host"), request)
 
     assert [r for r in caplog.records if r.name == LOGGER_NAME] == []
