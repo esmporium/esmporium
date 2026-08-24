@@ -34,8 +34,8 @@ Integration tests:
         - this is testing ESGF behaviour, rather than ours, but it's still key to test in case ESGF makes a change
         - the form of this test will change in a follow up PR where we return Dataset objects rather than raw JSON (we will stop caring about the raw JSON format as it is only an intermediate). Please mark this test with this note
         - do this only with our ESGFQuery class (don't worry about the specific ones, they're tested above), but this will need to be done on ESGF- [ ] ESGF-NG east and ESGF-NG west
-    [x] deferred to PR- [ ]5 check that the API health stats appear in the expected database
-        - do this both for ESGF- [ ]and ESGF-NG (don't worry about testing across all query classes though)
+    [x] deferred to PR1.5 check that the API health stats appear in the expected database
+        - do this both for ESGF1 and ESGF-NG (don't worry about testing across all query classes though)
     [x] mark these tests so that they are opt-in. By default they should be skipped so that our 'main' test suite doesn't require slow ESGF queries to run
         - this pattern of keeping only 'fast' tests on the default testing branch is one we want to use throughout
         - we'll need different marks for different kinds of tests, that is ok
@@ -63,8 +63,8 @@ Unit tests:
 
 Integration tests:
 
-- [ ] deferred to PR- [ ] check that the API health stats appear in the expected database
-    - do this both for ESGF- [ ] ESGF15-bridge and ESGF-NG (don't worry about testing across all query classes though). This can just be part of the existing integration tests, no need to add new tests.
+- [ ] check that the API health stats appear in the expected database
+    - do this both for ESGF-1 ESGF15-bridge and ESGF-NG (don't worry about testing across all query classes though). This can just be part of the existing integration tests, no need to add new tests.
 
 ## PR2
 

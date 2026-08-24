@@ -7,10 +7,17 @@ This file is about *values*, not searching. It exercises each generation's
 separate from `search()` (which never lists facet values), so it can only be
 tested here, directly against a generation, rather than through `search()`.
 
-This is the groundwork for the value/typo checker (the focus of the next PR):
-after a search comes back empty we will want to tell the user which values a
-facet *does* have, and these tests pin that we can ask for those values and
-read the answer against the live APIs.
+This is the groundwork the value/typo checker is built on: after a search comes
+back empty we tell the user which values a facet *does* have, and these tests
+pin that we can ask for those values and read the answer against the live APIs.
+They stay at the generation layer on purpose -- this file is the low-level proof
+that value *listing* works on the wire, independent of the checker.
+
+The checker's own end-to-end behaviour (routing by project, tiering a value into
+case/typo/unknown, and checking a variant label by form or presence) lives in
+`test_check_query_values_live.py`, and its pure logic in the unit test of the
+same name. Those go one layer up, through `check_query_values`, so they are not
+duplicated here.
 
 The search-shaped checks (a query returns results, a wrong facet name is
 caught, the AND/OR logic) live in `test_search_live.py`, because those go
