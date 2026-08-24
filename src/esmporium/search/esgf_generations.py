@@ -1337,17 +1337,24 @@ class ESGFNGStac:
         """
         See [SearchAPIGeneration.result_count][esmporium.search.esgf_generations.SearchAPIGeneration.result_count].
         """  # noqa: E501
-        matched = raw.get("numberMatched")
-        if isinstance(matched, int):
-            return matched
+        # The two ESGF-NG deployments disagree on where the total lives:
+        # east reports `numberMatched` (the STAC spelling),
+        # west reports `numMatched` and `context.matched`.
+        # We read whichever one is present, so both give us the true total
+        # rather than only the size of the page we happened to be handed.
+        context = raw.get("context")
+        for total in (
+            raw.get("numberMatched"),
+            raw.get("numMatched"),
+            context.get("matched") if isinstance(context, dict) else None,
+        ):
+            if isinstance(total, int):
+                return total
 
-        # One of east and west does not report `numberMatched`,
-        # so we fall back to counting what came back.
-        # Note that that fall back is only a lower bound:
-        # it counts one page, not the total.
-        # TODO: find a way to get the total (i.e. go through all pages).
-        # Can wait until we're actually parsing results into Datasets
-        # and there's lots of results on ESGF-NG.
+        # Neither spelling is present, so fall back to counting what came back.
+        # This is only a lower bound (one page, not the total),
+        # so it is a last resort rather than the first thing we reach for:
+        # a truncated page here would masquerade as the whole answer.
         features = raw.get("features")
         if isinstance(features, list):
             return len(features)
@@ -1355,7 +1362,9 @@ class ESGFNGStac:
         # No count and no records: this is not a search response as we know it,
         # and saying "zero" would be indistinguishable from a query
         # which genuinely matched nothing.
-        raise NoResultCountReturned(raw, "numberMatched (or features)")
+        raise NoResultCountReturned(
+            raw, "numberMatched / numMatched / context.matched (or features)"
+        )
 
     def build_get_facet_values_request(
         self, canonical: QueryCanonical, facets: set[str]
