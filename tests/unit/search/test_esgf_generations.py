@@ -46,6 +46,7 @@ from esmporium.search import (
     StacCMIP6Parameters,
     StacCMIP7Parameters,
     UnaskableFacetError,
+    UncompilableFacetPatternError,
     solr_facet_values,
     solr_num_found,
     stac_summary_values,
@@ -266,37 +267,34 @@ def test_solr_result_count(generation, query):
             7,
             id="the-total-is-reported",
         ),
-        pytest.param(
-            {"features": [{"id": "a"}, {"id": "b"}]},
-            2,
-            id="fall-back-to-counting-this-page",
-        ),
-        pytest.param({"features": []}, 0, id="no-matches"),
+        pytest.param({"numMatched": 0, "features": []}, 0, id="no-matches"),
     ),
 )
 def test_stac_result_count(raw, exp):
-    """
-    Test how we count matches on the STAC APIs
-
-    Note that the fall back counts the page we were given,
-    so it is a lower bound on the total rather than the total.
-    """
+    """Test how we count matches on the STAC APIs"""
     generation = ESGFNGStac(params=StacCMIP6Parameters)
 
     assert generation.result_count(raw) == exp
 
 
-def test_stac_result_count_with_no_count_we_can_read():
+@pytest.mark.parametrize(
+    "raw",
+    (
+        pytest.param({}, id="nothing-we-recognise"),
+        pytest.param(
+            {"features": [{"id": "a"}, {"id": "b"}]}, id="records-but-no-count"
+        ),
+        pytest.param({"features": []}, id="no-records-and-no-count"),
+    ),
+)
+def test_stac_result_count_with_no_count_we_can_read(raw):
     """
-    Test that a response with neither a count nor records is an error
-
-    Same rule as the Solr path: a response we cannot read a count out of
-    is not a response which matched nothing.
+    Test that a response which does not report a count is an error
     """
     generation = ESGFNGStac(params=StacCMIP6Parameters)
 
     with pytest.raises(NoResultCountReturned, match="Expected to read the count from"):
-        generation.result_count({})
+        generation.result_count(raw)
 
 
 SOLR_CMIP5_FACETS_RESPONSE = {
@@ -597,6 +595,70 @@ def test_stac_parse_facet_values_of_a_dialect_specific_facet():
     )
 
     assert res == {"variable": {"tas", "pr"}, "sub_experiment_id": {"none", "s1960"}}
+
+
+def test_stac_parse_facet_patterns():
+    """
+    Test that we read a STAC collection's pattern summaries into the vocabulary
+
+    A facet the collection describes with a pattern rather than a list is a
+    generated identifier: the API can say what its values look like, but not
+    which of them were published.
+    """
+    generation = ESGFNGStac(params=StacCMIP6Parameters)
+
+    res = generation.parse_facet_patterns(
+        STAC_CMIP6_COLLECTION,
+        {"variable", "reporting_interval", "variant_label", "grid_label"},
+    )
+
+    assert set(res) == {"variant_label"}
+    assert res["variant_label"].fullmatch("r1i1p1f1")
+    assert not res["variant_label"].fullmatch("r1i1pf1")
+
+
+def test_stac_a_facet_is_never_both_listed_and_described():
+    """
+    Test that the two readers never report the same facet
+
+    They answer different questions about a facet, and a collection summarises
+    each facet one way or the other, so a facet in both would mean we had
+    misread one of them.
+    """
+    generation = ESGFNGStac(params=StacCMIP6Parameters)
+    facets = {"variable", "reporting_interval", "variant_label", "grid_label"}
+
+    values = generation.parse_facet_values(STAC_CMIP6_COLLECTION, facets)
+    patterns = generation.parse_facet_patterns(STAC_CMIP6_COLLECTION, facets)
+
+    assert set(values).isdisjoint(patterns)
+
+
+def test_stac_parse_facet_patterns_of_an_uncompilable_pattern_raises():
+    """
+    Test that we say so, loudly, when a pattern is not a regular expression
+
+    A pattern we cannot compile is one we cannot check anything against.
+    Dropping it silently would look exactly like a facet the API never
+    described in the first place.
+    """
+    generation = ESGFNGStac(params=StacCMIP6Parameters)
+    raw = {"summaries": {"cmip6:variant_label": "^r(\\d+$"}}
+
+    with pytest.raises(UncompilableFacetPatternError, match="variant_label"):
+        generation.parse_facet_patterns(raw, {"variant_label"})
+
+
+def test_solr_parse_facet_patterns_is_always_empty():
+    """
+    Test that Solr reports no patterns
+
+    Solr enumerates its facet values; it never describes their form.
+    Asking it about a facet it cannot express is still a mistake, though.
+    """
+    generation = ESGF1Solr(params=SolrCMIP6Parameters)
+
+    assert generation.parse_facet_patterns({}, {"variant_label"}) == {}
 
 
 def test_stac_parse_facet_values_uses_the_prefix_it_is_given():

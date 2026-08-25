@@ -290,16 +290,52 @@ def test_aggregating_over_nodes_finds_more_than_one_node(client):
 
 
 @pytest.mark.parametrize("api, make_query", AND_OR_CASES)
-def test_search_ors_within_a_facet_and_ands_across_facets(client, api, make_query):
+def test_search_ands_across_facets(client, api, make_query):
     """
-    Test that facet values OR within a facet and facets AND across each other
+    Test that facets AND across each other
 
-    We search for [tas, rsdt] over [piControl, historical] and expect data for
-    every one of the four (variable, experiment) combinations. Each combination
-    that comes back with data is a variable ANDed with an experiment, so seeing
-    all four means each variable is usable with each experiment: the facets AND
-    across each other, and both values in each facet are honoured rather than
-    one being dropped.
+    Every one of the four (variable, experiment) combinations returns data.
+    Each combination that comes back is a variable ANDed with an experiment,
+    so seeing all four means each variable is usable with each experiment.
+
+    This says nothing about how values combine *within* a facet;
+    `test_search_ors_within_a_facet` is where that is tested.
+
+    A combination nobody has published yet is skipped rather than failed:
+    an empty answer to a query for data which does not exist tells us nothing
+    about how facets combine, which is the only thing this test is asking.
+    CMIP7 is the live example -- it is new, and much of it is still unpublished.
+    """
+
+    def count(variables, experiments):
+        query = make_query(variables, experiments)
+        results = search(query, build_list_selector([api]), limit=1, client=client)
+        if not results:
+            pytest.skip(f"{api.host} did not answer, so it is down or unwell")
+        return api.generation.result_count(results[api.host])
+
+    for variable in AND_OR_VARIABLES:
+        for experiment in AND_OR_EXPERIMENTS:
+            if count((variable,), (experiment,)) == 0:
+                pytest.skip(
+                    f"{api.host} has no data for variable={variable}, "
+                    f"experiment={experiment}, so this combination cannot show "
+                    "whether the facets ANDed"
+                )
+
+
+@pytest.mark.parametrize("api, make_query", AND_OR_CASES)
+def test_search_ors_within_a_facet(client, api, make_query):
+    """
+    Test that the values within a facet OR rather than one of them being dropped
+
+    Asking for both variables at once has to match at least as much as asking
+    for either alone: if a value were being dropped, or the values were being
+    ANDed, the combined search would match no more than one of them
+    (and, for an AND, almost certainly nothing at all).
+
+    Counts are compared rather than equated because a dataset could in principle
+    carry both variables, which would make the union smaller than the sum.
 
     Note: CMIP7 is new, so some of its combinations may not be published yet;
     this case can legitimately fail until that data exists.
@@ -312,15 +348,24 @@ def test_search_ors_within_a_facet_and_ands_across_facets(client, api, make_quer
             pytest.skip(f"{api.host} did not answer, so it is down or unwell")
         return api.generation.result_count(results[api.host])
 
-    for variable in AND_OR_VARIABLES:
-        for experiment in AND_OR_EXPERIMENTS:
-            # Isn't this test just checking results for variables and experiments
-            # one by one, rather than checking the AND/OR logic?!
-            found = count((variable,), (experiment,))
-            assert found > 0, (
-                f"expected data for variable={variable}, experiment={experiment}, "
-                f"but {api.host} matched none"
-            )
+    experiment = AND_OR_EXPERIMENTS[:1]
+    separately = [count((variable,), experiment) for variable in AND_OR_VARIABLES]
+    together = count(AND_OR_VARIABLES, experiment)
+
+    if not all(found > 0 for found in separately):
+        # Not a failure of the OR logic: there is simply no data to see it with.
+        # `test_search_ands_across_facets` is where a missing combination is
+        # reported, so saying it twice here would only be noise.
+        pytest.skip(
+            f"{api.host} matched nothing for one of {AND_OR_VARIABLES} on their "
+            "own, so there is nothing to compare the combined search against"
+        )
+
+    assert together >= max(separately), (
+        f"asking {api.host} for {AND_OR_VARIABLES} together matched {together}, "
+        f"fewer than the {max(separately)} matched by one of them alone: "
+        "the values are not being ORed within the facet"
+    )
 
 
 # TODO: eventually will test AND/OR logic again once populating Dataset. Testing

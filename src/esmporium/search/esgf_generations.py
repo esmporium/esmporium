@@ -19,6 +19,7 @@ if we need to search more than one project.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Annotated, Any, ClassVar, Protocol
 
@@ -564,6 +565,31 @@ class NoFacetValuesReturned(ValueError):
         super().__init__(msg)
 
 
+class UncompilableFacetPatternError(ValueError):
+    """
+    Raised when an API describes a facet with a pattern we cannot compile
+    """
+
+    def __init__(self, facet: str, pattern: str) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        facet
+            The facet the pattern was given for
+
+        pattern
+            The pattern we could not compile
+        """
+        self.facet = facet
+        self.pattern = pattern
+        super().__init__(
+            f"The pattern given for {facet!r} is not a valid regular expression, "
+            f"so we cannot check values against it: {pattern!r}"
+        )
+
+
 class NoResultCountReturned(ValueError):
     """
     Raised when a search response does not say how many records matched
@@ -695,6 +721,24 @@ class SearchAPIGeneration(Protocol):
     """
 
     @property
+    def params(self) -> type[QueryProtocol]:
+        """
+        The vocabulary this generation speaks
+
+        Part of the contract rather than an implementation detail:
+        a caller needs it to work out what this generation calls a facet,
+        and whether it has a name for it at all
+        (see [native_facet_names][(m).native_facet_names]).
+
+        Read-only here on purpose.
+        A generation is paired with its vocabulary when it is built,
+        and the implementations narrow this
+        (a STAC generation's `params` is a
+        [StacParams][(m).StacParams]), which only holds if nobody can rebind it.
+        """
+        ...
+
+    @property
     def name(self) -> str:
         """What to call this generation in a message to the user"""
         ...
@@ -806,9 +850,9 @@ class SearchAPIGeneration(Protocol):
             The values which are available,
             keyed by the name the facet was asked for under
 
-            A facet whose values the API does not enumerate is left out,
-            rather than reported as having no values,
-            because those are very different answers.
+            A facet whose values the API does not enumerate is left out
+            (higher level functions are left to decide what to do
+            about facets which are requested but not returned by this parsing).
 
         Raises
         ------
@@ -818,6 +862,42 @@ class SearchAPIGeneration(Protocol):
         UnaskableFacetError
             This generation's vocabulary cannot express one of `facets`,
             so this response was never going to answer the question
+        """
+        ...
+
+    def parse_facet_patterns(
+        self, raw: dict[str, Any], facets: set[str]
+    ) -> dict[str, re.Pattern[str]]:
+        """
+        Read the facet patterns out of a raw response
+
+        The counterpart to [parse_facet_values][(c).parse_facet_values],
+        for the facets an API describes by their form rather than by listing them.
+        A facet should be described one way or the other, never both,
+        so the two should never report the same facet.
+
+        Parameters
+        ----------
+        raw
+            The response to read, i.e. the answer to a
+            [build_get_facet_values_request][(c).build_get_facet_values_request]
+
+        facets
+            The facets we asked about, named as
+            [native_facet_names][esmporium.search.esgf_generations.native_facet_names]
+            describes.
+
+            Anything else in `raw` is ignored.
+
+        Returns
+        -------
+        :
+            The patterns which are described,
+            keyed by the name the facet was asked for under
+
+            A facet this response does not describe with a pattern is left out
+            (higher level functions are left to decide what to do
+            about facets which are requested but not returned by this parsing).
         """
         ...
 
@@ -1078,19 +1158,77 @@ def stac_summary_values(
 
         asked = asked_for.get(property_name[len(prefix) :])
         if asked is None:
-            # TODO: better handling here. Silent None doesn't seem correct.
+            # A facet of this vocabulary which the caller did not ask about.
+            # Not an error: we only report on what was asked for.
             continue
 
         if not isinstance(summary, list):
             # A range or a pattern, i.e. not a list of values.
-            # TODO: better handling here. Let's return an actual type
-            # so we can make it easier for users
-            # to see what values are enums vs. regexps etc.
+            # `stac_summary_patterns` is where those are read.
             continue
 
         values = {value for value in summary if isinstance(value, str)}
         if values:
             res[asked] = values
+
+    return res
+
+
+def stac_summary_patterns(
+    raw: dict[str, Any], params: type[StacParams], facets: set[str]
+) -> dict[str, re.Pattern[str]]:
+    """
+    Read the facet patterns out of a STAC collection's summaries
+
+    A STAC collection summarises some facet values
+    as a regular expression rather than as a list.
+    Those are the facets read here;
+    [stac_summary_values][(m).stac_summary_values] reads the enumerated values.
+
+    Parameters
+    ----------
+    raw
+        The raw JSON to parse
+
+    params
+        The vocabulary to read it with,
+        i.e. the parameter class used to build the request
+
+    facets
+        The facets we asked about, named as
+        [native_facet_names][(m).native_facet_names] describes
+
+    Returns
+    -------
+    :
+        The patterns which are described,
+        keyed by the name the facet was asked for under
+
+    Raises
+    ------
+    UnaskableFacetError
+        `params` cannot express one of `facets`
+    """
+    check_facets_askable(params, facets)
+
+    prefix = f"{params.prefix}:"
+    asked_for = {
+        native: asked for asked, native in native_facet_names(params, facets).items()
+    }
+
+    res: dict[str, re.Pattern[str]] = {}
+    for property_name, summary in raw.get("summaries", {}).items():
+        if not property_name.startswith(prefix):
+            continue
+
+        asked = asked_for.get(property_name[len(prefix) :])
+        if asked is None or not isinstance(summary, str):
+            continue
+
+        try:
+            res[asked] = re.compile(summary)
+        except re.error as exc:
+            raise UncompilableFacetPatternError(asked, summary) from exc
 
     return res
 
@@ -1225,6 +1363,15 @@ class ESGF1Solr:
         """See [SearchAPIGeneration.parse_facet_values][esmporium.search.esgf_generations.SearchAPIGeneration.parse_facet_values]."""  # noqa: E501
         return solr_facet_values(raw, self.params, facets)
 
+    def parse_facet_patterns(
+        self, raw: dict[str, Any], facets: set[str]
+    ) -> dict[str, re.Pattern[str]]:
+        """See [SearchAPIGeneration.parse_facet_patterns][esmporium.search.esgf_generations.SearchAPIGeneration.parse_facet_patterns]."""  # noqa: E501
+        # Solr enumerates its facet values; it never describes their form.
+        check_facets_askable(self.params, facets)
+
+        return {}
+
 
 @dataclass(frozen=True)
 class ESGF15Bridge:
@@ -1285,6 +1432,15 @@ class ESGF15Bridge:
     ) -> dict[str, set[str]]:
         """See [SearchAPIGeneration.parse_facet_values][esmporium.search.esgf_generations.SearchAPIGeneration.parse_facet_values]."""  # noqa: E501
         return solr_facet_values(raw, self.params, facets)
+
+    def parse_facet_patterns(
+        self, raw: dict[str, Any], facets: set[str]
+    ) -> dict[str, re.Pattern[str]]:
+        """See [SearchAPIGeneration.parse_facet_patterns][esmporium.search.esgf_generations.SearchAPIGeneration.parse_facet_patterns]."""  # noqa: E501
+        # Solr enumerates its facet values; it never describes their form.
+        check_facets_askable(self.params, facets)
+
+        return {}
 
 
 @dataclass(frozen=True)
@@ -1355,24 +1511,8 @@ class ESGFNGStac:
             if isinstance(total, int):
                 return total
 
-        # TODO: let's raise here and say what we looked at,
-        # rather than using this fallback
-        # (the fallback is covering up a real bug in the API,
-        # just let the bug surface).
-        # Neither spelling is present, so fall back to counting what came back.
-        # This is only a lower bound (one page, not the total),
-        # so it is a last resort rather than the first thing we reach for:
-        # a truncated page here would masquerade as the whole answer.
-        features = raw.get("features")
-        if isinstance(features, list):
-            return len(features)
-
-        # No count and no records: this is not a search response as we know it,
-        # and saying "zero" would be indistinguishable from a query
-        # which genuinely matched nothing.
-        raise NoResultCountReturned(
-            raw, "numberMatched / numMatched / context.matched (or features)"
-        )
+        # Neither spelling is present.
+        raise NoResultCountReturned(raw, "numberMatched / numMatched / context.matched")
 
     def build_get_facet_values_request(
         self, canonical: QueryCanonical, facets: set[str]
@@ -1392,3 +1532,9 @@ class ESGFNGStac:
     ) -> dict[str, set[str]]:
         """See [SearchAPIGeneration.parse_facet_values][esmporium.search.esgf_generations.SearchAPIGeneration.parse_facet_values]."""  # noqa: E501
         return stac_summary_values(raw, self.params, facets)
+
+    def parse_facet_patterns(
+        self, raw: dict[str, Any], facets: set[str]
+    ) -> dict[str, re.Pattern[str]]:
+        """See [SearchAPIGeneration.parse_facet_patterns][esmporium.search.esgf_generations.SearchAPIGeneration.parse_facet_patterns]."""  # noqa: E501
+        return stac_summary_patterns(raw, self.params, facets)

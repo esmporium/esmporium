@@ -7,14 +7,10 @@ See `tests/unit/search/test_recorded_responses.py` for what is done with them.
 
 They go stale, which is the point:
 refresh them when an API changes and read the diff.
-The cases here mirror those in
-`tests/integration/search/test_facet_values_live.py`;
-[TODO: check this - I don't think this is correct anymore.
-Also why is there both
-`test_check_query_values_live.py`
-and `test_facet_values_live.py`,
-they should do the same thing, no?]
-the unit tests fail loudly if a recording it expects is missing,
+
+The cases here mirror `RECORDED_CASES` in
+`tests/unit/search/test_recorded_responses.py`,
+and those tests fail loudly if a recording they expect is missing,
 so the two cannot drift apart silently.
 """
 
@@ -26,7 +22,13 @@ from typing import Any
 
 import httpx
 
-from esmporium.query import QueryCMIP5, QueryCMIP6, QueryCMIP7, to_canonical
+from esmporium.query import (
+    QueryCMIP5,
+    QueryCMIP6,
+    QueryCMIP7,
+    facet_spec,
+    to_canonical,
+)
 from esmporium.search import (
     ESGF1Solr,
     ESGF15Bridge,
@@ -51,8 +53,25 @@ How many records to ask for
 Enough to see the shape of a record, few enough to keep the files reviewable.
 """
 
-FACETS_TO_LIST = {"variable", "reporting_interval", "model"}
-"""The facets to record the values of"""
+
+def facets_to_list(generation: Any) -> set[str]:
+    """
+    Work out which facets to record the values of, for one generation
+
+    Everything the generation's vocabulary can express, rather than a fixed few.
+
+    Parameters
+    ----------
+    generation
+        The generation whose vocabulary to read
+
+    Returns
+    -------
+    :
+        The facets to ask about, named the way they are asked for
+    """
+    return set(facet_spec(generation.params).expressible_facets)
+
 
 CASES = (
     (
@@ -158,7 +177,7 @@ def main() -> None:
                     client,
                     host,
                     generation.build_get_facet_values_request(
-                        canonical, FACETS_TO_LIST
+                        canonical, facets_to_list(generation)
                     ),
                 ),
             )

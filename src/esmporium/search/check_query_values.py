@@ -16,8 +16,11 @@ from __future__ import annotations
 
 import difflib
 import re
-from dataclasses import dataclass, field
-from typing import Any, Protocol
+from collections.abc import Callable
+from dataclasses import dataclass
+from dataclasses import field as dcfield
+from enum import Enum
+from typing import Protocol
 
 import httpx
 
@@ -28,7 +31,7 @@ from esmporium.query import (
     facet_spec,
     to_canonical,
 )
-from esmporium.search.esgf_generations import StacCMIP7Parameters
+from esmporium.search.esgf_generations import native_facet_names
 from esmporium.search.search import fire
 from esmporium.search.search_api import (
     DEFAULT_SELECTOR,
@@ -36,89 +39,36 @@ from esmporium.search.search_api import (
     SearchAPISelector,
 )
 
-# TODO: make all this injectable as part of compare_values.
-# How close a spelling must be to count as a "did you mean" (0..1). difflib's
-# ratio; 0.6 is its own default and errs toward offering a suggestion.
-TYPO_CUTOFF = 0.6
-MAX_SUGGESTIONS = 3
+CloseMatcher = Callable[[str, set[str]], tuple[str, ...]]
+"""
+How to find the allowed values a wrong value is close enough to be a typo of
 
-# Facets whose values we check against a known grammer.
-# E.g. variant_label has a known structure "generated identifier"
-# We compare a user's value against the known shape, or simply if
-# their value exists, in comparison to difflib's "did you mean"
-# TODO: remove this - we should not need it.
-GENERATED_ID_FACETS: frozenset[str] = frozenset({"variant_label"})
-
-# A named capture group in a regex, e.g. `(?P<realization_index>\d+)`. The body
-# allows one level of nested parentheses, which is all the controlled vocabulary
-# patterns use (the initialisation index is itself a `(\d{4}\d{2}[abcde]?|\d+)`
-# alternation).
-# TODO: remove this. Surely it can't be needed?
-_NAMED_GROUP = re.compile(r"\(\?P<(?P<name>\w+)>(?:[^()]|\([^()]*\))*\)")
+Given the value the user set and the values which are allowed,
+return the ones worth suggesting, best first, or empty if none are close.
+"""
 
 
-def render_form(pattern: str) -> str:
-    r"""
-    Turn a facet's regex into a human-readable template using its named groups.
-
-    `^r(?P<realization_index>\d+)i...$` becomes
-    `r{realization}i{initialization}p{physics}f{forcing}`: each named group turns
-    into `{name}` (a trailing `_index` dropped for brevity) and the literal
-    separators between them (`r`, `i`, `p`, `f`) are kept as they are.
-
-    A pattern that names no groups (a bare `^r\d+i\d+...$`, as a STAC collection
-    summary gives) cannot be rendered this way, so we hand back the regex itself
-    rather than invent labels for it.
+class FindingKind(str, Enum):
+    """
+    What is wrong with a value, as far as we can tell
     """
 
-    def slot(match: re.Match[str]) -> str:
-        return "{" + match.group("name").removesuffix("_index") + "}"
+    CASE = "case"
+    """Right value, wrong case: the source lists it under a different casing"""
 
-    rendered = _NAMED_GROUP.sub(slot, pattern)
-    if rendered == pattern:  # nothing matched, i.e. no named groups to work from
-        # Hmm ok this might be handy, if the names are consistently there.
-        # Still, for first parse: remove or make very cautious.
-        return pattern
-    return rendered.strip("^$")
+    TYPO = "typo"
+    """Not a known value, but close enough to some that we can suggest them"""
 
+    UNKNOWN = "unknown"
+    """Not a known value, and nothing close enough to suggest"""
 
-# TODO: remove - too clever
-def _sample_key(value: str) -> tuple[bool, list[int], str]:
-    """Sort key for picking sample values.
-
-    For example, for variant_label prioritise low-valued integers
-    in order next to `r` index. r1, r2, r3, instead of r1, r10, r100.
+    MALFORMED = "malformed"
     """
-    return (value.isdigit(), [int(n) for n in re.findall(r"\d+", value)], value)
+    Does not match the form the source describes
 
-
-def sample_values(values: set[str]) -> tuple[str, ...]:
-    """Return a small, stable sample of real values, to show a facet's shape by eye."""
-    return tuple(sorted(values, key=_sample_key)[:MAX_SUGGESTIONS])
-
-
-# TODO: I need to clean this up based on the Slack message from last week after you
-# asked your colleague about tagging.
-# TODO: this should all be able to be deleted
-# because we can just get it directly from STAC.
-#
-# The CMIP7 controlled vocabulary: a JSON Schema whose per-facet properties carry
-# `enum`s of the allowed values. Fetched on demand (this whole feature only runs
-# after a live search, so we are online anyway) and cached for the session.
-# Pinned to a TAG, not a moving branch, so the vocabulary matches a known
-# data_specs_version and cannot shift mid-session. TODO: pin a real release tag
-# (align with the STAC items' cmip7:data_specs_version, e.g. MIPDS7-0p0p1);
-# "main" is a stand-in until we confirm the tag naming.
-# Note that the data_specs_version, despite the name, doesn't actually pin the values.
-# Let's see if claude can find a way to infer what schema was
-# used for a given API response.
-# If not, we'll just have to pin (and allow user to override if they want)
-# the tag to use and I will go asking in the ESGF slack
-# if there's a better way to do this.
-CMIP7_CV_TAG = "main"
-CMIP7_CV_URL = (
-    "https://raw.githubusercontent.com/WCRP-CMIP/CMIP7-CVs/{tag}/cmip7-stac.json"
-)
+    Used where the source describes a facet with a pattern rather than a list,
+    so we can judge shape but not existence.
+    """
 
 
 @dataclass(frozen=True)
@@ -127,13 +77,11 @@ class FacetFinding:
 
     facet: str
     """Canonical facet name, e.g. 'experiment'"""
-    # TODO: make this support query-specific facet names
-    # or have both facet_canonical and facet_user to differentiate
 
     value: str
     """What the user provided"""
 
-    kind: str  # TODO: make this an enum if it is used as such later # "case" (wrong case only) | "typo" (close) | "unknown" (no match)
+    kind: FindingKind
     """
     Kind of issue
     """
@@ -146,16 +94,18 @@ class FacetFinding:
 
 @dataclass(frozen=True)
 class ValueReport:
-    """The outcome of checking one query against one vocabulary source."""
+    """The outcome of checking one query against one source of allowed values"""
 
-    project: str
-    # TODO: why is this needed?
-    # Shouldn't/can't we just use the query
-    # or something else which doesn't assume a project identifier?
-
-    source: str  # TODO: better type for this?
+    query: QueryCanonical
     """
-    Where the allowed values come from
+    The query which was checked
+    """
+
+    source: str
+    """
+    How the source of allowed values describes itself
+
+    Used for reporting only, hence just a string
     """
 
     findings: tuple[FacetFinding, ...]
@@ -163,80 +113,243 @@ class ValueReport:
     Findings of checking the query
     """
 
-    unchecked: tuple[str, ...] = ()
+    failed_to_check: tuple[str, ...] = ()
     """
-    Facets that were not checked
+    Facets we could not check
     """
 
+    def facet_as_asked(self, facet: str) -> str:
+        """
+        Get the name the user gave a facet, so a finding reads the way they wrote it
+
+        Someone who wrote `QueryCMIP6(experiment_id=...)` should see
+        `experiment_id` back, not `experiment`.
+
+        Parameters
+        ----------
+        facet
+            Canonical facet name, as carried by a
+            [FacetFinding][(m).FacetFinding]
+
+        Returns
+        -------
+        :
+            What the user called `facet`
+
+            The canonical name is handed back unchanged if we cannot do better.
+        """
+        source_query = self.query.source_query
+        if source_query is None:
+            return facet
+
+        as_asked: str = facet_spec(type(source_query)).canonical_to_native.get(
+            facet, facet
+        )
+
+        return as_asked
+
     def ok(self) -> bool:
-        """Return True when nothing looked wrong (`unchecked` facets aside)."""
-        return not self.findings
-        # TODO: update to and `and not self.unchecked` ?
-        # ok when there is unchecked doesn't seem correct.
+        """
+        Return `True` when we checked everything and nothing looked wrong
+        """
+        return not self.findings and not self.failed_to_check
+
+
+class NotAFacetOfTheQueryError(ValueError):
+    """
+    Raised when we are asked for the values of a facet the query has no room for
+
+    Every facet we check comes from
+    [facets_the_user_set][(m).facets_the_user_set],
+    so a facet the query cannot hold is a facet we never asked about,
+    which means a source has answered a question we did not put to it.
+    That is a bug in us or in the source, not a value to report on.
+    """
+
+    def __init__(self, facet: str, canonical: QueryCanonical) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        facet
+            The facet we were asked for the values of
+
+        canonical
+            The query we were asked to read it out of
+        """
+        self.facet = facet
+        self.canonical = canonical
+        askable = ", ".join(
+            sorted(set(CANONICAL_FACETS) | set(canonical.query_specific_facets))
+        )
+        super().__init__(
+            f"{facet!r} is neither a canonical facet nor one of this query's own "
+            f"facets, so it has no values to read. Askable facets: {askable}."
+        )
+
+
+def values_set_for(canonical: QueryCanonical, facet: str) -> tuple[str, ...]:
+    """
+    Get the values the user set for a facet
+
+    Parameters
+    ----------
+    canonical
+        Canonical query
+
+    facet
+        Facet whose values to read, named as the user asked for it
+
+    Returns
+    -------
+    :
+        The values the user set for `facet`, or empty if they set none
+
+    Raises
+    ------
+    NotAFacetOfTheQueryError
+        `facet` is not a facet `canonical` can hold values for
+    """
+    if facet in CANONICAL_FACETS:
+        values: tuple[str, ...] = getattr(canonical, facet)
+        return values
+
+    if facet not in canonical.query_specific_facets:
+        raise NotAFacetOfTheQueryError(facet, canonical)
+
+    return canonical.query_specific_facets[facet]
+
+
+def close_matches_difflib(
+    value: str, allowed: set[str], n: int = 3, cutoff: float = 0.6
+) -> tuple[str, ...]:
+    """
+    Find the allowed values a value is close enough to be a misspelling of
+
+    The default [CloseMatcher][(m).CloseMatcher].
+
+    Parameters
+    ----------
+    value
+        The value the user gave
+
+    allowed
+        The values which are allowed
+
+    n
+        The number of suggestions to return
+
+    cutoff
+        The cutoff for 'close'
+
+    Returns
+    -------
+    :
+        The closest allowed values, best first, or empty if none are close
+    """
+    return tuple(difflib.get_close_matches(value, allowed, n=n, cutoff=cutoff))
 
 
 def compare_values(
-    canonical: QueryCanonical, available: dict[str, set[str]]
+    canonical: QueryCanonical,
+    available: dict[str, set[str]],
+    close_matches: CloseMatcher = close_matches_difflib,
 ) -> tuple[FacetFinding, ...]:
     """
-    Compare each set facet value against the allowed values for that facet.
+    Compare the values the user set against the values which are allowed
 
-    Only facets present in `available` are checked (the rest are `unchecked`,
-    handled by the caller). Tiers, in order: exact -> drop; case-insensitive
-    match -> "case"; close spelling -> "typo"; nothing close -> "unknown".
+    Only facets present in `available` are judged.
+
+    Parameters
+    ----------
+    canonical
+        Canonical query
+
+    available
+        The values each facet is allowed to take
+
+    close_matches
+        How to decide which allowed values a wrong one is close to
+
+    Returns
+    -------
+    :
+        One finding per value which is not an exact match
     """
-    # TODO: update docstring to match style used everywhere else
-
     findings: list[FacetFinding] = []
     for facet in sorted(available):  # sorted -> deterministic output
         allowed = available[facet]
 
         by_lower = {value.lower(): value for value in allowed}
-        for value in getattr(canonical, facet):
+        for value in values_set_for(canonical, facet):
             if value in allowed:
                 # in allowed values i.e. nothing to report
                 continue
 
             cased = by_lower.get(value.lower())
             if cased is not None:
-                findings.append(FacetFinding(facet, value, "case", (cased,)))
+                findings.append(FacetFinding(facet, value, FindingKind.CASE, (cased,)))
                 continue
 
-            close = tuple(
-                # TODO: actually do this injection.
-                # TODO: allow this to be injectable,
-                # I guess the type is
-                # Callable[[str, set[str]], tuple[str, ...]]
-                # i.e. give in the value and the known values,
-                # get back the close matches.
-                difflib.get_close_matches(
-                    value, allowed, n=MAX_SUGGESTIONS, cutoff=TYPO_CUTOFF
-                )
-            )
+            close = close_matches(value, allowed)
             findings.append(
-                FacetFinding(facet, value, "typo" if close else "unknown", close)
+                FacetFinding(
+                    facet,
+                    value,
+                    FindingKind.TYPO if close else FindingKind.UNKNOWN,
+                    close,
+                )
             )
 
     return tuple(findings)
 
 
 def facets_the_user_set(canonical: QueryCanonical) -> set[str]:
-    """Canonical facets the user populated, minus `project`.
-
-    Query-specific facets (e.g. CMIP5 `product`) are included so they surface as
-    `unchecked` -- we cannot validate them, and saying so is more honest than
-    silently ignoring them.
     """
-    # TODO: update docstring to match style used everywhere else
-    # We should be able to validate query-specific facets
+    Get the facets the user actually filled in
+
+    Parameters
+    ----------
+    canonical
+        Canonical query
+
+    Returns
+    -------
+    :
+        The facets the user set, named as they asked for them
+    """
     canonical_set = {facet for facet in CANONICAL_FACETS if getattr(canonical, facet)}
-    canonical_set.discard("project")
+
     return canonical_set | set(canonical.query_specific_facets)
 
 
-# TODO: rename to AllowedValuesSource?
-class VocabularySource(Protocol):
-    """Something that can list the allowed values of some facets."""
+@dataclass(frozen=True)
+class AllowedValues:
+    """
+    What a source can say about the allowed values of some facets
+
+    An API describes a facet one of two ways, never both:
+    by listing its values, or by describing their form.
+    Which one it is matters to the caller,
+    because they support different claims:
+    a listed value which is missing is not published,
+    while a value which fails a pattern cannot be valid at all.
+    """
+
+    values: dict[str, set[str]] = dcfield(default_factory=dict)
+    """The values each facet is allowed to take, for the facets which are listed"""
+
+    patterns: dict[str, re.Pattern[str]] = dcfield(default_factory=dict)
+    """The form each facet's values must take, for the facets which are described"""
+
+    def facets_covered(self) -> set[str]:
+        """Get the facets this source could say something about"""
+        return set(self.values) | set(self.patterns)
+
+
+class AllowedValuesSource(Protocol):
+    """Something that can say what the allowed values of some facets are"""
 
     @property
     def description(self) -> str:
@@ -245,9 +358,9 @@ class VocabularySource(Protocol):
 
     def allowed_values(
         self, canonical: QueryCanonical, facets: set[str]
-    ) -> dict[str, set[str]]:
+    ) -> AllowedValues:
         """
-        List the allowed values for a given set of facets
+        Get the allowed values for a given set of facets
 
         Parameters
         ----------
@@ -260,294 +373,253 @@ class VocabularySource(Protocol):
         Returns
         -------
         :
-            Mapping from facets to the allowed values
+            What this source can say about each facet
+
+        Raises
+        ------
+        CouldNotGetAllowedValuesError
+            The source could not be reached, or would not answer
         """
         ...
 
-    def facet_pattern(self, facet: str) -> re.Pattern[str] | None:
+
+class CouldNotGetAllowedValuesError(RuntimeError):
+    """
+    Raised when a source cannot tell us what the allowed values are
+    """
+
+    def __init__(self, description: str) -> None:
         """
-        Return the regex for a facet, if there is one
+        Initialise the error
 
         Parameters
         ----------
-        facet
-            Facet for which to get the pattern if there is one
-
-        Returns
-        -------
-        :
-            Regexp for `facet` if there is one, otherwise `None`
+        description
+            Where we were trying to get allowed values from
         """
-        ...
+        self.description = description
+        super().__init__(
+            f"{description} did not answer our request for facet values, "
+            "so we have nothing to check this query against."
+        )
 
 
 @dataclass
-class SolrVocabularySource:
-    """Retrieval of allowed values from SOLR APIs"""
+class SearchAPIValuesSource:
+    """
+    Retrieval of allowed values from a search API
+    """
 
     api: SearchAPI
 
     @property
     def description(self) -> str:
-        """See [VocabularySource.description][(m).]"""
+        """See [AllowedValuesSource.description][(m).]"""
         return self.api.host
 
     def allowed_values(
         self, canonical: QueryCanonical, facets: set[str]
-    ) -> dict[str, set[str]]:
-        """See [VocabularySource.allowed_values][(m).]"""
-        request = self.api.generation.build_get_facet_values_request(canonical, facets)
+    ) -> AllowedValues:
+        """See [AllowedValuesSource.allowed_values][(m).]"""
+        askable = set(native_facet_names(self.api.generation.params, facets))
+
+        request = self.api.generation.build_get_facet_values_request(canonical, askable)
 
         with httpx.Client(follow_redirects=True) as client:
             raw = fire(client, self.api, request)
 
-        # TODO: better error handling here.
-        # Silent nothing is wrong.
-        # We can do better and say that the request failed, even though it shouldn't.
-        # We can then handle that clear error in upper layers as needed.
         if raw is None:
-            return {}
+            raise CouldNotGetAllowedValuesError(self.description)
 
-        return self.api.generation.parse_facet_values(raw, facets)
-
-    def facet_pattern(self, facet: str) -> re.Pattern[str] | None:
-        """See [VocabularySource.facet_pattern][(m).]"""
-        return None
-
-
-# TODO: delete
-# - should not be needed now that we know how to get these from the API directly?
-# - or maybe it just needs to updated to take a URL from which to get the schema,
-#   because the API provides the full URL, rather than the tag
-@dataclass
-class Cmip7CvVocabularySource:
-    """
-    CMIP7: read allowed values from the controlled vocabulary (cmip7-stac.json).
-
-    Cannot return a list of known values through STAC.
-    [TODO: delete because the statement above turned out to be wrong]
-    """
-
-    tag: str = CMIP7_CV_TAG
-    _cache: dict[str, dict[str, Any]] = field(default_factory=dict)
-
-    @property
-    def description(self) -> str:
-        """See [VocabularySource.description][(m).]"""
-        # TODO: update once we have clarity about what this is meant to do
-        return f"CMIP7-CVs@{self.tag} (cmip7-stac.json)"
-
-    def allowed_values(
-        self, canonical: QueryCanonical, facets: set[str]
-    ) -> dict[str, set[str]]:
-        """See [VocabularySource.allowed_values][(m).]"""
-        schema = self._load_schema()
-        if not schema:
-            # TODO: raise here rather than silently returning.
-            # This API should always provide the schema
-            return {}
-
-        return self._values_from_schema(schema, facets)
-
-    def facet_pattern(self, facet: str) -> re.Pattern[str] | None:
-        """See [VocabularySource.facet_pattern][(m).]"""
-        schema = self._load_schema()
-        prop = self._property_for(schema, facet) if schema else None
-        if not prop or "pattern" not in prop:
-            return None
-
-        try:
-            return re.compile(prop["pattern"])
-        except re.error:
-            # TODO: raise here - a pattern which doesn't compile
-            # is an API issue we want to know about.
-            # Higher level functions can handle this as they wish.
-            return None
-
-    def _load_schema(self) -> dict[str, Any]:
-        """Fetch + cache the CV for the session; return {} on ANY fetch/parse error."""
-        # Should be able to get this via API queries instead.
-        # For example, go to https://discovery.east.esgf.io/search.
-        # Under "features" there is "stac_extensions".
-        # We should be able to get the schema URL from those.
-        if "schema" not in self._cache:
-            url = CMIP7_CV_URL.format(tag=self.tag)
-            try:
-                response = httpx.get(url, timeout=30, follow_redirects=True)
-                response.raise_for_status()
-                self._cache["schema"] = response.json()
-            except (httpx.HTTPError, ValueError):
-                self._cache["schema"] = {}  # fail soft: the search result stands
-        return self._cache["schema"]
-
-    @staticmethod
-    def _property_for(schema: dict[str, Any], facet: str) -> dict[str, Any] | None:
-        """
-        Get the property to look at for a given facet
-        """
-        properties = (
-            schema.get("definitions", {}).get("item_fields", {}).get("properties", {})
+        return AllowedValues(
+            values=self.api.generation.parse_facet_values(raw, askable),
+            patterns=self.api.generation.parse_facet_patterns(raw, askable),
         )
-        stem = facet_spec(StacCMIP7Parameters).canonical_to_native.get(facet)
-        # TODO make this more robust and consider whether returning None is helpful
-        # or an error would be clearer to callers of this helper.
-        if stem is None:
-            return None
-        prop = properties.get(f"{StacCMIP7Parameters.prefix}:{stem}")
-        return prop if isinstance(prop, dict) else None
 
-    @staticmethod
-    def _values_from_schema(
-        schema: dict[str, Any], facets: set[str]
-    ) -> dict[str, set[str]]:
+
+class NoSourceWouldAnswerError(RuntimeError):
+    """
+    Raised when every source we asked refused to say what the allowed values are
+
+    Carries all of the refusals rather than only the last,
+    because which endpoints refused is the interesting part:
+    one node being down says nothing, all of them being down says a lot,
+    and only the whole list tells you which it was.
+    """
+
+    def __init__(self, refusals: tuple[CouldNotGetAllowedValuesError, ...]) -> None:
         """
-        Get enum (i.e. explicitly listed) values from the schema
+        Initialise the error
 
-        Patterns etc. handled elsewhere
+        Parameters
+        ----------
+        refusals
+            What each source said, in the order they were asked
         """
-        out: dict[str, set[str]] = {}
-        for facet in facets:
-            prop = Cmip7CvVocabularySource._property_for(schema, facet)
-            if prop and "enum" in prop:
-                out[facet] = set(prop["enum"])
-        return out
-
-
-# TODO: move vocabulary source onto the search API
-# (either partly by just keeping references to the classes in this module
-# or entirely by deleting the classes in this module
-# and moving the functionality onto the search API or SearchAPIGeneration
-# classes, I would lean towards the second option I think)
-# rather than having it as a hard-coded function like this.
-def vocabulary_source_for(
-    canonical: QueryCanonical, selector: SearchAPISelector = DEFAULT_SELECTOR
-) -> VocabularySource | None:
-    """Choose where to get allowed values for this query's project, or None."""
-    project = canonical.project[0] if canonical.project else None
-    if project in ("CMIP5", "CMIP6"):
-        api = selector(canonical, 0)  # the node the search would have hit first
-        return SolrVocabularySource(api) if api is not None else None
-    if project == "CMIP7":
-        return Cmip7CvVocabularySource()
-    return None  # a project we have no vocabulary source for
+        self.refusals = refusals
+        self.described = tuple(refusal.description for refusal in refusals)
+        asked = "\n".join(f"  - {refusal}" for refusal in refusals)
+        super().__init__(
+            f"Asked {len(refusals)} source(s) for facet values and none answered, "
+            f"so we have nothing to check this query against:\n{asked}"
+        )
 
 
 def check_query_values(
-    query: QueryProtocol, selector: SearchAPISelector = DEFAULT_SELECTOR
-) -> ValueReport:
-    """Check a query's values against the right vocabulary source for its project."""
+    query: QueryProtocol,
+    selector: SearchAPISelector = DEFAULT_SELECTOR,
+    *,
+    stop_at_first_result: bool = True,
+    close_matches: CloseMatcher = close_matches_difflib,
+) -> dict[str, ValueReport]:
+    """
+    Check a query's values against the APIs which would have served it
+
+    The endpoints are worked through in the order
+    [search][esmporium.search.search.search] would have tried them,
+    and this takes the same `stop_at_first_result` as `search` does,
+    so the two answer the same question about the same endpoints
+    in the same way.
+
+    Parameters
+    ----------
+    query
+        Query to check
+
+    selector
+        How to pick the API to ask about allowed values at each attempt
+
+    stop_at_first_result
+        If `True` (the default), report on the first endpoint which answers.
+        The index nodes largely mirror one another,
+        so one good answer can be enough.
+
+        If `False`, ask every endpoint the selector yields
+        and keep each one's report.
+        The nodes do not hold exactly the same data,
+        so a value one of them has never heard of may be published on another --
+        comparing the reports is the only way to see that.
+
+    close_matches
+        How to decide which allowed values a wrong one is close to
+
+    Returns
+    -------
+    :
+        What each API said about the query's values, keyed by host.
+        An API which refused to answer is left out.
+
+        Empty if the selector had no API to offer,
+        which is not the same as one refusing:
+        there was nobody to have refused.
+
+    Raises
+    ------
+    NoSourceWouldAnswerError
+        The selector offered at least one API and none of them answered
+    """
     canonical = to_canonical(query)
-    source = vocabulary_source_for(canonical, selector)
-    if source is None:  # no source -> everything the user set is "unchecked"
-        # TODO: raise error here rather than just saying we didn't check.
-        # In general, I don't think 'unchecked' is that helpful.
-        # If we can't check, we should be raising clear errors
-        # rather than silently passing I think
-        # (or at least using a clearer name in the output like
-        # "failed_to_check" and making sure that the `ok` property
-        # does not return "ok" if we couldn't check something).
-        project = canonical.project[0] if canonical.project else ""
-        unchecked = tuple(sorted(facets_the_user_set(canonical)))
-        return ValueReport(project, "", (), unchecked)
 
-    return check_query_values_low(canonical, source)
+    reports: dict[str, ValueReport] = {}
+    refusals: list[CouldNotGetAllowedValuesError] = []
+
+    attempt = 0
+    while (api := selector(canonical, attempt)) is not None:
+        source = SearchAPIValuesSource(api)
+        try:
+            reports[source.description] = check_query_values_low(
+                canonical, source, close_matches
+            )
+        except CouldNotGetAllowedValuesError as exc:
+            refusals.append(exc)
+        else:
+            if stop_at_first_result:
+                break
+
+        attempt += 1
+
+    if not reports and refusals:
+        raise NoSourceWouldAnswerError(tuple(refusals))
+
+    return reports
 
 
-def check_generated_ids(
-    canonical: QueryCanonical,
-    source: VocabularySource,
-    facets: set[str],
-    available: dict[str, set[str]],
-) -> tuple[tuple[FacetFinding, ...], set[str]]:
+def check_against_patterns(
+    canonical: QueryCanonical, patterns: dict[str, re.Pattern[str]]
+) -> tuple[FacetFinding, ...]:
     """
-    Check generated-identifier facets (variant labels) by form or by presence.
+    Check values against the form their facet's values have to take
 
-    These are not a controlled vocabulary, so the honest thing to say depends on
-    what the source can tell us:
+    A pattern says what a value may look like, never whether it exists.
+    A value which matches therefore passes silently -- it is a value which
+    *could* exist -- and only one which cannot possibly be right is reported.
 
-    - For SOLR, we know what facet values exist, not the grammmar, for generated-
-    identifier facets. If a user's values is not in the list of known facet values,
-    it is reported as `absent` with a sample of real values. A well-formed value that
-      simply was not produced looks the same as a typo here, so we never call it
-      malformed and never assign blame -- we just show what does exist.
-    - For CMIP7, we know the correct grammatical form of the generated-identifier
-    facets, but not what exists. A well-formed value passes silently, because we
-    cannot say whether that particular run exists.
+    Parameters
+    ----------
+    canonical
+        Canonical query
 
-    Returns the findings and the set of facets we managed to check; a facet the
-    source can neither enumerate nor describe is left for the caller's
-    `unchecked`.
+    patterns
+        The pattern each facet's values must match
+
+    Returns
+    -------
+    :
+        One finding per value which does not match its facet's pattern
+
+        The suggestion is the pattern itself.
+        A regular expression is a poor thing to show a user,
+        but it is the only description of the form we have.
     """
-    # TODO: reconsider the usefulness of this.
-    # From SOLR, we can just check against the available values.
-    # If a value is there, great. If not, treat it as an error like anything else.
-    # From STAC, verify against the provided pattern.
-    # If it passes, then great, it's a possible value and we shouldn't flag it as wrong
-    # (but it should be clear, to the user, that this value is checked against
-    # a regexp i.e. for form only,
-    # not for whether any actual published values use this value or not),
-    # if it fails, then it's clearly wrong and we should tell the user that
-    # and show them the pattern it has to match
-    # (showing users regexp isn't perfect, but this isn't a perfect module,
-    # it will only solve some problems, not all).
     findings: list[FacetFinding] = []
-    checked: set[str] = set()
-    for facet in facets:
-        values = getattr(canonical, facet)
+    for facet in sorted(patterns):  # sorted -> deterministic output
+        pattern = patterns[facet]
+        findings += [
+            FacetFinding(facet, value, FindingKind.MALFORMED, (pattern.pattern,))
+            for value in values_set_for(canonical, facet)
+            if not pattern.fullmatch(value)
+        ]
 
-        if facet in available:  # a list source: check presence, not form
-            allowed = available[facet]
-            findings += [
-                FacetFinding(facet, value, "absent", sample_values(allowed))
-                for value in values
-                if value not in allowed
-            ]
-            checked.add(facet)
-            continue
-
-        pattern = source.facet_pattern(facet)
-        if pattern is not None:  # a grammar source: check form, not existence
-            form = render_form(pattern.pattern)
-            findings += [
-                FacetFinding(facet, value, "malformed", (form,))
-                for value in values
-                if not pattern.fullmatch(value)
-            ]
-            checked.add(facet)
-        # else: neither a list nor a grammar -> we cannot check it at all
-
-    return tuple(findings), checked
+    return tuple(findings)
 
 
 def check_query_values_low(
-    canonical: QueryCanonical, source: VocabularySource
+    canonical: QueryCanonical,
+    source: AllowedValuesSource,
+    close_matches: CloseMatcher = close_matches_difflib,
 ) -> ValueReport:
-    """Check a canonical query against ONE vocabulary source."""
+    """
+    Check a canonical query against ONE source of allowed values
+
+    Parameters
+    ----------
+    canonical
+        Canonical query
+
+    source
+        Where to get the allowed values from
+
+    close_matches
+        How to decide which allowed values a wrong one is close to
+
+    Returns
+    -------
+    :
+        What we could say about the query's values
+
+    Raises
+    ------
+    CouldNotGetAllowedValuesError
+        `source` would not tell us what the allowed values are
+    """
     facets = facets_the_user_set(canonical)
-    available = source.allowed_values(canonical, facets)
+    allowed = source.allowed_values(canonical, facets)
 
-    # TODO: add support for query-specific facets here too.
-    # Drive these with tests.
-    # Controlled-vocabulary facets go through the difflib tiering. We restrict it
-    # to CANONICAL facets: query-specific ones (e.g. CMIP5 `product`) have no
-    # attribute on the canonical query to read, and we do not claim to check
-    # them, so they fall through to `unchecked` below.
-    vocabulary = {facet for facet in facets if facet in CANONICAL_FACETS}
-    # TODO: rethink this in line with other comments above.
-    vocabulary -= GENERATED_ID_FACETS
-    vocabulary_available = {
-        facet: available[facet] for facet in vocabulary if facet in available
-    }
-    findings = list(compare_values(canonical, vocabulary_available))
-
-    # Generated identifiers (variant labels) are checked by form or presence.
-    generated_findings, generated_checked = check_generated_ids(
-        canonical, source, facets & GENERATED_ID_FACETS, available
+    findings = (
+        *compare_values(canonical, allowed.values, close_matches),
+        *check_against_patterns(canonical, allowed.patterns),
     )
-    findings.extend(generated_findings)
 
-    checked = set(vocabulary_available) | generated_checked
-    unchecked = tuple(sorted(facets - checked))
-    project = canonical.project[0] if canonical.project else ""
+    failed_to_check = tuple(sorted(facets - allowed.facets_covered()))
 
-    return ValueReport(project, source.description, tuple(findings), unchecked)
+    return ValueReport(canonical, source.description, findings, failed_to_check)

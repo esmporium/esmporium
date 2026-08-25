@@ -20,7 +20,8 @@ from esmporium.search import ValueReport, check_query_values
 def print_report(query: QueryProtocol, report: ValueReport) -> None:
     """Print one query's check as a short, human-readable report."""
     print(f"query   : {query!r}")
-    print(f"project : {report.project}   source: {report.source or '(none)'}")
+    project = report.query.project[0] if report.query.project else "(none)"
+    print(f"project : {project}   source: {report.source or '(none)'}")
     if report.ok():
         print("result  : no problems found")
     for finding in report.findings:
@@ -29,9 +30,11 @@ def print_report(query: QueryProtocol, report: ValueReport) -> None:
             if finding.suggestions
             else "no close match found"
         )
-        print(f"  [{finding.kind:7}] {finding.facet}={finding.value!r} -> {hint}")
-    if report.unchecked:
-        print(f"unchecked: {', '.join(report.unchecked)}")
+        # Named the way the caller wrote it, not the way we check it.
+        facet = report.facet_as_asked(finding.facet)
+        print(f"  [{finding.kind.value:9}] {facet}={finding.value!r} -> {hint}")
+    if report.failed_to_check:
+        print(f"could not check: {', '.join(report.failed_to_check)}")
     print()
 
 
@@ -45,9 +48,19 @@ EXAMPLE_CMIP7 = QueryCMIP7(experiment_id="abrupt-4x")
 
 
 def main() -> None:
-    """Check each example query and print the report."""
+    """Check each example query and print the report from every endpoint asked."""
     for example in (EXAMPLE_CMIP5, EXAMPLE_CMIP6, EXAMPLE_CMIP7):
-        print_report(example, check_query_values(example))
+        # `stop_at_first_result=False` asks every endpoint rather than settling
+        # for the first answer, the same way `search` does. The nodes do not
+        # hold identical data, so a value one has never heard of can be
+        # perfectly ordinary on the next one along -- worth seeing in a demo.
+        reports = check_query_values(example, stop_at_first_result=False)
+        if not reports:
+            print(f"query   : {example!r}")
+            print("result  : no endpoint had anything to say\n")
+        for report in reports.values():
+            print_report(example, report)
+
         print("=" * 72 + "\n")
 
 
