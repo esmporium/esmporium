@@ -9,8 +9,6 @@ example of calling it.
 
 Hits the live Solr nodes (CMIP5/6) and GitHub (the CMIP7 CV), like the search
 demo does, so it needs a network.
-
-Run it:  uv run python scripts/check_query_values_demo.py
 """
 
 from __future__ import annotations

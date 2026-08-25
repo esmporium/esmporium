@@ -257,7 +257,6 @@ def test_aggregating_over_nodes_finds_more_than_one_node(client):
     local_solr = ESGF1Solr(params=SolrCMIP6Parameters, distrib=False)
     nodes = [
         SearchAPI(host, local_solr, build_transient_retrying(2))
-        # real solr nodes to compare aggregation (unique results per host)
         for host in (
             "esgf.nci.org.au",
             "esgf.ceda.ac.uk",
@@ -315,6 +314,8 @@ def test_search_ors_within_a_facet_and_ands_across_facets(client, api, make_quer
 
     for variable in AND_OR_VARIABLES:
         for experiment in AND_OR_EXPERIMENTS:
+            # Isn't this test just checking results for variables and experiments
+            # one by one, rather than checking the AND/OR logic?!
             found = count((variable,), (experiment,))
             assert found > 0, (
                 f"expected data for variable={variable}, experiment={experiment}, "

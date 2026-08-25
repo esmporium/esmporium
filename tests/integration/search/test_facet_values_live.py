@@ -37,6 +37,11 @@ These are opt in. They are skipped unless `--run-hits-esgf-search-api` is given,
 because they are slow, they depend on servers we do not run,
 and a failure here means something different from a failure anywhere else.
 """
+# TODO: move any tests which are not in
+# `tests/integration/search/test_check_query_values_live.py`
+# to `tests/integration/search/test_check_query_values_live.py`,
+# then delete this file.
+# The two files do the same thing I believe.
 
 from __future__ import annotations
 
@@ -183,6 +188,8 @@ def test_facet_values_can_be_listed(client, host, generation, query):
 
     `tas` is used as the probe because every project publishes it.
     """
+    # TODO: make this cover all the query facets (including query specific ones)
+    # that we can.
     facets = {"variable", "reporting_interval", "model"}
     request = generation.build_get_facet_values_request(to_canonical(query), facets)
 
@@ -239,6 +246,7 @@ def test_facet_values_are_well_formed(client, host, generation, query):
     "this facet has no valid values", which is never what we mean:
     if we cannot list a facet's values, we leave it out.
     """
+    # TODO: consider whether this test is actually helpful
     facets = every_facet(generation)
     request = generation.build_get_facet_values_request(to_canonical(query), facets)
 
@@ -266,6 +274,11 @@ def test_facets_which_are_not_enumerated_are_left_out(client, host, generation, 
     than hard coded, so this keeps testing the right thing
     if the API starts listing something it used to describe as a pattern.
     """
+    # TODO: remove or update.
+    # This should be smarter and split facets
+    # into facets which are enumerated
+    # and facets which are handled via regexp checking instead
+    # (and any other cases, although I can't think of any?).
     facets = every_facet(generation)
     request = generation.build_get_facet_values_request(to_canonical(query), facets)
 

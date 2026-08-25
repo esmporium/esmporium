@@ -1,0 +1,2 @@
+- need to check whether lack of dependency injection is due to time or understanding
+- rebase before merging to clean up history

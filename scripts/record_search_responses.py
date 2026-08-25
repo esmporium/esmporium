@@ -9,6 +9,11 @@ They go stale, which is the point:
 refresh them when an API changes and read the diff.
 The cases here mirror those in
 `tests/integration/search/test_facet_values_live.py`;
+[TODO: check this - I don't think this is correct anymore.
+Also why is there both
+`test_check_query_values_live.py`
+and `test_facet_values_live.py`,
+they should do the same thing, no?]
 the unit tests fail loudly if a recording it expects is missing,
 so the two cannot drift apart silently.
 """

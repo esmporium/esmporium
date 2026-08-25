@@ -2,7 +2,7 @@ Rough plan for PRs.
 
 Last updated: 2026-08-2- [ ](ok, this is also tracked in git, anyway)
 
-## PR-1 In progress,  see [TODO @Anna make PR and add link here]
+## PR1 In progress, see https://github.com/esmporium/esmporium/pull/14
 
 Add search
 
@@ -49,7 +49,7 @@ Not included:
 - tracking queries in our database, that comes later
 
 
-## PR-1.5
+## PR1.5
 
 Search API health
 If this PR is small enough, consider also adding a selector function that picks the API to use based on health information (e.g. pick the API which has the fastest response with results for the given project)

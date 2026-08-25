@@ -1078,10 +1078,14 @@ def stac_summary_values(
 
         asked = asked_for.get(property_name[len(prefix) :])
         if asked is None:
+            # TODO: better handling here. Silent None doesn't seem correct.
             continue
 
         if not isinstance(summary, list):
             # A range or a pattern, i.e. not a list of values.
+            # TODO: better handling here. Let's return an actual type
+            # so we can make it easier for users
+            # to see what values are enums vs. regexps etc.
             continue
 
         values = {value for value in summary if isinstance(value, str)}
@@ -1351,6 +1355,10 @@ class ESGFNGStac:
             if isinstance(total, int):
                 return total
 
+        # TODO: let's raise here and say what we looked at,
+        # rather than using this fallback
+        # (the fallback is covering up a real bug in the API,
+        # just let the bug surface).
         # Neither spelling is present, so fall back to counting what came back.
         # This is only a lower bound (one page, not the total),
         # so it is a last resort rather than the first thing we reach for:

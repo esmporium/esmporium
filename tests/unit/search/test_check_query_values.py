@@ -1,6 +1,5 @@
 """
 Test the opt-in facet value/typo checker without touching the network
-
 """
 
 from __future__ import annotations
@@ -25,6 +24,7 @@ from esmporium.search import (
 )
 from esmporium.search.search_api import SOLR_CMIP6, SearchAPI
 
+# TODO: Shouldn't be needed once we have fixed up injection I think.
 # The module object itself, for monkeypatching its globals (`httpx`,
 # `vocabulary_source_for`). We resolve it through importlib rather than
 # `import ... as` because the `esmporium.search` package re-exports a *function*
@@ -44,7 +44,6 @@ def test_exact_match_is_not_a_finding():
 
 
 def test_wrong_case_only_is_a_case_finding():
-    """A value that differs only in case is a 'case' finding, suggesting the real casing."""  # noqa: E501
     canonical = canonical_cmip6(experiment_id="Historical")
 
     (finding,) = compare_values(canonical, {"experiment": {"historical"}})
@@ -53,7 +52,6 @@ def test_wrong_case_only_is_a_case_finding():
 
 
 def test_near_miss_is_a_typo_finding_with_ranked_suggestions():
-    """A close-but-wrong spelling is a 'typo' finding carrying the closest real values."""  # noqa: E501
     canonical = canonical_cmip6(experiment_id="abrupt4xco2")
 
     (finding,) = compare_values(
@@ -70,7 +68,6 @@ def test_near_miss_is_a_typo_finding_with_ranked_suggestions():
 
 
 def test_nonsense_is_an_unknown_finding_with_no_suggestion():
-    """A value nothing is close to is 'unknown', with no did-you-mean."""
     canonical = canonical_cmip6(experiment_id="zzzzzzzz")
 
     (finding,) = compare_values(canonical, {"experiment": {"historical", "piControl"}})
@@ -79,10 +76,10 @@ def test_nonsense_is_an_unknown_finding_with_no_suggestion():
 
 
 def test_suggestions_are_capped():
-    """No more than MAX_SUGGESTIONS did-you-means are offered, however many match."""
     canonical = canonical_cmip6(experiment_id="ssp")
     allowed = {"experiment": {f"ssp{n}" for n in range(10)}}
 
+    # TODO: update once the comparison function can be injected
     (finding,) = compare_values(canonical, allowed)
 
     assert len(finding.suggestions) <= checker.MAX_SUGGESTIONS
@@ -92,6 +89,8 @@ def test_a_facet_not_in_available_is_left_untouched():
     """compare_values only judges facets it was given values for; the
     rest are silent.
     """
+    # TODO: remove this test and replace with something sensible
+    # once this silent passing behaviour is gone.
     canonical = canonical_cmip6(experiment_id="Historical", variable_id="tas")
 
     # We give values for `variable` only; the wrong-cased `experiment` is not judged.
@@ -127,6 +126,7 @@ def test_findings_are_ordered_by_facet():
 
 def test_facets_the_user_set_is_the_populated_canonical_facets_minus_project():
     """Only facets the user actually filled in count, and `project` never does."""
+    # TODO: update once we remove special handling of project
     canonical = canonical_cmip6(experiment_id="historical", variable_id="tas")
 
     assert facets_the_user_set(canonical) == {"experiment", "variable"}
@@ -134,6 +134,7 @@ def test_facets_the_user_set_is_the_populated_canonical_facets_minus_project():
 
 def test_facets_the_user_set_includes_query_specific_facets():
     """A facet with no canonical home (CMIP5 `product`) is still reported, as unchecked."""  # noqa: E501
+    # TODO: update once the handling of unchecked is updated/fixed
     canonical = to_canonical(QueryCMIP5(experiment="historical", product="output1"))
 
     assert facets_the_user_set(canonical) == {"experiment", "product"}
@@ -151,7 +152,6 @@ def solr_api(host="node.example"):
 
 
 def test_solr_source_lists_values_keyed_by_canonical_facet(monkeypatch):
-    """The source asks the node for its facets and hands values back canonically keyed."""  # noqa: E501
     seen = {}
 
     def handler(request):
@@ -189,6 +189,7 @@ def test_solr_source_lists_values_keyed_by_canonical_facet(monkeypatch):
 
 def test_solr_source_returns_empty_when_the_node_never_answers(monkeypatch):
     """A node that only errors leaves us with nothing to check against, not a crash."""
+    # TODO: update. I think this should be an error, not a silent 'nothing to check' ?
     client = solr_client_for(lambda request: httpx.Response(503))
     monkeypatch.setattr(checker.httpx, "Client", lambda **kw: client)
 
@@ -206,6 +207,7 @@ def test_solr_source_describes_itself_by_host():
 
 # The real controlled-vocabulary (CV) describes variant_label with a named-group regex;
 # a trimmed copy of it, used both here and in the render_form tests below.
+# TODO: update once we get the schema from the right source.
 CV_VARIANT_PATTERN = (
     r"^r(?P<realization_index>\d+)i(?P<initialization_index>(\d{4}\d{2}[abcde]?|\d+))"
     r"p(?P<physics_index>\d+)f(?P<forcing_index>\d+)$"
@@ -245,6 +247,7 @@ def test_cv_source_pulls_enums_keyed_by_canonical_facet():
 
 def test_cv_source_omits_a_facet_the_cv_does_not_enumerate():
     """A facet the CV describes without an enum (a pattern) is left out, not empty."""
+    # TODO: update once we make the handling of enum vs. pattern etc. more sophisticated
     values = Cmip7CvVocabularySource._values_from_schema(
         CV_SCHEMA, {"experiment", "variant_label"}
     )
@@ -254,6 +257,7 @@ def test_cv_source_omits_a_facet_the_cv_does_not_enumerate():
 
 def test_cv_source_omits_a_facet_absent_from_the_cv():
     """A facet the CV says nothing about is simply left out."""
+    # TODO: update once we fix this silent saying nothing issue
     values = Cmip7CvVocabularySource._values_from_schema(CV_SCHEMA, {"activity"})
 
     assert values == {}
@@ -261,6 +265,8 @@ def test_cv_source_omits_a_facet_absent_from_the_cv():
 
 def test_cv_source_fails_soft_when_the_cv_cannot_be_fetched(monkeypatch):
     """If the CV cannot be fetched, we get {} rather than an exception."""
+    # TODO: update - surely this should be an error
+    # rather than silently saying 'all is fine' ?
 
     unreachable = httpx.ConnectError("no network")
 
@@ -277,6 +283,7 @@ def test_cv_source_fails_soft_when_the_cv_cannot_be_fetched(monkeypatch):
 
 def test_cv_source_reads_the_variant_label_pattern():
     """A facet the CV describes with a regex comes back as a compiled pattern."""
+    # TODO: update once handling of these is more sophisticated
     source = Cmip7CvVocabularySource()
     source._cache["schema"] = CV_SCHEMA  # avoid the network fetch
 
@@ -309,6 +316,7 @@ def test_cmip5_and_cmip6_route_to_the_selectors_first_node():
 
 def test_cmip7_routes_to_the_controlled_vocabulary():
     """CMIP7 checks against the CV, because ESGF-NG cannot list its facet values."""
+    # TODO: update once handling of sources is updated
     canonical = to_canonical(QueryCMIP6(experiment_id="historical")).model_copy(
         update={"project": ("CMIP7",)}
     )
@@ -350,10 +358,9 @@ class StubSource:
         return self._patterns.get(facet)
 
 
-# TODO: I need to double check what the high/low tiering is
-# referring to, to re-name these tests
 def test_low_tiers_findings_and_reports_the_rest_as_unchecked():
     """check_query_values_low tiers what it can and lists what it could not check."""
+    # TODO: udpate once the return values are more sophisticated
     canonical = canonical_cmip6(experiment_id="Historical", variable_id="tas")
     source = StubSource({"experiment": {"historical"}}, description="a-node")
 
@@ -371,6 +378,7 @@ def test_low_tiers_findings_and_reports_the_rest_as_unchecked():
 
 def test_low_reports_ok_when_everything_matches():
     """A clean query yields no findings and ok() is True."""
+    # TODO: add test facet specific queries too here
     canonical = canonical_cmip6(experiment_id="historical")
     source = StubSource({"experiment": {"historical"}})
 
@@ -382,6 +390,7 @@ def test_low_reports_ok_when_everything_matches():
 
 def test_high_with_no_source_marks_every_set_facet_unchecked():
     """When routing finds no source, nothing is judged and every facet is unchecked."""
+    # TODO: update once the idea of unchecked is updated
     report = check_query_values(
         QueryCMIP5(experiment="abrupt-4xco2", variable="tas"),
         selector=lambda canonical, attempt: None,  # exhausted -> no Solr source
@@ -413,6 +422,10 @@ def test_high_routes_and_checks_via_a_stubbed_source(monkeypatch):
 # Below are testing the pattern format of variant_label
 def test_render_form_turns_named_groups_into_a_template():
     """A regex with named groups renders as a readable `r{...}i{...}...` template."""
+    # TODO: this is too clever I think
+    # - just give back the regexp that appears in the schema in all cases.
+    # Where do these named groups come from?
+    # Are they reliable?
     assert checker.render_form(CV_VARIANT_PATTERN) == (
         "r{realization}i{initialization}p{physics}f{forcing}"
     )
@@ -426,6 +439,7 @@ def test_render_form_falls_back_to_the_raw_regex_without_named_groups():
 
 def test_sample_values_is_sorted_and_capped():
     """The sample is sorted and no bigger than MAX_SUGGESTIONS."""
+    # TODO: update once handling of this is updated
     got = checker.sample_values({"r2i1p1f1", "r1i1p1f1", "r1i1p2f1", "r3i1p1f1"})
 
     assert got == ("r1i1p1f1", "r1i1p2f1", "r2i1p1f1")
@@ -433,6 +447,7 @@ def test_sample_values_is_sorted_and_capped():
 
 def test_sample_values_orders_numerically_and_drops_junk():
     """Numeric order by `r`, e.g. from r1 to r2 before r10"""
+    # TODO: Get rid of this, just let 'normal' sorting happen, it's fine
     got = checker.sample_values({"1", "r100i1p1f1", "r2i1p1f1", "r1i1p1f1"})
 
     assert got == ("r1i1p1f1", "r2i1p1f1", "r100i1p1f1")
@@ -474,6 +489,7 @@ def test_variant_label_malformed_against_a_grammar_source_shows_the_form():
     (finding,) = report.findings
     assert finding.facet == "variant_label"
     assert finding.kind == "malformed"
+    # TODO: update once we decide whether we should just show the raw regexp
     assert finding.suggestions == (
         "r{realization}i{initialization}p{physics}f{forcing}",
     )
@@ -481,13 +497,10 @@ def test_variant_label_malformed_against_a_grammar_source_shows_the_form():
 
 
 def test_variant_label_well_formed_against_a_grammar_source_is_silent():
-    """A well-formed label passes silently: we cannot say whether that run exists.
-
-    `r5i1p1f1` matches the grammar even if nobody produced it. A grammar source
-    can only judge form, so the honest outcome is no finding -- and crucially
-    *not* `unchecked`, because we did check the one thing we can.
     """
-    canonical = canonical_cmip6(variant_label="r5i1p1f1")
+    A well-formed label passes silently: we cannot say whether that run exists.
+    """
+    canonical = canonical_cmip6(variant_label="r5i31p250f19")
     source = StubSource({}, patterns={"variant_label": re.compile(CV_VARIANT_PATTERN)})
 
     report = check_query_values_low(canonical, source)
@@ -498,6 +511,7 @@ def test_variant_label_well_formed_against_a_grammar_source_is_silent():
 
 def test_variant_label_is_unchecked_when_the_source_offers_neither():
     """A source with no list and no grammar leaves the label honestly unchecked."""
+    # TODO: update once unchecked handling is reconsidered
     canonical = canonical_cmip6(variant_label="r1i1pf1")
     source = StubSource({})  # no values, no patterns
 
