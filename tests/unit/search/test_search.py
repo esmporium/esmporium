@@ -130,8 +130,7 @@ def test_search_retries_a_transient_failure_then_succeeds():
 
 def test_search_returns_none_when_the_body_is_not_json():
     """A 200 we cannot read as JSON is no more useful than no answer"""
-    # TODO: wouldn't raising an error here be better?
-    # We expect JSON. If we don't get it, we should say so, no?
+    # TODO: update to error when we make the corresponding change in src
     calls = 0
 
     def handler(request):
