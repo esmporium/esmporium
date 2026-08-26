@@ -118,7 +118,9 @@ jobs:
           # Don't need interactive plots
           MPLBACKEND: Agg
         run: |
-          uv run --group tests pytest -r a -v src tests --doctest-modules --doctest-report ndiff --cov=esmporium --cov-report=term-missing --cov-report=xml
+          # Include --run-network so we run the migration tests too (once they're live).
+          # Otherwise don't run API hitting tests here (they have their own tests and workflow).
+          uv run --group tests pytest -r a -v src tests --run-network --doctest-modules --doctest-report ndiff --cov=esmporium --cov-report=term-missing --cov-report=xml
           uv run --group dev coverage report
       - name: Upload coverage reports to Codecov with GitHub Action
         uses: codecov/codecov-action@v6
@@ -173,7 +175,10 @@ jobs:
           # Don't need interactive plots
           MPLBACKEND: Agg
         run: |
-          uv run --no-sync pytest tests -r a -v
+          # Same as the tests job above,
+          # include --run-network so we run the migration tests too (once they're live).
+          # Otherwise don't run API hitting tests here (they have their own tests and workflow).
+          uv run --no-sync pytest tests -r a -v --run-network
 
   tests-without-extras:
     # Run the tests without installing extras.
@@ -213,7 +218,10 @@ jobs:
           # Don't need interactive plots
           MPLBACKEND: Agg
         run: |
-          pytest tests -r a -vv tests
+          # Same as the tests job above,
+          # include --run-network so we run the migration tests too (once they're live).
+          # Otherwise don't run API hitting tests here (they have their own tests and workflow).
+          pytest tests -r a -vv tests --run-network
 
   imports-without-extras:
     strategy:

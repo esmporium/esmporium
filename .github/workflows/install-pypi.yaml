@@ -82,6 +82,9 @@ jobs:
         # rather than a super thorough integration test.
         # You will have to make sure that your tests run
         # without all the extras installed for this to pass.
+        #
+        # The tests which hit the ESGF search API are deliberately
+        # not run here.
         pytest tests -r a -vv tests
     - name: Install all test dependencies
       run: |

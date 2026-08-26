@@ -1,0 +1,304 @@
+{
+  "facet_counts": {
+    "facet_fields": {},
+    "facet_heatmaps": {},
+    "facet_intervals": {},
+    "facet_queries": {},
+    "facet_ranges": {}
+  },
+  "response": {
+    "docs": [
+      {
+        "_timestamp": "2023-11-04T23:25:18.482Z",
+        "_version_": 1781677758592581632,
+        "access": [
+          "HTTPServer",
+          "Globus"
+        ],
+        "activity_drs": [
+          "CMIP"
+        ],
+        "activity_id": [
+          "CMIP"
+        ],
+        "cf_standard_name": [
+          "air_temperature"
+        ],
+        "citation_url": [
+          "http://cera-www.dkrz.de/WDCC/meta/CMIP6/CMIP6.CMIP.EC-Earth-Consortium.EC-Earth3.historical.r23i1p1f1.Amon.tas.gr.v20210527.json"
+        ],
+        "creation_date": "2019-03-18T15:07:49Z",
+        "data_node": "eagle.alcf.anl.gov",
+        "data_specs_version": [
+          "01.00.27"
+        ],
+        "dataset_id_template_": [
+          "%(mip_era)s.%(activity_drs)s.%(institution_id)s.%(source_id)s.%(experiment_id)s.%(member_id)s.%(table_id)s.%(variable_id)s.%(grid_label)s"
+        ],
+        "datetime_end": "2014-12-16T00:00:00Z",
+        "datetime_start": "1850-01-16T00:00:00Z",
+        "directory_format_template_": [
+          "%(root)s/%(mip_era)s/%(activity_drs)s/%(institution_id)s/%(source_id)s/%(experiment_id)s/%(member_id)s/%(table_id)s/%(variable_id)s/%(grid_label)s/%(version)s"
+        ],
+        "east_degrees": 359.29688,
+        "experiment_id": [
+          "historical"
+        ],
+        "experiment_title": [
+          "all-forcing simulation of the recent past"
+        ],
+        "frequency": [
+          "mon"
+        ],
+        "further_info_url": [
+          "https://furtherinfo.es-doc.org/CMIP6.EC-Earth-Consortium.EC-Earth3.historical.none.r23i1p1f1"
+        ],
+        "grid": [
+          "ORCA1T255"
+        ],
+        "grid_label": [
+          "gr"
+        ],
+        "id": "CMIP6.CMIP.EC-Earth-Consortium.EC-Earth3.historical.r23i1p1f1.Amon.tas.gr.v20210527|eagle.alcf.anl.gov",
+        "index_node": "us-index",
+        "instance_id": "CMIP6.CMIP.EC-Earth-Consortium.EC-Earth3.historical.r23i1p1f1.Amon.tas.gr.v20210527",
+        "institution_id": [
+          "EC-Earth-Consortium"
+        ],
+        "latest": true,
+        "master_id": "CMIP6.CMIP.EC-Earth-Consortium.EC-Earth3.historical.r23i1p1f1.Amon.tas.gr",
+        "member_id": [
+          "r23i1p1f1"
+        ],
+        "mip_era": [
+          "CMIP6"
+        ],
+        "model_cohort": [
+          "Registered"
+        ],
+        "nominal_resolution": [
+          "100 km"
+        ],
+        "north_degrees": 89.46282,
+        "number_of_files": 165,
+        "pid": [
+          "hdl:21.14100/a6f6b905-bc19-341c-b1bf-e47777dcf1a0"
+        ],
+        "product": [
+          "model-output"
+        ],
+        "project": [
+          "CMIP6"
+        ],
+        "realm": [
+          "atmos"
+        ],
+        "replica": true,
+        "retracted": false,
+        "score": 0.5,
+        "short_description": [
+          "EC-Earth3 output prepared for CMIP6"
+        ],
+        "size": 782045502,
+        "source_id": [
+          "EC-Earth3"
+        ],
+        "source_type": [
+          "AOGCM"
+        ],
+        "south_degrees": -89.46282,
+        "sub_experiment_id": [
+          "none"
+        ],
+        "table_id": [
+          "Amon"
+        ],
+        "title": "CMIP6.CMIP.EC-Earth-Consortium.EC-Earth3.historical.r23i1p1f1.Amon.tas.gr",
+        "type": "Dataset",
+        "variable": [
+          "tas"
+        ],
+        "variable_id": [
+          "tas"
+        ],
+        "variable_long_name": [
+          "Near-Surface Air Temperature"
+        ],
+        "variable_units": [
+          "K"
+        ],
+        "variant_label": [
+          "r23i1p1f1"
+        ],
+        "version": 20210527,
+        "west_degrees": 0.0,
+        "xlink": [
+          "http://cera-www.dkrz.de/WDCC/meta/CMIP6/CMIP6.CMIP.EC-Earth-Consortium.EC-Earth3.historical.r23i1p1f1.Amon.tas.gr.v20210527.json|Citation|citation",
+          "http://hdl.handle.net/hdl:21.14100/a6f6b905-bc19-341c-b1bf-e47777dcf1a0|PID|pid"
+        ]
+      },
+      {
+        "_timestamp": "2023-11-04T22:32:38.574Z",
+        "_version_": 1781674445188890624,
+        "access": [
+          "HTTPServer",
+          "Globus"
+        ],
+        "activity_drs": [
+          "CMIP"
+        ],
+        "activity_id": [
+          "CMIP"
+        ],
+        "cf_standard_name": [
+          "air_temperature"
+        ],
+        "citation_url": [
+          "http://cera-www.dkrz.de/WDCC/meta/CMIP6/CMIP6.CMIP.EC-Earth-Consortium.EC-Earth3.historical.r115i1p1f1.Amon.tas.gr.v20200412.json"
+        ],
+        "creation_date": "2019-06-26T13:22:07Z",
+        "data_node": "eagle.alcf.anl.gov",
+        "data_specs_version": [
+          "01.00.30"
+        ],
+        "dataset_id_template_": [
+          "%(mip_era)s.%(activity_drs)s.%(institution_id)s.%(source_id)s.%(experiment_id)s.%(member_id)s.%(table_id)s.%(variable_id)s.%(grid_label)s"
+        ],
+        "datetime_end": "2014-12-16T00:00:00Z",
+        "datetime_start": "1970-01-16T00:00:00Z",
+        "directory_format_template_": [
+          "%(root)s/%(mip_era)s/%(activity_drs)s/%(institution_id)s/%(source_id)s/%(experiment_id)s/%(member_id)s/%(table_id)s/%(variable_id)s/%(grid_label)s/%(version)s"
+        ],
+        "east_degrees": 359.29688,
+        "experiment_id": [
+          "historical"
+        ],
+        "experiment_title": [
+          "all-forcing simulation of the recent past"
+        ],
+        "frequency": [
+          "mon"
+        ],
+        "further_info_url": [
+          "https://furtherinfo.es-doc.org/CMIP6.EC-Earth-Consortium.EC-Earth3.historical.none.r115i1p1f1"
+        ],
+        "grid": [
+          "T255L91-ORCA1L75"
+        ],
+        "grid_label": [
+          "gr"
+        ],
+        "id": "CMIP6.CMIP.EC-Earth-Consortium.EC-Earth3.historical.r115i1p1f1.Amon.tas.gr.v20200412|eagle.alcf.anl.gov",
+        "index_node": "us-index",
+        "instance_id": "CMIP6.CMIP.EC-Earth-Consortium.EC-Earth3.historical.r115i1p1f1.Amon.tas.gr.v20200412",
+        "institution_id": [
+          "EC-Earth-Consortium"
+        ],
+        "latest": true,
+        "master_id": "CMIP6.CMIP.EC-Earth-Consortium.EC-Earth3.historical.r115i1p1f1.Amon.tas.gr",
+        "member_id": [
+          "r115i1p1f1"
+        ],
+        "mip_era": [
+          "CMIP6"
+        ],
+        "model_cohort": [
+          "Registered"
+        ],
+        "nominal_resolution": [
+          "100 km"
+        ],
+        "north_degrees": 89.46282,
+        "number_of_files": 45,
+        "pid": [
+          "hdl:21.14100/c8b16b9a-804e-331d-ae49-887af6d8be0a"
+        ],
+        "product": [
+          "model-output"
+        ],
+        "project": [
+          "CMIP6"
+        ],
+        "realm": [
+          "atmos"
+        ],
+        "replica": true,
+        "retracted": false,
+        "score": 0.5,
+        "short_description": [
+          "EC-Earth3 output prepared for CMIP6"
+        ],
+        "size": 212899382,
+        "source_id": [
+          "EC-Earth3"
+        ],
+        "source_type": [
+          "AOGCM"
+        ],
+        "south_degrees": -89.46282,
+        "sub_experiment_id": [
+          "none"
+        ],
+        "table_id": [
+          "Amon"
+        ],
+        "title": "CMIP6.CMIP.EC-Earth-Consortium.EC-Earth3.historical.r115i1p1f1.Amon.tas.gr",
+        "type": "Dataset",
+        "variable": [
+          "tas"
+        ],
+        "variable_id": [
+          "tas"
+        ],
+        "variable_long_name": [
+          "Near-Surface Air Temperature"
+        ],
+        "variable_units": [
+          "K"
+        ],
+        "variant_label": [
+          "r115i1p1f1"
+        ],
+        "version": 20200412,
+        "west_degrees": 0.0,
+        "xlink": [
+          "http://cera-www.dkrz.de/WDCC/meta/CMIP6/CMIP6.CMIP.EC-Earth-Consortium.EC-Earth3.historical.r115i1p1f1.Amon.tas.gr.v20200412.json|Citation|citation",
+          "http://hdl.handle.net/hdl:21.14100/c8b16b9a-804e-331d-ae49-887af6d8be0a|PID|pid"
+        ]
+      }
+    ],
+    "maxScore": 0.5,
+    "numFound": 2518,
+    "start": 0
+  },
+  "responseHeader": {
+    "QTime": 152710,
+    "params": {
+      "df": "text",
+      "echoParams": "all",
+      "facet": "true",
+      "facet.limit": "-1",
+      "facet.method": "enum",
+      "facet.mincount": "1",
+      "facet.sort": "lex",
+      "fl": "*,score",
+      "fq": [
+        "type:Dataset",
+        "experiment_id:\"historical\"",
+        "frequency:\"mon\"",
+        "project:\"CMIP6\"",
+        "variable_id:\"tas\""
+      ],
+      "indent": "true",
+      "q": "*:*",
+      "q.alt": "*:*",
+      "qf": "text",
+      "rows": "2",
+      "shards": "esgf-data-node-solr-query:8983/solr/datasets",
+      "start": "0",
+      "tie": "0.01",
+      "wt": "json"
+    },
+    "status": 0
+  }
+}

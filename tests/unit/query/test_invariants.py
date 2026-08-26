@@ -93,6 +93,22 @@ def test_absent_facets(query_class):
 
 
 @by_query
+def test_expressible_facets(query_class):
+    """
+    Test that "everything this class can express" is exactly its two kinds of facet
+
+    The canonical facets it maps and the ones which are its own.
+    """
+    spec = facet_spec(query_class)
+
+    assert spec.expressible_facets == set(spec.canonical_to_native) | set(
+        spec.query_specific_facets
+    )
+    assert spec.expressible_facets.isdisjoint(spec.absent_canonical_facets)
+    assert set(spec.canonical_to_native) <= CANONICAL_FACETS
+
+
+@by_query
 def test_query_specific_facets_are_not_rename_targets(query_class):
     """
     A native name is a rename target or a query-specific facet, not both.

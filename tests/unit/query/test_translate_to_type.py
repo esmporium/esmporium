@@ -209,7 +209,7 @@ def test_query_specific_facet_wrong_project_raises():
     ) as excinfo:
         translate_to_type(query, to=QueryCMIP6)
 
-    assert excinfo.value.facet == "product"
+    assert excinfo.value.facets == ("product",)
     assert excinfo.value.query_class == "QueryCMIP6"
 
 

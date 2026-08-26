@@ -215,6 +215,16 @@ class FacetSpec:
         """
         return CANONICAL_FACETS - set(self.canonical_to_native)
 
+    @property
+    def expressible_facets(self) -> frozenset[str]:
+        """
+        Every facet this class can express
+
+        The facets are given back with canonical names where available,
+        using query-specific names otherwise.
+        """
+        return frozenset(self.canonical_to_native) | self.query_specific_facets
+
 
 def _declared_facets(query_class: type) -> dict[str, QueryFacet]:
     """
