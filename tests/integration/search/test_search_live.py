@@ -15,6 +15,7 @@ import pytest
 from esmporium.query import QueryCMIP5, QueryCMIP6, QueryCMIP7
 from esmporium.search import (
     ESGF1Solr,
+    NoAPIWouldAnswerError,
     SolrCMIP6Parameters,
     build_list_selector,
     build_transient_retrying,
@@ -188,15 +189,28 @@ def client():
         yield res
 
 
+def search_or_skip(query, api, client, limit):
+    """
+    Search one live node, skipping the test if that node will not answer
+
+    A node being down says nothing about the behaviour under test,
+    so it is a skip rather than a failure.
+    """
+    try:
+        results = search(query, build_list_selector([api]), limit=limit, client=client)
+    except NoAPIWouldAnswerError:
+        pytest.skip(f"{api.host} did not answer, so it is down or unwell")
+
+    raw: dict = results[api.host]
+
+    return raw
+
+
 @pytest.mark.parametrize("api, query", LIVE_CASES)
 def test_search_returns_results(client, api, query):
     """A query we expect to match something comes back with matches"""
-    results = search(query, build_list_selector([api]), limit=5, client=client)
+    raw = search_or_skip(query, api, client, limit=5)
 
-    if not results:
-        pytest.skip(f"{api.host} did not answer, so it is down or unwell")
-
-    raw = results[api.host]
     assert api.generation.result_count(raw) > 0
 
 
@@ -213,12 +227,9 @@ def test_search_applies_the_facets_we_send(client, api, query, poison_field):
     and every search we build with it is quietly unfiltered.
     """
     nonsense = query.model_copy(update={poison_field: (NOT_A_REAL_VALUE,)})
-    results = search(nonsense, build_list_selector([api]), limit=5, client=client)
+    raw = search_or_skip(nonsense, api, client, limit=5)
 
-    if not results:
-        pytest.skip(f"{api.host} did not answer, so it is down or unwell")
-
-    assert api.generation.result_count(results[api.host]) == 0
+    assert api.generation.result_count(raw) == 0
 
 
 def master_ids(raw: dict) -> set[str]:
@@ -265,12 +276,15 @@ def test_aggregating_over_nodes_finds_more_than_one_node(client):
         )
     ]
 
-    results = search(
-        CMIP6_QUERY,
-        build_list_selector(nodes),
-        stop_at_first_result=False,
-        client=client,
-    )
+    try:
+        results = search(
+            CMIP6_QUERY,
+            build_list_selector(nodes),
+            stop_at_first_result=False,
+            client=client,
+        )
+    except NoAPIWouldAnswerError:
+        pytest.skip("no node answered, so there is nothing to aggregate")
 
     per_host = {host: master_ids(raw) for host, raw in results.items()}
     answered = {host: ids for host, ids in per_host.items() if ids}
@@ -309,10 +323,7 @@ def test_search_ands_across_facets(client, api, make_query):
 
     def count(variables, experiments):
         query = make_query(variables, experiments)
-        results = search(query, build_list_selector([api]), limit=1, client=client)
-        if not results:
-            pytest.skip(f"{api.host} did not answer, so it is down or unwell")
-        return api.generation.result_count(results[api.host])
+        return api.generation.result_count(search_or_skip(query, api, client, limit=1))
 
     for variable in AND_OR_VARIABLES:
         for experiment in AND_OR_EXPERIMENTS:
@@ -343,10 +354,7 @@ def test_search_ors_within_a_facet(client, api, make_query):
 
     def count(variables, experiments):
         query = make_query(variables, experiments)
-        results = search(query, build_list_selector([api]), limit=1, client=client)
-        if not results:
-            pytest.skip(f"{api.host} did not answer, so it is down or unwell")
-        return api.generation.result_count(results[api.host])
+        return api.generation.result_count(search_or_skip(query, api, client, limit=1))
 
     experiment = AND_OR_EXPERIMENTS[:1]
     separately = [count((variable,), experiment) for variable in AND_OR_VARIABLES]

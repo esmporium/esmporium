@@ -37,6 +37,7 @@ from esmporium.search.search_api import (
     DEFAULT_SELECTOR,
     SearchAPI,
     SearchAPISelector,
+    SelectorOfferedNoAPIError,
 )
 
 CloseMatcher = Callable[[str, set[str]], tuple[str, ...]]
@@ -518,12 +519,12 @@ def check_query_values(
         What each API said about the query's values, keyed by host.
         An API which refused to answer is left out.
 
-        Empty if the selector had no API to offer,
-        which is not the same as one refusing:
-        there was nobody to have refused.
-
     Raises
     ------
+    SelectorOfferedNoAPIError
+        `selector` had no API to offer for this query,
+        so there was nobody to ask
+
     NoSourceWouldAnswerError
         The selector offered at least one API and none of them answered
     """
@@ -535,11 +536,18 @@ def check_query_values(
     owns_client = client is None
     client = client if client is not None else httpx.Client(follow_redirects=True)
 
+    asked_someone = False
+
     try:
         attempt = 0
         while (api := selector(canonical, attempt)) is not None:
+            asked_someone = True
             source = SearchAPIValuesSource(api, client)
             try:
+                # Note: if the selector offers the same host twice,
+                # the second report simply replaces the first here.
+                # That is wasteful, because we ask the same host again,
+                # but it is not wrong: both reports say the same thing.
                 reports[source.description] = check_query_values_low(
                     canonical, source, close_matches
                 )
@@ -554,6 +562,9 @@ def check_query_values(
     finally:
         if owns_client:
             client.close()
+
+    if not asked_someone:
+        raise SelectorOfferedNoAPIError(canonical, selector)
 
     if not reports and refusals:
         raise NoSourceWouldAnswerError(tuple(refusals))

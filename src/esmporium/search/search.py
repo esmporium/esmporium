@@ -12,7 +12,12 @@ import httpx
 
 from esmporium.query import QueryProtocol, to_canonical
 from esmporium.search.esgf_generations import DEFAULT_LIMIT, Request
-from esmporium.search.search_api import DEFAULT_SELECTOR, SearchAPI, SearchAPISelector
+from esmporium.search.search_api import (
+    DEFAULT_SELECTOR,
+    SearchAPI,
+    SearchAPISelector,
+    SelectorOfferedNoAPIError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -128,13 +133,42 @@ def fire(
     try:
         return api.retrying(_once)
     except (httpx.HTTPError, ValueError):
-        # TODO: is it worth returning more information than just `None`
-        # in the case of failure?
-        # We can also leave this until we start logging search API health
+        # TODO: raise an error here rather than signalling failure with `None`.
+        # `None` cannot say why the API did not answer,
+        # and the caller has to remember to check for it,
+        # which is exactly the kind of silence we are trying to avoid
+        # (see `NoAPIWouldAnswerError`, which can only name the hosts
+        # that refused, never what they said).
+        # It is also what we would want for logging search API health,
         # because that is the key use case for
-        # which we would want this extra information
-        # (so maybe is the right point at which to make a change).
+        # which we would want this extra information.
+        # We will make this change in the PR
+        # where we start parsing search results into `Dataset`s,
+        # because that is where the parsing failures
+        # will want the same treatment.
         return None
+
+
+class NoAPIWouldAnswerError(RuntimeError):
+    """
+    Raised when every API we searched refused to answer
+    """
+
+    def __init__(self, hosts: tuple[str, ...]) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        hosts
+            The hosts which did not answer, in the order they were asked
+        """
+        self.hosts = hosts
+        asked = "\n".join(f"  - {host}" for host in hosts)
+        super().__init__(
+            f"Searched {len(hosts)} API(s) and none of them answered, "
+            f"so we have no results to give you:\n{asked}"
+        )
 
 
 def search(
@@ -180,19 +214,40 @@ def search(
     :
         The raw JSON each endpoint answered with, keyed by host.
         An endpoint which never answered is left out.
+
+    Raises
+    ------
+    SelectorOfferedNoAPIError
+        `selector` had no endpoint to offer for this query,
+        so there was nobody to search
+
+    NoAPIWouldAnswerError
+        The selector offered at least one endpoint and none of them answered
     """
     canonical = to_canonical(query)
+
     results: dict[str, Any] = {}
 
     owns_client = client is None
     client = client if client is not None else httpx.Client(follow_redirects=True)
 
+    asked_someone = False
+    refused: list[str] = []
+
     try:
         attempt = 0
         while (api := selector(canonical, attempt)) is not None:
+            asked_someone = True
             request = api.generation.build_search_request(canonical, limit)
             raw = fire(client, api, request)
-            if raw is not None:
+            if raw is None:
+                refused.append(api.host)
+            else:
+                # Note: if the selector offers the same host twice,
+                # the second answer simply replaces the first here.
+                # That is wasteful, because we run the query again,
+                # but it is not wrong: the answers are for the same query
+                # from the same host, so either will do.
                 results[api.host] = raw
                 if stop_at_first_result:
                     break
@@ -202,5 +257,11 @@ def search(
     finally:
         if owns_client:
             client.close()
+
+    if not asked_someone:
+        raise SelectorOfferedNoAPIError(canonical, selector)
+
+    if not results and refused:
+        raise NoAPIWouldAnswerError(tuple(refused))
 
     return results

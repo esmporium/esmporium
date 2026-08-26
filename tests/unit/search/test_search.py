@@ -14,10 +14,17 @@ import os
 import threading
 
 import httpx
+import pytest
 from tenacity import Retrying, retry_if_exception, stop_after_attempt
 
 from esmporium.query import QueryCMIP6
-from esmporium.search import SearchAPI, build_list_selector, search
+from esmporium.search import (
+    NoAPIWouldAnswerError,
+    SearchAPI,
+    SelectorOfferedNoAPIError,
+    build_list_selector,
+    search,
+)
 from esmporium.search.retry import _is_transient
 from esmporium.search.search_api import SOLR_CMIP6, STAC_CMIP6
 
@@ -39,6 +46,11 @@ def fast_retrying(attempts: int) -> Retrying:
 def client_for(handler) -> httpx.Client:
     """Build an httpx client whose requests are answered by `handler`"""
     return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def never_asked(request):
+    """A handler for the tests in which nothing should be sent anywhere."""
+    pytest.fail(f"unexpected request to {request.url}")
 
 
 def solr_response(num_found: int) -> httpx.Response:
@@ -77,7 +89,7 @@ def test_search_uses_the_apis_own_timeout():
     assert seen == [{"connect": 5.0, "read": 5.0, "write": 5.0, "pool": 5.0}]
 
 
-def test_search_returns_none_on_a_client_error_without_retrying():
+def test_search_raises_on_a_client_error_without_retrying():
     """A 4xx is a real 'no'; we do not ask again"""
     calls = 0
 
@@ -88,9 +100,9 @@ def test_search_returns_none_on_a_client_error_without_retrying():
 
     selector = build_list_selector([make_search_api("host", attempts=3)])
 
-    results = search(QUERY_CMIP6, selector, client=client_for(handler))
+    with pytest.raises(NoAPIWouldAnswerError, match="host"):
+        search(QUERY_CMIP6, selector, client=client_for(handler))
 
-    assert results == {}
     assert calls == 1
 
 
@@ -105,9 +117,9 @@ def test_search_retries_a_transient_failure_then_gives_up():
 
     selector = build_list_selector([make_search_api("host", attempts=3)])
 
-    results = search(QUERY_CMIP6, selector, client=client_for(handler))
+    with pytest.raises(NoAPIWouldAnswerError, match="host"):
+        search(QUERY_CMIP6, selector, client=client_for(handler))
 
-    assert results == {}
     assert calls == 3
 
 
@@ -128,9 +140,8 @@ def test_search_retries_a_transient_failure_then_succeeds():
     assert calls == 2
 
 
-def test_search_returns_none_when_the_body_is_not_json():
+def test_search_raises_when_the_body_is_not_json():
     """A 200 we cannot read as JSON is no more useful than no answer"""
-    # TODO: update to error when we make the corresponding change in src
     calls = 0
 
     def handler(request):
@@ -140,9 +151,9 @@ def test_search_returns_none_when_the_body_is_not_json():
 
     selector = build_list_selector([make_search_api("host", attempts=3)])
 
-    results = search(QUERY_CMIP6, selector, client=client_for(handler))
+    with pytest.raises(NoAPIWouldAnswerError, match="host"):
+        search(QUERY_CMIP6, selector, client=client_for(handler))
 
-    assert results == {}
     assert calls == 1, "an unreadable body is not a transient failure"
 
 
@@ -195,6 +206,18 @@ def test_search_skips_a_node_that_does_not_answer():
 
     assert list(results) == ["host-b"]
     assert results["host-b"]["response"]["numFound"] == 4
+
+
+def test_search_with_no_endpoint_to_try_raises():
+    """
+    Test that a selector with nothing to offer is an error, not an empty result
+
+    Somebody who calls `search` wants a search to happen.
+    An empty dict would say "we searched and found nothing",
+    when in truth nothing was searched at all.
+    """
+    with pytest.raises(SelectorOfferedNoAPIError, match="CMIP6"):
+        search(QUERY_CMIP6, build_list_selector([]), client=client_for(never_asked))
 
 
 def test_search_keeps_an_empty_but_valid_answer():

@@ -14,7 +14,11 @@ demo does, so it needs a network.
 from __future__ import annotations
 
 from esmporium.query import QueryCMIP5, QueryCMIP6, QueryCMIP7, QueryProtocol
-from esmporium.search import ValueReport, check_query_values
+from esmporium.search import (
+    NoSourceWouldAnswerError,
+    ValueReport,
+    check_query_values,
+)
 
 
 def print_report(query: QueryProtocol, report: ValueReport) -> None:
@@ -54,10 +58,15 @@ def main() -> None:
         # for the first answer, the same way `search` does. The nodes do not
         # hold identical data, so a value one has never heard of can be
         # perfectly ordinary on the next one along -- worth seeing in a demo.
-        reports = check_query_values(example, stop_at_first_result=False)
-        if not reports:
+        try:
+            reports = check_query_values(example, stop_at_first_result=False)
+        except NoSourceWouldAnswerError as exc:
+            # A demo is not the place for a traceback: every endpoint being
+            # down says nothing about the checker we are demonstrating.
             print(f"query   : {example!r}")
-            print("result  : no endpoint had anything to say\n")
+            print(f"result  : {exc}\n")
+            continue
+
         for report in reports.values():
             print_report(example, report)
 

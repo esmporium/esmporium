@@ -25,7 +25,12 @@ from esmporium.search import (
     facets_the_user_set,
     values_set_for,
 )
-from esmporium.search.search_api import SOLR_CMIP6, STAC_CMIP6, SearchAPI
+from esmporium.search.search_api import (
+    SOLR_CMIP6,
+    STAC_CMIP6,
+    SearchAPI,
+    SelectorOfferedNoAPIError,
+)
 
 
 def canonical_cmip6(**facets):
@@ -319,20 +324,21 @@ def test_a_report_which_could_not_check_something_is_not_ok():
     assert not report.ok()
 
 
-def test_high_with_no_api_to_ask_reports_nothing():
+def test_high_with_no_api_to_ask_raises():
     """
-    Test that a selector with nothing to offer gives back no reports
+    Test that a selector with nothing to offer is an error, not an empty answer
 
-    Not an error: there was nobody to have refused.
-    An empty answer cannot be misread as a clean bill of health,
-    because there is no report in it to call `ok()` on.
+    Somebody who asks for their values to be checked wants them checked.
+    No reports at all is not a result they asked for,
+    and it reads far too much like "nothing to report",
+    so it is said out loud instead.
     """
-    reports = check_query_values(
-        QueryCMIP5(experiment="abrupt-4xco2", variable="tas"),
-        selector=lambda canonical, attempt: None,
-    )
-
-    assert reports == {}
+    with pytest.raises(SelectorOfferedNoAPIError, match="CMIP5"):
+        check_query_values(
+            QueryCMIP5(experiment="abrupt-4xco2", variable="tas"),
+            selector=lambda canonical, attempt: None,
+            client=client_for(never_asked),
+        )
 
 
 def test_high_routes_through_the_selector_to_the_api():

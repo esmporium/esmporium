@@ -112,6 +112,44 @@ Given the canonical query and a 0-based attempt index, returns the next
 """
 
 
+class SelectorOfferedNoAPIError(ValueError):
+    """
+    Raised when a selector has no endpoint to offer for a query, from the very start
+
+    Asking for a search is asking for it to happen.
+    Handing back an empty answer would read as
+    "we asked, and nobody had anything for you",
+    when what happened is that nobody was asked at all:
+    a selector with an empty list, or one whose rules
+    rule out every endpoint for this query, is a bug in the calling code
+    and is worth saying out loud rather than quietly returning nothing.
+
+    This is only about having nobody to ask.
+    Endpoints which were asked and did not answer are a different thing,
+    and are reported as such.
+    """
+
+    def __init__(self, canonical: QueryCanonical, selector: SearchAPISelector) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        canonical
+            The query we were going to ask about
+
+        selector
+            The selector which had nothing to offer for it
+        """
+        self.canonical = canonical
+        self.selector = selector
+        super().__init__(
+            "No API was offered on the very first attempt, "
+            f"so there was nobody to ask. The selector was: {selector}. "
+            f"The query was: {canonical!r}."
+        )
+
+
 def build_list_selector(apis: Sequence[SearchAPI]) -> SearchAPISelector:
     """
     Build a selector that yields the given endpoints in order, then stops

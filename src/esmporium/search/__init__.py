@@ -61,11 +61,12 @@ from esmporium.search.esgf_generations import (
     unexpressible_facets,
 )
 from esmporium.search.retry import build_transient_retrying
-from esmporium.search.search import fire, search
+from esmporium.search.search import NoAPIWouldAnswerError, fire, search
 from esmporium.search.search_api import (
     DEFAULT_SELECTOR,
     SearchAPI,
     SearchAPISelector,
+    SelectorOfferedNoAPIError,
     build_list_selector,
     build_project_list_selector,
 )
@@ -84,6 +85,7 @@ __all__ = [
     "FacetFinding",
     "FindingKind",
     "LimitOutOfRangeError",
+    "NoAPIWouldAnswerError",
     "NoFacetValuesReturned",
     "NoResultCountReturned",
     "NoSourceWouldAnswerError",
@@ -95,6 +97,7 @@ __all__ = [
     "SearchAPIGeneration",
     "SearchAPISelector",
     "SearchAPIValuesSource",
+    "SelectorOfferedNoAPIError",
     "SolrCMIP5Parameters",
     "SolrCMIP6Parameters",
     "SolrCMIP7Parameters",
