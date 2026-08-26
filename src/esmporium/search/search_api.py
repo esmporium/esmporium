@@ -92,15 +92,39 @@ class SearchAPI:
 # Pre-built search API generations.
 # See note in docstring at the top of the module for why it is like this.
 SOLR_CMIP5 = ESGF1Solr(params=SolrCMIP5Parameters)
+"""
+Search API that hits ESGF1 using SOLR syntax and expects CMIP5 style queries
+"""
 SOLR_CMIP6 = ESGF1Solr(params=SolrCMIP6Parameters)
+"""
+Search API that hits ESGF1 using SOLR syntax and expects CMIP6 style queries
+"""
 SOLR_CMIP7 = ESGF1Solr(params=SolrCMIP7Parameters)
+"""
+Search API that hits ESGF1 using SOLR syntax and expects CMIP7 style queries
+"""
 
 BRIDGE_CMIP5 = ESGF15Bridge(params=SolrCMIP5Parameters)
+"""
+Search API that hits ESGF1.5 bridge and expects CMIP5 style queries
+"""
 BRIDGE_CMIP6 = ESGF15Bridge(params=SolrCMIP6Parameters)
+"""
+Search API that hits ESGF1.5 bridge and expects CMIP5 style queries
+"""
 
 STAC_CMIP5 = ESGFNGStac(params=StacCMIP5Parameters)
+"""
+Search API that hits ESGF-NG STAC API and expects CMIP5 style queries
+"""
 STAC_CMIP6 = ESGFNGStac(params=StacCMIP6Parameters)
+"""
+Search API that hits ESGF-NG STAC API and expects CMIP6 style queries
+"""
 STAC_CMIP7 = ESGFNGStac(params=StacCMIP7Parameters)
+"""
+Search API that hits ESGF-NG STAC API and expects CMIP7 style queries
+"""
 
 
 SearchAPISelector = Callable[[QueryCanonical, int], SearchAPI | None]
