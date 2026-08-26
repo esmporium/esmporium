@@ -146,28 +146,14 @@ def test_facets_the_user_set_includes_query_specific_facets():
     assert facets_the_user_set(canonical) == {"experiment", "product", "project"}
 
 
-REAL_HTTPX_CLIENT = httpx.Client
-"""
-The real client class, kept because the tests below replace `httpx.Client`
-
-`solr_client_for` has to build a client *through* the replacement, so it needs
-the class from before the patch. Reading `httpx.Client` at call time would find
-the patch and recurse.
-"""
+def client_for(handler):
+    """Build an httpx client whose requests are answered by `handler`"""
+    return httpx.Client(transport=httpx.MockTransport(handler))
 
 
-def solr_client_for(handler):
-    """A one-shot httpx.Client whose requests are answered by `handler`."""
-    return REAL_HTTPX_CLIENT(transport=httpx.MockTransport(handler))
-
-
-def answer_with(monkeypatch, handler):
-    """
-    Answer every request the checker sends with `handler`
-
-    A fresh client per call, because the checker closes the one it is given.
-    """
-    monkeypatch.setattr(httpx, "Client", lambda **kw: solr_client_for(handler))
+def never_asked(request):
+    """A handler for the tests in which nothing should be sent anywhere."""
+    pytest.fail(f"unexpected request to {request.url}")
 
 
 def once():
@@ -180,7 +166,7 @@ def solr_api(host="node.example"):
     return SearchAPI(host, SOLR_CMIP6, once())
 
 
-def test_solr_source_lists_values_keyed_by_canonical_facet(monkeypatch):
+def test_solr_source_lists_values_keyed_by_canonical_facet():
     seen = {}
 
     def handler(request):
@@ -199,9 +185,7 @@ def test_solr_source_lists_values_keyed_by_canonical_facet(monkeypatch):
             },
         )
 
-    answer_with(monkeypatch, handler)
-
-    source = SearchAPIValuesSource(solr_api())
+    source = SearchAPIValuesSource(solr_api(), client_for(handler))
     canonical = canonical_cmip6(experiment_id="historical", variable_id="tas")
     allowed = source.allowed_values(canonical, {"experiment", "variable"})
 
@@ -215,7 +199,7 @@ def test_solr_source_lists_values_keyed_by_canonical_facet(monkeypatch):
     assert seen["facets"] == "experiment_id,variable_id"
 
 
-def test_a_node_which_never_answers_raises(monkeypatch):
+def test_a_node_which_never_answers_raises():
     """
     Test that a node we could not get values from is an error, not an empty answer
 
@@ -223,9 +207,9 @@ def test_a_node_which_never_answers_raises(monkeypatch):
     "we checked, and it was fine", which is the one thing this module
     must never say by accident.
     """
-    answer_with(monkeypatch, lambda request: httpx.Response(503))
-
-    source = SearchAPIValuesSource(solr_api("down.example"))
+    source = SearchAPIValuesSource(
+        solr_api("down.example"), client_for(lambda request: httpx.Response(503))
+    )
     canonical = canonical_cmip6(experiment_id="historical")
 
     with pytest.raises(CouldNotGetAllowedValuesError, match=re.escape("down.example")):
@@ -234,7 +218,9 @@ def test_a_node_which_never_answers_raises(monkeypatch):
 
 def test_solr_source_describes_itself_by_host():
     """The report names where values came from; for Solr that is the host."""
-    source = SearchAPIValuesSource(solr_api("esgf.example.org"))
+    source = SearchAPIValuesSource(
+        solr_api("esgf.example.org"), client_for(never_asked)
+    )
     assert source.description == "esgf.example.org"
 
 
@@ -349,14 +335,12 @@ def test_high_with_no_api_to_ask_reports_nothing():
     assert reports == {}
 
 
-def test_high_routes_through_the_selector_to_the_api(monkeypatch):
+def test_high_routes_through_the_selector_to_the_api():
     """Test that the API the selector offers is the one asked, and reported under."""
-    handler = facet_values_from(["historical"])
-    answer_with(monkeypatch, handler)
-
     reports = check_query_values(
         QueryCMIP6(experiment_id="Historical"),
         selector=selector_yielding(solr_api("routed.example")),
+        client=client_for(facet_values_from(["historical"])),
     )
 
     assert set(reports) == {"routed.example"}
@@ -365,7 +349,7 @@ def test_high_routes_through_the_selector_to_the_api(monkeypatch):
     )
 
 
-def test_high_moves_on_to_the_next_api_when_one_will_not_answer(monkeypatch):
+def test_high_moves_on_to_the_next_api_when_one_will_not_answer():
     """
     Test that one endpoint refusing is not the end of the check
 
@@ -374,13 +358,13 @@ def test_high_moves_on_to_the_next_api_when_one_will_not_answer(monkeypatch):
     can usually answer the question the last one would not.
     """
     handler = by_host({"second.example": facet_values_from(["historical"])})
-    answer_with(monkeypatch, handler)
 
     reports = check_query_values(
         QueryCMIP6(experiment_id="Historical"),
         selector=selector_yielding(
             solr_api("down.example"), solr_api("second.example")
         ),
+        client=client_for(handler),
     )
 
     assert set(reports) == {"second.example"}
@@ -389,7 +373,7 @@ def test_high_moves_on_to_the_next_api_when_one_will_not_answer(monkeypatch):
     )
 
 
-def test_high_asks_every_api_when_told_not_to_stop_at_the_first(monkeypatch):
+def test_high_asks_every_api_when_told_not_to_stop_at_the_first():
     """
     Test that every endpoint is asked, and kept, when the caller asks for that
 
@@ -403,14 +387,13 @@ def test_high_asks_every_api_when_told_not_to_stop_at_the_first(monkeypatch):
             "does-not.example": facet_values_from(["historical"]),
         }
     )
-    answer_with(monkeypatch, handler)
-
     reports = check_query_values(
         QueryCMIP6(experiment_id="abrupt-4xCO2"),
         selector=selector_yielding(
             solr_api("knows.example"), solr_api("does-not.example")
         ),
         stop_at_first_result=False,
+        client=client_for(handler),
     )
 
     assert set(reports) == {"knows.example", "does-not.example"}
@@ -420,21 +403,21 @@ def test_high_asks_every_api_when_told_not_to_stop_at_the_first(monkeypatch):
     assert finding.kind is FindingKind.UNKNOWN
 
 
-def test_high_keeps_the_answers_it_got_when_only_some_apis_refuse(monkeypatch):
+def test_high_keeps_the_answers_it_got_when_only_some_apis_refuse():
     """A refusal alongside an answer is left out, not raised: we did check."""
     handler = by_host({"up.example": facet_values_from(["historical"])})
-    answer_with(monkeypatch, handler)
 
     reports = check_query_values(
         QueryCMIP6(experiment_id="historical"),
         selector=selector_yielding(solr_api("up.example"), solr_api("down.example")),
         stop_at_first_result=False,
+        client=client_for(handler),
     )
 
     assert set(reports) == {"up.example"}
 
 
-def test_high_raises_with_every_refusal_when_no_api_answers(monkeypatch):
+def test_high_raises_with_every_refusal_when_no_api_answers():
     """
     Test that a refusal from all of them is an error naming all of them
 
@@ -442,14 +425,13 @@ def test_high_raises_with_every_refusal_when_no_api_answers(monkeypatch):
     "we checked and it was fine". Which endpoints refused is the interesting
     part, so every refusal is carried, not just the last.
     """
-    answer_with(monkeypatch, lambda request: httpx.Response(503))
-
     with pytest.raises(NoSourceWouldAnswerError) as excinfo:
         check_query_values(
             QueryCMIP6(experiment_id="Historical"),
             selector=selector_yielding(
                 solr_api("first.example"), solr_api("last.example")
             ),
+            client=client_for(lambda request: httpx.Response(503)),
         )
 
     assert excinfo.value.described == ("first.example", "last.example")
@@ -648,22 +630,23 @@ def test_values_set_for_a_facet_the_query_cannot_hold_raises():
         values_set_for(canonical, "sub_experiment_id")
 
 
-def test_a_facet_the_apis_vocabulary_cannot_express_is_not_asked_about(monkeypatch):
+def test_a_facet_the_apis_vocabulary_cannot_express_is_not_asked_about():
     """
     Test that we do not build a request asking about a facet the API has no name for
 
     E.g. project with STAC APIs. project is not a facet with the STAC APIs,
     it is a prefix within the collection instead.
     """
-    answer_with(
-        monkeypatch,
+    client = client_for(
         lambda request: httpx.Response(
             200,
             json={"id": "CMIP6", "summaries": {"cmip6:experiment_id": ["historical"]}},
-        ),
+        )
     )
 
-    source = SearchAPIValuesSource(SearchAPI("stac.example", STAC_CMIP6, once()))
+    source = SearchAPIValuesSource(
+        SearchAPI("stac.example", STAC_CMIP6, once()), client
+    )
     canonical = canonical_cmip6(experiment_id="Historical")
 
     report = check_query_values_low(canonical, source)

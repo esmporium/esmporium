@@ -412,6 +412,11 @@ class SearchAPIValuesSource:
 
     api: SearchAPI
 
+    client: httpx.Client
+    """
+    The HTTP client to ask with
+    """
+
     @property
     def description(self) -> str:
         """See [AllowedValuesSource.description][(m).]"""
@@ -425,8 +430,7 @@ class SearchAPIValuesSource:
 
         request = self.api.generation.build_get_facet_values_request(canonical, askable)
 
-        with httpx.Client(follow_redirects=True) as client:
-            raw = fire(client, self.api, request)
+        raw = fire(self.client, self.api, request)
 
         if raw is None:
             raise CouldNotGetAllowedValuesError(self.description)
@@ -471,6 +475,7 @@ def check_query_values(
     *,
     stop_at_first_result: bool = True,
     close_matches: CloseMatcher = close_matches_difflib,
+    client: httpx.Client | None = None,
 ) -> dict[str, ValueReport]:
     """
     Check a query's values against the APIs which would have served it
@@ -503,6 +508,10 @@ def check_query_values(
     close_matches
         How to decide which allowed values a wrong one is close to
 
+    client
+        The HTTP client to ask the APIs with.
+        If `None`, one is built for the call and closed at the end.
+
     Returns
     -------
     :
@@ -523,20 +532,28 @@ def check_query_values(
     reports: dict[str, ValueReport] = {}
     refusals: list[CouldNotGetAllowedValuesError] = []
 
-    attempt = 0
-    while (api := selector(canonical, attempt)) is not None:
-        source = SearchAPIValuesSource(api)
-        try:
-            reports[source.description] = check_query_values_low(
-                canonical, source, close_matches
-            )
-        except CouldNotGetAllowedValuesError as exc:
-            refusals.append(exc)
-        else:
-            if stop_at_first_result:
-                break
+    owns_client = client is None
+    client = client if client is not None else httpx.Client(follow_redirects=True)
 
-        attempt += 1
+    try:
+        attempt = 0
+        while (api := selector(canonical, attempt)) is not None:
+            source = SearchAPIValuesSource(api, client)
+            try:
+                reports[source.description] = check_query_values_low(
+                    canonical, source, close_matches
+                )
+            except CouldNotGetAllowedValuesError as exc:
+                refusals.append(exc)
+            else:
+                if stop_at_first_result:
+                    break
+
+            attempt += 1
+
+    finally:
+        if owns_client:
+            client.close()
 
     if not reports and refusals:
         raise NoSourceWouldAnswerError(tuple(refusals))
