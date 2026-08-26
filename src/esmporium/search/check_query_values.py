@@ -20,7 +20,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from dataclasses import field as dcfield
 from enum import Enum
-from typing import Protocol
 
 import httpx
 
@@ -349,41 +348,6 @@ class AllowedValues:
         return set(self.values) | set(self.patterns)
 
 
-class AllowedValuesSource(Protocol):
-    """Something that can say what the allowed values of some facets are"""
-
-    @property
-    def description(self) -> str:
-        """Where these values came from, for reporting purposes."""
-        ...
-
-    def allowed_values(
-        self, canonical: QueryCanonical, facets: set[str]
-    ) -> AllowedValues:
-        """
-        Get the allowed values for a given set of facets
-
-        Parameters
-        ----------
-        canonical
-            Canonical query
-
-        facets
-            Facets for which to get the allowed values
-
-        Returns
-        -------
-        :
-            What this source can say about each facet
-
-        Raises
-        ------
-        CouldNotGetAllowedValuesError
-            The source could not be reached, or would not answer
-        """
-        ...
-
-
 class CouldNotGetAllowedValuesError(RuntimeError):
     """
     Raised when a source cannot tell us what the allowed values are
@@ -405,41 +369,55 @@ class CouldNotGetAllowedValuesError(RuntimeError):
         )
 
 
-@dataclass
-class SearchAPIValuesSource:
+def allowed_values_from_api(
+    api: SearchAPI,
+    client: httpx.Client,
+    canonical: QueryCanonical,
+    facets: set[str],
+) -> AllowedValues:
     """
-    Retrieval of allowed values from a search API
+    Get what a search API can tell us about the allowed values of some facets
+
+    Parameters
+    ----------
+    api
+        The API to ask
+
+    client
+        The HTTP client to ask with
+
+    canonical
+        Canonical query
+
+    facets
+        Facets for which to get the allowed values
+
+    Returns
+    -------
+    :
+        What `api` can say about each facet
+
+        Facets `api` has no name for are simply absent:
+        we cannot ask about what it cannot express.
+
+    Raises
+    ------
+    CouldNotGetAllowedValuesError
+        `api` could not be reached, or would not answer
     """
+    askable = set(native_facet_names(api.generation.params, facets))
 
-    api: SearchAPI
+    request = api.generation.build_get_facet_values_request(canonical, askable)
 
-    client: httpx.Client
-    """
-    The HTTP client to ask with
-    """
+    raw = fire(client, api, request)
 
-    @property
-    def description(self) -> str:
-        """See [AllowedValuesSource.description][(m).]"""
-        return self.api.host
+    if raw is None:
+        raise CouldNotGetAllowedValuesError(api.host)
 
-    def allowed_values(
-        self, canonical: QueryCanonical, facets: set[str]
-    ) -> AllowedValues:
-        """See [AllowedValuesSource.allowed_values][(m).]"""
-        askable = set(native_facet_names(self.api.generation.params, facets))
-
-        request = self.api.generation.build_get_facet_values_request(canonical, askable)
-
-        raw = fire(self.client, self.api, request)
-
-        if raw is None:
-            raise CouldNotGetAllowedValuesError(self.description)
-
-        return AllowedValues(
-            values=self.api.generation.parse_facet_values(raw, askable),
-            patterns=self.api.generation.parse_facet_patterns(raw, askable),
-        )
+    return AllowedValues(
+        values=api.generation.parse_facet_values(raw, askable),
+        patterns=api.generation.parse_facet_patterns(raw, askable),
+    )
 
 
 class NoSourceWouldAnswerError(RuntimeError):
@@ -529,6 +507,7 @@ def check_query_values(
         The selector offered at least one API and none of them answered
     """
     canonical = to_canonical(query)
+    facets = facets_the_user_set(canonical)
 
     reports: dict[str, ValueReport] = {}
     refusals: list[CouldNotGetAllowedValuesError] = []
@@ -542,18 +521,18 @@ def check_query_values(
         attempt = 0
         while (api := selector(canonical, attempt)) is not None:
             asked_someone = True
-            source = SearchAPIValuesSource(api, client)
             try:
+                allowed = allowed_values_from_api(api, client, canonical, facets)
+            except CouldNotGetAllowedValuesError as exc:
+                refusals.append(exc)
+            else:
                 # Note: if the selector offers the same host twice,
                 # the second report simply replaces the first here.
                 # That is wasteful, because we ask the same host again,
                 # but it is not wrong: both reports say the same thing.
-                reports[source.description] = check_query_values_low(
-                    canonical, source, close_matches
+                reports[api.host] = check_query_values_low(
+                    canonical, allowed, api.host, close_matches
                 )
-            except CouldNotGetAllowedValuesError as exc:
-                refusals.append(exc)
-            else:
                 if stop_at_first_result:
                     break
 
@@ -613,19 +592,28 @@ def check_against_patterns(
 
 def check_query_values_low(
     canonical: QueryCanonical,
-    source: AllowedValuesSource,
+    allowed: AllowedValues,
+    source: str,
     close_matches: CloseMatcher = close_matches_difflib,
 ) -> ValueReport:
     """
-    Check a canonical query against ONE source of allowed values
+    Check a canonical query against ONE set of allowed values
+
+    This does no I/O: getting the values is the caller's job
+    (see [allowed_values_from_api][(m).]),
+    so what is checked and what is merely reported as unchecked
+    is decided here and nowhere else.
 
     Parameters
     ----------
     canonical
         Canonical query
 
+    allowed
+        What the source could say about the query's facets
+
     source
-        Where to get the allowed values from
+        How to name where `allowed` came from, for reporting purposes
 
     close_matches
         How to decide which allowed values a wrong one is close to
@@ -634,14 +622,8 @@ def check_query_values_low(
     -------
     :
         What we could say about the query's values
-
-    Raises
-    ------
-    CouldNotGetAllowedValuesError
-        `source` would not tell us what the allowed values are
     """
     facets = facets_the_user_set(canonical)
-    allowed = source.allowed_values(canonical, facets)
 
     findings = (
         *compare_values(canonical, allowed.values, close_matches),
@@ -650,4 +632,4 @@ def check_query_values_low(
 
     failed_to_check = tuple(sorted(facets - allowed.facets_covered()))
 
-    return ValueReport(canonical, source.description, findings, failed_to_check)
+    return ValueReport(canonical, source, findings, failed_to_check)

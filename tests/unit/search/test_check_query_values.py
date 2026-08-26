@@ -18,7 +18,7 @@ from esmporium.search import (
     FindingKind,
     NoSourceWouldAnswerError,
     NotAFacetOfTheQueryError,
-    SearchAPIValuesSource,
+    allowed_values_from_api,
     check_query_values,
     check_query_values_low,
     compare_values,
@@ -190,9 +190,10 @@ def test_solr_source_lists_values_keyed_by_canonical_facet():
             },
         )
 
-    source = SearchAPIValuesSource(solr_api(), client_for(handler))
     canonical = canonical_cmip6(experiment_id="historical", variable_id="tas")
-    allowed = source.allowed_values(canonical, {"experiment", "variable"})
+    allowed = allowed_values_from_api(
+        solr_api(), client_for(handler), canonical, {"experiment", "variable"}
+    )
 
     assert allowed.values == {
         "experiment": {"historical", "abrupt-4xCO2"},
@@ -212,21 +213,13 @@ def test_a_node_which_never_answers_raises():
     "we checked, and it was fine", which is the one thing this module
     must never say by accident.
     """
-    source = SearchAPIValuesSource(
-        solr_api("down.example"), client_for(lambda request: httpx.Response(503))
-    )
     canonical = canonical_cmip6(experiment_id="historical")
+    refuses = client_for(lambda request: httpx.Response(503))
 
     with pytest.raises(CouldNotGetAllowedValuesError, match=re.escape("down.example")):
-        source.allowed_values(canonical, {"experiment"})
-
-
-def test_solr_source_describes_itself_by_host():
-    """The report names where values came from; for Solr that is the host."""
-    source = SearchAPIValuesSource(
-        solr_api("esgf.example.org"), client_for(never_asked)
-    )
-    assert source.description == "esgf.example.org"
+        allowed_values_from_api(
+            solr_api("down.example"), refuses, canonical, {"experiment"}
+        )
 
 
 # A variant_label pattern of the shape the STAC collection summaries really carry:
@@ -234,29 +227,18 @@ def test_solr_source_describes_itself_by_host():
 VARIANT_PATTERN = r"^r\d+i(\d{4}\d{2}[abcde]?|\d+)p\d+f\d+$"
 
 
-class StubSource:
-    """A source of allowed values which returns the values (and patterns) it was handed"""  # noqa: E501
+def answered(values, patterns=None):
+    """
+    What a source said about a query's facets
 
-    def __init__(self, values, description="stub-source", patterns=None):
-        # `project` is a facet like any other, so every query carries it and
-        # every source is asked about it. A stub which could not answer would
-        # put `project` in `failed_to_check` for every test here, which would
-        # say nothing about the test.
-        self._values = {"project": {"CMIP5", "CMIP6", "CMIP7"}, **values}
-        self.description = description
-        self._patterns = patterns or {}
-
-    def allowed_values(self, canonical, facets):
-        return AllowedValues(
-            values={
-                facet: self._values[facet] for facet in facets if facet in self._values
-            },
-            patterns={
-                facet: self._patterns[facet]
-                for facet in facets
-                if facet in self._patterns
-            },
-        )
+    We have to keep `project` because a source which said nothing about it would put
+    `project` in `failed_to_check` for every test here,
+    which would say nothing about the test, so it is always included.
+    """
+    return AllowedValues(
+        values={"project": {"CMIP5", "CMIP6", "CMIP7"}, **values},
+        patterns=patterns or {},
+    )
 
 
 def selector_yielding(*apis):
@@ -284,9 +266,9 @@ def by_host(handlers, otherwise=lambda request: httpx.Response(503)):
 def test_low_tiers_findings_and_reports_the_rest_as_unchecked():
     """check_query_values_low tiers what it can and lists what it could not check."""
     canonical = canonical_cmip6(experiment_id="Historical", variable_id="tas")
-    source = StubSource({"experiment": {"historical"}}, description="a-node")
+    allowed = answered({"experiment": {"historical"}})
 
-    report = check_query_values_low(canonical, source)
+    report = check_query_values_low(canonical, allowed, "a-node")
 
     assert report.query.project == ("CMIP6",)
     assert report.source == "a-node"
@@ -301,9 +283,9 @@ def test_low_tiers_findings_and_reports_the_rest_as_unchecked():
 def test_low_reports_ok_when_everything_matches():
     """A clean query yields no findings, nothing unchecked, and ok() is True."""
     canonical = canonical_cmip6(experiment_id="historical")
-    source = StubSource({"experiment": {"historical"}})
+    allowed = answered({"experiment": {"historical"}})
 
-    report = check_query_values_low(canonical, source)
+    report = check_query_values_low(canonical, allowed, "a-node")
 
     assert report.findings == ()
     assert report.failed_to_check == ()
@@ -315,9 +297,9 @@ def test_a_report_which_could_not_check_something_is_not_ok():
     Test that a facet we could not check prevents a report from being `ok`
     """
     canonical = canonical_cmip6(variable_id="tas")
-    source = StubSource({})
+    allowed = answered({})
 
-    report = check_query_values_low(canonical, source)
+    report = check_query_values_low(canonical, allowed, "a-node")
 
     assert report.findings == ()
     assert report.failed_to_check == ("variable",)
@@ -350,6 +332,8 @@ def test_high_routes_through_the_selector_to_the_api():
     )
 
     assert set(reports) == {"routed.example"}
+    # The report is keyed by, and names, the host the values came from.
+    assert reports["routed.example"].source == "routed.example"
     assert reports["routed.example"].findings == (
         FacetFinding("experiment", "Historical", "case", ("historical",)),
     )
@@ -456,9 +440,9 @@ def test_a_value_matching_the_pattern_passes_silently():
     A pattern says what a value may look like, never whether it exists.
     """
     canonical = canonical_cmip6(variant_label="r5i31p250f19")
-    source = StubSource({}, patterns={"variant_label": re.compile(VARIANT_PATTERN)})
+    allowed = answered({}, patterns={"variant_label": re.compile(VARIANT_PATTERN)})
 
-    report = check_query_values_low(canonical, source)
+    report = check_query_values_low(canonical, allowed, "a-node")
 
     assert report.findings == ()
     assert report.failed_to_check == ()
@@ -474,9 +458,9 @@ def test_a_value_failing_the_pattern_is_malformed_and_shows_the_pattern():
     to show a user, but it is the only description of the form we have.
     """
     canonical = canonical_cmip6(variant_label="r1i1pf1")
-    source = StubSource({}, patterns={"variant_label": re.compile(VARIANT_PATTERN)})
+    allowed = answered({}, patterns={"variant_label": re.compile(VARIANT_PATTERN)})
 
-    report = check_query_values_low(canonical, source)
+    report = check_query_values_low(canonical, allowed, "a-node")
 
     (finding,) = report.findings
     assert finding.facet == "variant_label"
@@ -494,9 +478,9 @@ def test_a_listed_facet_is_tiered_like_any_other_even_when_generated():
     In other words, check that variant_label isn't special.
     """
     canonical = canonical_cmip6(variant_label="r1i1pf1")
-    source = StubSource({"variant_label": {"r1i1p1f1", "r1i1p2f1", "r2i1p1f1"}})
+    allowed = answered({"variant_label": {"r1i1p1f1", "r1i1p2f1", "r2i1p1f1"}})
 
-    report = check_query_values_low(canonical, source)
+    report = check_query_values_low(canonical, allowed, "a-node")
 
     (finding,) = report.findings
     assert finding.facet == "variant_label"
@@ -507,9 +491,9 @@ def test_a_listed_facet_is_tiered_like_any_other_even_when_generated():
 def test_a_listed_value_which_is_present_is_not_flagged():
     """A value the source lists is fine, and counts as checked."""
     canonical = canonical_cmip6(variant_label="r1i1p1f1")
-    source = StubSource({"variant_label": {"r1i1p1f1", "r2i1p1f1"}})
+    allowed = answered({"variant_label": {"r1i1p1f1", "r2i1p1f1"}})
 
-    report = check_query_values_low(canonical, source)
+    report = check_query_values_low(canonical, allowed, "a-node")
 
     assert report.findings == ()
     assert report.ok()
@@ -518,9 +502,9 @@ def test_a_listed_value_which_is_present_is_not_flagged():
 def test_a_facet_the_source_says_nothing_about_could_not_be_checked():
     """A source with no list and no pattern leaves the facet honestly unchecked."""
     canonical = canonical_cmip6(variant_label="r1i1pf1")
-    source = StubSource({})  # no values, no patterns
+    allowed = answered({})  # no values, no patterns
 
-    report = check_query_values_low(canonical, source)
+    report = check_query_values_low(canonical, allowed, "a-node")
 
     assert report.findings == ()
     assert report.failed_to_check == ("variant_label",)
@@ -535,9 +519,9 @@ def test_a_query_specific_facet_is_checked_when_the_source_lists_it():
     and can list its values, so there is no reason not to check it.
     """
     canonical = to_canonical(QueryCMIP5(experiment="historical", product="output3"))
-    source = StubSource({"product": {"output1", "output2"}})
+    allowed = answered({"product": {"output1", "output2"}})
 
-    report = check_query_values_low(canonical, source)
+    report = check_query_values_low(canonical, allowed, "a-node")
 
     (finding,) = report.findings
     assert finding.facet == "product"
@@ -573,9 +557,9 @@ def test_a_finding_can_be_named_the_way_the_user_wrote_it():
     not the `experiment` the checking is done in.
     """
     canonical = canonical_cmip6(experiment_id="Historical")
-    source = StubSource({"experiment": {"historical"}})
+    allowed = answered({"experiment": {"historical"}})
 
-    report = check_query_values_low(canonical, source)
+    report = check_query_values_low(canonical, allowed, "a-node")
 
     (finding,) = report.findings
     assert finding.facet == "experiment"
@@ -585,9 +569,9 @@ def test_a_finding_can_be_named_the_way_the_user_wrote_it():
 def test_a_query_specific_facet_already_carries_the_users_name():
     """A facet only the query names has no other name to be shown under."""
     canonical = to_canonical(QueryCMIP5(experiment="historical", product="output3"))
-    source = StubSource({"product": {"output1", "output2"}})
+    allowed = answered({"product": {"output1", "output2"}})
 
-    report = check_query_values_low(canonical, source)
+    report = check_query_values_low(canonical, allowed, "a-node")
 
     (finding,) = report.findings
     assert report.facet_as_asked(finding.facet) == "product"
@@ -601,12 +585,13 @@ def test_the_close_match_function_reaches_the_report_layer():
     nobody calls that directly, they call the function which builds a report.
     """
     canonical = canonical_cmip6(experiment_id="hist")
-    source = StubSource({"experiment": {"historical", "piControl"}})
+    allowed = answered({"experiment": {"historical", "piControl"}})
 
     report = check_query_values_low(
         canonical,
-        source,
-        close_matches=lambda value, allowed: ("everything-is-close",),
+        allowed,
+        "a-node",
+        close_matches=lambda value, values: ("everything-is-close",),
     )
 
     (finding,) = report.findings
@@ -650,12 +635,13 @@ def test_a_facet_the_apis_vocabulary_cannot_express_is_not_asked_about():
         )
     )
 
-    source = SearchAPIValuesSource(
-        SearchAPI("stac.example", STAC_CMIP6, once()), client
-    )
+    api = SearchAPI("stac.example", STAC_CMIP6, once())
     canonical = canonical_cmip6(experiment_id="Historical")
+    facets = facets_the_user_set(canonical)
 
-    report = check_query_values_low(canonical, source)
+    allowed = allowed_values_from_api(api, client, canonical, facets)
+
+    report = check_query_values_low(canonical, allowed, api.host)
 
     assert report.findings == (
         FacetFinding("experiment", "Historical", "case", ("historical",)),
@@ -673,9 +659,9 @@ def test_a_canonically_built_query_reads_back_canonically():
     canonical = canonical_cmip6(experiment_id="Historical").model_copy(
         update={"source_query": None}
     )
-    source = StubSource({"experiment": {"historical"}})
+    allowed = answered({"experiment": {"historical"}})
 
-    report = check_query_values_low(canonical, source)
+    report = check_query_values_low(canonical, allowed, "a-node")
 
     (finding,) = report.findings
     assert report.facet_as_asked(finding.facet) == "experiment"
