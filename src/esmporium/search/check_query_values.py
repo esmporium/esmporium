@@ -448,6 +448,19 @@ class NoSourceWouldAnswerError(RuntimeError):
         )
 
 
+@dataclass(frozen=True)
+class ValueCheckOutcome:
+    """
+    What came of checking a query: the APIs which answered, and those which did not
+    """
+
+    reports: dict[str, ValueReport]
+    """What each API which answered said about the query, keyed by host"""
+
+    refusals: dict[str, CouldNotGetAllowedValuesError]
+    """What each API which would not answer said, keyed by host"""
+
+
 def check_query_values(
     query: QueryProtocol,
     selector: SearchAPISelector = DEFAULT_SELECTOR,
@@ -455,7 +468,7 @@ def check_query_values(
     stop_at_first_result: bool = True,
     close_matches: CloseMatcher = close_matches_difflib,
     client: httpx.Client | None = None,
-) -> dict[str, ValueReport]:
+) -> ValueCheckOutcome:
     """
     Check a query's values against the APIs which would have served it
 
@@ -494,8 +507,9 @@ def check_query_values(
     Returns
     -------
     :
-        What each API said about the query's values, keyed by host.
-        An API which refused to answer is left out.
+        What each API which answered said about the query's values,
+        and what each API which would not answer said,
+        both keyed by host
 
     Raises
     ------
@@ -510,7 +524,7 @@ def check_query_values(
     facets = facets_the_user_set(canonical)
 
     reports: dict[str, ValueReport] = {}
-    refusals: list[CouldNotGetAllowedValuesError] = []
+    refusals: dict[str, CouldNotGetAllowedValuesError] = {}
 
     owns_client = client is None
     client = client if client is not None else httpx.Client(follow_redirects=True)
@@ -524,7 +538,7 @@ def check_query_values(
             try:
                 allowed = allowed_values_from_api(api, client, canonical, facets)
             except CouldNotGetAllowedValuesError as exc:
-                refusals.append(exc)
+                refusals[api.host] = exc
             else:
                 # Note: if the selector offers the same host twice,
                 # the second report simply replaces the first here.
@@ -546,9 +560,9 @@ def check_query_values(
         raise SelectorOfferedNoAPIError(canonical, selector)
 
     if not reports and refusals:
-        raise NoSourceWouldAnswerError(tuple(refusals))
+        raise NoSourceWouldAnswerError(tuple(refusals.values()))
 
-    return reports
+    return ValueCheckOutcome(reports, refusals)
 
 
 def check_against_patterns(

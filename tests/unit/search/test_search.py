@@ -67,11 +67,12 @@ def test_search_returns_the_json_on_success():
     """A 200 with a JSON body comes back as that JSON, keyed by host"""
     selector = build_list_selector([make_search_api("host")])
 
-    results = search(
+    outcome = search(
         QUERY_CMIP6, selector, client=client_for(lambda r: solr_response(3))
     )
 
-    assert results == {"host": {"response": {"numFound": 3, "docs": []}}}
+    assert outcome.results == {"host": {"response": {"numFound": 3, "docs": []}}}
+    assert outcome.refusals == {}
 
 
 def test_search_uses_the_apis_own_timeout():
@@ -134,9 +135,9 @@ def test_search_retries_a_transient_failure_then_succeeds():
 
     selector = build_list_selector([make_search_api("host", attempts=3)])
 
-    results = search(QUERY_CMIP6, selector, client=client_for(handler))
+    outcome = search(QUERY_CMIP6, selector, client=client_for(handler))
 
-    assert results == {"host": {"response": {"numFound": 9, "docs": []}}}
+    assert outcome.results == {"host": {"response": {"numFound": 9, "docs": []}}}
     assert calls == 2
 
 
@@ -169,10 +170,12 @@ def test_search_stops_at_the_first_answer_by_default():
         [make_search_api("host-a"), make_search_api("host-b")]
     )
 
-    results = search(QUERY_CMIP6, selector, client=client_for(by_host))
+    outcome = search(QUERY_CMIP6, selector, client=client_for(by_host))
 
-    assert list(results) == ["host-a"]
-    assert results["host-a"]["response"]["numFound"] == 5
+    assert list(outcome.results) == ["host-a"]
+    assert outcome.results["host-a"]["response"]["numFound"] == 5
+    # host-b was never asked, so it did not refuse either.
+    assert outcome.refusals == {}
 
 
 def test_search_aggregates_every_node_when_asked_to():
@@ -181,13 +184,13 @@ def test_search_aggregates_every_node_when_asked_to():
         [make_search_api("host-a"), make_search_api("host-b")]
     )
 
-    results = search(
+    outcome = search(
         QUERY_CMIP6, selector, stop_at_first_result=False, client=client_for(by_host)
     )
 
-    assert set(results) == {"host-a", "host-b"}
-    assert results["host-a"]["response"]["numFound"] == 5
-    assert results["host-b"]["response"]["numFound"] == 7
+    assert set(outcome.results) == {"host-a", "host-b"}
+    assert outcome.results["host-a"]["response"]["numFound"] == 5
+    assert outcome.results["host-b"]["response"]["numFound"] == 7
 
 
 def test_search_skips_a_node_that_does_not_answer():
@@ -202,10 +205,13 @@ def test_search_skips_a_node_that_does_not_answer():
         [make_search_api("host-a"), make_search_api("host-b")]
     )
 
-    results = search(QUERY_CMIP6, selector, client=client_for(handler))
+    outcome = search(QUERY_CMIP6, selector, client=client_for(handler))
 
-    assert list(results) == ["host-b"]
-    assert results["host-b"]["response"]["numFound"] == 4
+    assert list(outcome.results) == ["host-b"]
+    assert outcome.results["host-b"]["response"]["numFound"] == 4
+    # The node which was passed over is kept, with what it said.
+    assert set(outcome.refusals) == {"host-a"}
+    assert "host-a" in str(outcome.refusals["host-a"])
 
 
 def test_search_with_no_endpoint_to_try_raises():
@@ -224,11 +230,11 @@ def test_search_keeps_an_empty_but_valid_answer():
     """'Nothing matched' is an answer, so it is kept"""
     selector = build_list_selector([make_search_api("host-a")])
 
-    results = search(
+    outcome = search(
         QUERY_CMIP6, selector, client=client_for(lambda request: solr_response(0))
     )
 
-    assert results["host-a"]["response"]["numFound"] == 0
+    assert outcome.results["host-a"]["response"]["numFound"] == 0
 
 
 def test_search_builds_and_closes_its_own_client(monkeypatch):
@@ -237,9 +243,9 @@ def test_search_builds_and_closes_its_own_client(monkeypatch):
     monkeypatch.setattr(httpx, "Client", lambda **kwargs: built)
 
     selector = build_list_selector([make_search_api("host-a")])
-    results = search(QUERY_CMIP6, selector)
+    outcome = search(QUERY_CMIP6, selector)
 
-    assert results["host-a"]["response"]["numFound"] == 2
+    assert outcome.results["host-a"]["response"]["numFound"] == 2
     assert built.is_closed, "a client search built itself should be closed after"
 
 

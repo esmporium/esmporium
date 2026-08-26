@@ -59,7 +59,7 @@ def main() -> None:
         # hold identical data, so a value one has never heard of can be
         # perfectly ordinary on the next one along -- worth seeing in a demo.
         try:
-            reports = check_query_values(example, stop_at_first_result=False)
+            outcome = check_query_values(example, stop_at_first_result=False)
         except NoSourceWouldAnswerError as exc:
             # A demo is not the place for a traceback: every endpoint being
             # down says nothing about the checker we are demonstrating.
@@ -67,8 +67,11 @@ def main() -> None:
             print(f"result  : {exc}\n")
             continue
 
-        for report in reports.values():
+        for report in outcome.reports.values():
             print_report(example, report)
+
+        for refusal in outcome.refusals.values():
+            print(f"refused : {refusal}\n")
 
         print("=" * 72 + "\n")
 

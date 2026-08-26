@@ -197,11 +197,11 @@ def search_or_skip(query, api, client, limit):
     so it is a skip rather than a failure.
     """
     try:
-        results = search(query, build_list_selector([api]), limit=limit, client=client)
+        outcome = search(query, build_list_selector([api]), limit=limit, client=client)
     except NoAPIWouldAnswerError:
         pytest.skip(f"{api.host} did not answer, so it is down or unwell")
 
-    raw: dict = results[api.host]
+    raw: dict = outcome.results[api.host]
 
     return raw
 
@@ -277,7 +277,7 @@ def test_aggregating_over_nodes_finds_more_than_one_node(client):
     ]
 
     try:
-        results = search(
+        outcome = search(
             CMIP6_QUERY,
             build_list_selector(nodes),
             stop_at_first_result=False,
@@ -286,7 +286,7 @@ def test_aggregating_over_nodes_finds_more_than_one_node(client):
     except NoAPIWouldAnswerError:
         pytest.skip("no node answered, so there is nothing to aggregate")
 
-    per_host = {host: master_ids(raw) for host, raw in results.items()}
+    per_host = {host: master_ids(raw) for host, raw in outcome.results.items()}
     answered = {host: ids for host, ids in per_host.items() if ids}
     if len(answered) < 2:
         pytest.skip(

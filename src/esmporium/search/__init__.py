@@ -15,6 +15,7 @@ from esmporium.search.check_query_values import (
     FindingKind,
     NoSourceWouldAnswerError,
     NotAFacetOfTheQueryError,
+    ValueCheckOutcome,
     ValueReport,
     allowed_values_from_api,
     check_query_values,
@@ -60,7 +61,13 @@ from esmporium.search.esgf_generations import (
     unexpressible_facets,
 )
 from esmporium.search.retry import build_transient_retrying
-from esmporium.search.search import NoAPIWouldAnswerError, fire, search
+from esmporium.search.search import (
+    CouldNotSearchError,
+    NoAPIWouldAnswerError,
+    SearchOutcome,
+    fire,
+    search,
+)
 from esmporium.search.search_api import (
     DEFAULT_SELECTOR,
     SearchAPI,
@@ -77,6 +84,7 @@ __all__ = [
     "MIN_LIMIT",
     "AllowedValues",
     "CouldNotGetAllowedValuesError",
+    "CouldNotSearchError",
     "ESGF1Solr",
     "ESGF15Bridge",
     "ESGFNGStac",
@@ -94,6 +102,7 @@ __all__ = [
     "SearchAPI",
     "SearchAPIGeneration",
     "SearchAPISelector",
+    "SearchOutcome",
     "SelectorOfferedNoAPIError",
     "SolrCMIP5Parameters",
     "SolrCMIP6Parameters",
@@ -104,6 +113,7 @@ __all__ = [
     "StacParams",
     "UnaskableFacetError",
     "UncompilableFacetPatternError",
+    "ValueCheckOutcome",
     "ValueReport",
     "allowed_values_from_api",
     "build_list_selector",

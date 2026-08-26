@@ -55,7 +55,7 @@ def main() -> None:
 
     for query in (EXAMPLE_CMIP5, EXAMPLE_CMIP6, EXAMPLE_CMIP7):
         print(f"\nquery: {query!r}")
-        for host, raw in search(query, limit=2).items():
+        for host, raw in search(query, limit=2).results.items():
             print(f"  {host:22} {node_count_summary(raw)}")
 
 

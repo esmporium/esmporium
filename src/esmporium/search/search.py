@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 import shlex
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -149,26 +150,64 @@ def fire(
         return None
 
 
-class NoAPIWouldAnswerError(RuntimeError):
+class CouldNotSearchError(RuntimeError):
     """
-    Raised when every API we searched refused to answer
+    Raised when one API will not answer a search
     """
 
-    def __init__(self, hosts: tuple[str, ...]) -> None:
+    def __init__(self, host: str) -> None:
         """
         Initialise the error
 
         Parameters
         ----------
-        hosts
-            The hosts which did not answer, in the order they were asked
+        host
+            The host which did not answer
         """
-        self.hosts = hosts
-        asked = "\n".join(f"  - {host}" for host in hosts)
+        # TODO: carry the underlying cause once `fire` raises
+        # rather than returning `None` (see the TODO in `fire`).
+        # Until then, this can only say that the host did not answer,
+        # never why.
+        self.host = host
         super().__init__(
-            f"Searched {len(hosts)} API(s) and none of them answered, "
+            f"{host} did not answer our search request, so it has given us no results."
+        )
+
+
+class NoAPIWouldAnswerError(RuntimeError):
+    """
+    Raised when every API we searched refused to answer
+    """
+
+    def __init__(self, refusals: tuple[CouldNotSearchError, ...]) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        refusals
+            What each API said, in the order they were asked
+        """
+        self.refusals = refusals
+        self.hosts = tuple(refusal.host for refusal in refusals)
+        asked = "\n".join(f"  - {refusal}" for refusal in refusals)
+        super().__init__(
+            f"Searched {len(refusals)} API(s) and none of them answered, "
             f"so we have no results to give you:\n{asked}"
         )
+
+
+@dataclass(frozen=True)
+class SearchOutcome:
+    """
+    What came of a search: the endpoints which answered, and those which did not
+    """
+
+    results: dict[str, Any]
+    """The raw JSON each endpoint answered with, keyed by host"""
+
+    refusals: dict[str, CouldNotSearchError]
+    """What each endpoint which did not answer said, keyed by host"""
 
 
 def search(
@@ -178,7 +217,7 @@ def search(
     stop_at_first_result: bool = True,
     limit: int = DEFAULT_LIMIT,
     client: httpx.Client | None = None,
-) -> dict[str, Any]:
+) -> SearchOutcome:
     """
     Search the endpoints the selector yields, and collect their raw JSON
 
@@ -212,8 +251,9 @@ def search(
     Returns
     -------
     :
-        The raw JSON each endpoint answered with, keyed by host.
-        An endpoint which never answered is left out.
+        What each endpoint answered with,
+        and what each endpoint which did not answer said,
+        both keyed by host
 
     Raises
     ------
@@ -227,12 +267,12 @@ def search(
     canonical = to_canonical(query)
 
     results: dict[str, Any] = {}
+    refusals: dict[str, CouldNotSearchError] = {}
 
     owns_client = client is None
     client = client if client is not None else httpx.Client(follow_redirects=True)
 
     asked_someone = False
-    refused: list[str] = []
 
     try:
         attempt = 0
@@ -241,7 +281,7 @@ def search(
             request = api.generation.build_search_request(canonical, limit)
             raw = fire(client, api, request)
             if raw is None:
-                refused.append(api.host)
+                refusals[api.host] = CouldNotSearchError(api.host)
             else:
                 # Note: if the selector offers the same host twice,
                 # the second answer simply replaces the first here.
@@ -261,7 +301,7 @@ def search(
     if not asked_someone:
         raise SelectorOfferedNoAPIError(canonical, selector)
 
-    if not results and refused:
-        raise NoAPIWouldAnswerError(tuple(refused))
+    if not results and refusals:
+        raise NoAPIWouldAnswerError(tuple(refusals.values()))
 
-    return results
+    return SearchOutcome(results, refusals)

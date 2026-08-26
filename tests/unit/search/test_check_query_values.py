@@ -325,16 +325,16 @@ def test_high_with_no_api_to_ask_raises():
 
 def test_high_routes_through_the_selector_to_the_api():
     """Test that the API the selector offers is the one asked, and reported under."""
-    reports = check_query_values(
+    outcome = check_query_values(
         QueryCMIP6(experiment_id="Historical"),
         selector=selector_yielding(solr_api("routed.example")),
         client=client_for(facet_values_from(["historical"])),
     )
 
-    assert set(reports) == {"routed.example"}
+    assert set(outcome.reports) == {"routed.example"}
     # The report is keyed by, and names, the host the values came from.
-    assert reports["routed.example"].source == "routed.example"
-    assert reports["routed.example"].findings == (
+    assert outcome.reports["routed.example"].source == "routed.example"
+    assert outcome.reports["routed.example"].findings == (
         FacetFinding("experiment", "Historical", "case", ("historical",)),
     )
 
@@ -349,7 +349,7 @@ def test_high_moves_on_to_the_next_api_when_one_will_not_answer():
     """
     handler = by_host({"second.example": facet_values_from(["historical"])})
 
-    reports = check_query_values(
+    outcome = check_query_values(
         QueryCMIP6(experiment_id="Historical"),
         selector=selector_yielding(
             solr_api("down.example"), solr_api("second.example")
@@ -357,10 +357,13 @@ def test_high_moves_on_to_the_next_api_when_one_will_not_answer():
         client=client_for(handler),
     )
 
-    assert set(reports) == {"second.example"}
-    assert reports["second.example"].findings == (
+    assert set(outcome.reports) == {"second.example"}
+    assert outcome.reports["second.example"].findings == (
         FacetFinding("experiment", "Historical", "case", ("historical",)),
     )
+    # The node which would not answer is kept too, with what it said.
+    assert set(outcome.refusals) == {"down.example"}
+    assert "down.example" in str(outcome.refusals["down.example"])
 
 
 def test_high_asks_every_api_when_told_not_to_stop_at_the_first():
@@ -377,7 +380,7 @@ def test_high_asks_every_api_when_told_not_to_stop_at_the_first():
             "does-not.example": facet_values_from(["historical"]),
         }
     )
-    reports = check_query_values(
+    outcome = check_query_values(
         QueryCMIP6(experiment_id="abrupt-4xCO2"),
         selector=selector_yielding(
             solr_api("knows.example"), solr_api("does-not.example")
@@ -386,25 +389,26 @@ def test_high_asks_every_api_when_told_not_to_stop_at_the_first():
         client=client_for(handler),
     )
 
-    assert set(reports) == {"knows.example", "does-not.example"}
-    assert reports["knows.example"].findings == ()
-    (finding,) = reports["does-not.example"].findings
+    assert set(outcome.reports) == {"knows.example", "does-not.example"}
+    assert outcome.reports["knows.example"].findings == ()
+    (finding,) = outcome.reports["does-not.example"].findings
     assert finding.value == "abrupt-4xCO2"
     assert finding.kind is FindingKind.UNKNOWN
 
 
 def test_high_keeps_the_answers_it_got_when_only_some_apis_refuse():
-    """A refusal alongside an answer is left out, not raised: we did check."""
+    """A refusal alongside an answer is reported alongside it, not raised."""
     handler = by_host({"up.example": facet_values_from(["historical"])})
 
-    reports = check_query_values(
+    outcome = check_query_values(
         QueryCMIP6(experiment_id="historical"),
         selector=selector_yielding(solr_api("up.example"), solr_api("down.example")),
         stop_at_first_result=False,
         client=client_for(handler),
     )
 
-    assert set(reports) == {"up.example"}
+    assert set(outcome.reports) == {"up.example"}
+    assert set(outcome.refusals) == {"down.example"}
 
 
 def test_high_raises_with_every_refusal_when_no_api_answers():
