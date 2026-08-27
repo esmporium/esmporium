@@ -358,7 +358,7 @@ class SearchAPICallRecord(EsmporiumBase, table=True):
 
     An append-only log: one row per call to
     [fire][esmporium.search.search.fire] that was observed
-    (see [record_search_api_calls][esmporium.db.health.record_search_api_calls]).
+    (see [record_search_api_calls][esmporium.db.search_health.record_search_api_calls]).
     We never update these rows, so they accumulate a history:
     which host was asked what, when, how it answered and how long it took.
     That is enough to tell, later and with a plain `GROUP BY`,

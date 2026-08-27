@@ -1,12 +1,5 @@
 """
 Recording search API health into the database
-
-The search layer emits a plain [SearchAPICall][esmporium.search.health.SearchAPICall]
-for each call it makes and hands it to an observer, without knowing what the observer
-does with it (see [esmporium.search.health][]).
-This is the observer which records that call as a row:
-it is the one place the search-health fact becomes a
-[SearchAPICallRecord][esmporium.db.schema.SearchAPICallRecord] in the database.
 """
 
 from __future__ import annotations
@@ -23,13 +16,7 @@ if TYPE_CHECKING:
 
 def record_search_api_calls(session: Session) -> SearchAPICallObserver:
     """
-    Build an observer which records each search API call into the database
-
-    Pass the result as the `observer` of
-    [search][esmporium.search.search.search] or
-    [check_query_values][esmporium.search.check_query_values.check_query_values]
-    (or compose it with others via
-    [fan_out][esmporium.search.health.fan_out]).
+    Build an observer which records each search API call record into the database
 
     Each call is committed on its own, so a run that is killed part way through
     keeps the records of the calls it had already made.
