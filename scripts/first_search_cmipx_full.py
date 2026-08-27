@@ -23,7 +23,7 @@ from typing import Any
 
 from sqlmodel import Session, create_engine, select
 
-from esmporium.db import SearchApiCallRecord, record_search_api_calls
+from esmporium.db import SearchAPICallRecord, record_search_api_calls
 from esmporium.db.migrate import upgrade_to_head
 from esmporium.query import QueryCMIP5, QueryCMIP6, QueryCMIP7
 from esmporium.search import search
@@ -59,7 +59,7 @@ def print_health(session: Session) -> None:
     """Print every recorded search-API call, in the order they happened."""
     print("\nsearch API health (one row per request):")
     records = session.exec(
-        select(SearchApiCallRecord).order_by(SearchApiCallRecord.id)
+        select(SearchAPICallRecord).order_by(SearchAPICallRecord.id)
     ).all()
     for record in records:
         status = "ok" if record.success else f"FAILED ({record.error})"

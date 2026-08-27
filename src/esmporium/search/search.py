@@ -19,7 +19,7 @@ from esmporium.search.esgf_generations import (
     NoResultCountReturned,
     Request,
 )
-from esmporium.search.health import SearchApiCall, SearchApiCallObserver
+from esmporium.search.health import SearchAPICall, SearchAPICallObserver
 from esmporium.search.search_api import (
     DEFAULT_SELECTOR,
     SearchAPI,
@@ -158,7 +158,7 @@ def fire(
     client: httpx.Client,
     api: SearchAPI,
     request: Request,
-    observer: SearchApiCallObserver | None = None,
+    observer: SearchAPICallObserver | None = None,
 ) -> dict[str, Any]:
     """
     Send one request to one API, using that API's retry policy and timeout
@@ -218,7 +218,7 @@ def fire(
     except (httpx.HTTPError, ValueError) as exc:
         if observer is not None:
             observer(
-                SearchApiCall(
+                SearchAPICall(
                     host=api.host,
                     http_method=request.method,
                     url=str(built.url),
@@ -234,7 +234,7 @@ def fire(
 
     if observer is not None:
         observer(
-            SearchApiCall(
+            SearchAPICall(
                 host=api.host,
                 http_method=request.method,
                 url=str(built.url),
@@ -312,7 +312,7 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
     stop_at_first_result: bool = True,
     limit: int = DEFAULT_LIMIT,
     client: httpx.Client | None = None,
-    observer: SearchApiCallObserver | None = None,
+    observer: SearchAPICallObserver | None = None,
 ) -> SearchOutcome:
     """
     Search the endpoints the selector yields, and collect their raw JSON

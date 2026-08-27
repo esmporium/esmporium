@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 from sqlmodel import Session, select
 
-from esmporium.db import SearchApiCallRecord, record_search_api_calls
+from esmporium.db import SearchAPICallRecord, record_search_api_calls
 from esmporium.db.migrate import upgrade_to_head
 
 
@@ -23,7 +23,7 @@ def recorded(engine):
 
     Yields a `(observer, read_calls)` pair: pass `observer` to `search` or
     `check_query_values`, then call `read_calls()` to get the recorded
-    [SearchApiCallRecord][esmporium.db.schema.SearchApiCallRecord] rows back.
+    [SearchAPICallRecord][esmporium.db.schema.SearchAPICallRecord] rows back.
     """
     upgrade_to_head(engine)
 
@@ -36,7 +36,7 @@ def recorded(engine):
             with Session(engine) as reader:
                 return list(
                     reader.exec(
-                        select(SearchApiCallRecord).order_by(SearchApiCallRecord.id)
+                        select(SearchAPICallRecord).order_by(SearchAPICallRecord.id)
                     )
                 )
 

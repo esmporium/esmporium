@@ -12,13 +12,13 @@ from esmporium.db.schema import (
     DATASET_FACET_COLUMNS,
     METADATA,
     Dataset,
-    SearchApiCallRecord,
+    SearchAPICallRecord,
 )
 
 __all__ = [
     "DATASET_FACET_COLUMNS",
     "METADATA",
     "Dataset",
-    "SearchApiCallRecord",
+    "SearchAPICallRecord",
     "record_search_api_calls",
 ]

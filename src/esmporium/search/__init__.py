@@ -61,8 +61,8 @@ from esmporium.search.esgf_generations import (
     unexpressible_facets,
 )
 from esmporium.search.health import (
-    SearchApiCall,
-    SearchApiCallObserver,
+    SearchAPICall,
+    SearchAPICallObserver,
     fan_out,
 )
 from esmporium.search.retry import build_transient_retrying
@@ -106,11 +106,11 @@ __all__ = [
     "ProjectPrefixMismatchError",
     "Request",
     "SearchAPI",
+    "SearchAPICall",
+    "SearchAPICallObserver",
     "SearchAPIGeneration",
     "SearchAPIRequestError",
     "SearchAPISelector",
-    "SearchApiCall",
-    "SearchApiCallObserver",
     "SearchOutcome",
     "SelectorOfferedNoAPIError",
     "SolrCMIP5Parameters",

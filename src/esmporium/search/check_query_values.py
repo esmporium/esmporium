@@ -31,7 +31,7 @@ from esmporium.query import (
     to_canonical,
 )
 from esmporium.search.esgf_generations import native_facet_names
-from esmporium.search.health import SearchApiCallObserver
+from esmporium.search.health import SearchAPICallObserver
 from esmporium.search.search import SearchAPIRequestError, fire
 from esmporium.search.search_api import (
     DEFAULT_SELECTOR,
@@ -375,7 +375,7 @@ def allowed_values_from_api(
     client: httpx.Client,
     canonical: QueryCanonical,
     facets: set[str],
-    observer: SearchApiCallObserver | None = None,
+    observer: SearchAPICallObserver | None = None,
 ) -> AllowedValues:
     """
     Get what a search API can tell us about the allowed values of some facets
@@ -474,7 +474,7 @@ def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberat
     stop_at_first_result: bool = True,
     close_matches: CloseMatcher = close_matches_difflib,
     client: httpx.Client | None = None,
-    observer: SearchApiCallObserver | None = None,
+    observer: SearchAPICallObserver | None = None,
 ) -> ValueCheckOutcome:
     """
     Check a query's values against the APIs which would have served it

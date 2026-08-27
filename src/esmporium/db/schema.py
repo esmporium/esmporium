@@ -11,7 +11,7 @@ from sqlalchemy import MetaData
 from sqlalchemy.orm import registry
 from sqlmodel import Field, SQLModel
 
-from esmporium.search.health import SearchApiCall
+from esmporium.search.health import SearchAPICall
 
 
 def _utcnow() -> datetime.datetime:
@@ -352,7 +352,7 @@ see `test_facet_columns_are_the_declared_facets`.
 """
 
 
-class SearchApiCallRecord(EsmporiumBase, table=True):
+class SearchAPICallRecord(EsmporiumBase, table=True):
     """
     One recorded request to one search API
 
@@ -424,7 +424,7 @@ class SearchApiCallRecord(EsmporiumBase, table=True):
     """How long the call took, in wall-clock seconds"""
 
     @classmethod
-    def from_call(cls, call: SearchApiCall) -> "SearchApiCallRecord":
+    def from_call(cls, call: SearchAPICall) -> "SearchAPICallRecord":
         """
         Build a row from the search layer's plain record of a call
 
