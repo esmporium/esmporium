@@ -59,8 +59,7 @@ def _curl_equivalent(request: httpx.Request) -> str:
     return " ".join(parts)
 
 
-# Rename to _log_request_as_url_and_curl
-def _log_request(
+def _log_request_as_url_and_curl(
     api: SearchAPI,
     request: httpx.Request,
     # Make the level to log at a parameter, rather than being hard-coded
@@ -186,19 +185,20 @@ def fire(
         json=request.json_body,
         timeout=api.timeout,
     )
-    _log_request(api, built)
+    _log_request_as_url_and_curl(api, built)
 
     request_body = json.dumps(request.json_body) if request.json_body else None
-    start = time.monotonic()
 
-    def _record(
+    def _record(  # noqa: PLR0913 - one keyword-only argument per recorded field
         *,
+        attempt_number: int,
         success: bool,
         response_code: int | None,
         error: str | None,
         num_results: int | None,
+        seconds: float,
     ) -> None:
-        """Tell the observer, if any, how this call went."""
+        """Tell the observer, if any, how one attempt went."""
         if observer is None:
             return
         observer(
@@ -211,48 +211,54 @@ def fire(
                 success=success,
                 error=error,
                 num_results=num_results,
-                response_time_seconds=time.monotonic() - start,
+                response_time_seconds=seconds,
+                attempt_number=attempt_number,
             )
         )
 
-    def _once() -> httpx.Response:
-        response = client.send(built)
-        response.raise_for_status()
-        return response
+    # Counts the attempts as the retry policy works through them, so each
+    # recorded row can say which attempt it was. It has to persist across the
+    # calls the retry policy makes to `_attempt`, hence the `nonlocal`.
+    attempt = 0
 
-    # `.json()` is deliberately outside the retry: a body we cannot parse is not
-    # a transient failure, so it is never retried, and keeping it out here means
-    # the `Response` (and its status code) stays in scope for both paths below,
-    # so no mutable state has to smuggle the status out of the retried closure.
-    try:
-        response = api.retrying(_once)
-    except httpx.HTTPError as exc:
-        # A status error carries the code it failed with; a transport error or
-        # timeout never got a response, so there is no code to record.
-        status = (
-            exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
-        )
-        _record(success=False, response_code=status, error=str(exc), num_results=None)
-        raise SearchAPIRequestError(api.host) from exc
-
-    try:
-        raw: dict[str, Any] = response.json()
-    except ValueError as exc:
+    def _attempt() -> dict[str, Any]:
+        # One HTTP attempt: sent, checked and parsed here, so it records itself
+        # (with everything in scope) before returning or raising. The retry
+        # policy calls this once per attempt, so recording here records them all.
+        nonlocal attempt
+        attempt += 1
+        started = time.monotonic()
+        response: httpx.Response | None = None
+        try:
+            response = client.send(built)
+            response.raise_for_status()
+            raw: dict[str, Any] = response.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            # No response means nothing answered (a transport error or timeout);
+            # otherwise record the status the host gave us, even on a failure.
+            _record(
+                attempt_number=attempt,
+                success=False,
+                response_code=response.status_code if response is not None else None,
+                error=str(exc),
+                num_results=None,
+                seconds=time.monotonic() - started,
+            )
+            raise
         _record(
-            success=False,
+            attempt_number=attempt,
+            success=True,
             response_code=response.status_code,
-            error=str(exc),
-            num_results=None,
+            error=None,
+            num_results=_result_count_or_none(api, raw),
+            seconds=time.monotonic() - started,
         )
-        raise SearchAPIRequestError(api.host) from exc
+        return raw
 
-    _record(
-        success=True,
-        response_code=response.status_code,
-        error=None,
-        num_results=_result_count_or_none(api, raw),
-    )
-    return raw
+    try:
+        return api.retrying(_attempt)
+    except (httpx.HTTPError, ValueError) as exc:
+        raise SearchAPIRequestError(api.host) from exc
 
 
 class CouldNotSearchError(RuntimeError):
@@ -272,7 +278,6 @@ class CouldNotSearchError(RuntimeError):
         cause
             What went wrong, if we know it. Folded into the message so that a
             refusal can say *why*, and kept on `cause` for callers to inspect
-            (its own `__cause__` still carries the underlying HTTP error).
         """
         self.host = host
         self.cause = cause

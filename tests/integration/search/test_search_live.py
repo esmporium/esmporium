@@ -219,8 +219,9 @@ def search_or_skip(query, api, client, limit, observer=None):
 def test_search_returns_results(client, api, query, recorded):
     """A query we expect to match something comes back with matches
 
-    Also checks that the search-API health of the call was recorded: a single
-    successful request to this host, with a result count and timing.
+    Also checks that the search-API health was recorded: one row per attempt (a
+    healthy node answers first try, but a flaky one may be retried), all for this
+    host, with the final, successful attempt carrying the result count and timing.
     """
     observer, read_calls = recorded
 
@@ -228,14 +229,16 @@ def test_search_returns_results(client, api, query, recorded):
 
     assert api.generation.result_count(raw) > 0
 
-    # One request to one host, recorded as a success.
-    (recorded_call,) = read_calls()
-    assert recorded_call.host == api.host
-    assert recorded_call.success is True
-    assert recorded_call.response_code == 200
-    assert recorded_call.num_results == api.generation.result_count(raw)
-    # Timing is recorded; its actual value is not something we can predict.
-    assert recorded_call.response_time_seconds > 0.0
+    # One row per attempt, all for this host, timed; the last is the success.
+    calls = read_calls()
+    assert calls, "expected at least one recorded call"
+    assert all(call.host == api.host for call in calls)
+    assert all(call.response_time_seconds > 0.0 for call in calls)
+    assert [call.attempt_number for call in calls] == list(range(1, len(calls) + 1))
+    success = calls[-1]
+    assert success.success is True
+    assert success.response_code == 200
+    assert success.num_results == api.generation.result_count(raw)
 
 
 @pytest.mark.parametrize("api, query, poison_field", FACET_NAME_CASES)
@@ -261,11 +264,14 @@ def test_search_applies_the_facets_we_send(client, api, query, poison_field, rec
     assert api.generation.result_count(raw) == 0
 
     # A response that matched nothing is still a successful call, and recorded.
-    (recorded_call,) = read_calls()
-    assert recorded_call.host == api.host
-    assert recorded_call.success is True
-    assert recorded_call.num_results == 0
-    assert recorded_call.response_time_seconds > 0.0
+    # One row per attempt; the final, successful one carries the zero count.
+    calls = read_calls()
+    assert calls, "expected at least one recorded call"
+    assert all(call.host == api.host for call in calls)
+    assert all(call.response_time_seconds > 0.0 for call in calls)
+    success = calls[-1]
+    assert success.success is True
+    assert success.num_results == 0
 
 
 def master_ids(raw: dict) -> set[str]:

@@ -40,6 +40,7 @@ def upgrade() -> None:
         sa.Column("error", sqlmodel.sql.sqltypes.AutoString(), nullable=True),
         sa.Column("num_results", sa.Integer(), nullable=True),
         sa.Column("response_time_seconds", sa.Float(), nullable=False),
+        sa.Column("attempt_number", sa.Integer(), nullable=False),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_searchapicallrecord")),
     )
     with op.batch_alter_table("searchapicallrecord", schema=None) as batch_op:

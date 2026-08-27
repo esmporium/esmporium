@@ -26,6 +26,7 @@ CREATE TABLE searchapicallrecord (
 	error VARCHAR,
 	num_results INTEGER,
 	response_time_seconds FLOAT NOT NULL,
+	attempt_number INTEGER NOT NULL,
 	CONSTRAINT pk_searchapicallrecord PRIMARY KEY (id)
 );
 

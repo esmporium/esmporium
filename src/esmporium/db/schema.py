@@ -417,6 +417,16 @@ class SearchAPICallRecord(EsmporiumBase, table=True):
     response_time_seconds: float
     """How long the call took, in wall-clock seconds"""
 
+    attempt_number: int
+    """
+    Which attempt this row is, 1-based
+
+    One row is recorded per HTTP attempt, so a host that had to be retried
+    leaves several rows for one logical request: attempt 1, attempt 2, and so on.
+    The successful attempt (if any) is the last one, and is the only one that
+    carries a result count.
+    """
+
     @classmethod
     def from_call(cls, call: SearchAPICall) -> "SearchAPICallRecord":
         """
@@ -442,4 +452,5 @@ class SearchAPICallRecord(EsmporiumBase, table=True):
             error=call.error,
             num_results=call.num_results,
             response_time_seconds=call.response_time_seconds,
+            attempt_number=call.attempt_number,
         )

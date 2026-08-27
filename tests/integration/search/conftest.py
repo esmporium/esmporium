@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
     from esmporium.search.health import SearchAPICallObserver
 
-# The observer to record with, plus a function that reads back the rows recorded.
+# The observer to record with, plus a function that gives back the rows recorded.
 Recorded = tuple["SearchAPICallObserver", "Callable[[], list[SearchAPICallRecord]]"]
 
 

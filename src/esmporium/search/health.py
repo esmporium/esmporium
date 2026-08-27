@@ -60,6 +60,9 @@ class SearchAPICall:
     response_time_seconds: float
     """See [SearchAPICallRecord.response_time_seconds][esmporium.db.schema.SearchAPICallRecord.response_time_seconds]."""  # noqa: E501
 
+    attempt_number: int
+    """See [SearchAPICallRecord.attempt_number][esmporium.db.schema.SearchAPICallRecord.attempt_number]."""  # noqa: E501
+
 
 SearchAPICallObserver = Callable[[SearchAPICall], None]
 """

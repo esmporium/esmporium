@@ -106,12 +106,14 @@ def test_cmip6_experiment_case_slip_is_matched_to_the_real_spelling(recorded):
     assert finding.kind is FindingKind.CASE
     assert finding.suggestions == ("historical",)
 
-    # One request, to the host that answered, recorded as a success with timing.
-    # (num_results is not asserted: a facet-values response need not carry a count.)
-    (recorded_call,) = read_calls()
-    assert recorded_call.host == report.source
-    assert recorded_call.success is True
-    assert recorded_call.response_time_seconds > 0.0
+    # One row per attempt, all for the host that answered; the last is the
+    # success. (num_results is not asserted: a facet-values response need not
+    # carry a count.)
+    calls = read_calls()
+    assert calls, "expected at least one recorded call"
+    assert all(call.host == report.source for call in calls)
+    assert all(call.response_time_seconds > 0.0 for call in calls)
+    assert calls[-1].success is True
 
 
 def test_cmip7_experiment_typo_is_matched_against_the_apis_own_values():
