@@ -5,9 +5,25 @@ Database schema
 # # Don't use this here, it breaks SQLModel
 # from __future__ import annotations
 
+import datetime
+
 from sqlalchemy import MetaData
 from sqlalchemy.orm import registry
 from sqlmodel import Field, SQLModel
+
+from esmporium.search.health import SearchApiCall
+
+
+def _utcnow() -> datetime.datetime:
+    """
+    Get the current time, as a timezone-aware UTC datetime
+
+    Used as the default for recorded-at columns.
+    We store UTC so rows from different machines are comparable,
+    and keep it timezone-aware so the offset is never left to guess.
+    """
+    return datetime.datetime.now(datetime.timezone.utc)
+
 
 NAMING_CONVENTION = {
     "ix": "ix_%(table_name)s_%(column_0_N_name)s",
@@ -334,3 +350,102 @@ Adding a facet to [`Dataset`][esmporium.db.schema.Dataset] means adding it here 
 This is checked by the tests explicitly,
 see `test_facet_columns_are_the_declared_facets`.
 """
+
+
+class SearchApiCallRecord(EsmporiumBase, table=True):
+    """
+    One recorded request to one search API
+
+    An append-only log: one row per call to
+    [fire][esmporium.search.search.fire] that was observed
+    (see [record_search_api_calls][esmporium.db.health.record_search_api_calls]).
+    We never update these rows, so they accumulate a history:
+    which host was asked what, when, how it answered and how long it took.
+    That is enough to tell, later and with a plain `GROUP BY`,
+    which nodes are fast, which are flaky, and which have data for a project.
+
+    This deliberately does not link to a query or a search run.
+    Tracking the queries themselves comes later (see `PLAN.md`);
+    for now this stands alone as a record of endpoint behaviour.
+    """
+
+    # See the note on `Dataset.model_config`: this catches a bad *value* at
+    # construction rather than at commit time.
+    model_config = {"validate_assignment": True}
+
+    id: int | None = Field(default=None, primary_key=True)
+    """Surrogate key; assigned by the database"""
+
+    created_at: datetime.datetime = Field(default_factory=_utcnow, index=True)
+    """
+    When the call was recorded (UTC)
+
+    Indexed so that "how did things look today?" is a cheap query.
+    """
+
+    host: str = Field(index=True)
+    """
+    The host the request went to, e.g. `esgf.nci.org.au`
+
+    Indexed so that "how has this node behaved?" is a cheap query.
+    """
+
+    http_method: str
+    """The HTTP method used, e.g. `GET` or `POST`"""
+
+    url: str
+    """The full URL the request went to, including any query string"""
+
+    request_body: str | None = None
+    """The request body that was sent (STAC `POST`s), or `None` (Solr `GET`s)"""
+
+    response_code: int | None = None
+    """
+    The HTTP status code the host answered with
+
+    `None` when nothing answered at all (a transport error or a timeout),
+    which is how "the host said no" is told apart from "the host never spoke".
+    """
+
+    success: bool
+    """Whether we got a usable answer back"""
+
+    error: str | None = None
+    """The failure's message, or `None` on success"""
+
+    num_results: int | None = None
+    """
+    The number of records the host reported matched, if it reported one
+
+    `None` when the response carries no count we can read.
+    """
+
+    response_time_seconds: float
+    """How long the call took, in wall-clock seconds"""
+
+    @classmethod
+    def from_call(cls, call: SearchApiCall) -> "SearchApiCallRecord":
+        """
+        Build a row from the search layer's plain record of a call
+
+        Parameters
+        ----------
+        call
+            What the search layer observed about one call
+
+        Returns
+        -------
+        :
+            The row to add to the database
+        """
+        return cls(
+            host=call.host,
+            http_method=call.http_method,
+            url=call.url,
+            request_body=call.request_body,
+            response_code=call.response_code,
+            success=call.success,
+            error=call.error,
+            num_results=call.num_results,
+            response_time_seconds=call.response_time_seconds,
+        )

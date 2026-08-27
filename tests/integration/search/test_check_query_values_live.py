@@ -20,7 +20,7 @@ from esmporium.search import (
 pytestmark = pytest.mark.hits_esgf_search_api
 
 
-def only_report(query: QueryProtocol) -> ValueReport:
+def only_report(query: QueryProtocol, observer=None) -> ValueReport:
     """
     Check a query and pull out the one report, or skip if no endpoint answered
 
@@ -29,9 +29,12 @@ def only_report(query: QueryProtocol) -> ValueReport:
 
     A node being down says nothing about the checker,
     so it is a skip rather than a failure.
+
+    If `observer` is given it is passed through to `check_query_values`, so a
+    caller can assert on the search-API health recorded for the call.
     """
     try:
-        outcome = check_query_values(query)
+        outcome = check_query_values(query, observer=observer)
     except NoSourceWouldAnswerError:
         pytest.skip("no endpoint answered today, so there is nothing to assert")
 
@@ -80,19 +83,35 @@ def test_cmip5_experiment_typo_is_matched_to_the_real_spelling():
     assert "abrupt4xCO2" in finding.suggestions
 
 
-def test_cmip6_experiment_case_slip_is_matched_to_the_real_spelling():
+def test_cmip6_experiment_case_slip_is_matched_to_the_real_spelling(recorded):
+    """The value-check driven path also records search-API health.
+
+    The checker hits a search API just like `search` does, so a call driven by
+    `check_query_values` is recorded the same way: one successful request to the
+    host that answered, with timing.
+    """
+    observer, read_calls = recorded
+
     report = only_report(
         QueryCMIP6(
             # uppercase, which is the typo
             experiment_id="Historical",
             variable_id="tas",
-        )
+        ),
+        observer=observer,
     )
 
     finding = finding_for(report, "experiment")
 
     assert finding.kind is FindingKind.CASE
     assert finding.suggestions == ("historical",)
+
+    # One request, to the host that answered, recorded as a success with timing.
+    # (num_results is not asserted: a facet-values response need not carry a count.)
+    (recorded_call,) = read_calls()
+    assert recorded_call.host == report.source
+    assert recorded_call.success is True
+    assert recorded_call.response_time_seconds is not None
 
 
 def test_cmip7_experiment_typo_is_matched_against_the_apis_own_values():

@@ -189,15 +189,24 @@ def client():
         yield res
 
 
-def search_or_skip(query, api, client, limit):
+def search_or_skip(query, api, client, limit, observer=None):
     """
     Search one live node, skipping the test if that node will not answer
 
     A node being down says nothing about the behaviour under test,
     so it is a skip rather than a failure.
+
+    If `observer` is given it is passed through to `search`, so a caller can
+    assert on the search-API health recorded for the call.
     """
     try:
-        outcome = search(query, build_list_selector([api]), limit=limit, client=client)
+        outcome = search(
+            query,
+            build_list_selector([api]),
+            limit=limit,
+            client=client,
+            observer=observer,
+        )
     except NoAPIWouldAnswerError:
         pytest.skip(f"{api.host} did not answer, so it is down or unwell")
 
@@ -207,15 +216,30 @@ def search_or_skip(query, api, client, limit):
 
 
 @pytest.mark.parametrize("api, query", LIVE_CASES)
-def test_search_returns_results(client, api, query):
-    """A query we expect to match something comes back with matches"""
-    raw = search_or_skip(query, api, client, limit=5)
+def test_search_returns_results(client, api, query, recorded):
+    """A query we expect to match something comes back with matches
+
+    Also checks that the search-API health of the call was recorded: a single
+    successful request to this host, with a result count and timing.
+    """
+    observer, read_calls = recorded
+
+    raw = search_or_skip(query, api, client, limit=5, observer=observer)
 
     assert api.generation.result_count(raw) > 0
 
+    # One request to one host, recorded as a success.
+    (recorded_call,) = read_calls()
+    assert recorded_call.host == api.host
+    assert recorded_call.success is True
+    assert recorded_call.response_code == 200
+    assert recorded_call.num_results == api.generation.result_count(raw)
+    # Timing is recorded; its actual value is not something we can predict.
+    assert recorded_call.response_time_seconds is not None
+
 
 @pytest.mark.parametrize("api, query, poison_field", FACET_NAME_CASES)
-def test_search_applies_the_facets_we_send(client, api, query, poison_field):
+def test_search_applies_the_facets_we_send(client, api, query, poison_field, recorded):
     """
     Test that the API understood the facet names we sent it
 
@@ -225,11 +249,23 @@ def test_search_applies_the_facets_we_send(client, api, query, poison_field):
     If it came back with matches, it ignored the name we used,
     which means our name for that facet is wrong
     and every search we build with it is quietly unfiltered.
+
+    This also exercises the health path where a request succeeds but matches
+    nothing: the call is recorded as a success with a zero result count.
     """
+    observer, read_calls = recorded
+
     nonsense = query.model_copy(update={poison_field: (NOT_A_REAL_VALUE,)})
-    raw = search_or_skip(nonsense, api, client, limit=5)
+    raw = search_or_skip(nonsense, api, client, limit=5, observer=observer)
 
     assert api.generation.result_count(raw) == 0
+
+    # A response that matched nothing is still a successful call, and recorded.
+    (recorded_call,) = read_calls()
+    assert recorded_call.host == api.host
+    assert recorded_call.success is True
+    assert recorded_call.num_results == 0
+    assert recorded_call.response_time_seconds is not None
 
 
 def master_ids(raw: dict) -> set[str]:

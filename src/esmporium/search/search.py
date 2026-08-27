@@ -4,15 +4,22 @@ High-level search functionality
 
 from __future__ import annotations
 
+import json
 import logging
 import shlex
+import time
 from dataclasses import dataclass
 from typing import Any
 
 import httpx
 
 from esmporium.query import QueryProtocol, to_canonical
-from esmporium.search.esgf_generations import DEFAULT_LIMIT, Request
+from esmporium.search.esgf_generations import (
+    DEFAULT_LIMIT,
+    NoResultCountReturned,
+    Request,
+)
+from esmporium.search.health import SearchApiCall, SearchApiCallObserver
 from esmporium.search.search_api import (
     DEFAULT_SELECTOR,
     SearchAPI,
@@ -90,11 +97,69 @@ def _log_request(
     )
 
 
+class SearchAPIRequestError(RuntimeError):
+    """
+    Raised when one request to one search API does not come back with a usable answer
+
+    This is the low-level failure that [fire][(m).fire] raises,
+    whether the host never answered (a transport error or timeout)
+    or answered with something we could not use (a bad status, unreadable JSON).
+    It carries the underlying exception as its `__cause__`,
+    so a caller which catches it can always say *why* the call failed.
+
+    The higher-level callers translate this into their own vocabulary:
+    a search into a [CouldNotSearchError][(m).CouldNotSearchError],
+    a value check into a
+    [CouldNotGetAllowedValuesError][esmporium.search.check_query_values.CouldNotGetAllowedValuesError].
+    """
+
+    def __init__(self, host: str) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        host
+            The host the request went to
+        """
+        self.host = host
+        super().__init__(
+            f"{host} did not come back with a usable answer to our request."
+        )
+
+
+def _result_count_or_none(api: SearchAPI, raw: dict[str, Any]) -> int | None:
+    """
+    Read how many records a response reported, or `None` if it reported none
+
+    A search response reports its total; the STAC facet-values response
+    (a collection document) does not, hence the tolerance.
+
+    Parameters
+    ----------
+    api
+        The API the response came from (its generation knows how to read the count)
+
+    raw
+        The response to read
+
+    Returns
+    -------
+    :
+        The number of records reported, or `None` if the response carries no count
+    """
+    try:
+        return api.generation.result_count(raw)
+    except NoResultCountReturned:
+        return None
+
+
 def fire(
     client: httpx.Client,
     api: SearchAPI,
     request: Request,
-) -> dict[str, Any] | None:
+    observer: SearchApiCallObserver | None = None,
+) -> dict[str, Any]:
     """
     Send one request to one API, using that API's retry policy and timeout
 
@@ -109,12 +174,21 @@ def fire(
     request
         The request to send
 
+    observer
+        Told about this call once it is done, on both the success and failure path.
+        If `None` (the default), nothing is recorded.
+        See [esmporium.search.health][] for how to build one.
+
     Returns
     -------
     :
-        The raw JSON the endpoint answered with,
-        or `None` if it never answered
-        or answered with something we cannot use
+        The raw JSON the endpoint answered with
+
+    Raises
+    ------
+    SearchAPIRequestError
+        The API never answered, or answered with something we cannot use.
+        The underlying cause is carried as the error's `__cause__`.
     """
     built = client.build_request(
         request.method,
@@ -125,29 +199,54 @@ def fire(
     )
     _log_request(api, built)
 
+    request_body = json.dumps(request.json_body) if request.json_body else None
+
+    # A mutable box so the retried closure can hand the status code back out:
+    # on the failure path we still want the last status the host gave us.
+    seen: dict[str, int | None] = {"status": None}
+
     def _once() -> dict[str, Any]:
         response = client.send(built)
+        seen["status"] = response.status_code
         response.raise_for_status()
         res: dict[str, Any] = response.json()
         return res
 
+    start = time.monotonic()
     try:
-        return api.retrying(_once)
-    except (httpx.HTTPError, ValueError):
-        # TODO: raise an error here rather than signalling failure with `None`.
-        # `None` cannot say why the API did not answer,
-        # and the caller has to remember to check for it,
-        # which is exactly the kind of silence we are trying to avoid
-        # (see `NoAPIWouldAnswerError`, which can only name the hosts
-        # that refused, never what they said).
-        # It is also what we would want for logging search API health,
-        # because that is the key use case for
-        # which we would want this extra information.
-        # We will make this change in the PR
-        # where we start parsing search results into `Dataset`s,
-        # because that is where the parsing failures
-        # will want the same treatment.
-        return None
+        raw = api.retrying(_once)
+    except (httpx.HTTPError, ValueError) as exc:
+        if observer is not None:
+            observer(
+                SearchApiCall(
+                    host=api.host,
+                    http_method=request.method,
+                    url=str(built.url),
+                    request_body=request_body,
+                    response_code=seen["status"],
+                    success=False,
+                    error=str(exc),
+                    num_results=None,
+                    response_time_seconds=time.monotonic() - start,
+                )
+            )
+        raise SearchAPIRequestError(api.host) from exc
+
+    if observer is not None:
+        observer(
+            SearchApiCall(
+                host=api.host,
+                http_method=request.method,
+                url=str(built.url),
+                request_body=request_body,
+                response_code=seen["status"],
+                success=True,
+                error=None,
+                num_results=_result_count_or_none(api, raw),
+                response_time_seconds=time.monotonic() - start,
+            )
+        )
+    return raw
 
 
 class CouldNotSearchError(RuntimeError):
@@ -164,10 +263,6 @@ class CouldNotSearchError(RuntimeError):
         host
             The host which did not answer
         """
-        # TODO: carry the underlying cause once `fire` raises
-        # rather than returning `None` (see the TODO in `fire`).
-        # Until then, this can only say that the host did not answer,
-        # never why.
         self.host = host
         super().__init__(
             f"{host} did not answer our search request, so it has given us no results."
@@ -210,13 +305,14 @@ class SearchOutcome:
     """What each endpoint which did not answer said, keyed by host"""
 
 
-def search(
+def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection seams
     query: QueryProtocol,
     selector: SearchAPISelector = DEFAULT_SELECTOR,
     *,
     stop_at_first_result: bool = True,
     limit: int = DEFAULT_LIMIT,
     client: httpx.Client | None = None,
+    observer: SearchApiCallObserver | None = None,
 ) -> SearchOutcome:
     """
     Search the endpoints the selector yields, and collect their raw JSON
@@ -247,6 +343,11 @@ def search(
     client
         The HTTP client to search with.
         If `None`, one is built for the call and closed at the end.
+
+    observer
+        Told about each request to each endpoint, so its health can be recorded.
+        If `None` (the default), nothing is recorded.
+        See [esmporium.search.health][] for how to build one.
 
     Returns
     -------
@@ -279,9 +380,14 @@ def search(
         while (api := selector(canonical, attempt)) is not None:
             asked_someone = True
             request = api.generation.build_search_request(canonical, limit)
-            raw = fire(client, api, request)
-            if raw is None:
-                refusals[api.host] = CouldNotSearchError(api.host)
+            try:
+                raw = fire(client, api, request, observer)
+            except SearchAPIRequestError as exc:
+                could_not = CouldNotSearchError(api.host)
+                # Attach the cause so the refusal can say *why*, even though it is
+                # being stored rather than raised (`raise ... from` is for raising).
+                could_not.__cause__ = exc
+                refusals[api.host] = could_not
             else:
                 # Note: if the selector offers the same host twice,
                 # the second answer simply replaces the first here.
