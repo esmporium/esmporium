@@ -100,17 +100,6 @@ def _log_request(
 class SearchAPIRequestError(RuntimeError):
     """
     Raised when one request to one search API does not come back with a usable answer
-
-    This is the low-level failure that [fire][(m).fire] raises,
-    whether the host never answered (a transport error or timeout)
-    or answered with something we could not use (a bad status, unreadable JSON).
-    It carries the underlying exception as its `__cause__`,
-    so a caller which catches it can always say *why* the call failed.
-
-    The higher-level callers translate this into their own vocabulary:
-    a search into a [CouldNotSearchError][(m).CouldNotSearchError],
-    a value check into a
-    [CouldNotGetAllowedValuesError][esmporium.search.check_query_values.CouldNotGetAllowedValuesError].
     """
 
     def __init__(self, host: str) -> None:
@@ -123,6 +112,8 @@ class SearchAPIRequestError(RuntimeError):
             The host the request went to
         """
         self.host = host
+        # TODO Zeb: add more information? The request itself?
+        # Or is just the host the important part of the information?
         super().__init__(
             f"{host} did not come back with a usable answer to our request."
         )
@@ -264,6 +255,7 @@ class CouldNotSearchError(RuntimeError):
             The host which did not answer
         """
         self.host = host
+        # TODO Zeb: as above, is it just host or also request that is important here?
         super().__init__(
             f"{host} did not answer our search request, so it has given us no results."
         )
