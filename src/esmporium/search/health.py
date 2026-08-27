@@ -56,9 +56,7 @@ class SearchAPICall:
     The exception that made the attempt fail, or `None` on success
 
     Kept as the live exception so an observer can
-    inspect its type or cause. The database stores a string instead; that
-    translation happens in
-    [SearchAPICallRecord.from_call][esmporium.db.schema.SearchAPICallRecord.from_call].
+    inspect its type or cause.
     """
 
     num_results: int | None

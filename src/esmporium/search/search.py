@@ -234,7 +234,8 @@ def fire(
             response.raise_for_status()
             raw: dict[str, Any] = response.json()
         except (httpx.HTTPError, ValueError) as exc:
-            # No response means nothing answered (a transport error or timeout);
+            # No response means nothing answered (a transport error or timeout
+            # or an issue converting the JSON);
             # otherwise record the status the host gave us, even on a failure.
             _record(
                 attempt_number=attempt,

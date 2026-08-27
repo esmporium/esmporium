@@ -66,6 +66,24 @@ Integration tests:
 - [ ] check that the API health stats appear in the expected database
     - do this both for ESGF-1 ESGF15-bridge and ESGF-NG (don't worry about testing across all query classes though). This can just be part of the existing integration tests, no need to add new tests.
 
+## PR1.7
+Use Search API health to select/rank APIs for the next request
+
+This is an optional selector function to use if the SearchAPICallRecord table has data (any data, or only opt-in selector if the same request is being sent out? - maybe the latter?) This selector could take a few different formats: it could be based on no. results per request per host, or time per request per host, or results/time. Should this be a user decision, or we make that decision now? Our selector will rank the hosts, and then the user can either use the ranked list, or the top choice (already a user choice in search function)
+
+Where would a selector live? search_api.py?
+
+Tests:
+
+Unit tests:
+
+- [ ] I feel a little lost with tests still, but I will have a crack and you can provide feedback.
+    - Test that a mock health table with various hosts with different results and request times (and attempt numbers) rank the way we want them to. Creates output of ranked hosts that can be injected back to search.
+
+Integration tests:
+
+- [ ] Are there any integration tests here? Feels like maybe just unit tests if we are only performing live tests on a single host?
+
 ## PR2
 
 Converting search results into Datasets
