@@ -112,8 +112,6 @@ class SearchAPIRequestError(RuntimeError):
             The host the request went to
         """
         self.host = host
-        # TODO Zeb: add more information? The request itself?
-        # Or is just the host the important part of the information?
         super().__init__(
             f"{host} did not come back with a usable answer to our request."
         )
@@ -191,52 +189,69 @@ def fire(
     _log_request(api, built)
 
     request_body = json.dumps(request.json_body) if request.json_body else None
-
-    # A mutable box so the retried closure can hand the status code back out:
-    # on the failure path we still want the last status the host gave us.
-    seen: dict[str, int | None] = {"status": None}
-
-    def _once() -> dict[str, Any]:
-        response = client.send(built)
-        seen["status"] = response.status_code
-        response.raise_for_status()
-        res: dict[str, Any] = response.json()
-        return res
-
     start = time.monotonic()
-    try:
-        raw = api.retrying(_once)
-    except (httpx.HTTPError, ValueError) as exc:
-        if observer is not None:
-            observer(
-                SearchAPICall(
-                    host=api.host,
-                    http_method=request.method,
-                    url=str(built.url),
-                    request_body=request_body,
-                    response_code=seen["status"],
-                    success=False,
-                    error=str(exc),
-                    num_results=None,
-                    response_time_seconds=time.monotonic() - start,
-                )
-            )
-        raise SearchAPIRequestError(api.host) from exc
 
-    if observer is not None:
+    def _record(
+        *,
+        success: bool,
+        response_code: int | None,
+        error: str | None,
+        num_results: int | None,
+    ) -> None:
+        """Tell the observer, if any, how this call went."""
+        if observer is None:
+            return
         observer(
             SearchAPICall(
                 host=api.host,
                 http_method=request.method,
                 url=str(built.url),
                 request_body=request_body,
-                response_code=seen["status"],
-                success=True,
-                error=None,
-                num_results=_result_count_or_none(api, raw),
+                response_code=response_code,
+                success=success,
+                error=error,
+                num_results=num_results,
                 response_time_seconds=time.monotonic() - start,
             )
         )
+
+    def _once() -> httpx.Response:
+        response = client.send(built)
+        response.raise_for_status()
+        return response
+
+    # `.json()` is deliberately outside the retry: a body we cannot parse is not
+    # a transient failure, so it is never retried, and keeping it out here means
+    # the `Response` (and its status code) stays in scope for both paths below,
+    # so no mutable state has to smuggle the status out of the retried closure.
+    try:
+        response = api.retrying(_once)
+    except httpx.HTTPError as exc:
+        # A status error carries the code it failed with; a transport error or
+        # timeout never got a response, so there is no code to record.
+        status = (
+            exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+        )
+        _record(success=False, response_code=status, error=str(exc), num_results=None)
+        raise SearchAPIRequestError(api.host) from exc
+
+    try:
+        raw: dict[str, Any] = response.json()
+    except ValueError as exc:
+        _record(
+            success=False,
+            response_code=response.status_code,
+            error=str(exc),
+            num_results=None,
+        )
+        raise SearchAPIRequestError(api.host) from exc
+
+    _record(
+        success=True,
+        response_code=response.status_code,
+        error=None,
+        num_results=_result_count_or_none(api, raw),
+    )
     return raw
 
 
@@ -245,7 +260,7 @@ class CouldNotSearchError(RuntimeError):
     Raised when one API will not answer a search
     """
 
-    def __init__(self, host: str) -> None:
+    def __init__(self, host: str, cause: Exception | None = None) -> None:
         """
         Initialise the error
 
@@ -253,12 +268,25 @@ class CouldNotSearchError(RuntimeError):
         ----------
         host
             The host which did not answer
+
+        cause
+            What went wrong, if we know it. Folded into the message so that a
+            refusal can say *why*, and kept on `cause` for callers to inspect
+            (its own `__cause__` still carries the underlying HTTP error).
         """
         self.host = host
-        # TODO Zeb: as above, is it just host or also request that is important here?
-        super().__init__(
-            f"{host} did not answer our search request, so it has given us no results."
-        )
+        self.cause = cause
+        if cause is None:
+            message = (
+                f"{host} did not answer our search request, "
+                "so it has given us no results."
+            )
+        else:
+            message = (
+                f"{host} did not answer our search request ({cause}), "
+                "so it has given us no results."
+            )
+        super().__init__(message)
 
 
 class NoAPIWouldAnswerError(RuntimeError):
@@ -375,11 +403,7 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
             try:
                 raw = fire(client, api, request, observer)
             except SearchAPIRequestError as exc:
-                could_not = CouldNotSearchError(api.host)
-                # Attach the cause so the refusal can say *why*, even though it is
-                # being stored rather than raised (`raise ... from` is for raising).
-                could_not.__cause__ = exc
-                refusals[api.host] = could_not
+                refusals[api.host] = CouldNotSearchError(api.host, cause=exc)
             else:
                 # Note: if the selector offers the same host twice,
                 # the second answer simply replaces the first here.

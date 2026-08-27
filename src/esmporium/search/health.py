@@ -51,15 +51,9 @@ class SearchAPICall:
     """See [SearchAPICallRecord.response_time_seconds][esmporium.db.schema.SearchAPICallRecord.response_time_seconds]."""  # noqa: E501
 
 
-# TODO Zeb: this makes sense enough but not enough to clarify
-# the docstring
 SearchAPICallObserver = Callable[[SearchAPICall], None]
 """
 Something told about each search API call as it happens
-
-Given the [SearchAPICall][(m).] describing one call, do something with it
-(record it, print it, collect it). Called once per call to
-[fire][esmporium.search.search.fire] when one is supplied.
 """
 
 
