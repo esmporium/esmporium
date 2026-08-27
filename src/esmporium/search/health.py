@@ -51,8 +51,15 @@ class SearchAPICall:
     success: bool
     """See [SearchAPICallRecord.success][esmporium.db.schema.SearchAPICallRecord.success]."""  # noqa: E501
 
-    error: str | None
-    """See [SearchAPICallRecord.error][esmporium.db.schema.SearchAPICallRecord.error]."""  # noqa: E501
+    error: Exception | None
+    """
+    The exception that made the attempt fail, or `None` on success
+
+    Kept as the live exception so an observer can
+    inspect its type or cause. The database stores a string instead; that
+    translation happens in
+    [SearchAPICallRecord.from_call][esmporium.db.schema.SearchAPICallRecord.from_call].
+    """
 
     num_results: int | None
     """See [SearchAPICallRecord.num_results][esmporium.db.schema.SearchAPICallRecord.num_results]."""  # noqa: E501

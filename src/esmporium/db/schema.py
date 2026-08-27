@@ -405,7 +405,9 @@ class SearchAPICallRecord(EsmporiumBase, table=True):
     """Whether we got a usable answer back"""
 
     error: str | None = None
-    """The failure's message, or `None` on success"""
+    """
+    The failure's type and message, or `None` on success
+    """
 
     num_results: int | None = None
     """
@@ -449,7 +451,11 @@ class SearchAPICallRecord(EsmporiumBase, table=True):
             request_body=call.request_body,
             response_code=call.response_code,
             success=call.success,
-            error=call.error,
+            error=(
+                f"{type(call.error).__name__}: {call.error}"
+                if call.error is not None
+                else None
+            ),
             num_results=call.num_results,
             response_time_seconds=call.response_time_seconds,
             attempt_number=call.attempt_number,

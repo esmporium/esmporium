@@ -194,7 +194,7 @@ def fire(
         attempt_number: int,
         success: bool,
         response_code: int | None,
-        error: str | None,
+        error: Exception | None,
         num_results: int | None,
         seconds: float,
     ) -> None:
@@ -240,7 +240,7 @@ def fire(
                 attempt_number=attempt,
                 success=False,
                 response_code=response.status_code if response is not None else None,
-                error=str(exc),
+                error=exc,
                 num_results=None,
                 seconds=time.monotonic() - started,
             )
