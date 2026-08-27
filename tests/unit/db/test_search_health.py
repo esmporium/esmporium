@@ -1,5 +1,5 @@
 """
-Unit tests for recording search-API health into the database
+Unit tests for recording search API health into the database
 
 These cover the translation from the search layer's plain `SearchAPICall` into a
 `SearchAPICallRecord` row (`from_call`) and the observer that persists it
