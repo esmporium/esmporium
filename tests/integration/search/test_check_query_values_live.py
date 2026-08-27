@@ -84,11 +84,11 @@ def test_cmip5_experiment_typo_is_matched_to_the_real_spelling():
 
 
 def test_cmip6_experiment_case_slip_is_matched_to_the_real_spelling(recorded):
-    """The value-check driven path also records search-API health.
+    """
+    With additional test recording search API health
 
-    The checker hits a search API just like `search` does, so a call driven by
-    `check_query_values` is recorded the same way: one successful request to the
-    host that answered, with timing.
+    Also checks that the search API health of the call was recorded: a single
+    successful request to this host, with a result count and timing.
     """
     observer, read_calls = recorded
 
@@ -111,7 +111,7 @@ def test_cmip6_experiment_case_slip_is_matched_to_the_real_spelling(recorded):
     (recorded_call,) = read_calls()
     assert recorded_call.host == report.source
     assert recorded_call.success is True
-    assert recorded_call.response_time_seconds is not None
+    assert recorded_call.response_time_seconds > 0.0
 
 
 def test_cmip7_experiment_typo_is_matched_against_the_apis_own_values():

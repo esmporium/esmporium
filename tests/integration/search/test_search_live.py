@@ -235,7 +235,7 @@ def test_search_returns_results(client, api, query, recorded):
     assert recorded_call.response_code == 200
     assert recorded_call.num_results == api.generation.result_count(raw)
     # Timing is recorded; its actual value is not something we can predict.
-    assert recorded_call.response_time_seconds is not None
+    assert recorded_call.response_time_seconds > 0.0
 
 
 @pytest.mark.parametrize("api, query, poison_field", FACET_NAME_CASES)
@@ -265,7 +265,7 @@ def test_search_applies_the_facets_we_send(client, api, query, poison_field, rec
     assert recorded_call.host == api.host
     assert recorded_call.success is True
     assert recorded_call.num_results == 0
-    assert recorded_call.response_time_seconds is not None
+    assert recorded_call.response_time_seconds > 0.0
 
 
 def master_ids(raw: dict) -> set[str]:
