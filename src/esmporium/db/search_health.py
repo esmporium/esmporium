@@ -6,24 +6,27 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from sqlmodel import Session
+
 from esmporium.db.schema import SearchAPICallRecord
 
 if TYPE_CHECKING:
-    from sqlmodel import Session
+    from sqlalchemy import Engine
 
     from esmporium.search.health import SearchAPICall, SearchAPICallObserver
 
 
-def record_search_api_calls(session: Session) -> SearchAPICallObserver:
+def record_search_api_calls(engine: Engine) -> SearchAPICallObserver:
     """
-    Build an observer which records each search API call record into the database
+    Build an observer which records each search API call record into database
 
-    Each call is committed on its own, so a run that is killed part way through
-    keeps the records of the calls it had already made.
+    A fresh session is opened per call, so the observer is safe to call from
+    several threads at once. Each call is committed on its own, so a run killed
+    part way through keeps the records of the calls it had already made.
 
     Parameters
     ----------
-    session
+    engine
         The database session to record into.
         The caller owns it (opening and closing it), the same way the search
         functions let the caller own the HTTP client.
@@ -35,7 +38,9 @@ def record_search_api_calls(session: Session) -> SearchAPICallObserver:
     """
 
     def observer(call: SearchAPICall) -> None:
-        session.add(SearchAPICallRecord.from_call(call))
-        session.commit()
+        # thread safe to handle parallelism
+        with Session(engine) as session:
+            session.add(SearchAPICallRecord.from_call(call))
+            session.commit()
 
     return observer
