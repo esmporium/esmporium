@@ -27,17 +27,16 @@ def recorded(engine):
     """
     upgrade_to_head(engine)
 
-    with Session(engine) as session:
-        observer = record_search_api_calls(session)
+    observer = record_search_api_calls(engine)
 
-        def read_calls():
-            # A fresh session so we read what the observer committed, not a stale
-            # identity-map view.
-            with Session(engine) as reader:
-                return list(
-                    reader.exec(
-                        select(SearchAPICallRecord).order_by(SearchAPICallRecord.id)
-                    )
+    def read_calls():
+        # A fresh session so we read what the observer committed, not a stale
+        # identity-map view.
+        with Session(engine) as reader:
+            return list(
+                reader.exec(
+                    select(SearchAPICallRecord).order_by(SearchAPICallRecord.id)
                 )
+            )
 
-        yield observer, read_calls
+    yield observer, read_calls

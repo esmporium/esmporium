@@ -24,57 +24,31 @@ class SearchAPICall:
     """
 
     host: str
-    """The host the request went to, e.g. `esgf.nci.org.au`"""
+    """See [SearchAPICallRecord.host][esmporium.db.schema.SearchAPICallRecord.host]."""
 
     http_method: str
-    """The HTTP method used, e.g. `GET` or `POST`"""
+    """See [SearchAPICallRecord.http_method][esmporium.db.schema.SearchAPICallRecord.http_method]."""  # noqa: E501
 
     url: str
-    """
-    The full URL the request went to, including any query string
-
-    For the Solr-shaped APIs the facets ride in the query string,
-    so this captures them; for the STAC APIs the query is in the body instead
-    (see [request_body][(c).request_body]).
-    """
+    """See [SearchAPICallRecord.url][esmporium.db.schema.SearchAPICallRecord.url]."""
 
     request_body: str | None
-    """
-    The request body that was sent, if any
-
-    The STAC APIs carry the query as a JSON body (a `POST`);
-    the Solr-shaped APIs put everything in the URL and send no body,
-    in which case this is `None`.
-    """
+    """See [SearchAPICallRecord.request_body][esmporium.db.schema.SearchAPICallRecord.request_body]."""  # noqa: E501
 
     response_code: int | None
-    """
-    The HTTP status code the host answered with
-
-    `None` when nothing answered at all,
-    e.g. a transport error or a timeout,
-    which is how "the host said no" is told apart from "the host never spoke".
-    """
+    """See [SearchAPICallRecord.response_code][esmporium.db.schema.SearchAPICallRecord.response_code]."""  # noqa: E501
 
     success: bool
-    """Whether we got a usable answer back"""
+    """See [SearchAPICallRecord.success][esmporium.db.schema.SearchAPICallRecord.success]."""  # noqa: E501
 
     error: str | None
-    """
-    The failure's message, or `None` on success
-    """
+    """See [SearchAPICallRecord.error][esmporium.db.schema.SearchAPICallRecord.error]."""  # noqa: E501
 
     num_results: int | None
-    """
-    The number of records the host reported matched
-
-    `None` when the response carries no count we can read
-    (a search response reports its total; the STAC facet-values response,
-    which is a collection document, does not).
-    """
+    """See [SearchAPICallRecord.num_results][esmporium.db.schema.SearchAPICallRecord.num_results]."""  # noqa: E501
 
     response_time_seconds: float
-    """How long the request took to return"""
+    """See [SearchAPICallRecord.response_time_seconds][esmporium.db.schema.SearchAPICallRecord.response_time_seconds]."""  # noqa: E501
 
 
 # TODO Zeb: this makes sense enough but not enough to clarify

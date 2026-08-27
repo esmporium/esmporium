@@ -27,8 +27,8 @@ def record_search_api_calls(engine: Engine) -> SearchAPICallObserver:
     Parameters
     ----------
     engine
-        The database session to record into.
-        The caller owns it (opening and closing it), the same way the search
+        The database engine to record into.
+        The caller owns it, the same way the search
         functions let the caller own the HTTP client.
 
     Returns

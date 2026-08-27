@@ -88,7 +88,7 @@ def main() -> None:
         with Session(engine) as session:
             # This observer records every request the searches make. Passing it is
             # the whole opt-in: leave it off and nothing is recorded.
-            observer = record_search_api_calls(session)
+            observer = record_search_api_calls(engine)
 
             for query in (EXAMPLE_CMIP5, EXAMPLE_CMIP6, EXAMPLE_CMIP7):
                 print(f"\nquery: {query!r}")
