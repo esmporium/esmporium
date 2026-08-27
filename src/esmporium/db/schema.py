@@ -356,17 +356,11 @@ class SearchAPICallRecord(EsmporiumBase, table=True):
     """
     One recorded request to one search API
 
-    An append-only log: one row per call to
-    [fire][esmporium.search.search.fire] that was observed
-    (see [record_search_api_calls][esmporium.db.search_health.record_search_api_calls]).
+    An append-only log.
     We never update these rows, so they accumulate a history:
     which host was asked what, when, how it answered and how long it took.
     That is enough to tell, later and with a plain `GROUP BY`,
     which nodes are fast, which are flaky, and which have data for a project.
-
-    This deliberately does not link to a query or a search run.
-    Tracking the queries themselves comes later (see `PLAN.md`);
-    for now this stands alone as a record of endpoint behaviour.
     """
 
     # See the note on `Dataset.model_config`: this catches a bad *value* at
@@ -426,7 +420,7 @@ class SearchAPICallRecord(EsmporiumBase, table=True):
     @classmethod
     def from_call(cls, call: SearchAPICall) -> "SearchAPICallRecord":
         """
-        Build a row from the search layer's plain record of a call
+        Initialise from the search layer's plain record of a call
 
         Parameters
         ----------
@@ -436,7 +430,7 @@ class SearchAPICallRecord(EsmporiumBase, table=True):
         Returns
         -------
         :
-            The row to add to the database
+            Initialised object
         """
         return cls(
             host=call.host,
