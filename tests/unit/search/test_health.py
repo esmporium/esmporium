@@ -96,9 +96,6 @@ def a_call() -> SearchAPICall:
     )
 
 
-# --- success paths ---------------------------------------------------------
-
-
 def test_success_with_results_records_one_call():
     (call,) = record(lambda r: solr_response(812), [make_api("esgf.example.org")])
 
@@ -115,6 +112,7 @@ def test_success_with_results_records_one_call():
     assert call.attempt_number == 1
 
 
+# TODO: @Zeb I guess this is technically a success for our health table?
 def test_zero_results_still_records_a_success():
     (call,) = record(lambda r: solr_response(0), [make_api("host")])
 
@@ -142,9 +140,6 @@ def test_stac_post_records_its_method_and_body():
     assert call.request_body is not None
     assert "historical" in call.request_body  # the query rode in the JSON body
     assert call.num_results == 3
-
-
-# --- failure paths ---------------------------------------------------------
 
 
 def test_client_error_records_one_failed_call_without_retrying():
@@ -198,9 +193,6 @@ def test_an_unparseable_body_records_a_failure_with_the_status():
     assert call.attempt_number == 1
 
 
-# --- opt-out and the fire contract ----------------------------------------
-
-
 def test_no_observer_records_nothing_but_still_works():
     selector = build_list_selector([make_api("host")])
 
@@ -222,9 +214,6 @@ def test_fire_fails_loudly_carrying_the_cause():
 
     assert excinfo.value.host == "host"
     assert isinstance(excinfo.value.__cause__, httpx.HTTPStatusError)
-
-
-# --- the callers thread the observer --------------------------------------
 
 
 def test_search_records_one_row_per_host_tried():
@@ -260,9 +249,6 @@ def test_check_query_values_records_its_call():
     (call,) = calls
     assert call.host == "node"
     assert call.success is True
-
-
-# --- fan_out ---------------------------------------------------------------
 
 
 def test_fan_out_calls_each_observer_in_order():
