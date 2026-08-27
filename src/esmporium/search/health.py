@@ -1,9 +1,19 @@
 """
-Health record information of search APIs for every search request
+Observing the health of the search APIs
 
-Here we define the health information to be saved, including:
-success, failure, error message, time taken, number of results
-(per host, per request).
+Every live request to a search API goes through
+[fire][esmporium.search.search.fire], whatever it was driven by.
+That is the one place where the request, the response code, any error, the number
+of results and the time taken all exist together, so it is where we observe a call.
+
+Observing is opt-in and deliberately use case agnostic.
+`fire` builds a plain [SearchApiCall][(m).] describing what happened
+and hands it to a [SearchApiCallObserver][(m).] if one was given.
+What to *do* with that record is the observer's choice:
+the database layer provides an observer which records it
+(see [record_search_api_calls][esmporium.db.health.record_search_api_calls]),
+but an observer is just a function, so a caller can print it, collect it,
+or send it somewhere else instead.
 
 Note that we define a `request` as the search we send, and a `call`
 as the request sent to a single host. A single request can result in several
