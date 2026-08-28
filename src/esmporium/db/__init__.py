@@ -14,19 +14,16 @@ from esmporium.db.schema import (
     SearchAPICallRecord,
 )
 from esmporium.db.search_health import (
-    DEFAULT_CANDIDATES,
     HostHealth,
     HostRanker,
     aggregate_host_health,
     build_health_selector,
-    example_custom_ranker,
-    rank_by_speed,
+    rank_by_median_response_time,
     record_search_api_calls,
 )
 
 __all__ = [
     "DATASET_FACET_COLUMNS",
-    "DEFAULT_CANDIDATES",
     "METADATA",
     "Dataset",
     "HostHealth",
@@ -34,7 +31,6 @@ __all__ = [
     "SearchAPICallRecord",
     "aggregate_host_health",
     "build_health_selector",
-    "example_custom_ranker",
-    "rank_by_speed",
+    "rank_by_median_response_time",
     "record_search_api_calls",
 ]

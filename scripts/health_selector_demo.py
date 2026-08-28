@@ -11,7 +11,7 @@ What it does:
    `stop_at_first_result=False` so every node in each project's pool is hit and
    gets a health record (real network, like the search demo).
 2. Prints a per-host health table (calls, success rate, median time).
-3. For each project, prints the order `build_health_selector` (which ranks by
+3. Prints the order `build_health_selector` (which ranks by
    speed) would hand to `search()`.
 
 It hits the live nodes, so it needs a network and takes a little while.
@@ -24,23 +24,22 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from sqlmodel import create_engine
+from sqlmodel import Session, create_engine, select
 
 from esmporium.db import (
-    DEFAULT_CANDIDATES,
     HostHealth,
     aggregate_host_health,
     build_health_selector,
-    rank_by_speed,
+    rank_by_median_response_time,
     record_search_api_calls,
 )
 from esmporium.db.migrate import upgrade_to_head
+from esmporium.db.schema import SearchAPICallRecord
 from esmporium.query import (
     QueryCMIP5,
     QueryCMIP6,
     QueryCMIP7,
     QueryProtocol,
-    to_canonical,
 )
 from esmporium.search import search
 
@@ -72,28 +71,31 @@ def print_health_table(health: dict[str, HostHealth]) -> None:
     print(f"  {'host':24} {'calls':>5} {'ok%':>5} {'med.time':>9}")
     print(f"  {'-' * 24} {'-' * 5} {'-' * 5} {'-' * 9}")
     # Fastest first, the same order the selector would use.
-    for h in sorted(health.values(), key=rank_by_speed):
-        time = "-" if h.response_time == float("inf") else f"{h.response_time:.2f}s"
+    for h in sorted(health.values(), key=rank_by_median_response_time):
+        time = (
+            "-"
+            if h.median_response_time == float("inf")
+            else f"{h.median_response_time:.2f}s"
+        )
         print(f"  {h.host:24} {h.n_calls:>5} {h.success_rate * 100:>4.0f}% {time:>9}")
 
 
-def ranked_hosts(engine, project: str) -> list[str]:
+def ranked_hosts(engine) -> list[str]:
     """Return the host order the speed-ranked selector would hand `search()`."""
-    selector = build_health_selector(engine, rank=rank_by_speed)
-    canonical = to_canonical(EXAMPLE_QUERIES[project])
+    selector = build_health_selector(engine, ranker=rank_by_median_response_time)
     hosts: list[str] = []
     attempt = 0
-    while (api := selector(canonical, attempt)) is not None:
+    while (api := selector(None, attempt)) is not None:
         hosts.append(api.host)
         attempt += 1
+
     return hosts
 
 
 def print_rankings(engine) -> None:
-    """For each project, print the speed-ranked order the selector would try."""
-    print("\nspeed-ranked order per project (fastest first):")
-    for project in EXAMPLE_QUERIES:
-        print(f"  {project}: {' > '.join(ranked_hosts(engine, project))}")
+    """Print the speed-ranked order the selector would try."""
+    print("\nspeed-ranked order (fastest first):")
+    print(f"{' > '.join(ranked_hosts(engine))}")
 
 
 def main() -> None:
@@ -105,8 +107,12 @@ def main() -> None:
         print("gathering health from live nodes (this takes a little while):")
         gather_health(engine)
 
-        pool_hosts = {api.host for pool in DEFAULT_CANDIDATES.values() for api in pool}
-        health = aggregate_host_health(engine, pool_hosts)
+        with Session(engine) as session:
+            pools_in_db = session.scalars(
+                select(SearchAPICallRecord.host).distinct()
+            ).all()
+
+        health = aggregate_host_health(engine, pools_in_db)
 
         print_health_table(health)
         print_rankings(engine)
