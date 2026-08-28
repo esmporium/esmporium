@@ -6,6 +6,7 @@ health-based selector built on top of it
 from __future__ import annotations
 
 import math
+import re
 
 import httpx
 import pytest
@@ -16,7 +17,7 @@ from esmporium.db import (
     SearchAPICallRecord,
     aggregate_host_health,
     build_health_selector,
-    rank_by_speed,
+    rank_by_median_response_time,
     record_search_api_calls,
 )
 from esmporium.query import QueryCanonical, QueryCMIP6
@@ -197,22 +198,49 @@ def test_aggregate_rolls_up_speed_and_reliability(engine):
     assert a.n_success == 2
     assert a.success_rate == pytest.approx(2 / 3)
     # Median of the successful times only; the failed call's time is ignored.
-    assert a.response_time == pytest.approx(0.3)
+    assert a.median_response_time == pytest.approx(0.3)
 
     b = health["b"]
     assert b.n_calls == 1
     assert b.n_success == 0
     assert b.success_rate == 0.0
     # No successful call, so it sorts to the very back on speed.
-    assert b.response_time == math.inf
+    assert b.median_response_time == math.inf
 
 
 def test_aggregate_filters_to_the_requested_hosts(engine):
     seed(engine, make_call(host="a"), make_call(host="b"))
 
     assert set(aggregate_host_health(engine, ["a"])) == {"a"}
-    # An empty host list means "nothing to look up", not "everything".
-    assert aggregate_host_health(engine, []) == {}
+    # An empty host doesn't make sense, raise
+    with pytest.raises(
+        ValueError, match=re.escape("Please pass a list of hosts, received hosts=")
+    ):
+        aggregate_host_health(engine, [])
+
+
+def test_aggregate_raises_if_database_is_empty_and_no_hosts_are_provided(engine):
+    # No seed, hence db is empty
+
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "There is no health information in the database. engine=Engine"
+        ),
+    ):
+        aggregate_host_health(engine)
+
+
+def test_aggregate_raises_if_database_has_no_information_for_wanted_node(engine):
+    # No seed, hence db is empty
+
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "These hosts have no health information in the database: ['a']. engine="
+        ),
+    ):
+        aggregate_host_health(engine, ["a"])
 
 
 def test_rank_by_speed_orders_fastest_first_and_dead_last():
@@ -220,7 +248,7 @@ def test_rank_by_speed_orders_fastest_first_and_dead_last():
     mid = HostHealth("mid", 4, 4, 1.0, 0.5)
     dead = HostHealth("dead", 4, 0, 0.0, math.inf)
 
-    ranked = sorted([mid, dead, fast], key=rank_by_speed)
+    ranked = sorted([mid, dead, fast], key=rank_by_median_response_time)
 
     assert [h.host for h in ranked] == ["fast", "mid", "dead"]
 
@@ -232,7 +260,7 @@ def test_selector_orders_the_pool_fastest_first(engine):
         make_call(host="fast", response_time_seconds=0.1),
         make_call(host="mid", response_time_seconds=0.5),
     )
-    candidates = {"CMIP6": [api("slow"), api("fast"), api("mid")]}
+    candidates = {api("slow"), api("fast"), api("mid")}
 
     selector = build_health_selector(engine, candidates)
 
@@ -246,7 +274,7 @@ def test_selector_appends_hosts_with_no_health_after_ranked_ones(engine):
         make_call(host="slow", response_time_seconds=0.9),
     )
     # "unknown" has never been called, so we cannot judge it.
-    candidates = {"CMIP6": [api("unknown"), api("slow"), api("fast")]}
+    candidates = {api("unknown"), api("slow"), api("fast")}
 
     selector = build_health_selector(engine, candidates)
 
@@ -256,7 +284,7 @@ def test_selector_appends_hosts_with_no_health_after_ranked_ones(engine):
 def test_selector_falls_back_entirely_when_the_pool_has_no_health(engine):
     # Nothing recorded, so there is nothing to rank on.
     fallback = build_list_selector([api("fb-1"), api("fb-2")])
-    candidates = {"CMIP6": [api("a"), api("b")]}
+    candidates = {api("a"), api("b")}
 
     selector = build_health_selector(engine, candidates, fallback=fallback)
 
@@ -278,7 +306,7 @@ def test_selector_injects_into_search_and_is_asked_in_ranked_order(engine):
         make_call(host="slow", response_time_seconds=0.9),
         make_call(host="fast", response_time_seconds=0.1),
     )
-    candidates = {"CMIP6": [api("slow"), api("fast")]}
+    candidates = {api("slow"), api("fast")}
     selector = build_health_selector(engine, candidates)
 
     # Every node answers, so `results` is keyed in the order they were asked,
@@ -291,13 +319,3 @@ def test_selector_injects_into_search_and_is_asked_in_ranked_order(engine):
     )
 
     assert list(outcome.results) == ["fast", "slow"]
-
-
-def test_selector_needs_exactly_one_project(engine):
-    seed(engine, make_call(host="a", response_time_seconds=0.1))
-    selector = build_health_selector(engine, {"CMIP6": [api("a")]})
-
-    with pytest.raises(ValueError, match="exactly one project"):
-        selector(QueryCanonical(project=()), 0)
-    with pytest.raises(ValueError, match="exactly one project"):
-        selector(QueryCanonical(project=("CMIP5", "CMIP6")), 0)

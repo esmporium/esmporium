@@ -91,6 +91,43 @@ class HostHealth:
     """
 
 
+class NoSearchAPIHealthInformationError(ValueError):
+    """
+    Raised when there is no search API health information, but we expect there to be
+    """
+
+    def __init__(self, engine: Engine) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        engine
+            Database engine
+        """
+        self.engine = engine
+        msg = f"There is no health information in the database. {engine=}"
+        super().__init__(msg)
+
+
+def get_hosts_in_db(engine: Engine) -> list[str]:
+    """
+    Get the hosts which appear in the database
+
+    Parameters
+    ----------
+    engine
+        The database to read health from.
+
+    Returns
+    -------
+    :
+        Hosts which appear in the database
+    """
+    with Session(engine) as session:
+        return session.scalars(select(SearchAPICallRecord.host).distinct()).all()
+
+
 def aggregate_host_health(
     engine: Engine, hosts: Iterable[str] | None = None
 ) -> dict[str, HostHealth]:
@@ -114,11 +151,13 @@ def aggregate_host_health(
     """
     statement = select(SearchAPICallRecord)
     if hosts is None:
-        # TODO: look up hosts from DB
-        raise NotImplementedError
-        # if not wanted:
-        #     msg = "The database is empty"
-        #     raise AssertionError(msg)
+        hosts_in_db = get_hosts_in_db(engine)
+
+        if not hosts_in_db:
+            msg = f"There is no health information in the database. {engine=}"
+            raise ValueError(msg)
+
+        wanted = hosts_in_db
 
     else:
         wanted = list(hosts)
@@ -135,6 +174,14 @@ def aggregate_host_health(
     by_host: dict[str, list[SearchAPICallRecord]] = {}
     for row in rows:
         by_host.setdefault(row.host, []).append(row)
+
+    no_information = [v for v in wanted if v not in by_host]
+    if no_information:
+        msg = (
+            f"These hosts have no health information in the database: "
+            f"{no_information}. {engine=}"
+        )
+        raise ValueError(msg)
 
     health: dict[str, HostHealth] = {}
     for host, host_rows in by_host.items():
@@ -237,13 +284,16 @@ def build_health_selector(
     # Hence just use the default tuple in the function instead.
 
     # Aggregate only the hosts we could actually pick, once, up front.
-    hosts = {api.host for api in candidates}
-    health = aggregate_host_health(engine, hosts)
-    if not health:
+    host_candidates = {api.host for api in candidates}
+    hosts_in_db = get_hosts_in_db(engine)
+
+    host_candidates_in_db = host_candidates.intersection(hosts_in_db)
+    if not host_candidates_in_db:
         # No health information for any of the hosts of interest,
         # drop to the fallback.
         return fallback
 
+    health = aggregate_host_health(engine, host_candidates_in_db)
     have_data = [api for api in candidates if api.host in health]
     no_data = [api for api in candidates if api.host not in health]
     ranked_with_data = sorted(have_data, key=lambda api: ranker(health[api.host]))
