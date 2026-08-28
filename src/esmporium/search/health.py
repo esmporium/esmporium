@@ -11,7 +11,7 @@ Observing is opt-in and deliberately use case agnostic.
 and hands it to a [SearchApiCallObserver][(m).] if one was given.
 What to *do* with that record is the observer's choice:
 the database layer provides an observer which records it
-(see [record_search_api_calls][esmporium.db.health.record_search_api_calls]),
+(see [record_search_api_calls][esmporium.db.search_health.record_search_api_calls]),
 but an observer is just a function, so a caller can print it, collect it,
 or send it somewhere else instead.
 
@@ -28,10 +28,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class SearchAPICall:
-    """
-    Health information saved per search API per call
-
-    """
+    """Health information saved per search API per call"""
 
     host: str
     """See [SearchAPICallRecord.host][esmporium.db.schema.SearchAPICallRecord.host]."""
@@ -70,9 +67,7 @@ class SearchAPICall:
 
 
 SearchAPICallObserver = Callable[[SearchAPICall], None]
-"""
-Something told about each search API call as it happens
-"""
+"""Something told about each search API call as it happens"""
 
 
 def fan_out(*observers: SearchAPICallObserver) -> SearchAPICallObserver:
