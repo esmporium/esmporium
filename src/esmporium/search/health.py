@@ -7,8 +7,8 @@ That is the one place where the request, the response code, any error, the numbe
 of results and the time taken all exist together, so it is where we observe a call.
 
 Observing is opt-in and deliberately use case agnostic.
-`fire` builds a plain [SearchApiCall][(m).] describing what happened
-and hands it to a [SearchApiCallObserver][(m).] if one was given.
+`fire` builds a plain [SearchAPICall][(m).] describing what happened
+and hands it to a [SearchAPICallObserver][(m).] if one was given.
 What to *do* with that record is the observer's choice:
 the database layer provides an observer which records it
 (see [record_search_api_calls][esmporium.db.search_health.record_search_api_calls]),
