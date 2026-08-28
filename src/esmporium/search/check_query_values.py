@@ -31,7 +31,8 @@ from esmporium.query import (
     to_canonical,
 )
 from esmporium.search.esgf_generations import native_facet_names
-from esmporium.search.search import fire
+from esmporium.search.health import SearchAPICallObserver
+from esmporium.search.search import SearchAPIRequestError, fire
 from esmporium.search.search_api import (
     DEFAULT_SELECTOR,
     SearchAPI,
@@ -374,6 +375,7 @@ def allowed_values_from_api(
     client: httpx.Client,
     canonical: QueryCanonical,
     facets: set[str],
+    observer: SearchAPICallObserver | None = None,
 ) -> AllowedValues:
     """
     Get what a search API can tell us about the allowed values of some facets
@@ -392,6 +394,10 @@ def allowed_values_from_api(
     facets
         Facets for which to get the allowed values
 
+    observer
+        Told about the request to `api`, so its health can be recorded.
+        If `None` (the default), nothing is recorded.
+
     Returns
     -------
     :
@@ -409,10 +415,10 @@ def allowed_values_from_api(
 
     request = api.generation.build_get_facet_values_request(canonical, askable)
 
-    raw = fire(client, api, request)
-
-    if raw is None:
-        raise CouldNotGetAllowedValuesError(api.host)
+    try:
+        raw = fire(client, api, request, observer)
+    except SearchAPIRequestError as exc:
+        raise CouldNotGetAllowedValuesError(api.host) from exc
 
     return AllowedValues(
         values=api.generation.parse_facet_values(raw, askable),
@@ -461,13 +467,14 @@ class ValueCheckOutcome:
     """What each API which would not answer said, keyed by host"""
 
 
-def check_query_values(
+def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberate injection seams
     query: QueryProtocol,
     selector: SearchAPISelector = DEFAULT_SELECTOR,
     *,
     stop_at_first_result: bool = True,
     close_matches: CloseMatcher = close_matches_difflib,
     client: httpx.Client | None = None,
+    observer: SearchAPICallObserver | None = None,
 ) -> ValueCheckOutcome:
     """
     Check a query's values against the APIs which would have served it
@@ -504,6 +511,11 @@ def check_query_values(
         The HTTP client to ask the APIs with.
         If `None`, one is built for the call and closed at the end.
 
+    observer
+        Told about each request to each API, so its health can be recorded.
+        If `None` (the default), nothing is recorded.
+        See [esmporium.search.health][] for how to build one.
+
     Returns
     -------
     :
@@ -536,7 +548,9 @@ def check_query_values(
         while (api := selector(canonical, attempt)) is not None:
             asked_someone = True
             try:
-                allowed = allowed_values_from_api(api, client, canonical, facets)
+                allowed = allowed_values_from_api(
+                    api, client, canonical, facets, observer
+                )
             except CouldNotGetAllowedValuesError as exc:
                 refusals[api.host] = exc
             else:

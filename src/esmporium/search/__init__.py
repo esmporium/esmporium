@@ -60,10 +60,16 @@ from esmporium.search.esgf_generations import (
     stac_summary_values,
     unexpressible_facets,
 )
+from esmporium.search.health import (
+    SearchAPICall,
+    SearchAPICallObserver,
+    fan_out,
+)
 from esmporium.search.retry import build_transient_retrying
 from esmporium.search.search import (
     CouldNotSearchError,
     NoAPIWouldAnswerError,
+    SearchAPIRequestError,
     SearchOutcome,
     fire,
     search,
@@ -100,7 +106,10 @@ __all__ = [
     "ProjectPrefixMismatchError",
     "Request",
     "SearchAPI",
+    "SearchAPICall",
+    "SearchAPICallObserver",
     "SearchAPIGeneration",
+    "SearchAPIRequestError",
     "SearchAPISelector",
     "SearchOutcome",
     "SelectorOfferedNoAPIError",
@@ -127,6 +136,7 @@ __all__ = [
     "close_matches_difflib",
     "compare_values",
     "facets_the_user_set",
+    "fan_out",
     "fire",
     "native_facet_names",
     "search",

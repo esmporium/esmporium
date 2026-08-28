@@ -1,20 +1,20 @@
 Rough plan for PRs.
 
-Last updated: 2026-08-2- [ ](ok, this is also tracked in git, anyway)
+Last updated: 2026-08-27 (ok, this is also tracked in git, anyway)
 
-## PR1 In progress, see https://github.com/esmporium/esmporium/pull/14
+## PR1 Done, see https://github.com/esmporium/esmporium/pull/14
 
 Add search
 
 Check that we can execute searches using all our query classes.
-Check that we can hit both the ESGF- [ ]and ESGF-NG APIs.
+Check that we can hit both the ESGF-1 and ESGF-NG APIs.
 Check that we can track search API performance in a database.
 
 Tests:
 
 Unit tests:
 
-- [x] conversion of query classes into ESGF- [ ]and ESGF-NG query parameters
+- [x] conversion of query classes into ESGF-1 and ESGF-NG query parameters
     - no actual hit of the API, we just want to check the generated query parameters for each API
     - default is to always search so that retracted results are included too so we get tracking of when datasets go from not retracted to retracted (this means the retracted parameter will need to be passed every time I think, because ESGF's default is to not return retracted results)
 - [x] check of retry logic i.e. make sure that retry wishes from the user are respected and passed through correctly
@@ -23,17 +23,17 @@ Unit tests:
 
 Integration tests:
 
-- [ ] hit the APIs using all query classes and check that we get the results we expect. Run this on all combinations, even e.g. CMIP5 with ESGF-NG and CMIP7 with ESGF- [ ] We shouldn't get an error, we should just get no results.
+- [x] hit the APIs using all query classes and check that we get the results we expect. Run this on all combinations, even e.g. CMIP5 with ESGF-NG and CMIP7 with ESGF-1 We shouldn't get an error, we should just get no results.
     [x] check that all query - API combinations can be handled. Parse the returned JSON very roughly (proper parsing comes in the next PR) to check results are as expected.
         - only do 'plain' queries here, test the AND/OR logic of the ESGF APIs in a separate test below
         - the simplest will be e.g. CMIP5 with ESGF1
         - the most complicated will be a query using ESGFQuery that queries CMIP5, CMIP6 and CMIP7. This will require the queries to be split in parallel and retries of different end points for CMIP5 vs. CMIP6 vs. CMIP7. I guess the logic should be, if an end point gives no results, try the next one? For this PR, please just have some function like `end_point_selector` which is given the full query and the attempt number and returns the end-point to search. Give this sensible defaults but make sure that this function is injectable so a user can override the logic as they wish/need. This is what will also allow a user to effectively specify a queue of APIs to try as needed. For now, just combine the results in a basic dict with keys for each search e.g. `{"cmip5": cmip5_raw_json, "cmip6": cmip6_raw_json, "cmip7": cmip7_raw_json}` - we will clean this up in a follow up PR.
         - the form of this test will change in a follow up PR (and be easier to read and write) where we return Dataset objects rather than raw JSON (we will stop caring about the raw JSON format as it is only an intermediate). Please mark this test with this note
-    [ ] check the AND/OR logic of the ESGF APIs. Parse the returned JSON very roughly (proper parsing comes in the next PR) to check results are as expected.
+    [x] check the AND/OR logic of the ESGF APIs. Parse the returned JSON very roughly (proper parsing comes in the next PR) to check results are as expected.
         - the simplest test should not have any test of AND/OR logic, because the search is so simple. However, the test should somehow be parameterised/duplicated so that there are also tests that check the ESGF APIs' AND/OR logic too.
         - this is testing ESGF behaviour, rather than ours, but it's still key to test in case ESGF makes a change
         - the form of this test will change in a follow up PR where we return Dataset objects rather than raw JSON (we will stop caring about the raw JSON format as it is only an intermediate). Please mark this test with this note
-        - do this only with our ESGFQuery class (don't worry about the specific ones, they're tested above), but this will need to be done on ESGF- [ ] ESGF-NG east and ESGF-NG west
+        - do this only with our ESGFQuery class (don't worry about the specific ones, they're tested above), but this will need to be done on ESGF-1 ESGF-NG east and ESGF-NG west
     [x] deferred to PR1.5 check that the API health stats appear in the expected database
         - do this both for ESGF1 and ESGF-NG (don't worry about testing across all query classes though)
     [x] mark these tests so that they are opt-in. By default they should be skipped so that our 'main' test suite doesn't require slow ESGF queries to run
@@ -53,18 +53,45 @@ Not included:
 
 Search API health
 If this PR is small enough, consider also adding a selector function that picks the API to use based on health information (e.g. pick the API which has the fastest response with results for the given project)
-search.py logging see comment to return failure reason rather than None?
+search.py logging see comment to return failure reason rather than None? (see line 137 in search.py)
 
 Tests:
 
 Unit tests:
 
-- [ ] capturing of various paths e.g. successful search (make sure we store request plus time taken for response plus whether there were any results/number of results (so we can distinguish APIs with results for projects vs. those without)?), failure search (store request plus failure status code plus failure status message plus ?), any other paths (not sure what...). Mock out the search API so we control the response
+- [x] capturing of various paths e.g. successful search (make sure we store request plus time taken for response plus whether there were any results/number of results (so we can distinguish APIs with results for projects vs. those without)?), failure search (store request plus failure status code plus failure status message plus ?), any other paths (not sure what...). Mock out the search API so we control the response
 
 Integration tests:
 
-- [ ] check that the API health stats appear in the expected database
+- [x] check that the API health stats appear in the expected database
     - do this both for ESGF-1 ESGF15-bridge and ESGF-NG (don't worry about testing across all query classes though). This can just be part of the existing integration tests, no need to add new tests.
+        - only done on select queries: no point duplicating the tests across code paths that won't vary by search API (we think)
+
+## PR1.7
+
+Use Search API health information from the database to select/rank APIs for the next request
+
+This is an optional selector function to use if the SearchAPICallRecord table has data (any data, or only opt-in selector if the same request is being sent out? - maybe the latter?) This selector could take a few different formats: it could be based on no. results per request per host, or time per request per host, or results/time. Should this be a user decision, or we make that decision now? Our selector will rank the hosts based on database information, then return hosts based on that ranking (the search functions handle the logic around how many hosts are used, the selector functions don't need to worry about that logic at all).
+ZN reply: it can only do something sensible if there is data. You have to decide what to do if the table has no data. I'd probably have a fallback option (e.g. the default selector) so that it doesn't blow up the first time it is used (and then kicks in once there is data)
+ZN reply: I wouldn't do it only if the same request is being sent, but I can also see why that might be helpful. It doesn't really matter: we're just writing this as a convenience - users can always inject something else if they want so there is no real penalty to pay from getting this 'wrong'. Just use this PR as a chance to practice adding something and making decisions yourself with a lot of freedom. Maybe use a demo script that you can run repeatedly over different searches to help you figure out what is actually useful in practice.
+ZN reply: it's all user decision. The point of the selector function being injectable is that the user can always choose to do something different.
+ZN reply: all we want to demonstrate here is how such a selector could work, and to then put a couple that we think are most useful in the codebase so that a) others can get this without having to figure it out themselves and b) users have a template if they want to copy-paste then edit to get behaviour that is exactly tuned to their use case.
+
+Where would a selector live? search_api.py?
+ZN reply: ideally it should end up in search_api.py, next to the other in built selectors. However, given that it requires database knowledge, we might have to put it in `search_health` or somewhere else instead.
+
+Tests:
+
+Unit tests:
+
+- [ ] I feel a little lost with tests still, but I will have a crack and you can provide feedback.
+    - Test that a mock health table with various hosts with different results and request times (and attempt numbers) rank the way we want them to. Creates output of ranked hosts that can be injected back to search.
+      ZN reply: yep this is what we want
+
+Integration tests:
+
+- [ ] Are there any integration tests here? Feels like maybe just unit tests if we are only performing live tests on a single host?
+    - ZN: yep no integration tests for this. The functionality is nice to have, not something we need to make bullet proof. Also setting up an integration test that was more than just running a bunch of searches then using this selector would be hard, and this simple integration test is very expensive to run and of very little value.
 
 ## PR2
 
@@ -290,7 +317,7 @@ Unit tests:
 Integration tests:
 
 - [ ] Do a search query that gets file information from an ESGF API, assert that the expected data access information and links appear in the database
-    - do this on all combinations of ESGF- [ ]ESGF-NG and CMIP5/CMIP6/CMIP7. Yes, that's more expensive, but it's also the key test so we are happy to pay that price
+    - do this on all combinations of ESGF-1 ESGF-NG and CMIP5/CMIP6/CMIP7. Yes, that's more expensive, but it's also the key test so we are happy to pay that price
     - also make sure that there are links between information that can only be retrieved from file headers and the file from which the information was retrieved (add this assertion to the relevant tests from the previous PR)
 
 Not included:
