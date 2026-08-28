@@ -102,6 +102,7 @@ Converting search results into Datasets
 Check that we can parse search results into Datasets
 Check whether we can create a mermaid diagram that, by definition, stays in line with our code that we can put in our docs to show the links between things
 Include pagination in this step (currently we know the number of results found for each search, but are only recording the first 10,000 in the raw_json). STAC and SOLR will be handled differently. SOLR can be paralelised and STAC (with east and west having slightly different naming conventions), have to be handled consecutively.
+This is the first place where we will be parallelising (handling multiple pages of results via SOLR). There are notes in tests/integration/test_health.py about defering parallelisation testing, primarily regarding how we handle recording results to a dataset in paralel (must be handled specifically).
 
 Tests:
 
@@ -121,6 +122,7 @@ Integration tests:
 - Pagination: an explicit integration test for a search that returns around 30 000 results (so we need 3 queries to get everything)
 - We can get the integration test with SOLR. With STAC, we'll have to rely on mocking for now to test this and a proper integration
 test can wait until there are 10 000 records available. -> or perhaps not...
+- SOLR paralelisation and saving multiple pages of results to dataset concurrently.
 
 Not included:
 
