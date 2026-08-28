@@ -13,12 +13,28 @@ from esmporium.db.schema import (
     Dataset,
     SearchAPICallRecord,
 )
-from esmporium.db.search_health import record_search_api_calls
+from esmporium.db.search_health import (
+    DEFAULT_CANDIDATES,
+    HostHealth,
+    HostRanker,
+    aggregate_host_health,
+    build_health_selector,
+    example_custom_ranker,
+    rank_by_speed,
+    record_search_api_calls,
+)
 
 __all__ = [
     "DATASET_FACET_COLUMNS",
+    "DEFAULT_CANDIDATES",
     "METADATA",
     "Dataset",
+    "HostHealth",
+    "HostRanker",
     "SearchAPICallRecord",
+    "aggregate_host_health",
+    "build_health_selector",
+    "example_custom_ranker",
+    "rank_by_speed",
     "record_search_api_calls",
 ]

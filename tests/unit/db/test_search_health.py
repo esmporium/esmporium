@@ -1,13 +1,29 @@
 """
-Unit tests for recording search API health into the database
+Unit tests for recording search API health into the database, and for the
+health-based selector built on top of it
 """
 
 from __future__ import annotations
 
+import math
+
+import httpx
+import pytest
 from sqlmodel import Session, col, select
 
-from esmporium.db import SearchAPICallRecord, record_search_api_calls
+from esmporium.db import (
+    HostHealth,
+    SearchAPICallRecord,
+    aggregate_host_health,
+    build_health_selector,
+    rank_by_speed,
+    record_search_api_calls,
+)
+from esmporium.query import QueryCanonical, QueryCMIP6
+from esmporium.search import SearchAPI, build_list_selector, search
 from esmporium.search.health import SearchAPICall
+from esmporium.search.retry import build_transient_retrying
+from esmporium.search.search_api import CMIP6_APIS, SOLR_CMIP6
 
 
 def make_call(  # noqa: PLR0913 - a factory mirroring every field of the record
@@ -122,3 +138,166 @@ def test_record_is_append_only(engine):
 
     assert [row.host for row in rows] == ["a", "b"]
     assert [row.attempt_number for row in rows] == [1, 2]
+
+
+# --- the health-based selector -------------------------------------------------
+
+QUERY_CMIP6 = QueryCMIP6(experiment_id="historical", variable_id="tas", frequency="mon")
+"""A single-project (CMIP6) query; its canonical form is what the selector sees"""
+
+CMIP6 = QueryCanonical(project=("CMIP6",))
+"""The canonical query a selector is handed for the tests that call it directly"""
+
+
+def seed(engine, *calls: SearchAPICall) -> None:
+    """Record some calls into the health table."""
+    observer = record_search_api_calls(engine)
+    for call in calls:
+        observer(call)
+
+
+def api(host: str) -> SearchAPI:
+    """Build a CMIP6-Solr SearchAPI for `host` (only the host matters to ranking)."""
+    return SearchAPI(host, SOLR_CMIP6, build_transient_retrying(1))
+
+
+def hosts_offered(selector, canonical=CMIP6) -> list[str]:
+    """Walk a selector to exhaustion and collect the hosts it offers, in order."""
+    hosts: list[str] = []
+    attempt = 0
+    while (chosen := selector(canonical, attempt)) is not None:
+        hosts.append(chosen.host)
+        attempt += 1
+    return hosts
+
+
+def solr_response(num_found: int) -> httpx.Response:
+    """A Solr-shaped 200 response reporting `num_found` matches."""
+    return httpx.Response(200, json={"response": {"numFound": num_found, "docs": []}})
+
+
+def client_for(handler) -> httpx.Client:
+    """An httpx client whose requests are answered by `handler`."""
+    return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def test_aggregate_rolls_up_speed_and_reliability(engine):
+    seed(
+        engine,
+        make_call(host="a", success=True, response_time_seconds=0.2),
+        make_call(host="a", success=True, response_time_seconds=0.4),
+        make_call(host="a", success=False, num_results=None, response_time_seconds=9.0),
+        make_call(host="b", success=False, num_results=None, response_time_seconds=9.0),
+    )
+
+    health = aggregate_host_health(engine)
+
+    a = health["a"]
+    assert a.n_calls == 3
+    assert a.n_success == 2
+    assert a.success_rate == pytest.approx(2 / 3)
+    # Median of the successful times only; the failed call's time is ignored.
+    assert a.response_time == pytest.approx(0.3)
+
+    b = health["b"]
+    assert b.n_calls == 1
+    assert b.n_success == 0
+    assert b.success_rate == 0.0
+    # No successful call, so it sorts to the very back on speed.
+    assert b.response_time == math.inf
+
+
+def test_aggregate_filters_to_the_requested_hosts(engine):
+    seed(engine, make_call(host="a"), make_call(host="b"))
+
+    assert set(aggregate_host_health(engine, ["a"])) == {"a"}
+    # An empty host list means "nothing to look up", not "everything".
+    assert aggregate_host_health(engine, []) == {}
+
+
+def test_rank_by_speed_orders_fastest_first_and_dead_last():
+    fast = HostHealth("fast", 4, 4, 1.0, 0.1)
+    mid = HostHealth("mid", 4, 4, 1.0, 0.5)
+    dead = HostHealth("dead", 4, 0, 0.0, math.inf)
+
+    ranked = sorted([mid, dead, fast], key=rank_by_speed)
+
+    assert [h.host for h in ranked] == ["fast", "mid", "dead"]
+
+
+def test_selector_orders_the_pool_fastest_first(engine):
+    seed(
+        engine,
+        make_call(host="slow", response_time_seconds=1.0),
+        make_call(host="fast", response_time_seconds=0.1),
+        make_call(host="mid", response_time_seconds=0.5),
+    )
+    candidates = {"CMIP6": [api("slow"), api("fast"), api("mid")]}
+
+    selector = build_health_selector(engine, candidates)
+
+    assert hosts_offered(selector) == ["fast", "mid", "slow"]
+
+
+def test_selector_appends_hosts_with_no_health_after_ranked_ones(engine):
+    seed(
+        engine,
+        make_call(host="fast", response_time_seconds=0.1),
+        make_call(host="slow", response_time_seconds=0.9),
+    )
+    # "unknown" has never been called, so we cannot judge it.
+    candidates = {"CMIP6": [api("unknown"), api("slow"), api("fast")]}
+
+    selector = build_health_selector(engine, candidates)
+
+    assert hosts_offered(selector) == ["fast", "slow", "unknown"]
+
+
+def test_selector_falls_back_entirely_when_the_pool_has_no_health(engine):
+    # Nothing recorded, so there is nothing to rank on.
+    fallback = build_list_selector([api("fb-1"), api("fb-2")])
+    candidates = {"CMIP6": [api("a"), api("b")]}
+
+    selector = build_health_selector(engine, candidates, fallback=fallback)
+
+    # It defers to the fallback verbatim, offering the fallback's own APIs.
+    assert selector(CMIP6, 0).host == "fb-1"
+    assert hosts_offered(selector) == ["fb-1", "fb-2"]
+
+
+def test_selector_default_fallback_is_the_default_selector(engine):
+    # Empty table + default candidates/fallback: behaves like the default order.
+    selector = build_health_selector(engine)
+
+    assert hosts_offered(selector) == [candidate.host for candidate in CMIP6_APIS]
+
+
+def test_selector_injects_into_search_and_is_asked_in_ranked_order(engine):
+    seed(
+        engine,
+        make_call(host="slow", response_time_seconds=0.9),
+        make_call(host="fast", response_time_seconds=0.1),
+    )
+    candidates = {"CMIP6": [api("slow"), api("fast")]}
+    selector = build_health_selector(engine, candidates)
+
+    # Every node answers, so `results` is keyed in the order they were asked,
+    # which is the selector's ranked (fastest-first) order.
+    outcome = search(
+        QUERY_CMIP6,
+        selector,
+        stop_at_first_result=False,
+        client=client_for(lambda request: solr_response(1)),
+    )
+
+    assert list(outcome.results) == ["fast", "slow"]
+
+
+def test_selector_needs_exactly_one_project(engine):
+    seed(engine, make_call(host="a", response_time_seconds=0.1))
+    selector = build_health_selector(engine, {"CMIP6": [api("a")]})
+
+    with pytest.raises(ValueError, match="exactly one project"):
+        selector(QueryCanonical(project=()), 0)
+    with pytest.raises(ValueError, match="exactly one project"):
+        selector(QueryCanonical(project=("CMIP5", "CMIP6")), 0)

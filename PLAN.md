@@ -80,6 +80,8 @@ ZN reply: all we want to demonstrate here is how such a selector could work, and
 Where would a selector live? search_api.py?
 ZN reply: ideally it should end up in search_api.py, next to the other in built selectors. However, given that it requires database knowledge, we might have to put it in `search_health` or somewhere else instead.
 
+Update: Only rank by speed for this PR, leave project and more intelligent ranking (by results and speed according to project requests) for future PR.
+
 Tests:
 
 Unit tests:
