@@ -38,6 +38,14 @@ from esmporium.search.search_api import SOLR_CMIP6, STAC_CMIP6
 # small, and copying keeps this file self-contained. A future PR (PR3 needs a mock
 # search endpoint of its own) may pull them into a shared `mock_search_api` module.
 
+# NOTE 2: We explicitly do not test parallelism on search calls yet.
+# A concurrency/thread test — without WAL + busy_timeout a
+# concurrent-write SQLite test is flaky, and thread-safety is the deferred parallel
+# PR's concern. Deterministic multi-row behaviour is already covered by the
+# retry / multi-host cases in file 1.
+# FROM ZN: "make sure that database writing works, even when calls are made in
+# parallel so can clash/race each other or have other weird parallel side effects"
+
 QUERY = QueryCMIP6(experiment_id="historical", variable_id="tas", frequency="mon")
 """A CMIP6 query the mock APIs answer for"""
 
@@ -112,7 +120,6 @@ def test_success_with_results_records_one_call():
     assert call.attempt_number == 1
 
 
-# TODO: @Zeb I guess this is technically a success for our health table?
 def test_zero_results_still_records_a_success():
     (call,) = record(lambda r: solr_response(0), [make_api("host")])
 
@@ -142,14 +149,22 @@ def test_stac_post_records_its_method_and_body():
     assert call.num_results == 3
 
 
-def test_client_error_records_one_failed_call_without_retrying():
-    (call,) = record(lambda r: httpx.Response(404), [make_api("host", attempts=3)])
+def test_a_client_error_is_not_retried():
+    # attempts=3 would allow three tries, but a 4xx is a definite "no": the policy
+    # does not retry it, so exactly one attempt is made and one call recorded.
+    calls = record(lambda r: httpx.Response(404), [make_api("host", attempts=3)])
+
+    assert len(calls) == 1
+    assert calls[0].attempt_number == 1
+
+
+def test_a_failed_call_records_the_status_and_error():
+    (call,) = record(lambda r: httpx.Response(404), [make_api("host")])
 
     assert call.success is False
     assert call.response_code == 404
     assert isinstance(call.error, httpx.HTTPStatusError)
     assert call.num_results is None
-    assert call.attempt_number == 1
 
 
 def test_a_transient_failure_records_every_attempt():
@@ -180,17 +195,27 @@ def test_a_transport_error_records_no_status_code():
     assert isinstance(call.error, httpx.TransportError)
 
 
+def test_an_unparseable_body_is_not_retried():
+    # A body we cannot parse is not a transient failure, so the policy does not
+    # retry it: exactly one attempt is made and one call recorded, despite attempts=3.
+    calls = record(
+        lambda r: httpx.Response(200, content=b"not json"),
+        [make_api("host", attempts=3)],
+    )
+
+    assert len(calls) == 1
+    assert calls[0].attempt_number == 1
+
+
 def test_an_unparseable_body_records_a_failure_with_the_status():
     (call,) = record(
         lambda r: httpx.Response(200, content=b"not json"),
-        [make_api("host", attempts=3)],
+        [make_api("host")],
     )
 
     assert call.success is False
     assert call.response_code == 200
     assert isinstance(call.error, ValueError)
-    # A body we cannot parse is not a transient failure, so it is not retried.
-    assert call.attempt_number == 1
 
 
 def test_no_observer_records_nothing_but_still_works():

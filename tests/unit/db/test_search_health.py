@@ -1,10 +1,5 @@
 """
 Unit tests for recording search API health into the database
-
-These cover the translation from the search layer's plain `SearchAPICall` into a
-`SearchAPICallRecord` row (`from_call`) and the observer that persists it
-(`record_search_api_calls`), using an in-memory SQLite (see `conftest.py`). Driving
-`fire` against a mock search API is covered in `tests/unit/search/test_health.py`.
 """
 
 from __future__ import annotations

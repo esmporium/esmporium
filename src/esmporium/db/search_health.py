@@ -28,8 +28,7 @@ def record_search_api_calls(engine: Engine) -> SearchAPICallObserver:
     ----------
     engine
         The database engine to record into.
-        The caller owns it, the same way the search
-        functions let the caller own the HTTP client.
+        The caller owns it
 
     Returns
     -------
