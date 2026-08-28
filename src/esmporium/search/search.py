@@ -99,6 +99,12 @@ def _log_request_as_url_and_curl(
 class SearchAPIRequestError(RuntimeError):
     """
     Raised when one request to one search API does not come back with a usable answer
+
+    This is the low-level failure that [fire][(m).fire] raises,
+    whether the host never answered (a transport error or timeout)
+    or answered with something we could not use (a bad status, unreadable JSON).
+
+    Higher-level callers are expected to translate this into their own vocabulary.
     """
 
     def __init__(self, host: str) -> None:
