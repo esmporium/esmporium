@@ -59,19 +59,26 @@ Tests:
 
 Unit tests:
 
-- [ ] capturing of various paths e.g. successful search (make sure we store request plus time taken for response plus whether there were any results/number of results (so we can distinguish APIs with results for projects vs. those without)?), failure search (store request plus failure status code plus failure status message plus ?), any other paths (not sure what...). Mock out the search API so we control the response
+- [x] capturing of various paths e.g. successful search (make sure we store request plus time taken for response plus whether there were any results/number of results (so we can distinguish APIs with results for projects vs. those without)?), failure search (store request plus failure status code plus failure status message plus ?), any other paths (not sure what...). Mock out the search API so we control the response
 
 Integration tests:
 
-- [ ] check that the API health stats appear in the expected database
+- [x] check that the API health stats appear in the expected database
     - do this both for ESGF-1 ESGF15-bridge and ESGF-NG (don't worry about testing across all query classes though). This can just be part of the existing integration tests, no need to add new tests.
+        - only done on select queries: no point duplicating the tests across code paths that won't vary by search API (we think)
 
 ## PR1.7
-Use Search API health to select/rank APIs for the next request
 
-This is an optional selector function to use if the SearchAPICallRecord table has data (any data, or only opt-in selector if the same request is being sent out? - maybe the latter?) This selector could take a few different formats: it could be based on no. results per request per host, or time per request per host, or results/time. Should this be a user decision, or we make that decision now? Our selector will rank the hosts, and then the user can either use the ranked list, or the top choice (already a user choice in search function)
+Use Search API health information from the database to select/rank APIs for the next request
+
+This is an optional selector function to use if the SearchAPICallRecord table has data (any data, or only opt-in selector if the same request is being sent out? - maybe the latter?) This selector could take a few different formats: it could be based on no. results per request per host, or time per request per host, or results/time. Should this be a user decision, or we make that decision now? Our selector will rank the hosts based on database information, then return hosts based on that ranking (the search functions handle the logic around how many hosts are used, the selector functions don't need to worry about that logic at all).
+ZN reply: it can only do something sensible if there is data. You have to decide what to do if the table has no data. I'd probably have a fallback option (e.g. the default selector) so that it doesn't blow up the first time it is used (and then kicks in once there is data)
+ZN reply: I wouldn't do it only if the same request is being sent, but I can also see why that might be helpful. It doesn't really matter: we're just writing this as a convenience - users can always inject something else if they want so there is no real penalty to pay from getting this 'wrong'. Just use this PR as a chance to practice adding something and making decisions yourself with a lot of freedom. Maybe use a demo script that you can run repeatedly over different searches to help you figure out what is actually useful in practice.
+ZN reply: it's all user decision. The point of the selector function being injectable is that the user can always choose to do something different.
+ZN reply: all we want to demonstrate here is how such a selector could work, and to then put a couple that we think are most useful in the codebase so that a) others can get this without having to figure it out themselves and b) users have a template if they want to copy-paste then edit to get behaviour that is exactly tuned to their use case.
 
 Where would a selector live? search_api.py?
+ZN reply: ideally it should end up in search_api.py, next to the other in built selectors. However, given that it requires database knowledge, we might have to put it in `search_health` or somewhere else instead.
 
 Tests:
 
@@ -79,10 +86,12 @@ Unit tests:
 
 - [ ] I feel a little lost with tests still, but I will have a crack and you can provide feedback.
     - Test that a mock health table with various hosts with different results and request times (and attempt numbers) rank the way we want them to. Creates output of ranked hosts that can be injected back to search.
+      ZN reply: yep this is what we want
 
 Integration tests:
 
 - [ ] Are there any integration tests here? Feels like maybe just unit tests if we are only performing live tests on a single host?
+    - ZN: yep no integration tests for this. The functionality is nice to have, not something we need to make bullet proof. Also setting up an integration test that was more than just running a bunch of searches then using this selector would be hard, and this simple integration test is very expensive to run and of very little value.
 
 ## PR2
 
