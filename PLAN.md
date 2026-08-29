@@ -138,11 +138,12 @@ By this stage, we'll have two key functions (at least conceptually, maybe not in
 - [ ] `parse_raw_json`
     - this will only parse into Datasets here. However, in future, this could also return DataAccess/File objects, so we need to be careful that the function signature and build of `parse_raw_json` accomodates for this (if not already, it should at least be clear how it would be modified to support DataAccess/File in future)
 
-We want to make these both 'private' i.e. add an underscore at the start of them and then create our 'real' `search_esgf` function. Maybe call this `search_esgf_single`, because this function should only support a single query. This function should search ESGF, parse the raw JSON into datasets and save those datasets to the database. We want it like this so that every search result goes in the database: that coupling is deliberately and, in many ways the point of esmporium. Users can use the private functions if they really want, but we're marking them as 'private' to make clear that we think this pattern should only be used if you really know what you're doing.
+We want to make these both clearly low-level e.g. add a `_low` suffix or something else to their names then create our 'real' `search_esgf` function. Maybe call the low-level function `search_esgf_single`, because it will only support a single query. This function should search ESGF, parse the raw JSON into datasets and save those datasets to the database. We want it like this so that every search result goes in the database: that coupling is deliberately and, in many ways the point of esmporium. Users can use the low-level functions if they really want and we should have docs that explain this escape hatch, but we're marking them as low-level to make clear that we think this pattern should only be used if you really know what you're doing.
+When renaming `search_esgf` to `search_esgf_single`  or `search_esgf_low` or whatever, let's also make the selector a required, rather than optional argument. The default selector has a coupling between API and project, let's move that into the higher-level and just have no 'sensible default' in our low-level functions (in my experience, for low-level stuff, forcing the user to think everything through is better than 'sensible defaults' because the sensible defaults can cause more confusion and work than just forcing people to make a decision at the start).
 
-Then, also add a higher-level `search_esgf` function, that takes one or more queries. This function handles the parallelisation of calls to `search_esgf_single` (but it is a bit more complicated, because `search_esgf_single` can itself also spin up multiple workers if e.g. it receives an ESGFQuery that needs to work over multiple projects).
+Then, also add a higher-level `search_esgf` function, that takes one or more queries. This function handles the parallelisation of calls to `search_esgf_single` (~but it is a bit more complicated, because `search_esgf_single` can itself also spin up multiple workers if e.g. it receives an ESGFQuery that needs to work over multiple projects~ put the splitting of a query that wants to query over multiple projects in the high-level `search_esgf` function: keep the low-level function as it is i.e. without any coupling between project and behaviour).
 
-My instinct is to do it this way. Check this plan with claude first. Maybe there is a better pattern for handling this parallelisation over queries (i.e. the fact that `search_esgf` needs to parallelise calls to `search_esgf_single`) and parallelisation over projects (i.e. the fact that `search_esgf_single` has to make multiple calls to ESGF if we want a query that includes multiple projects) issue.
+My instinct is to do it this way because it keeps the low-level function 'dumb' and easily controlled, with the 'sensible default' coupling between queries and project only appearing in the high-layer (so most users get it, but experts can use the low-layer directly if they don't like it). Nonetheless, check this plan with claude first. ~Maybe there is a better pattern for handling this parallelisation over queries (i.e. the fact that `search_esgf` needs to parallelise calls to `search_esgf_single`) and parallelisation over projects (i.e. the fact that `search_esgf_single` has to make multiple calls to ESGF if we want a query that includes multiple projects) issue.~
 
 Unit tests:
 
@@ -155,7 +156,7 @@ Integration tests:
 
 - [ ] Update the integration tests from PR2 so that they use `search_esgf` or `search_esgf_single` (as is appropriate for the test)
 - [ ] Add test of executing multiple queries in parallel using `search_esgf`
-    - in the docstring of `search_esgf`, note that performing multiple queries with this function is the only way to get certain types of logic e.g. if you want to look for `tas` monthly and `ts` daily but exclude `tas` daily and `ts` monthly, you need to do two queries because the ESGF API will give you `tas` and `ts` monthly and daily if you put in a search like `variable=["tas", "ts"], frequency=["mon", "day"]` (this is definitely true for SOLR, for NG it's probably not quite like that as the CQL2 syntax probably allows better AND/OR control - let's defer really deep support that right now, we can come back to it in future if we ever decide that we really need that feature/control)
+    - in the docstring of `search_esgf`, note that performing multiple queries with this function is the only way to get certain types of logic e.g. if you want to look for `tas` monthly and `ts` daily but exclude `tas` daily and `ts` monthly, you need to do two queries because the SOLR APIs will give you `tas` and `ts` monthly and daily if you put in a search like `variable=["tas", "ts"], frequency=["mon", "day"]` (this is definitely true for SOLR, for NG it's probably not quite like that as the CQL2 syntax probably allows better AND/OR control - let's defer really deep support for that right now, we can come back to it in future if we ever decide that we really need that feature/control)
 
 Not included:
 
@@ -176,8 +177,8 @@ Tests:
 
 Unit tests:
 
-- [ ] auto-generation of name for `QueryCollection` objects. Include a timestamp so collision of names is very unlikely
-- [ ] handling of clashes in names (unit test because this logic test should be able to be done without a database connection if we get the abstraction right)
+- [ ] auto-generation of name for `QueryCollection` objects. Include a timestamp in the automatically generated name so accidental collision of names is very unlikely
+- [ ] handling of clashes in names (unit test because this logic test should be able to be done without a real database connection if we get the abstraction right)
 - [ ] passing of clash handling parameters from `search_esgf` down to low level functions (use mocking so this test is only checking parsing, not other behaviour)
 
 (maybe we'll move some of the integration tests below in here if we can make them fast enough)
@@ -187,8 +188,8 @@ Integration tests:
 - [ ] update existing tests to handle `search_esgf`'s new API
 - [ ] searching with two query collections that only differ by name raises by default (parsing and other behaviour handled above)
 - [ ] `search_esgf` tracks the search in the database
-- [ ] we have a `rerun_search_esgf`, which works baesd on the query's name or ID alone (not sure if we need a specific function for this or we just make `search_esgf` handle query names, let's think about it). Re-running records the information required to see how dataset entries have changed over time
-    - there's probably quite a few cases to consider here e.g. new dataset version, version goes from not retracted to retracted, dataset is no longer available (should never happen, but might because I think ESGF only returns not retracted results by default, so it might look like data disappeared if a user set retracted=false in their search)
+- [ ] we have a `rerun_search_esgf`, which works baesd on the query's name or ID alone (not sure if we need a specific function for this or we just make `search_esgf` handle query names/ids as well as QueryCollection objects, let's think about it). Re-running records the information required to see how dataset entries have changed over time
+    - there's probably quite a few cases to consider here e.g. new dataset version, version goes from not retracted to retracted, dataset is no longer available (should never happen, because I think ESGF returns both retracted and not retracted results via search APIs by default, but it might look like data disappeared if a user set retracted=false in their search)
     - all of this tracking behaviour should also work if we just call `search_esgf` again with the same query (i.e. there should be some common path between the two, if we keep `rerun_search_esgf` and `search_esgf` separate)
 
 Live tests:

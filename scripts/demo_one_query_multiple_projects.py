@@ -11,6 +11,7 @@ from esmporium.query import QueryCMIP7
 from esmporium.search import build_list_selector, search
 from esmporium.search.search_api import SOLR_CMIP7, SearchAPI, build_transient_retrying
 
+# TODO: add this to the live search use cases
 # This query gives you back results from multiple projects with ESG1.
 EXAMPLE_MULTI_PROJECT_RESULT = QueryCMIP7(
     project=("CMIP6", "CMIP7"),

@@ -5,17 +5,88 @@ This contains our search API interface,
 the pre-built search APIs we know how to talk to
 and pre-built options for how to pick between them.
 
-TODO: blend with line 293
+TODO: blend with the lines after "TODO: blend with module docstring"
+- ESGF search APIs have two parts
+    - the endpoint you're going to hit (not query specific)
+    - the facets you're going to use for search parameters (query specific)
+        - rename e.g. QueryCMIP5 to QueryCMIP5Like to make clearer that it is CMIP5-like,
+          but may also be used for other projects
+- this is why a given host can be used for multiple search APIs:
+  the host is only part of it, the decision about which facets to use is the other
+    - using multiple sets of facets in one query is asking for trouble
+        - either it always fails
+        - or worse, the API takes both the facets and gives back zero results always
+        - or equally worse, the API takes one or other of the facets, but not both
+    - as a result, if you want to make queries using multiple different sets of facets,
+      you have to hit the same host twice
+        - however, users can escape via the other_terms hatch
+          if they know better than us
+        - we don't provide this via the 'recommended' path
+          because we don't want to deal with the error handling headache
+          (we can make this reliable if we just make extra query(s),
+          we can't make this reliable if we optimise for queries,
+          but users can still do it with other_terms
+          and keep the rest of the machinery if they want)
+- beyond this, in practice, you can only get results for a given project
+  if you query the API using the facets from another project,
+  you get no results
+  (e.g. if you query project=CMIP6 with variant_label=r1i1pf1, you get lots of results,
+  if you query project=CMIP6 with ensemble=r1i1pf1, you get nothing)
+  - our default set ups
+    (e.g. default selectors)
+    and high-level functions
+    (e.g. the search based on multiple queries that we will add in PR3)
+    try to recognise this,
+    which is why these things all have 'project-aware' logic by default
+    or in-built (which is what we will do in PR3)
+  - this project-awareness introduces a coupling between project and behaviour
+  - this makes it much easier for us to give correct behaviour
+  - however, it does mean that we introduce a coupling
+    that isn't there in all the search APIs.
+    This has some consequences, e.g. we (will) make two or more queries
+    where sometimes one would have been enough
+  - this is a tradeoff that we are ok with.
+    The extra queries make maintenance and reliability much easier.
+    The extra queries do not cost that much in the scheme of things
+    (this will be particularly true once we have added parallelisation)
+  - as a user, the low level interfaces still allow you to create a setup
+    that is optimised to minimise the number of queries, if you want
+    (TODO: add that we should explain how to do this in FUTURE-DOCS.md)
+
+Use or delete what is below here
+
 Note that, in our implementation,
 search API generations
 ([SearchAPIGeneration][esmporium.search.esgf_generations.])
-are tightly coupled to query types
-(via the fact that [SearchAPIGeneration.params][esmporium.search.esgf_generations.]
-is a [QueryProtocol][esmporium.query.protocol.]).
+are tightly coupled to the language used for creating the search facets
+i.e. each [SearchAPIGeneration][esmporium.search.esgf_generations.].
 This is why there is e.g. [SOLR_CMIP5][(m).] and [SOLR_CMIP6][(m).],
 rather than just a single SOLR generation instance.
-This choice is made so that request creation, error handling and reporting
-are much simpler.
+This choice is made so that request creation, error handling
+and reporting are much simpler.
+
+TODO:
+
+
+- why this makes handling easier
+- what the coupling means
+    - at low level, you can actually pass whatever and make any choices you want.
+      The generations just make sure that the facets can be understood by the API,
+      but you can create combinations that will return no results
+      if you use the low level yourself.
+      We deliberately don't stop this,
+      as it is possible that there are cases that we haven't thought of
+      (e.g. you need to search for a project that we don't nkow about).
+      You just have to wire it and think it through yourself.
+      The fact that queries are always built with specific facets
+      reflects how ESGF works (you query with specific language of various projects, there is no canonical language)
+    - at higher level, we try to do this coupling for you.
+      That's why default selectors use or will use project to pick:
+      project is generally the right choice.
+      That's also why the forthcoming high-level search API will automatically split by project.
+The coupling between search API generations
+and query types
+
 However, this means that in our implemented workflows,
 because a request is made for each project of interest,
 rather than making use of the fact
@@ -362,7 +433,7 @@ class SearchAPIStore:
         :
             APIs that can be used to search `project`.
         """
-        return [v for v in self.api_classifications if project in v.projects]
+        return [v.search_api for v in self.api_classifications if project in v.projects]
 
     def get_apis_from_host(self, host: str) -> list[SearchAPI]:
         """
@@ -378,7 +449,7 @@ class SearchAPIStore:
         :
             APIs that use `host`
         """
-        return [v for v in self.api_classifications if v.host == host]
+        return [v.search_api for v in self.api_classifications if v.host == host]
 
     def get_api_for_project_from_host(self, project: str, host: str) -> SearchAPI:
         """
@@ -407,12 +478,12 @@ class SearchAPIStore:
         matches = [
             v
             for v in self.api_classifications
-            if (v.host == host and project in v.projects)
+            if (v.search_api.host == host and project in v.projects)
         ]
         if len(matches) < 1:
             host_projects = {}
             for v in self.api_classifications:
-                host_projects.setdefault(v.host, []).extend(v.projects)
+                host_projects.setdefault(v.search_api.host, []).extend(v.projects)
 
             supported_hosts_and_projects = "\n".join(
                 f"  - {host}: {projects}" for host, projects in host_projects.items()
@@ -428,11 +499,11 @@ class SearchAPIStore:
             msg = f"More than one candidate for {host=} and {project=}. {matches=}"
             raise AssertionError(msg)
 
-        return matches[0]
+        return matches[0].search_api
 
 
 INBUILT_SEARCH_API_STORE = SearchAPIStore(
-    api_classifications=(
+    api_classifications=tuple(
         APIClassification(
             SearchAPI(host, generation, build_transient_retrying(2)), projects
         )
