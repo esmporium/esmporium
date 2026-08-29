@@ -4,99 +4,15 @@ Search API implementation
 This contains our search API interface,
 the pre-built search APIs we know how to talk to
 and pre-built options for how to pick between them.
-
-TODO: blend with the lines after "TODO: blend with module docstring"
-- ESGF search APIs have two parts
-    - the endpoint you're going to hit (not query specific)
-    - the facets you're going to use for search parameters (query specific)
-        - rename e.g. QueryCMIP5 to QueryCMIP5Like to make clearer that it is CMIP5-like,
-          but may also be used for other projects
-- this is why a given host can be used for multiple search APIs:
-  the host is only part of it, the decision about which facets to use is the other
-    - using multiple sets of facets in one query is asking for trouble
-        - either it always fails
-        - or worse, the API takes both the facets and gives back zero results always
-        - or equally worse, the API takes one or other of the facets, but not both
-    - as a result, if you want to make queries using multiple different sets of facets,
-      you have to hit the same host twice
-        - however, users can escape via the other_terms hatch
-          if they know better than us
-        - we don't provide this via the 'recommended' path
-          because we don't want to deal with the error handling headache
-          (we can make this reliable if we just make extra query(s),
-          we can't make this reliable if we optimise for queries,
-          but users can still do it with other_terms
-          and keep the rest of the machinery if they want)
-- beyond this, in practice, you can only get results for a given project
-  if you query the API using the facets from another project,
-  you get no results
-  (e.g. if you query project=CMIP6 with variant_label=r1i1pf1, you get lots of results,
-  if you query project=CMIP6 with ensemble=r1i1pf1, you get nothing)
-  - our default set ups
-    (e.g. default selectors)
-    and high-level functions
-    (e.g. the search based on multiple queries that we will add in PR3)
-    try to recognise this,
-    which is why these things all have 'project-aware' logic by default
-    or in-built (which is what we will do in PR3)
-  - this project-awareness introduces a coupling between project and behaviour
-  - this makes it much easier for us to give correct behaviour
-  - however, it does mean that we introduce a coupling
-    that isn't there in all the search APIs.
-    This has some consequences, e.g. we (will) make two or more queries
-    where sometimes one would have been enough
-  - this is a tradeoff that we are ok with.
-    The extra queries make maintenance and reliability much easier.
-    The extra queries do not cost that much in the scheme of things
-    (this will be particularly true once we have added parallelisation)
-  - as a user, the low level interfaces still allow you to create a setup
-    that is optimised to minimise the number of queries, if you want
-    (TODO: add that we should explain how to do this in FUTURE-DOCS.md)
-
-Use or delete what is below here
-
-Note that, in our implementation,
-search API generations
-([SearchAPIGeneration][esmporium.search.esgf_generations.])
-are tightly coupled to the language used for creating the search facets
-i.e. each [SearchAPIGeneration][esmporium.search.esgf_generations.].
-This is why there is e.g. [SOLR_CMIP5][(m).] and [SOLR_CMIP6][(m).],
-rather than just a single SOLR generation instance.
-This choice is made so that request creation, error handling
-and reporting are much simpler.
-
-TODO:
-
-
-- why this makes handling easier
-- what the coupling means
-    - at low level, you can actually pass whatever and make any choices you want.
-      The generations just make sure that the facets can be understood by the API,
-      but you can create combinations that will return no results
-      if you use the low level yourself.
-      We deliberately don't stop this,
-      as it is possible that there are cases that we haven't thought of
-      (e.g. you need to search for a project that we don't nkow about).
-      You just have to wire it and think it through yourself.
-      The fact that queries are always built with specific facets
-      reflects how ESGF works (you query with specific language of various projects, there is no canonical language)
-    - at higher level, we try to do this coupling for you.
-      That's why default selectors use or will use project to pick:
-      project is generally the right choice.
-      That's also why the forthcoming high-level search API will automatically split by project.
-The coupling between search API generations
-and query types
-
-However, this means that in our implemented workflows,
-because a request is made for each project of interest,
-rather than making use of the fact
-that some queries can be applied across multiple projects.
-For example, if we were searching for "tas" in CMIP5 and CMIP6,
-we would send a query for CMIP5 and a query for CMIP6 separately,
-rather than one query that searched across both projects.
-This is a tradeoff we are ok making: the extra queries are a small price to pay
-for much clearer errors.
+TODO: put dev ref to FUTURE-DOCS.md (to be updated to docs) as comment
 """
+# @Developers: we strongly recommend reading the section
+# "Search and query and vocab explanation"
+# in FUTURE-DOCS.md to help understand why there are multiple instances of SearchAPI
+# for a given host: this is a deliberate decision to make error handling simpler,
+# even though it means that our SearchAPI does not map one-to-one onto ESGF hosts.
+# TODO: update the reference to a docs page
+# once we migrate FUTURE-DOCS.md into actual docs.
 
 from __future__ import annotations
 
@@ -360,38 +276,6 @@ class APIClassification:
     projects: tuple[str, ...]
     """
     Projects which `search_api` supports
-
-    TODO: blend with module docstring
-    The idea that a given API only supports specific projets is a bit misleading.
-    This association is a convenience and true in practice
-    but it isn't a design feature of ESGF or the APIs themselves.
-    Put another way: search APIs can be used to search across different projects,
-    but they generally will only have results for specific projects,
-    so the coupling exists in practice but not in theory
-    and is therefore hard to predict.
-    As a result, the package does not strictly enforce this coupling
-    between search APIs and projects,
-    but it does provide convenience layers that behave like this coupling exists,
-    based on our experience of where the coupling exists in practice.
-
-    This is related to, but different from, the coupling
-    between [SearchAPIGeneration][(m).] and [QueryProtocol][esmporium.query.protocol.].
-    That coupling represents the fact that search APIs expect
-    queries to be made with specific terms/facets.
-    This is not actually a coupling to projects, even though these terms/facets
-    are usually associated with the project in which they were first used.
-
-    However, as stated in [the docstring of this module][(m)],
-    our experience is that it is extremely difficult to get searching
-    across different projets with a single API right in all cases,
-    so it is simpler to just act like each search API
-    (and query language) is specific to a limited set of known projects
-    (even if it means that some queries aren't 100% optimised).
-
-    This classification idea is a convenience,
-    which is why it makes this trade-off.
-    The rest of the package provides all the lower-level tools
-    you need if you want to optimise things more.
     """
 
 

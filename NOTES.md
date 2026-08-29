@@ -1,0 +1,3 @@
+1. Discuss with Anna whether we should do some renaming to make clear the split between 'real' search APIs (which just take whatever they're given) and the interface we introduce (which makes it harder to shoot yourself in the foot).
+   It would basically introuduce a lower layer SearchAPI class - which behaved just like hitting the actual search API - then introducing a higher-level FacetSpecificSearchAPI class, which is the thing that makes it harder to shoot yourself in the foot by getting facet names wrong.
+   I think this would be a good change, but it is also quite a big change so we should agree in advance.
