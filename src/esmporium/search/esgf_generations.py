@@ -1327,6 +1327,12 @@ class ESGF1Solr:
             # A list becomes a repeated parameter, which is how this API ORs.
             params[api_name] = list(values)
 
+        # TODO: be more careful about key clashes here,
+        # add this to all search APIs.
+        # Not sure how this got missed.
+        for facet, values in native.other_terms.items():
+            params[facet] = list(values)
+
         return Request("GET", "/esg-search/search", params=params)
 
     def result_count(self, raw: dict[str, Any]) -> int:
