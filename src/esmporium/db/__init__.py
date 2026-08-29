@@ -19,7 +19,7 @@ from esmporium.db.search_health import (
     HostRanker,
     aggregate_host_health,
     build_health_selector,
-    rank_by_speed,
+    rank_by_response_time_median,
     record_search_api_calls,
 )
 
@@ -33,6 +33,6 @@ __all__ = [
     "SearchAPICallRecord",
     "aggregate_host_health",
     "build_health_selector",
-    "rank_by_speed",
+    "rank_by_response_time_median",
     "record_search_api_calls",
 ]

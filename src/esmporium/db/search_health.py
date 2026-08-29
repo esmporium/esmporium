@@ -82,12 +82,11 @@ class HostHealth:
     success_rate: float
     """`n_success / n_calls`, or `0.0` if there were somehow no calls"""
 
-    response_time: float
+    response_time_median_seconds: float
     """
-    A representative response time for this host, in seconds
+    Median response time for this host, in seconds
 
-    The median `response_time_seconds` over the successful calls, or `inf` if
-    there were none, so a host that never succeeds sorts to the back on speed.
+    The median `response_time_seconds` over the successful calls.
     """
 
 
@@ -138,7 +137,7 @@ def aggregate_host_health(
             n_calls=len(host_rows),
             n_success=len(times),
             success_rate=len(times) / len(host_rows) if host_rows else 0.0,
-            response_time=median(times) if times else math.inf,
+            response_time_median_seconds=median(times) if times else math.inf,
         )
 
     return health
@@ -159,7 +158,7 @@ to sort this host by", and [build_health_selector][(m).] sorts the pool by it.
 # per request, and if we can link that to the search a user may want to
 # perform in the future. This we can do only once the database is connected
 # by request and populated with results.
-def rank_by_speed(health: HostHealth) -> Any:
+def rank_by_response_time_median(health: HostHealth) -> Any:
     """
     Rank by response time, fastest first
 
@@ -167,7 +166,7 @@ def rank_by_speed(health: HostHealth) -> Any:
     `response_time` is `inf` and it sorts to the very back on its own, without
     any special-casing.
     """
-    return health.response_time
+    return health.response_time_median_seconds
 
 
 # The pool to reorder for each project, when the caller does not supply one.
@@ -226,7 +225,7 @@ def build_health_selector(
     engine: Engine,
     candidates: Mapping[str, Sequence[SearchAPI]] | None = None,
     *,
-    rank: HostRanker = rank_by_speed,
+    rank: HostRanker = rank_by_response_time_median,
     fallback: SearchAPISelector = DEFAULT_SELECTOR,
 ) -> SearchAPISelector:
     """

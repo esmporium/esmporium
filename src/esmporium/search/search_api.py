@@ -5,12 +5,26 @@ This contains our search API interface,
 the pre-built search APIs we know how to talk to
 and pre-built options for how to pick between them.
 
-Note that, in our implementaiton, generation objects are tightly coupled to projects
-which is why there is e.g. [SOLR_CMIP5][(m).] and [SOLR_CMIP6][(m).],
+TODO: blend with line 293
+Note that, in our implementation,
+search API generations
+([SearchAPIGeneration][esmporium.search.esgf_generations.])
+are tightly coupled to query types
+(via the fact that [SearchAPIGeneration.params][esmporium.search.esgf_generations.]
+is a [QueryProtocol][esmporium.query.protocol.]).
+This is why there is e.g. [SOLR_CMIP5][(m).] and [SOLR_CMIP6][(m).],
 rather than just a single SOLR generation instance.
-This choice is made so that error handling and reporting is much simpler,
-but costs extra requests if we want to search more than one project.
-This is a tradeoff we are ok making.
+This choice is made so that request creation, error handling and reporting
+are much simpler.
+However, this means that in our implemented workflows,
+because a request is made for each project of interest,
+rather than making use of the fact
+that some queries can be applied across multiple projects.
+For example, if we were searching for "tas" in CMIP5 and CMIP6,
+we would send a query for CMIP5 and a query for CMIP6 separately,
+rather than one query that searched across both projects.
+This is a tradeoff we are ok making: the extra queries are a small price to pay
+for much clearer errors.
 """
 
 from __future__ import annotations
@@ -258,55 +272,210 @@ def build_project_list_selector(
     return select
 
 
-CMIP5_APIS: list[SearchAPI] = [
-    SearchAPI("esg-dn1.nsc.liu.se", SOLR_CMIP5, build_transient_retrying(2)),
-    SearchAPI("esgf.nci.org.au", SOLR_CMIP5, build_transient_retrying(2)),
-    SearchAPI("esgf-node.ornl.gov", BRIDGE_CMIP5, build_transient_retrying(2)),
-    SearchAPI("esgf.ceda.ac.uk", SOLR_CMIP5, build_transient_retrying(2)),
-    SearchAPI("esgf-data.dkrz.de", SOLR_CMIP5, build_transient_retrying(2)),
-    SearchAPI("search.east.esgf.io", STAC_CMIP5, build_transient_retrying(2)),
-    SearchAPI("search.west.esgf.io", STAC_CMIP5, build_transient_retrying(2)),
-]
-"""
-Known CMIP5 search APIs
+@dataclass(frozen=True)
+class APIClassification:
+    """
+    Classification of a search API
 
-These are sorted in order of greatest to least results,
-when we checked.
-"""
+    Provides extra classification information (i.e. metadata) which
+    [SearchAPI][(m).] doesn't hold.
+    """
 
-CMIP6_APIS: list[SearchAPI] = [
-    SearchAPI("esg-dn1.nsc.liu.se", SOLR_CMIP6, build_transient_retrying(2)),
-    SearchAPI("esgf-node.ornl.gov", BRIDGE_CMIP6, build_transient_retrying(2)),
-    SearchAPI("esgf.nci.org.au", SOLR_CMIP6, build_transient_retrying(2)),
-    SearchAPI("esgf.ceda.ac.uk", SOLR_CMIP6, build_transient_retrying(2)),
-    SearchAPI("esgf-data.dkrz.de", SOLR_CMIP6, build_transient_retrying(2)),
-    SearchAPI("search.east.esgf.io", STAC_CMIP6, build_transient_retrying(2)),
-    SearchAPI("search.west.esgf.io", STAC_CMIP6, build_transient_retrying(2)),
-]
-"""
-Known CMIP6 search APIs
+    search_api: SearchAPI
+    """
+    Search API
+    """
 
-These are sorted in order of greatest to least results,
-when we checked.
-"""
-CMIP7_APIS: list[SearchAPI] = [
-    SearchAPI("search.east.esgf.io", STAC_CMIP7, build_transient_retrying(2)),
-    SearchAPI("search.west.esgf.io", STAC_CMIP7, build_transient_retrying(2)),
-    SearchAPI("esgf.nci.org.au", SOLR_CMIP7, build_transient_retrying(2)),
-    SearchAPI("esgf-data.dkrz.de", SOLR_CMIP7, build_transient_retrying(2)),
-]
-"""
-Known CMIP7 search APIs
+    projects: tuple[str, ...]
+    """
+    Projects which `search_api` supports
 
-These are sorted in order of greatest to least results,
-when we checked.
+    TODO: blend with module docstring
+    The idea that a given API only supports specific projets is a bit misleading.
+    This association is a convenience and true in practice
+    but it isn't a design feature of ESGF or the APIs themselves.
+    Put another way: search APIs can be used to search across different projects,
+    but they generally will only have results for specific projects,
+    so the coupling exists in practice but not in theory
+    and is therefore hard to predict.
+    As a result, the package does not strictly enforce this coupling
+    between search APIs and projects,
+    but it does provide convenience layers that behave like this coupling exists,
+    based on our experience of where the coupling exists in practice.
+
+    This is related to, but different from, the coupling
+    between [SearchAPIGeneration][(m).] and [QueryProtocol][esmporium.query.protocol.].
+    That coupling represents the fact that search APIs expect
+    queries to be made with specific terms/facets.
+    This is not actually a coupling to projects, even though these terms/facets
+    are usually associated with the project in which they were first used.
+
+    However, as stated in [the docstring of this module][(m)],
+    our experience is that it is extremely difficult to get searching
+    across different projets with a single API right in all cases,
+    so it is simpler to just act like each search API
+    (and query language) is specific to a limited set of known projects
+    (even if it means that some queries aren't 100% optimised).
+
+    This classification idea is a convenience,
+    which is why it makes this trade-off.
+    The rest of the package provides all the lower-level tools
+    you need if you want to optimise things more.
+    """
+
+
+@dataclass(frozen=True)
+class SearchAPIStore:
+    """
+    A store of seach APIs
+
+    Search APIs require specific types of language,
+    which effectively makes them coupled to specific ESGF projects.
+
+    This store helps manage a group of APIs
+    and get them in more convenient ways than looking through lists.
+    """
+
+    api_classifications: tuple[APIClassification, ...]
+    """
+    Search API classifications
+    """
+
+    def get_apis_for_project(self, project: str) -> list[SearchAPI]:
+        """
+        Get the APIs that can be used to search a specific project
+
+        [TODO fix this cross-ref]
+        See [APIClassification.projects][(m).]
+        for an explanation of why the name of this function is misleading,
+        because it is based on the idea
+        that specifying the project also defines the search API.
+
+        Parameters
+        ----------
+        project
+            The project for which we want to get
+            all the APIs that can be used to search the project.
+
+        Returns
+        -------
+        :
+            APIs that can be used to search `project`.
+        """
+        return [v for v in self.api_classifications if project in v.projects]
+
+    def get_apis_from_host(self, host: str) -> list[SearchAPI]:
+        """
+        Get the API(s) that use a specific host
+
+        Parameters
+        ----------
+        host
+            The host for which we want to get APIs.
+
+        Returns
+        -------
+        :
+            APIs that use `host`
+        """
+        return [v for v in self.api_classifications if v.host == host]
+
+    def get_api_for_project_from_host(self, project: str, host: str) -> SearchAPI:
+        """
+        Get the API that can be used to search a specific project from a specific host
+
+        [TODO fix this cross-ref]
+        See [APIClassification.projects][(m).]
+        for an explanation of why the name of this function is misleading,
+        because it is based on the idea
+        that specifying the project also defines the search API.
+
+        Parameters
+        ----------
+        project
+            The project for which we want to get
+            all the APIs that can be used to search the project.
+
+        host
+            The host for which we want to get API.
+
+        Returns
+        -------
+        :
+            APIs that use `host`
+        """
+        matches = [
+            v
+            for v in self.api_classifications
+            if (v.host == host and project in v.projects)
+        ]
+        if len(matches) < 1:
+            host_projects = {}
+            for v in self.api_classifications:
+                host_projects.setdefault(v.host, []).extend(v.projects)
+
+            supported_hosts_and_projects = "\n".join(
+                f"  - {host}: {projects}" for host, projects in host_projects.items()
+            )
+            msg = (
+                f"No API from {host=} is associated with {project=}. "
+                "Available hosts and supported projects:\n"
+                f"{supported_hosts_and_projects}"
+            )
+            raise ValueError(msg)
+
+        elif len(matches) > 1:
+            msg = f"More than one candidate for {host=} and {project=}. {matches=}"
+            raise AssertionError(msg)
+
+        return matches[0]
+
+
+INBUILT_SEARCH_API_STORE = SearchAPIStore(
+    api_classifications=(
+        APIClassification(
+            SearchAPI(host, generation, build_transient_retrying(2)), projects
+        )
+        for host, generation, projects in (
+            # CMIP5 hosts
+            ("esg-dn1.nsc.liu.se", SOLR_CMIP5, ("CMIP5",)),
+            ("esgf.nci.org.au", SOLR_CMIP5, ("CMIP5",)),
+            ("esgf-node.ornl.gov", BRIDGE_CMIP5, ("CMIP5",)),
+            ("esgf.ceda.ac.uk", SOLR_CMIP5, ("CMIP5",)),
+            ("esgf-data.dkrz.de", SOLR_CMIP5, ("CMIP5",)),
+            ("search.east.esgf.io", STAC_CMIP5, ("CMIP5",)),
+            ("search.west.esgf.io", STAC_CMIP5, ("CMIP5",)),
+            # CMIP6-style hosts
+            ("esg-dn1.nsc.liu.se", SOLR_CMIP6, ("CMIP6", "CMIP6Plus")),
+            ("esgf-node.ornl.gov", BRIDGE_CMIP6, ("CMIP6", "CMIP6Plus")),
+            ("esgf.nci.org.au", SOLR_CMIP6, ("CMIP6", "CMIP6Plus")),
+            ("esgf.ceda.ac.uk", SOLR_CMIP6, ("CMIP6", "CMIP6Plus")),
+            ("esgf-data.dkrz.de", SOLR_CMIP6, ("CMIP6", "CMIP6Plus")),
+            ("search.east.esgf.io", STAC_CMIP6, ("CMIP6", "CMIP6Plus")),
+            ("search.west.esgf.io", STAC_CMIP6, ("CMIP6", "CMIP6Plus")),
+            # CMIP7 hosts
+            ("search.east.esgf.io", STAC_CMIP7, ("CMIP7",)),
+            ("search.west.esgf.io", STAC_CMIP7, ("CMIP7",)),
+            # Kept for now because they have results.
+            # However, ESGF nodes have been told not to publish CMIP7 to old nodes,
+            # so these should have zero results quite soon
+            # and therefore be taken out of our results quite soon.
+            ("esgf.nci.org.au", SOLR_CMIP7, ("CMIP7",)),
+            ("esgf-data.dkrz.de", SOLR_CMIP7, ("CMIP7",)),
+        )
+    )
+)
+"""
+Our in-built search API store.
+
+This should not be taken to be exhaustive.
+You may need to add more APIs or adjust retry policies etc. yourself.
 """
 
 DEFAULT_SELECTOR = build_project_list_selector(
     {
-        "CMIP5": CMIP5_APIS,
-        "CMIP6": CMIP6_APIS,
-        "CMIP7": CMIP7_APIS,
+        project: INBUILT_SEARCH_API_STORE.get_apis_for_project(project)
+        for project in ["CMIP5", "CMIP6", "CMIP7"]
     }
 )
 """The selector used when the caller does not choose one"""
