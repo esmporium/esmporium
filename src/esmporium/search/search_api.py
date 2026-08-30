@@ -279,6 +279,9 @@ class APIClassification:
     """
 
 
+# TODO: rename to FacetSpecificSearchAPIStore if we make that change
+# (SearchAPIFacadeStore might be a better name)
+# and do other associated changes throughout.
 @dataclass(frozen=True)
 class SearchAPIStore:
     """
@@ -300,11 +303,7 @@ class SearchAPIStore:
         """
         Get the APIs that can be used to search a specific project
 
-        [TODO fix this cross-ref]
-        See [APIClassification.projects][(m).]
-        for an explanation of why the name of this function is misleading,
-        because it is based on the idea
-        that specifying the project also defines the search API.
+        [TODO: rename to get_api_facades_for_project if we make that change]
 
         Parameters
         ----------
@@ -323,6 +322,8 @@ class SearchAPIStore:
         """
         Get the API(s) that use a specific host
 
+        [TODO: rename to get_api_facades_for_host if we make that change]
+
         Parameters
         ----------
         host
@@ -339,11 +340,7 @@ class SearchAPIStore:
         """
         Get the API that can be used to search a specific project from a specific host
 
-        [TODO fix this cross-ref]
-        See [APIClassification.projects][(m).]
-        for an explanation of why the name of this function is misleading,
-        because it is based on the idea
-        that specifying the project also defines the search API.
+        [TODO: rename to get_api_facade_for_project_from_host if we make that change]
 
         Parameters
         ----------
@@ -386,6 +383,8 @@ class SearchAPIStore:
         return matches[0].search_api
 
 
+# TODO: rename to INBUILT_FACET_SPECIFIC_SEARCH_API_STORE if we make that change
+# (INBUILT_SEARCH_API_FACADE_STORE might be a better name)
 INBUILT_SEARCH_API_STORE = SearchAPIStore(
     api_classifications=tuple(
         APIClassification(
