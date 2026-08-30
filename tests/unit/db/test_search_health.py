@@ -4,8 +4,6 @@ Unit tests related to search API health information
 
 from __future__ import annotations
 
-import math
-
 import httpx
 import pytest
 from sqlmodel import Session, col, select
@@ -216,7 +214,7 @@ def test_aggregate_filters_to_the_requested_hosts(engine):
 def test_rank_by_speed_orders_fastest_first_and_dead_last():
     fast = HostHealth("fast", 4, 4, 1.0, 0.1)
     mid = HostHealth("mid", 4, 4, 1.0, 0.5)
-    dead = HostHealth("dead", 4, 0, 0.0, math.inf)
+    dead = HostHealth("dead", 4, 0, 0.0, None)
 
     ranked = sorted([mid, dead, fast], key=get_median_response_time_for_ranking)
 

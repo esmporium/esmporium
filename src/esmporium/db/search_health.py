@@ -77,7 +77,13 @@ class HostHealth:
     """How many of those calls succeeded"""
 
     success_rate: float
-    """`n_success / n_calls`, or `0.0` if there were no successful calls"""
+    """
+    `n_success / n_calls`
+
+    Should be set to `0.0` if there are somehow no calls
+    (but this is generally impossible as hosts only appear in the database
+    if they've been called).
+    """
 
     median_response_time_seconds: float | None
     """
@@ -178,7 +184,7 @@ def get_median_response_time_for_ranking(health: HostHealth) -> float:
     """
     return (
         health.median_response_time_seconds
-        if health.median_response_time_seconds
+        if health.median_response_time_seconds is not None
         else math.inf
     )
 
@@ -228,7 +234,7 @@ def build_health_selector(
     engine: Engine,
     candidates: Mapping[str, Sequence[SearchAPI]] | None = None,
     *,
-    rank: HostRanker = get_median_response_time_for_ranking,
+    ranker: HostRanker = get_median_response_time_for_ranking,
     fallback: SearchAPISelector = DEFAULT_SELECTOR,
 ) -> SearchAPISelector:
     """
@@ -246,8 +252,8 @@ def build_health_selector(
     candidates
         The search API pool to reorder, grouped by project.
 
-    rank
-        How to order the hosts that have health.
+    ranker
+        How to rank hosts for which we have health information.
 
     fallback
         The selector to defer to for a query with no relevant health information.
@@ -267,7 +273,7 @@ def build_health_selector(
         project = _single_project(canonical)
         pool = pools[project]
 
-        ranked = _rank_pool(pool, health, rank)
+        ranked = _rank_pool(pool, health, ranker)
         if ranked is None:
             return fallback(canonical, attempt)
 
