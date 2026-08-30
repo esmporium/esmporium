@@ -31,7 +31,7 @@ from esmporium.db import (
     HostHealth,
     aggregate_host_health,
     build_health_selector,
-    rank_by_speed,
+    median_response_time_for_ranking,
     record_search_api_calls,
 )
 from esmporium.db.migrate import upgrade_to_head
@@ -72,14 +72,18 @@ def print_health_table(health: dict[str, HostHealth]) -> None:
     print(f"  {'host':24} {'calls':>5} {'ok%':>5} {'med.time':>9}")
     print(f"  {'-' * 24} {'-' * 5} {'-' * 5} {'-' * 9}")
     # Fastest first, the same order the selector would use.
-    for h in sorted(health.values(), key=rank_by_speed):
-        time = "-" if h.response_time == float("inf") else f"{h.response_time:.2f}s"
+    for h in sorted(health.values(), key=median_response_time_for_ranking):
+        time = (
+            "-"
+            if h.median_response_time_seconds == float("inf")
+            else f"{h.median_response_time_seconds:.2f}s"
+        )
         print(f"  {h.host:24} {h.n_calls:>5} {h.success_rate * 100:>4.0f}% {time:>9}")
 
 
 def ranked_hosts(engine, project: str) -> list[str]:
     """Return the host order the speed-ranked selector would hand `search()`."""
-    selector = build_health_selector(engine, rank=rank_by_speed)
+    selector = build_health_selector(engine, rank=median_response_time_for_ranking)
     canonical = to_canonical(EXAMPLE_QUERIES[project])
     hosts: list[str] = []
     attempt = 0

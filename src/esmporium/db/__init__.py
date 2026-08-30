@@ -19,7 +19,7 @@ from esmporium.db.search_health import (
     HostRanker,
     aggregate_host_health,
     build_health_selector,
-    rank_by_speed,
+    median_response_time_for_ranking,
     record_search_api_calls,
 )
 

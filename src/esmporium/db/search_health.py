@@ -82,12 +82,12 @@ class HostHealth:
     success_rate: float
     """`n_success / n_calls`, or `0.0` if there were somehow no calls"""
 
-    response_time: float
+    median_response_time_seconds: float | None
     """
-    A representative response time for this host, in seconds
+    Median response time for this host, in seconds.
 
-    The median `response_time_seconds` over the successful calls, or `inf` if
-    there were none, so a host that never succeeds sorts to the back on speed.
+    The median `response_time_seconds` over the successful calls.
+    `None` if there were no successful calls.
     """
 
 
@@ -138,7 +138,7 @@ def aggregate_host_health(
             n_calls=len(host_rows),
             n_success=len(times),
             success_rate=len(times) / len(host_rows) if host_rows else 0.0,
-            response_time=median(times) if times else math.inf,
+            median_response_time_seconds=median(times) if times else math.inf,
         )
 
     return health
@@ -153,21 +153,34 @@ to sort this host by", and [build_health_selector][(m).] sorts the pool by it.
 """
 
 
-# TODO Future: In future PR we will rank more intelligently by result and by speed
-# We hold off future a future step, because ranking by result is only
-# significant if we know request (esp. project/collection) information
-# per request, and if we can link that to the search a user may want to
-# perform in the future. This we can do only once the database is connected
-# by request and populated with results.
-def rank_by_speed(health: HostHealth) -> Any:
+# TODO Future: In a future PR we will probably rank more intelligently
+# by speed based on relevant searches.
+# We hold off, because ranking by search is only significant
+# if we know the serach that was made (esp. project/collection).
+# We will only know that once we start tracking searches
+# and linking them to requests in the database.
+def get_median_response_time_for_ranking(health: HostHealth) -> float:
     """
-    Rank by response time, fastest first
+    Get median response time in a form that can be used for ranking based on host health
 
-    A host that never returned a usable answer has no recorded time, so its
-    `response_time` is `inf` and it sorts to the very back on its own, without
-    any special-casing.
+    Parameters
+    ----------
+    health
+        Host health information
+
+    Returns
+    -------
+    :
+        Median response time
+
+        For hosts that have no response time measurements,
+        we cast to `math.inf` so that these hosts are sorted last.
     """
-    return health.response_time
+    return (
+        health.median_response_time_seconds
+        if health.median_response_time_seconds
+        else math.inf
+    )
 
 
 # The pool to reorder for each project, when the caller does not supply one.
@@ -193,13 +206,14 @@ def _single_project(canonical: QueryCanonical) -> str:
             f"received: {canonical.project}"
         )
         raise ValueError(msg)
+
     return canonical.project[0]
 
 
 def _rank_pool(
     pool: Sequence[SearchAPI],
     health: Mapping[str, HostHealth],
-    rank: HostRanker,
+    ranker: HostRanker,
 ) -> list[SearchAPI] | None:
     """
     Reorder one project's pool by health, or report that it has none
@@ -218,7 +232,7 @@ def _rank_pool(
 
     no_data = [api for api in pool if api.host not in health]
     # `sorted` is stable, so hosts that tie on the key keep their pool order.
-    ranked = sorted(have_data, key=lambda api: rank(health[api.host]))
+    ranked = sorted(have_data, key=lambda api: ranker(health[api.host]))
     return ranked + no_data
 
 
@@ -226,7 +240,7 @@ def build_health_selector(
     engine: Engine,
     candidates: Mapping[str, Sequence[SearchAPI]] | None = None,
     *,
-    rank: HostRanker = rank_by_speed,
+    rank: HostRanker = get_median_response_time_for_ranking,
     fallback: SearchAPISelector = DEFAULT_SELECTOR,
 ) -> SearchAPISelector:
     """

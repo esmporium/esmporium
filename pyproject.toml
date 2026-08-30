@@ -9,17 +9,14 @@ authors = [
 license = { text = "3-Clause BSD License" }
 requires-python = ">=3.10"
 dependencies = [
-    # Required because the database lives on the user's machine,
+    # alembic is required because the database lives on the user's machine,
     # so the user's own process is the only thing
     # that can ever migrate it to a newer schema.
     "alembic>=1.13.0",
-    # HTTP client for searching live ESGF endpoints.
     "httpx>=0.28.0",
-    # If you use numpy, we suggest pinning to >2.1.0
-    # based on the minimum supported python version
-    "pandas>=2.2.0", # pin based on minimum supported python version
+    # "numpy>=2.1.0",
+    "pandas>=2.2.0",
     "sqlmodel>=0.0.39",
-    # Declarative retry policies for the ESGF search clients.
     "tenacity>=8.0.0",
 ]
 readme = "README.md"
