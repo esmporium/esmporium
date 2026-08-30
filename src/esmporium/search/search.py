@@ -22,7 +22,7 @@ from esmporium.search.esgf_generations import (
 from esmporium.search.health import SearchAPICall, SearchAPICallObserver
 from esmporium.search.search_api import (
     DEFAULT_SELECTOR,
-    SearchAPI,
+    SearchAPIOld,
     SearchAPISelector,
     SelectorOfferedNoAPIError,
 )
@@ -60,7 +60,7 @@ def _curl_equivalent(request: httpx.Request) -> str:
 
 
 def _log_request_as_url_and_curl(
-    api: SearchAPI,
+    api: SearchAPIOld,
     request: httpx.Request,
     # Make the level to log at a parameter, rather than being hard-coded
 ) -> None:
@@ -122,7 +122,7 @@ class SearchAPIRequestError(RuntimeError):
         )
 
 
-def _result_count_or_none(api: SearchAPI, raw: dict[str, Any]) -> int | None:
+def _result_count_or_none(api: SearchAPIOld, raw: dict[str, Any]) -> int | None:
     """
     Read how many records a response reported, or `None` if it reported none
 
@@ -150,7 +150,7 @@ def _result_count_or_none(api: SearchAPI, raw: dict[str, Any]) -> int | None:
 
 def fire(
     client: httpx.Client,
-    api: SearchAPI,
+    api: SearchAPIOld,
     request: Request,
     observer: SearchAPICallObserver | None = None,
 ) -> dict[str, Any]:

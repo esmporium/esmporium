@@ -76,7 +76,7 @@ from esmporium.search.search import (
 )
 from esmporium.search.search_api import (
     DEFAULT_SELECTOR,
-    SearchAPI,
+    SearchAPIOld,
     SearchAPISelector,
     SelectorOfferedNoAPIError,
     build_list_selector,
@@ -105,10 +105,10 @@ __all__ = [
     "OneProjectRequiredError",
     "ProjectPrefixMismatchError",
     "Request",
-    "SearchAPI",
     "SearchAPICall",
     "SearchAPICallObserver",
     "SearchAPIGeneration",
+    "SearchAPIOld",
     "SearchAPIRequestError",
     "SearchAPISelector",
     "SearchOutcome",

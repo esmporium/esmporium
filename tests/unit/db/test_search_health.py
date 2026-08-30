@@ -17,7 +17,7 @@ from esmporium.db import (
     record_search_api_calls,
 )
 from esmporium.query import QueryCanonical, QueryCMIP6
-from esmporium.search import SearchAPI, build_list_selector, search
+from esmporium.search import SearchAPIOld, build_list_selector, search
 from esmporium.search.health import SearchAPICall
 from esmporium.search.retry import build_transient_retrying
 from esmporium.search.search_api import CMIP6_APIS, SOLR_CMIP6
@@ -153,9 +153,9 @@ def seed(engine, *calls: SearchAPICall) -> None:
         observer(call)
 
 
-def api(host: str) -> SearchAPI:
+def api(host: str) -> SearchAPIOld:
     """Build a CMIP6-Solr SearchAPI for `host` (only the host matters to ranking)."""
-    return SearchAPI(host, SOLR_CMIP6, build_transient_retrying(1))
+    return SearchAPIOld(host, SOLR_CMIP6, build_transient_retrying(1))
 
 
 def hosts_offered(selector, canonical=CMIP6) -> list[str]:

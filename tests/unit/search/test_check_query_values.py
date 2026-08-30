@@ -28,7 +28,7 @@ from esmporium.search import (
 from esmporium.search.search_api import (
     SOLR_CMIP6,
     STAC_CMIP6,
-    SearchAPI,
+    SearchAPIOld,
     SelectorOfferedNoAPIError,
 )
 
@@ -168,7 +168,7 @@ def once():
 
 def solr_api(host="node.example"):
     """A CMIP6/Solr SearchAPI that retries once and never sleeps."""
-    return SearchAPI(host, SOLR_CMIP6, once())
+    return SearchAPIOld(host, SOLR_CMIP6, once())
 
 
 def test_solr_source_lists_values_keyed_by_canonical_facet():
@@ -639,7 +639,7 @@ def test_a_facet_the_apis_vocabulary_cannot_express_is_not_asked_about():
         )
     )
 
-    api = SearchAPI("stac.example", STAC_CMIP6, once())
+    api = SearchAPIOld("stac.example", STAC_CMIP6, once())
     canonical = canonical_cmip6(experiment_id="Historical")
     facets = facets_the_user_set(canonical)
 

@@ -19,7 +19,7 @@ from esmporium.db.schema import SearchAPICallRecord
 from esmporium.search.search_api import (
     DEFAULT_SEARCH_APIS_BY_PROJECT,
     DEFAULT_SELECTOR,
-    SearchAPI,
+    SearchAPIOld,
     SearchAPISelector,
 )
 
@@ -205,10 +205,10 @@ def _single_project(canonical: QueryCanonical) -> str:
 
 
 def _rank_pool(
-    pool: Sequence[SearchAPI],
+    pool: Sequence[SearchAPIOld],
     health: Mapping[str, HostHealth],
     ranker: HostRanker,
-) -> list[SearchAPI] | None:
+) -> list[SearchAPIOld] | None:
     """
     Reorder a search API pool by health, or report that there is no health information
 
@@ -232,7 +232,7 @@ def _rank_pool(
 
 def build_health_selector(
     engine: Engine,
-    candidates: Mapping[str, Sequence[SearchAPI]] | None = None,
+    candidates: Mapping[str, Sequence[SearchAPIOld]] | None = None,
     *,
     ranker: HostRanker = get_median_response_time_for_ranking,
     fallback: SearchAPISelector = DEFAULT_SELECTOR,
@@ -269,7 +269,7 @@ def build_health_selector(
     all_hosts = {api.host for pool in pools.values() for api in pool}
     health = aggregate_host_health(engine, all_hosts)
 
-    def select(canonical: QueryCanonical, attempt: int) -> SearchAPI | None:
+    def select(canonical: QueryCanonical, attempt: int) -> SearchAPIOld | None:
         project = _single_project(canonical)
         pool = pools[project]
 

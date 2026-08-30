@@ -7,7 +7,7 @@ from __future__ import annotations
 import pytest
 
 from esmporium.query import QueryCanonical
-from esmporium.search import Request, SearchAPI, build_list_selector
+from esmporium.search import Request, SearchAPIOld, build_list_selector
 from esmporium.search.retry import build_transient_retrying
 from esmporium.search.search_api import (
     SOLR_CMIP6,
@@ -15,9 +15,9 @@ from esmporium.search.search_api import (
 )
 
 
-def make_api(host: str) -> SearchAPI:
+def make_api(host: str) -> SearchAPIOld:
     """Build a SearchAPI whose only interesting field, for these tests, is its host"""
-    return SearchAPI(host, SOLR_CMIP6, build_transient_retrying(1))
+    return SearchAPIOld(host, SOLR_CMIP6, build_transient_retrying(1))
 
 
 def canonical(*projects: str) -> QueryCanonical:
@@ -35,7 +35,7 @@ def test_url_uses_the_scheme_and_host():
 
 def test_url_can_use_http():
     """A host which only offers http can be reached over it"""
-    api = SearchAPI(
+    api = SearchAPIOld(
         "esgf.example.org", SOLR_CMIP6, build_transient_retrying(1), scheme="http"
     )
     request = Request("GET", "/esg-search/search")

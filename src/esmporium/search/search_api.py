@@ -38,7 +38,7 @@ from esmporium.search.retry import build_transient_retrying
 
 
 @dataclass(frozen=True)
-class SearchAPI:
+class SearchAPIOld:
     """
     One search endpoint we can hit
     """
@@ -127,7 +127,7 @@ Search API that hits ESGF-NG STAC API and expects CMIP7 style queries
 """
 
 
-SearchAPISelector = Callable[[QueryCanonical, int], SearchAPI | None]
+SearchAPISelector = Callable[[QueryCanonical, int], SearchAPIOld | None]
 """
 Chooses which endpoint to try next
 
@@ -174,7 +174,7 @@ class SelectorOfferedNoAPIError(ValueError):
         )
 
 
-def build_list_selector(apis: Sequence[SearchAPI]) -> SearchAPISelector:
+def build_list_selector(apis: Sequence[SearchAPIOld]) -> SearchAPISelector:
     """
     Build a selector that yields the given endpoints in order, then stops
 
@@ -191,14 +191,14 @@ def build_list_selector(apis: Sequence[SearchAPI]) -> SearchAPISelector:
         A selector over `apis`
     """
 
-    def select(canonical: QueryCanonical, attempt: int) -> SearchAPI | None:
+    def select(canonical: QueryCanonical, attempt: int) -> SearchAPIOld | None:
         return apis[attempt] if attempt < len(apis) else None
 
     return select
 
 
 def build_project_list_selector(
-    project_lists: Mapping[str, Sequence[SearchAPI]],
+    project_lists: Mapping[str, Sequence[SearchAPIOld]],
 ) -> SearchAPISelector:
     """
     Build a selector that works through a project specific list of endpoints
@@ -214,7 +214,7 @@ def build_project_list_selector(
         A selector which yields APIs in an order specific to the query's project
     """
 
-    def select(canonical: QueryCanonical, attempt: int) -> SearchAPI | None:
+    def select(canonical: QueryCanonical, attempt: int) -> SearchAPIOld | None:
         """
         Select search API to use
 
@@ -258,14 +258,14 @@ def build_project_list_selector(
     return select
 
 
-CMIP5_APIS: list[SearchAPI] = [
-    SearchAPI("esg-dn1.nsc.liu.se", SOLR_CMIP5, build_transient_retrying(2)),
-    SearchAPI("esgf.nci.org.au", SOLR_CMIP5, build_transient_retrying(2)),
-    SearchAPI("esgf-node.ornl.gov", BRIDGE_CMIP5, build_transient_retrying(2)),
-    SearchAPI("esgf.ceda.ac.uk", SOLR_CMIP5, build_transient_retrying(2)),
-    SearchAPI("esgf-data.dkrz.de", SOLR_CMIP5, build_transient_retrying(2)),
-    SearchAPI("search.east.esgf.io", STAC_CMIP5, build_transient_retrying(2)),
-    SearchAPI("search.west.esgf.io", STAC_CMIP5, build_transient_retrying(2)),
+CMIP5_APIS: list[SearchAPIOld] = [
+    SearchAPIOld("esg-dn1.nsc.liu.se", SOLR_CMIP5, build_transient_retrying(2)),
+    SearchAPIOld("esgf.nci.org.au", SOLR_CMIP5, build_transient_retrying(2)),
+    SearchAPIOld("esgf-node.ornl.gov", BRIDGE_CMIP5, build_transient_retrying(2)),
+    SearchAPIOld("esgf.ceda.ac.uk", SOLR_CMIP5, build_transient_retrying(2)),
+    SearchAPIOld("esgf-data.dkrz.de", SOLR_CMIP5, build_transient_retrying(2)),
+    SearchAPIOld("search.east.esgf.io", STAC_CMIP5, build_transient_retrying(2)),
+    SearchAPIOld("search.west.esgf.io", STAC_CMIP5, build_transient_retrying(2)),
 ]
 """
 Known CMIP5 search APIs
@@ -274,14 +274,14 @@ These are sorted in order of greatest to least results,
 when we checked.
 """
 
-CMIP6_APIS: list[SearchAPI] = [
-    SearchAPI("esg-dn1.nsc.liu.se", SOLR_CMIP6, build_transient_retrying(2)),
-    SearchAPI("esgf-node.ornl.gov", BRIDGE_CMIP6, build_transient_retrying(2)),
-    SearchAPI("esgf.nci.org.au", SOLR_CMIP6, build_transient_retrying(2)),
-    SearchAPI("esgf.ceda.ac.uk", SOLR_CMIP6, build_transient_retrying(2)),
-    SearchAPI("esgf-data.dkrz.de", SOLR_CMIP6, build_transient_retrying(2)),
-    SearchAPI("search.east.esgf.io", STAC_CMIP6, build_transient_retrying(2)),
-    SearchAPI("search.west.esgf.io", STAC_CMIP6, build_transient_retrying(2)),
+CMIP6_APIS: list[SearchAPIOld] = [
+    SearchAPIOld("esg-dn1.nsc.liu.se", SOLR_CMIP6, build_transient_retrying(2)),
+    SearchAPIOld("esgf-node.ornl.gov", BRIDGE_CMIP6, build_transient_retrying(2)),
+    SearchAPIOld("esgf.nci.org.au", SOLR_CMIP6, build_transient_retrying(2)),
+    SearchAPIOld("esgf.ceda.ac.uk", SOLR_CMIP6, build_transient_retrying(2)),
+    SearchAPIOld("esgf-data.dkrz.de", SOLR_CMIP6, build_transient_retrying(2)),
+    SearchAPIOld("search.east.esgf.io", STAC_CMIP6, build_transient_retrying(2)),
+    SearchAPIOld("search.west.esgf.io", STAC_CMIP6, build_transient_retrying(2)),
 ]
 """
 Known CMIP6 search APIs
@@ -290,11 +290,11 @@ These are sorted in order of greatest to least results,
 when we checked.
 """
 
-CMIP7_APIS: list[SearchAPI] = [
-    SearchAPI("search.east.esgf.io", STAC_CMIP7, build_transient_retrying(2)),
-    SearchAPI("search.west.esgf.io", STAC_CMIP7, build_transient_retrying(2)),
-    SearchAPI("esgf.nci.org.au", SOLR_CMIP7, build_transient_retrying(2)),
-    SearchAPI("esgf-data.dkrz.de", SOLR_CMIP7, build_transient_retrying(2)),
+CMIP7_APIS: list[SearchAPIOld] = [
+    SearchAPIOld("search.east.esgf.io", STAC_CMIP7, build_transient_retrying(2)),
+    SearchAPIOld("search.west.esgf.io", STAC_CMIP7, build_transient_retrying(2)),
+    SearchAPIOld("esgf.nci.org.au", SOLR_CMIP7, build_transient_retrying(2)),
+    SearchAPIOld("esgf-data.dkrz.de", SOLR_CMIP7, build_transient_retrying(2)),
 ]
 """
 Known CMIP7 search APIs
@@ -303,7 +303,7 @@ These are sorted in order of greatest to least results,
 when we checked.
 """
 
-DEFAULT_SEARCH_APIS_BY_PROJECT: Mapping[str, Sequence[SearchAPI]] = {
+DEFAULT_SEARCH_APIS_BY_PROJECT: Mapping[str, Sequence[SearchAPIOld]] = {
     "CMIP5": CMIP5_APIS,
     "CMIP6": CMIP6_APIS,
     "CMIP7": CMIP7_APIS,

@@ -35,7 +35,7 @@ from esmporium.search.health import SearchAPICallObserver
 from esmporium.search.search import SearchAPIRequestError, fire
 from esmporium.search.search_api import (
     DEFAULT_SELECTOR,
-    SearchAPI,
+    SearchAPIOld,
     SearchAPISelector,
     SelectorOfferedNoAPIError,
 )
@@ -371,7 +371,7 @@ class CouldNotGetAllowedValuesError(RuntimeError):
 
 
 def allowed_values_from_api(
-    api: SearchAPI,
+    api: SearchAPIOld,
     client: httpx.Client,
     canonical: QueryCanonical,
     facets: set[str],

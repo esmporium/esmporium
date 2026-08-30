@@ -29,7 +29,7 @@ from esmporium.search.search_api import (
     STAC_CMIP5,
     STAC_CMIP6,
     STAC_CMIP7,
-    SearchAPI,
+    SearchAPIOld,
 )
 
 pytestmark = pytest.mark.hits_esgf_search_api
@@ -42,27 +42,27 @@ CMIP6_QUERY = QueryCMIP6(experiment_id="historical", variable_id="tas", frequenc
 
 LIVE_CASES = (
     pytest.param(
-        SearchAPI("esgf.nci.org.au", SOLR_CMIP5, build_transient_retrying(2)),
+        SearchAPIOld("esgf.nci.org.au", SOLR_CMIP5, build_transient_retrying(2)),
         QueryCMIP5(experiment="historical", variable="tas", time_frequency="mon"),
         id="solr-cmip5",
     ),
     pytest.param(
-        SearchAPI("esgf.nci.org.au", SOLR_CMIP6, build_transient_retrying(2)),
+        SearchAPIOld("esgf.nci.org.au", SOLR_CMIP6, build_transient_retrying(2)),
         CMIP6_QUERY,
         id="solr-cmip6",
     ),
     pytest.param(
-        SearchAPI("search.east.esgf.io", STAC_CMIP6, build_transient_retrying(2)),
+        SearchAPIOld("search.east.esgf.io", STAC_CMIP6, build_transient_retrying(2)),
         CMIP6_QUERY,
         id="esgf-ng-cmip6",
     ),
     pytest.param(
-        SearchAPI("search.east.esgf.io", STAC_CMIP7, build_transient_retrying(2)),
+        SearchAPIOld("search.east.esgf.io", STAC_CMIP7, build_transient_retrying(2)),
         QueryCMIP7(variable_id="tas"),
         id="esgf-ng-cmip7",
     ),
     pytest.param(
-        SearchAPI("esgf.nci.org.au", SOLR_CMIP7, build_transient_retrying(2)),
+        SearchAPIOld("esgf.nci.org.au", SOLR_CMIP7, build_transient_retrying(2)),
         QueryCMIP7(variable_id="tas"),
         id="solr-cmip7",
     ),
@@ -84,43 +84,43 @@ and the search would come back with everything rather than with nothing.
 # keys silently), so the name here has to be a real field of that class.
 FACET_NAME_CASES = (
     pytest.param(
-        SearchAPI("esgf.nci.org.au", SOLR_CMIP5, build_transient_retrying(2)),
+        SearchAPIOld("esgf.nci.org.au", SOLR_CMIP5, build_transient_retrying(2)),
         QueryCMIP5(experiment="historical", variable="tas", time_frequency="mon"),
         "variable",
         id="solr-cmip5",
     ),
     pytest.param(
-        SearchAPI("esgf.nci.org.au", SOLR_CMIP6, build_transient_retrying(2)),
+        SearchAPIOld("esgf.nci.org.au", SOLR_CMIP6, build_transient_retrying(2)),
         CMIP6_QUERY,
         "variable_id",
         id="solr-cmip6",
     ),
     pytest.param(
-        SearchAPI("esgf.nci.org.au", SOLR_CMIP7, build_transient_retrying(2)),
+        SearchAPIOld("esgf.nci.org.au", SOLR_CMIP7, build_transient_retrying(2)),
         QueryCMIP7(variable_id="tas"),
         "variable_id",
         id="solr-cmip7",
     ),
     pytest.param(
-        SearchAPI("esgf-node.ornl.gov", BRIDGE_CMIP6, build_transient_retrying(2)),
+        SearchAPIOld("esgf-node.ornl.gov", BRIDGE_CMIP6, build_transient_retrying(2)),
         CMIP6_QUERY,
         "variable_id",
         id="bridge-cmip6",
     ),
     pytest.param(
-        SearchAPI("search.east.esgf.io", STAC_CMIP5, build_transient_retrying(2)),
+        SearchAPIOld("search.east.esgf.io", STAC_CMIP5, build_transient_retrying(2)),
         QueryCMIP5(experiment="historical", variable="tas", time_frequency="mon"),
         "variable",
         id="esgf-ng-cmip5",
     ),
     pytest.param(
-        SearchAPI("search.east.esgf.io", STAC_CMIP6, build_transient_retrying(2)),
+        SearchAPIOld("search.east.esgf.io", STAC_CMIP6, build_transient_retrying(2)),
         CMIP6_QUERY,
         "variable_id",
         id="esgf-ng-cmip6",
     ),
     pytest.param(
-        SearchAPI("search.east.esgf.io", STAC_CMIP7, build_transient_retrying(2)),
+        SearchAPIOld("search.east.esgf.io", STAC_CMIP7, build_transient_retrying(2)),
         QueryCMIP7(variable_id="tas"),
         "variable_id",
         id="esgf-ng-cmip7",
@@ -164,17 +164,17 @@ def and_or_query(query_cls, variable_field, experiment_field):
 
 AND_OR_CASES = (
     pytest.param(
-        SearchAPI("esgf.nci.org.au", SOLR_CMIP5, build_transient_retrying(2)),
+        SearchAPIOld("esgf.nci.org.au", SOLR_CMIP5, build_transient_retrying(2)),
         and_or_query(QueryCMIP5, "variable", "experiment"),
         id="solr-cmip5",
     ),
     pytest.param(
-        SearchAPI("esgf-node.ornl.gov", BRIDGE_CMIP6, build_transient_retrying(2)),
+        SearchAPIOld("esgf-node.ornl.gov", BRIDGE_CMIP6, build_transient_retrying(2)),
         and_or_query(QueryCMIP6, "variable_id", "experiment_id"),
         id="bridge-cmip6",
     ),
     pytest.param(
-        SearchAPI("search.east.esgf.io", STAC_CMIP7, build_transient_retrying(2)),
+        SearchAPIOld("search.east.esgf.io", STAC_CMIP7, build_transient_retrying(2)),
         and_or_query(QueryCMIP7, "variable_id", "experiment_id"),
         id="esgf-ng-cmip7",
     ),
@@ -309,7 +309,7 @@ def test_aggregating_over_nodes_finds_more_than_one_node(client):
     """
     local_solr = ESGF1Solr(params=SolrCMIP6Parameters, distrib=False)
     nodes = [
-        SearchAPI(host, local_solr, build_transient_retrying(2))
+        SearchAPIOld(host, local_solr, build_transient_retrying(2))
         for host in (
             "esgf.nci.org.au",
             "esgf.ceda.ac.uk",

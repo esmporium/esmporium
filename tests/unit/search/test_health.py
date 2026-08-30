@@ -21,7 +21,7 @@ from tenacity import Retrying, retry_if_exception, stop_after_attempt
 from esmporium.query import QueryCMIP6, to_canonical
 from esmporium.search import (
     NoAPIWouldAnswerError,
-    SearchAPI,
+    SearchAPIOld,
     SearchAPIRequestError,
     build_list_selector,
     check_query_values,
@@ -69,9 +69,9 @@ def solr_response(num_found: int) -> httpx.Response:
     return httpx.Response(200, json={"response": {"numFound": num_found, "docs": []}})
 
 
-def make_api(host, generation=SOLR_CMIP6, attempts=1) -> SearchAPI:
+def make_api(host, generation=SOLR_CMIP6, attempts=1) -> SearchAPIOld:
     """Build a SearchAPI for `host` with a no-sleep retry policy."""
-    return SearchAPI(host, generation, fast_retrying(attempts))
+    return SearchAPIOld(host, generation, fast_retrying(attempts))
 
 
 def record(handler, apis) -> list[SearchAPICall]:
