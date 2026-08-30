@@ -1,6 +1,5 @@
 """
-Unit tests for recording search API health into the database, and for the
-health-based selector built on top of it
+Unit tests related to search API health information
 """
 
 from __future__ import annotations
@@ -16,7 +15,7 @@ from esmporium.db import (
     SearchAPICallRecord,
     aggregate_host_health,
     build_health_selector,
-    median_response_time_for_ranking,
+    get_median_response_time_for_ranking,
     record_search_api_calls,
 )
 from esmporium.query import QueryCanonical, QueryCMIP6
@@ -197,14 +196,13 @@ def test_aggregate_rolls_up_speed_and_reliability(engine):
     assert a.n_success == 2
     assert a.success_rate == pytest.approx(2 / 3)
     # Median of the successful times only; the failed call's time is ignored.
-    assert a.median_response_time_seconds == pytest.approx(0.3)
+    assert a.median_response_time_seconds == pytest.approx((0.2 + 0.4) / 2.0)
 
     b = health["b"]
     assert b.n_calls == 1
     assert b.n_success == 0
     assert b.success_rate == 0.0
-    # No successful call, so it sorts to the very back on speed.
-    assert b.median_response_time_seconds == math.inf
+    assert b.median_response_time_seconds is None
 
 
 def test_aggregate_filters_to_the_requested_hosts(engine):
@@ -220,7 +218,7 @@ def test_rank_by_speed_orders_fastest_first_and_dead_last():
     mid = HostHealth("mid", 4, 4, 1.0, 0.5)
     dead = HostHealth("dead", 4, 0, 0.0, math.inf)
 
-    ranked = sorted([mid, dead, fast], key=median_response_time_for_ranking)
+    ranked = sorted([mid, dead, fast], key=get_median_response_time_for_ranking)
 
     assert [h.host for h in ranked] == ["fast", "mid", "dead"]
 

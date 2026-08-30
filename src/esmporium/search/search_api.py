@@ -289,6 +289,7 @@ Known CMIP6 search APIs
 These are sorted in order of greatest to least results,
 when we checked.
 """
+
 CMIP7_APIS: list[SearchAPI] = [
     SearchAPI("search.east.esgf.io", STAC_CMIP7, build_transient_retrying(2)),
     SearchAPI("search.west.esgf.io", STAC_CMIP7, build_transient_retrying(2)),
@@ -302,11 +303,14 @@ These are sorted in order of greatest to least results,
 when we checked.
 """
 
-DEFAULT_SELECTOR = build_project_list_selector(
-    {
-        "CMIP5": CMIP5_APIS,
-        "CMIP6": CMIP6_APIS,
-        "CMIP7": CMIP7_APIS,
-    }
-)
+DEFAULT_SEARCH_APIS_BY_PROJECT: Mapping[str, Sequence[SearchAPI]] = {
+    "CMIP5": CMIP5_APIS,
+    "CMIP6": CMIP6_APIS,
+    "CMIP7": CMIP7_APIS,
+}
+"""
+Default search APIs to use, grouped by project
+"""
+
+DEFAULT_SELECTOR = build_project_list_selector(DEFAULT_SEARCH_APIS_BY_PROJECT)
 """The selector used when the caller does not choose one"""

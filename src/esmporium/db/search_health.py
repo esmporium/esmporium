@@ -17,9 +17,7 @@ from sqlmodel import Session, col, select
 
 from esmporium.db.schema import SearchAPICallRecord
 from esmporium.search.search_api import (
-    CMIP5_APIS,
-    CMIP6_APIS,
-    CMIP7_APIS,
+    DEFAULT_SEARCH_APIS_BY_PROJECT,
     DEFAULT_SELECTOR,
     SearchAPI,
     SearchAPISelector,
@@ -44,7 +42,6 @@ def record_search_api_calls(engine: Engine) -> SearchAPICallObserver:
     ----------
     engine
         The database engine to record into.
-        The caller owns it.
 
     Returns
     -------
@@ -53,7 +50,7 @@ def record_search_api_calls(engine: Engine) -> SearchAPICallObserver:
     """
 
     def observer(call: SearchAPICall) -> None:
-        # thread safe to handle parallelism
+        # This function needs to be thread safe to handle parallelism
         with Session(engine) as session:
             session.add(SearchAPICallRecord.from_call(call))
             session.commit()
@@ -80,7 +77,7 @@ class HostHealth:
     """How many of those calls succeeded"""
 
     success_rate: float
-    """`n_success / n_calls`, or `0.0` if there were somehow no calls"""
+    """`n_success / n_calls`, or `0.0` if there were no successful calls"""
 
     median_response_time_seconds: float | None
     """
@@ -97,16 +94,15 @@ def aggregate_host_health(
     """
     Combine each call record into one [HostHealth][(m).] per host
 
-    One read of the health table, grouped by host.
-
     Parameters
     ----------
     engine
-        The database to read from. The caller owns it.
+        The database to read from.
 
     hosts
-        If given, only aggregate these hosts (the pool the caller cares about).
-        Hosts with no recorded calls are simply absent from the result.
+        Only aggregate these hosts (the pool the caller cares about).
+
+        If not provided, we return information for all hosts in the database.
 
     Returns
     -------
@@ -114,12 +110,16 @@ def aggregate_host_health(
         A [HostHealth][(m).] per host that has at least one recorded call,
         keyed by host
     """
+    # Grab everything
     statement = select(SearchAPICallRecord)
     if hosts is not None:
         wanted = list(hosts)
-        # An empty `hosts` means "nothing to look up", not "everything".
+        # Make sure that if we get empty hosts,
+        # we return nothing, not everything.
         if not wanted:
             return {}
+
+        # Restrict search to just what we want
         statement = statement.where(col(SearchAPICallRecord.host).in_(wanted))
 
     with Session(engine) as session:
@@ -131,14 +131,15 @@ def aggregate_host_health(
 
     health: dict[str, HostHealth] = {}
     for host, host_rows in by_host.items():
-        # Only successful calls carry a meaningful time.
-        times = [r.response_time_seconds for r in host_rows if r.success]
+        times_successful = [r.response_time_seconds for r in host_rows if r.success]
         health[host] = HostHealth(
             host=host,
             n_calls=len(host_rows),
-            n_success=len(times),
-            success_rate=len(times) / len(host_rows) if host_rows else 0.0,
-            median_response_time_seconds=median(times) if times else math.inf,
+            n_success=len(times_successful),
+            success_rate=len(times_successful) / len(host_rows) if host_rows else 0.0,
+            median_response_time_seconds=median(times_successful)
+            if times_successful
+            else None,
         )
 
     return health
@@ -146,10 +147,9 @@ def aggregate_host_health(
 
 HostRanker = Callable[[HostHealth], Any]
 """
-Turns one host's health into a sort key; hosts are sorted ascending, best first
+Turns one host's health into a sort key
 
-This is the injection seam for how to rank. A ranker just says "here is the key
-to sort this host by", and [build_health_selector][(m).] sorts the pool by it.
+This should return keys such that, when hosts are sorted ascending, the best is first.
 """
 
 
@@ -183,26 +183,14 @@ def get_median_response_time_for_ranking(health: HostHealth) -> float:
     )
 
 
-# The pool to reorder for each project, when the caller does not supply one.
-# Same lists as `DEFAULT_SELECTOR`
-DEFAULT_CANDIDATES: Mapping[str, Sequence[SearchAPI]] = {
-    "CMIP5": CMIP5_APIS,
-    "CMIP6": CMIP6_APIS,
-    "CMIP7": CMIP7_APIS,
-}
-
-
 def _single_project(canonical: QueryCanonical) -> str:
     """
     Pull the one project out of a query, or explain why we cannot
-
-    This will be used to choose which `DEFAULT_CANDIDATE` list of
-    hosts to use, if no health information has been recorded.
     """
     if len(canonical.project) != 1:
         msg = (
             "We can only unambiguously pick the SearchAPI list "
-            "if there is exactly one project, "
+            "if there is exactly one project in the query, "
             f"received: {canonical.project}"
         )
         raise ValueError(msg)
@@ -216,7 +204,7 @@ def _rank_pool(
     ranker: HostRanker,
 ) -> list[SearchAPI] | None:
     """
-    Reorder one project's pool by health, or report that it has none
+    Reorder a search API pool by health, or report that there is no health information
 
     Hosts with recorded health come first, sorted by `rank`; hosts with none
     keep their original order and follow, so an endpoint we have never called is
@@ -244,40 +232,36 @@ def build_health_selector(
     fallback: SearchAPISelector = DEFAULT_SELECTOR,
 ) -> SearchAPISelector:
     """
-    Build a selector that orders each project's endpoints by recorded health
+    Build a selector that orders each project's search APIs by their health
 
-    The health is read *once*, now, when the selector is built. That keeps the
-    selector cheap and deterministic for the run it is used in; build a fresh one
-    to pick up calls recorded since.
+    The health is read *once*, now, when the selector is built.
+    That keeps the selector cheap and deterministic for the run it is used in.
+    Build a new selector if you want to use updated information.
 
     Parameters
     ----------
     engine
-        The database to read health from. The caller owns it.
+        The database to read health from.
 
     candidates
-        The endpoint pool to reorder per project. Defaults to the same lists as
-        [DEFAULT_SELECTOR][esmporium.search.search_api.DEFAULT_SELECTOR].
+        The search API pool to reorder, grouped by project.
 
     rank
-        How to order the hosts that have health. Defaults to
-        [rank_by_speed][(m).].
+        How to order the hosts that have health.
 
     fallback
-        The selector to defer to for a query whose pool has no health yet.
-        Defaults to [DEFAULT_SELECTOR][esmporium.search.search_api.DEFAULT_SELECTOR].
+        The selector to defer to for a query with no relevant health information.
 
     Returns
     -------
     :
-        A selector that ranks by health where it can, and falls back where it
-        cannot
+        Health-based selector (falling back to a default where there is no information)
     """
-    pools = candidates if candidates is not None else DEFAULT_CANDIDATES
+    pools = candidates if candidates is not None else DEFAULT_SEARCH_APIS_BY_PROJECT
 
     # Aggregate only the hosts we could actually pick, once, up front.
-    pool_hosts = {api.host for pool in pools.values() for api in pool}
-    health = aggregate_host_health(engine, pool_hosts)
+    all_hosts = {api.host for pool in pools.values() for api in pool}
+    health = aggregate_host_health(engine, all_hosts)
 
     def select(canonical: QueryCanonical, attempt: int) -> SearchAPI | None:
         project = _single_project(canonical)
@@ -285,7 +269,6 @@ def build_health_selector(
 
         ranked = _rank_pool(pool, health, rank)
         if ranked is None:
-            # Nothing to rank on for this project: behave like the fallback.
             return fallback(canonical, attempt)
 
         return ranked[attempt] if attempt < len(ranked) else None
