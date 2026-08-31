@@ -34,7 +34,7 @@ from esmporium.search.retry import build_transient_retrying
 # TODO:
 # - [x] make search/apis/protocol.py etc. so we can split this a bit more clearly
 # - [x] adding all the new search API definitions
-# - [ ] move all the pre-built API generation definitions into facade
+# - [x] move all the pre-built API generation definitions into facade
 # - delete SearchAPIOld and get tests going via the new path
 # - add concrete implementations of different generations into search/apis
 # - move pre-built facade instances into search_api_facade

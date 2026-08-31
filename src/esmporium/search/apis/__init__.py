@@ -11,6 +11,8 @@ without the constraints provided by our higher-level interfaces.
 """
 
 from esmporium.search.apis.esgf1 import SearchAPIESGF1Solr
+from esmporium.search.apis.esgf15_bridge import SearchAPIESGF15BridgeSolr
+from esmporium.search.apis.esgfng import SearchAPIESGFNGSTAC
 from esmporium.search.apis.protocol import SearchAPI
 from esmporium.search.apis.request import Request
 
@@ -18,4 +20,6 @@ __all__ = [
     "Request",
     "SearchAPI",
     "SearchAPIESGF1Solr",
+    "SearchAPIESGF15BridgeSolr",
+    "SearchAPIESGFNGSTAC",
 ]
