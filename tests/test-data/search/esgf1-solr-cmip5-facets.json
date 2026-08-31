@@ -2410,109 +2410,13 @@
     "facet_ranges": {}
   },
   "response": {
-    "docs": [
-      {
-        "_timestamp": "2015-11-02T16:18:10.945Z",
-        "_version_": 1803477291677777920,
-        "access": [
-          "HTTPServer",
-          "OPENDAP"
-        ],
-        "cf_standard_name": [
-          "surface_temperature",
-          "square_of_sea_surface_temperature"
-        ],
-        "cmor_table": [
-          "day"
-        ],
-        "data_node": "esgf.ceda.ac.uk",
-        "dataset_id_template_": [
-          "cmip5.%(product)s.%(institute)s.%(model)s.%(experiment)s.%(time_frequency)s.%(realm)s.%(cmor_table)s.%(ensemble)s"
-        ],
-        "datetime_start": "0000-12-30T12:00:00Z",
-        "datetime_stop": "0150-12-30T12:00:00Z",
-        "description": [
-          "MIROC-ESM model output prepared for CMIP5 abrupt 4XCO2"
-        ],
-        "drs_id": [
-          "cmip5.output1.MIROC.MIROC-ESM.abrupt4xCO2.day.ocean.day.r1i1p1"
-        ],
-        "east_degrees": 359.29688,
-        "ensemble": [
-          "r1i1p1"
-        ],
-        "experiment": [
-          "abrupt4xCO2"
-        ],
-        "experiment_family": [
-          "All",
-          "Idealized"
-        ],
-        "forcing": [
-          "GHG (GHG includes only CO2)"
-        ],
-        "format": [
-          "netCDF, CF-1.4"
-        ],
-        "id": "cmip5.output1.MIROC.MIROC-ESM.abrupt4xCO2.day.ocean.day.r1i1p1.v20120828|esgf.ceda.ac.uk",
-        "index_node": "esgf.ceda.ac.uk",
-        "instance_id": "cmip5.output1.MIROC.MIROC-ESM.abrupt4xCO2.day.ocean.day.r1i1p1.v20120828",
-        "institute": [
-          "MIROC"
-        ],
-        "latest": true,
-        "master_gateway": [
-          "DEFAULT"
-        ],
-        "master_id": "cmip5.output1.MIROC.MIROC-ESM.abrupt4xCO2.day.ocean.day.r1i1p1",
-        "metadata_format": "THREDDS",
-        "model": [
-          "MIROC-ESM"
-        ],
-        "north_degrees": 89.14444,
-        "number_of_files": 16,
-        "product": [
-          "output1"
-        ],
-        "project": [
-          "CMIP5"
-        ],
-        "realm": [
-          "ocean"
-        ],
-        "replica": true,
-        "retracted": false,
-        "score": 1.0,
-        "size": 21545663904,
-        "south_degrees": -89.14444,
-        "time_frequency": [
-          "day"
-        ],
-        "timestamp": "2015-10-20T01:09:19Z",
-        "title": "project=CMIP5, model=MIROC-ESM-CHEM, Atmosphere and Ocean Research Institute (The University of Tokyo), National Institute for Environmental Studies, and Japan Agency for Marine-Earth Science and Technology, experiment=abrupt 4XCO2, time_frequency=day, modeling realm=ocean, ensemble=r1i1p1, version=20120828",
-        "type": "Dataset",
-        "variable": [
-          "tos",
-          "tossq"
-        ],
-        "variable_long_name": [
-          "Sea Surface Temperature",
-          "Square of Sea Surface Temperature"
-        ],
-        "variable_units": [
-          "K",
-          "K2"
-        ],
-        "version": "20120828",
-        "west_degrees": 0.703125
-      }
-    ],
+    "docs": [],
     "maxScore": 1.0,
     "numFound": 102217,
     "start": 0
   },
   "responseHeader": {
-    "QTime": 268,
+    "QTime": 115,
     "params": {
       "df": "text",
       "echoParams": "all",
@@ -2542,7 +2446,7 @@
       "q": "*:*",
       "q.alt": "*:*",
       "qf": "text",
-      "rows": "1",
+      "rows": "0",
       "shards": "solr-slave:8983/solr/datasets,solr-replica-ceda:8983/solr/datasets,solr-replica-dkrz:8983/solr/datasets,solr-replica-ipsl:8983/solr/datasets,solr-replica-liu:8983/solr/datasets,solr-replica-noaa:8983/solr/datasets",
       "start": "0",
       "tie": "0.01",

@@ -30,7 +30,6 @@ from esmporium.query import (
     to_canonical,
 )
 from esmporium.search import (
-    Request,
     SearchAPIESGF1Solr,
     SearchAPIESGF15BridgeSolr,
     SearchAPIESGFNGSTAC,
@@ -40,6 +39,7 @@ from esmporium.search import (
     STACCMIP6Parameters,
     STACCMIP7Parameters,
     build_transient_retrying,
+    fire,
 )
 
 OUT_DIR = Path(__file__).parents[1] / "tests" / "test-data" / "search"
@@ -56,34 +56,10 @@ Enough to see the shape of a record, few enough to keep the files reviewable.
 """
 
 
-def facets_to_list(facade: SearchAPIFacade) -> set[str]:
-    """
-    Work out which facets to record the values of, for one facade
-
-    Everything the facade's vocabulary can express, rather than a fixed few.
-
-    Parameters
-    ----------
-    facade
-        The facade whose vocabulary to read
-
-    Returns
-    -------
-    :
-        The facets to ask about, named the way they are asked for
-    """
-    return set(facet_spec(facade.query_style).expressible_facets)
-
-
-def _facade(query_style: Any, search_api: Any) -> SearchAPIFacade:
-    """Pair a query style with a search API, retrying transient failures twice"""
-    return SearchAPIFacade(query_style=query_style, search_api=search_api)
-
-
 CASES = (
     (
         "esgf1-solr-cmip5",
-        _facade(
+        SearchAPIFacade(
             SolrCMIP5Parameters,
             SearchAPIESGF1Solr("esgf.nci.org.au", build_transient_retrying(2)),
         ),
@@ -91,7 +67,7 @@ CASES = (
     ),
     (
         "esgf1-solr-cmip6",
-        _facade(
+        SearchAPIFacade(
             SolrCMIP6Parameters,
             SearchAPIESGF1Solr("esgf.nci.org.au", build_transient_retrying(2)),
         ),
@@ -99,7 +75,7 @@ CASES = (
     ),
     (
         "esgf15-bridge-cmip6",
-        _facade(
+        SearchAPIFacade(
             SolrCMIP6Parameters,
             SearchAPIESGF15BridgeSolr(
                 "esgf-node.ornl.gov", build_transient_retrying(2)
@@ -109,7 +85,7 @@ CASES = (
     ),
     (
         "esgf-ng-stac-cmip6",
-        _facade(
+        SearchAPIFacade(
             STACCMIP6Parameters,
             SearchAPIESGFNGSTAC("search.east.esgf.io", build_transient_retrying(2)),
         ),
@@ -117,7 +93,7 @@ CASES = (
     ),
     (
         "esgf-ng-stac-cmip7",
-        _facade(
+        SearchAPIFacade(
             STACCMIP7Parameters,
             SearchAPIESGFNGSTAC("search.east.esgf.io", build_transient_retrying(2)),
         ),
@@ -125,39 +101,6 @@ CASES = (
     ),
 )
 """What to record: a name, the facade to ask with, and the query"""
-
-
-def fetch(client: httpx.Client, host: str, request: Request) -> dict[str, Any]:
-    """
-    Send a request to a host and hand back the JSON it answered with
-
-    Parameters
-    ----------
-    client
-        The client to send with
-
-    host
-        The host to send to
-
-    request
-        The request to send, as built by a generation
-
-    Returns
-    -------
-    :
-        The raw JSON the host answered with
-    """
-    response = client.request(
-        request.method,
-        f"https://{host}{request.path}",
-        params=request.params,
-        json=request.json_body,
-    )
-    response.raise_for_status()
-
-    res: dict[str, Any] = response.json()
-
-    return res
 
 
 def write(name: str, raw: dict[str, Any]) -> None:
@@ -185,19 +128,23 @@ def main() -> None:
     with httpx.Client(follow_redirects=True, timeout=TIMEOUT) as client:
         for name, facade, query in CASES:
             canonical = to_canonical(query)
-            host = facade.search_api.host
 
             write(
                 f"{name}-search",
-                fetch(client, host, facade.build_search_request(canonical, LIMIT)),
+                fire(
+                    client,
+                    facade.search_api,
+                    facade.build_search_request(canonical, LIMIT),
+                ),
             )
             write(
                 f"{name}-facets",
-                fetch(
+                fire(
                     client,
-                    host,
+                    facade.search_api,
                     facade.build_get_facet_values_request(
-                        canonical, facets_to_list(facade)
+                        canonical,
+                        set(facet_spec(facade.query_style).expressible_facets),
                     ),
                 ),
             )
