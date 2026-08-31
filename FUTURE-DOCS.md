@@ -159,6 +159,17 @@ This gives you full control, but also the ability to shoot yourself in the foot
 [TODO: when we write these docs, also rename QueryCMIP5 to QueryCMIP5Like etc. to make clear
 that these query-styles can be used for projects other than the 'named' one i.e they are CMIPX-like, rather than only being used for CMIPX].
 
+When we come to writing these docs, note that this facade concept does not apply to searching our local database for datasets and loading data.
+We control how that is set up and can do translations from different query styles into database searches.
+The issue here is that, if you use a project-specific facet, then you'll only get results for that project back.
+We need to think a bit about how to handle that.
+My default is that, if the user is using these project-specific facets, they know what they want
+so do nothing by default.
+But we probably want some flag which turns on a check for 'datasets that would have matched, if there were no project-specific facets'.
+We'll also want to consider things like `unify_attribute_names` too
+(for all datasets, make sure that there are attributes which match a specific query-style on there
+e.g. add `experiment_id` to the attributes of CMIP5 datasets).
+
 ## The local database docs
 
 Once we think our local database handling for datasets is stable

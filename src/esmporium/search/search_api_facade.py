@@ -5,11 +5,6 @@ This contains our facades to search APIs.
 These facades are introduced to add more robust handling.
 Complete documentation of this will be added in future.
 """
-# TODO: add note for devs to read text in FUTURE-DOCS.md
-# TODO: add full documentation
-# once we are at the point of loading data based on our database
-# (this facade idea is going to pervade that part too,
-# so we hold off until we know how that looks).
 
 from __future__ import annotations
 
