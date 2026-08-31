@@ -152,10 +152,7 @@ class SearchAPIESGF1Solr:
     """
 
     def build_search_request(
-        self,
-        facet_values: Mapping[str, tuple[str, ...]],
-        limit: int,
-        distrib: int,
+        self, facet_values: Mapping[str, tuple[str, ...]], limit: int
     ) -> Request:
         """
         See [SearchAPI.build_search_request][esmporium.search.apis.SearchAPI.build_search_request].
