@@ -13,6 +13,98 @@ from tenacity import Retrying
 from esmporium.search.apis.request import Request
 
 
+class LimitOutOfRangeError(ValueError):
+    """
+    Raised when a page size is one the search APIs will not accept
+    """
+
+    def __init__(self, limit: int, min_limit: int, max_limit: int) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        limit
+            The page size which was asked for
+
+        min_limit
+            Minimum value of `limit` supported by the API
+
+        max_limit
+            Maximum value of `limit` supported by the API
+        """
+        self.limit = limit
+        self.min_limit = min_limit
+        self.max_limit = max_limit
+        super().__init__(
+            f"limit must be between {min_limit} and {max_limit}, received {limit}. "
+            "If you want more records than that, paginate."
+        )
+
+
+class NoSearchResultNumberOfMatchesReturned(ValueError):
+    """
+    Raised when a search response does not say how many records matched a search
+    """
+
+    def __init__(self, raw: dict[str, Any], expected_at: str) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        raw
+            The response we could not read a count out of
+
+        expected_at
+            Where in `raw` we looked for the number of records that matched the search
+        """
+        self.raw = raw
+        self.expected_at = expected_at
+
+        keys = ", ".join(sorted(raw)) if raw else "nothing at all"
+        super().__init__(
+            "This response does not report how many records matched the search. "
+            f"We expected to read the count from {expected_at!r}, "
+            # TODO: make this more robust as the issue might be for a key
+            # lower than the top level.
+            f"but the response's top-level keys are: {keys}."
+        )
+
+
+class NoFacetValuesReturned(ValueError):
+    """
+    Raised when a response does not enumerate facet values at all
+
+    We don't expect this to happen,
+    but if we expect to get facet values and don't, we want to be loud about it.
+    """
+
+    def __init__(self, raw: dict[str, Any], expected_at: str) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        raw
+            The response we could not read facet values out of
+
+        expected_at
+            Where in `raw` we looked for the facet values
+        """
+        self.raw = raw
+        self.expected_at = expected_at
+
+        keys = ", ".join(sorted(raw)) if raw else "nothing at all"
+        super().__init__(
+            "This response does not report facet values. "
+            f"We expected to read the facet values from {expected_at!r}, "
+            # TODO: make this more robust as the issue might be for a key
+            # lower than the top level.
+            f"but the response's top-level keys are: {keys}."
+        )
+
+
 class SearchAPI(Protocol):
     """
     A search API endpoint we can query
@@ -72,12 +164,22 @@ class SearchAPI(Protocol):
         -------
         :
             The request to send
+
+        Raises
+        ------
+        LimitOutOfRangeError
+            `limit` is outside the range this search API accepts
         """
         ...
 
-    def get_search_result_count(self, raw: dict[str, Any]) -> int:
+    def get_search_result_n_matches(self, raw: dict[str, Any]) -> int:
         """
-        Get the total number of search results out of a raw response
+        Get the number of records that matched a search from a raw response
+
+        Note: this is not necessarily the same as the number of results in `raw`.
+        Some search APIs will only return a limited number of results.
+        This method should return the total number of records which matched the search,
+        which can be much higher than the number of results returned in `raw`.
 
         Parameters
         ----------
@@ -88,24 +190,33 @@ class SearchAPI(Protocol):
         Returns
         -------
         :
-            The number of search results
+            The number of records that matched the search
 
         Raises
         ------
-        NoResultCountReturned
-            `raw` does not report a count we can read
+        NoSearchResultNumberOfMatchesReturned
+            `raw` does not report the number of records that matched the search
         """
-        # TODO: rename NoResultCountReturned to NoSearchResultCountReturned
+        # TODO: ensure implmentations raise NoSearchResultNumberOfMatchesReturned
+        # rather than NoResultCountReturned
         ...
 
-    def build_get_facet_values_request(self, facets: set[str]) -> Request:
+    def build_get_facet_values_for_project_request(
+        self, facets: set[str], project: str
+    ) -> Request:
         """
-        Build a request which lists the values of the given facets
+        Build a request which lists the facet values that appear in a project
+
+        This gets the facet values (e.g. historical, piControl),
+        not the facet names (e.g. experiment_id).
 
         Parameters
         ----------
         facets
-            The facets to list the values of.
+            The (names of the) facets to list the values of.
+
+        project
+            The project to get facet values for.
 
         Returns
         -------

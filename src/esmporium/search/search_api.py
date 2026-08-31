@@ -42,6 +42,7 @@ from esmporium.search.retry import build_transient_retrying
 # - add FacetSpecificSearchAPIStore
 #   or whatever we are going to call it into search_api_facade
 # - review with claude (given changes, what do you think, what tests are missing etc.)
+# - is it SOLR or Solr when referring to this format in text?
 
 
 @dataclass(frozen=True)
