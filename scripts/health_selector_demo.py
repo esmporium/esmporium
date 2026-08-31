@@ -27,11 +27,11 @@ from pathlib import Path
 from sqlmodel import create_engine
 
 from esmporium.db import (
-    DEFAULT_CANDIDATES,
+    DEFAULT_SEARCH_APIS_BY_PROJECT,
     HostHealth,
     aggregate_host_health,
     build_health_selector,
-    rank_by_speed,
+    get_median_response_time_for_ranking,
     record_search_api_calls,
 )
 from esmporium.db.migrate import upgrade_to_head
@@ -72,14 +72,18 @@ def print_health_table(health: dict[str, HostHealth]) -> None:
     print(f"  {'host':24} {'calls':>5} {'ok%':>5} {'med.time':>9}")
     print(f"  {'-' * 24} {'-' * 5} {'-' * 5} {'-' * 9}")
     # Fastest first, the same order the selector would use.
-    for h in sorted(health.values(), key=rank_by_speed):
-        time = "-" if h.response_time == float("inf") else f"{h.response_time:.2f}s"
+    for h in sorted(health.values(), key=get_median_response_time_for_ranking):
+        time = (
+            "-"
+            if h.median_response_time_seconds == float("inf")
+            else f"{h.median_response_time_seconds:.2f}s"
+        )
         print(f"  {h.host:24} {h.n_calls:>5} {h.success_rate * 100:>4.0f}% {time:>9}")
 
 
 def ranked_hosts(engine, project: str) -> list[str]:
     """Return the host order the speed-ranked selector would hand `search()`."""
-    selector = build_health_selector(engine, rank=rank_by_speed)
+    selector = build_health_selector(engine, rank=get_median_response_time_for_ranking)
     canonical = to_canonical(EXAMPLE_QUERIES[project])
     hosts: list[str] = []
     attempt = 0
@@ -105,7 +109,9 @@ def main() -> None:
         print("gathering health from live nodes (this takes a little while):")
         gather_health(engine)
 
-        pool_hosts = {api.host for pool in DEFAULT_CANDIDATES.values() for api in pool}
+        pool_hosts = {
+            api.host for pool in DEFAULT_SEARCH_APIS_BY_PROJECT.values() for api in pool
+        }
         health = aggregate_host_health(engine, pool_hosts)
 
         print_health_table(health)
