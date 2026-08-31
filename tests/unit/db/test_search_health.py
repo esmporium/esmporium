@@ -17,10 +17,16 @@ from esmporium.db import (
     record_search_api_calls,
 )
 from esmporium.query import QueryCanonical, QueryCMIP6
-from esmporium.search import SearchAPIOld, build_list_selector, search
+from esmporium.search import (
+    DEFAULT_SEARCH_API_FACADES_BY_PROJECT,
+    SearchAPIESGF1Solr,
+    SearchAPIFacade,
+    SolrCMIP6Parameters,
+    build_list_selector,
+    search,
+)
 from esmporium.search.health import SearchAPICall
 from esmporium.search.retry import build_transient_retrying
-from esmporium.search.search_api import CMIP6_APIS, SOLR_CMIP6
 
 
 def make_call(  # noqa: PLR0913 - a factory mirroring every field of the record
@@ -153,9 +159,12 @@ def seed(engine, *calls: SearchAPICall) -> None:
         observer(call)
 
 
-def api(host: str) -> SearchAPIOld:
-    """Build a CMIP6-Solr SearchAPI for `host` (only the host matters to ranking)."""
-    return SearchAPIOld(host, SOLR_CMIP6, build_transient_retrying(1))
+def api(host: str) -> SearchAPIFacade:
+    """Build a CMIP6-Solr facade for `host` (only the host matters to ranking)."""
+    return SearchAPIFacade(
+        query_style=SolrCMIP6Parameters,
+        search_api=SearchAPIESGF1Solr(host, build_transient_retrying(1)),
+    )
 
 
 def hosts_offered(selector, canonical=CMIP6) -> list[str]:
@@ -163,7 +172,7 @@ def hosts_offered(selector, canonical=CMIP6) -> list[str]:
     hosts: list[str] = []
     attempt = 0
     while (chosen := selector(canonical, attempt)) is not None:
-        hosts.append(chosen.host)
+        hosts.append(chosen.search_api.host)
         attempt += 1
     return hosts
 
@@ -257,7 +266,7 @@ def test_selector_falls_back_entirely_when_the_pool_has_no_health(engine):
     selector = build_health_selector(engine, candidates, fallback=fallback)
 
     # It defers to the fallback verbatim, offering the fallback's own APIs.
-    assert selector(CMIP6, 0).host == "fb-1"
+    assert selector(CMIP6, 0).search_api.host == "fb-1"
     assert hosts_offered(selector) == ["fb-1", "fb-2"]
 
 
@@ -265,7 +274,10 @@ def test_selector_default_fallback_is_the_default_selector(engine):
     # Empty table + default candidates/fallback: behaves like the default order.
     selector = build_health_selector(engine)
 
-    assert hosts_offered(selector) == [candidate.host for candidate in CMIP6_APIS]
+    assert hosts_offered(selector) == [
+        candidate.search_api.host
+        for candidate in DEFAULT_SEARCH_API_FACADES_BY_PROJECT["CMIP6"]
+    ]
 
 
 def test_selector_injects_into_search_and_is_asked_in_ranked_order(engine):

@@ -30,7 +30,6 @@ from esmporium.query import (
     facet_spec,
     to_canonical,
 )
-from esmporium.search.esgf_generations import native_facet_names
 from esmporium.search.health import SearchAPICallObserver
 from esmporium.search.search import SearchAPIRequestError, fire
 from esmporium.search.search_api_facade import (
@@ -412,19 +411,20 @@ def allowed_values_from_api(
     CouldNotGetAllowedValuesError
         `facade.search_api` could not be reached, or would not answer
     """
-    # TODO: rewire all of this
-    askable = set(native_facet_names(api.generation.params, facets))
+    # Only ask about the facets this facade's vocabulary can express; the rest
+    # have no name to ask them under, so the caller records them as unchecked.
+    askable = facade.askable_facets(facets)
 
-    request = api.generation.build_get_facet_values_request(canonical, askable)
+    request = facade.build_get_facet_values_request(canonical, askable)
 
     try:
-        raw = fire(client, api, request, observer)
+        raw = fire(client, facade.search_api, request, observer)
     except SearchAPIRequestError as exc:
-        raise CouldNotGetAllowedValuesError(api.host) from exc
+        raise CouldNotGetAllowedValuesError(facade.search_api.host) from exc
 
     return AllowedValues(
-        values=api.generation.parse_facet_values(raw, askable),
-        patterns=api.generation.parse_facet_patterns(raw, askable),
+        values=facade.parse_facet_values(raw, askable),
+        patterns=facade.parse_facet_patterns(raw, askable),
     )
 
 
@@ -528,8 +528,8 @@ def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberat
 
     Raises
     ------
-    SelectorOfferedNoAPIError
-        `selector` had no API to offer for this query,
+    SelectorOfferedNoAPIFacadeError
+        `selector` had no API facade to offer for this query,
         so there was nobody to ask
 
     NoSourceWouldAnswerError
@@ -548,21 +548,22 @@ def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberat
 
     try:
         attempt = 0
-        while (api := selector(canonical, attempt)) is not None:
+        while (facade := selector(canonical, attempt)) is not None:
             asked_someone = True
+            host = facade.search_api.host
             try:
                 allowed = allowed_values_from_api(
-                    api, client, canonical, facets, observer
+                    facade, client, canonical, facets, observer
                 )
             except CouldNotGetAllowedValuesError as exc:
-                refusals[api.host] = exc
+                refusals[host] = exc
             else:
                 # Note: if the selector offers the same host twice,
                 # the second report simply replaces the first here.
                 # That is wasteful, because we ask the same host again,
                 # but it is not wrong: both reports say the same thing.
-                reports[api.host] = check_query_values_low(
-                    canonical, allowed, api.host, close_matches
+                reports[host] = check_query_values_low(
+                    canonical, allowed, host, close_matches
                 )
                 if stop_at_first_result:
                     break

@@ -21,8 +21,12 @@ from tenacity import Retrying, retry_if_exception, stop_after_attempt
 from esmporium.query import QueryCMIP6, to_canonical
 from esmporium.search import (
     NoAPIWouldAnswerError,
-    SearchAPIOld,
+    SearchAPIESGF1Solr,
+    SearchAPIESGFNGSTAC,
+    SearchAPIFacade,
     SearchAPIRequestError,
+    SolrCMIP6Parameters,
+    STACCMIP6Parameters,
     build_list_selector,
     check_query_values,
     fan_out,
@@ -31,7 +35,6 @@ from esmporium.search import (
 )
 from esmporium.search.health import SearchAPICall
 from esmporium.search.retry import _is_transient
-from esmporium.search.search_api import SOLR_CMIP6, STAC_CMIP6
 
 # NOTE: the mock helpers below are duplicated from
 # `tests/unit/search/test_search.py` and `test_check_query_values.py`. They are
@@ -69,9 +72,17 @@ def solr_response(num_found: int) -> httpx.Response:
     return httpx.Response(200, json={"response": {"numFound": num_found, "docs": []}})
 
 
-def make_api(host, generation=SOLR_CMIP6, attempts=1) -> SearchAPIOld:
-    """Build a SearchAPI for `host` with a no-sleep retry policy."""
-    return SearchAPIOld(host, generation, fast_retrying(attempts))
+def make_api(host, *, stac=False, attempts=1) -> SearchAPIFacade:
+    """Build a CMIP6 facade for `host` with a no-sleep retry policy."""
+    if stac:
+        return SearchAPIFacade(
+            query_style=STACCMIP6Parameters,
+            search_api=SearchAPIESGFNGSTAC(host, fast_retrying(attempts)),
+        )
+    return SearchAPIFacade(
+        query_style=SolrCMIP6Parameters,
+        search_api=SearchAPIESGF1Solr(host, fast_retrying(attempts)),
+    )
 
 
 def record(handler, apis) -> list[SearchAPICall]:
@@ -139,7 +150,7 @@ def test_success_with_an_uncountable_body_records_none_results():
 
 
 def test_stac_post_records_its_method_and_body():
-    api = make_api("search.example.io", generation=STAC_CMIP6)
+    api = make_api("search.example.io", stac=True)
 
     (call,) = record(lambda r: httpx.Response(200, json={"numberMatched": 3}), [api])
 
@@ -231,11 +242,11 @@ def test_no_observer_records_nothing_but_still_works():
 
 
 def test_fire_fails_loudly_carrying_the_cause():
-    api = make_api("host")
-    request = api.generation.build_search_request(to_canonical(QUERY), 10)
+    facade = make_api("host")
+    request = facade.build_search_request(to_canonical(QUERY), 10)
 
     with pytest.raises(SearchAPIRequestError) as excinfo:
-        fire(client_for(lambda r: httpx.Response(500)), api, request)
+        fire(client_for(lambda r: httpx.Response(500)), facade.search_api, request)
 
     assert excinfo.value.host == "host"
     assert isinstance(excinfo.value.__cause__, httpx.HTTPStatusError)

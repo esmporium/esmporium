@@ -52,7 +52,7 @@ def stac_summary_values(raw: dict[str, Any], facets: set[str]) -> dict[str, set[
     # An empty block is as useless to us as a missing one:
     # either way this deployment has told us nothing it knows.
     if not raw.get("summaries"):
-        raise NoFacetValuesReturned
+        raise NoFacetValuesReturned(raw, "summaries")
 
     res: dict[str, set[str]] = {}
     for api_name, summary in raw["summaries"].items():
@@ -112,9 +112,9 @@ def stac_summary_patterns(
     # An empty block is as useless to us as a missing one:
     # either way this deployment has told us nothing it knows.
     if not raw.get("summaries"):
-        raise NoFacetValuesReturned
+        raise NoFacetValuesReturned(raw, "summaries")
 
-    res: dict[str, set[str]] = {}
+    res: dict[str, re.Pattern[str]] = {}
     for api_name, summary in raw["summaries"].items():
         if api_name in facets:
             if not isinstance(summary, str):
@@ -196,7 +196,7 @@ class SearchAPIESGFNGSTAC:
 
     def get_search_result_n_matches(self, raw: dict[str, Any]) -> int:
         """
-        See [SearchAPI.get_search_result_count][esmporium.search.apis.SearchAPI.get_search_result_count].
+        See [SearchAPI.get_search_result_n_matches][esmporium.search.apis.SearchAPI.get_search_result_n_matches].
         """  # noqa: E501
         # The two ESGF-NG deployments disagree on where the total lives:
         # east reports `numberMatched` (the STAC spelling),
@@ -215,12 +215,15 @@ class SearchAPIESGFNGSTAC:
             raw, "numberMatched / numMatched / context.matched"
         )
 
-    def build_get_facet_values_request(self, facets: set[str], project: str) -> Request:
+    def build_get_facet_values_for_project_request(
+        self, facets: set[str], project: str
+    ) -> Request:
         """
-        See [SearchAPI.build_get_facet_values_request][esmporium.search.apis.SearchAPI.build_get_facet_values_request].
+        See [SearchAPI.build_get_facet_values_for_project_request][esmporium.search.apis.SearchAPI.build_get_facet_values_for_project_request].
         """  # noqa: E501
         # Assumes project has been mapped to the intended collection style
-        # (e.g. all lowercase)
+        # (the facade passes the collection exactly as the caller wrote it,
+        # e.g. `CMIP6`).
         return Request("GET", f"/collections/{project}")
 
     def parse_facet_values(

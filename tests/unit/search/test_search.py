@@ -20,13 +20,16 @@ from tenacity import Retrying, retry_if_exception, stop_after_attempt
 from esmporium.query import QueryCMIP6
 from esmporium.search import (
     NoAPIWouldAnswerError,
-    SearchAPIOld,
-    SelectorOfferedNoAPIError,
+    SearchAPIESGF1Solr,
+    SearchAPIESGFNGSTAC,
+    SearchAPIFacade,
+    SelectorOfferedNoAPIFacadeError,
+    SolrCMIP6Parameters,
+    STACCMIP6Parameters,
     build_list_selector,
     search,
 )
 from esmporium.search.retry import _is_transient
-from esmporium.search.search_api import SOLR_CMIP6, STAC_CMIP6
 
 LOGGER_NAME = "esmporium.search.search"
 
@@ -60,9 +63,12 @@ def solr_response(num_found: int) -> httpx.Response:
 
 def make_search_api(
     host: str, attempts: int = 1, timeout: float = 30.0
-) -> SearchAPIOld:
-    """Build a CMIP6-Solr SearchAPI for `host`"""
-    return SearchAPIOld(host, SOLR_CMIP6, fast_retrying(attempts), timeout=timeout)
+) -> SearchAPIFacade:
+    """Build a CMIP6-Solr facade for `host`"""
+    return SearchAPIFacade(
+        query_style=SolrCMIP6Parameters,
+        search_api=SearchAPIESGF1Solr(host, fast_retrying(attempts), timeout=timeout),
+    )
 
 
 def test_search_returns_the_json_on_success():
@@ -224,7 +230,7 @@ def test_search_with_no_endpoint_to_try_raises():
     An empty dict would say "we searched and found nothing",
     when in truth nothing was searched at all.
     """
-    with pytest.raises(SelectorOfferedNoAPIError, match="CMIP6"):
+    with pytest.raises(SelectorOfferedNoAPIFacadeError, match="CMIP6"):
         search(QUERY_CMIP6, build_list_selector([]), client=client_for(never_asked))
 
 
@@ -283,8 +289,11 @@ def test_search_logs_the_request_at_debug(caplog):
 
 def test_search_curl_reproduces_a_post_body(caplog):
     """The curl-equivalent of a POST carries its method and body"""
-    # STAC is our POST generation, so search it to exercise the POST path.
-    stac_api = SearchAPIOld("search.example.io", STAC_CMIP6, fast_retrying(1))
+    # STAC is our POST wire format, so search it to exercise the POST path.
+    stac_api = SearchAPIFacade(
+        query_style=STACCMIP6Parameters,
+        search_api=SearchAPIESGFNGSTAC("search.example.io", fast_retrying(1)),
+    )
     selector = build_list_selector([stac_api])
 
     with caplog.at_level(logging.DEBUG, logger=LOGGER_NAME):

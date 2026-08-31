@@ -177,17 +177,20 @@ class SearchAPIESGF1Solr:
 
     def get_search_result_n_matches(self, raw: dict[str, Any]) -> int:
         """
-        See [SearchAPI.get_search_result_count][esmporium.search.apis.SearchAPI.get_search_result_count].
+        See [SearchAPI.get_search_result_n_matches][esmporium.search.apis.SearchAPI.get_search_result_n_matches].
         """  # noqa: E501
         return get_solr_search_result_n_matches(raw)
 
-    def build_get_facet_values_request(self, facets: set[str], project: str) -> Request:
+    def build_get_facet_values_for_project_request(
+        self, facets: set[str], project: str
+    ) -> Request:
         """
-        See [SearchAPI.build_get_facet_values_request][esmporium.search.apis.SearchAPI.build_get_facet_values_request].
+        See [SearchAPI.build_get_facet_values_for_project_request][esmporium.search.apis.SearchAPI.build_get_facet_values_for_project_request].
         """  # noqa: E501
         params: dict[str, Any] = {
             "format": "application/solr+json",
-            "facets": ",".join(facets),
+            # Sorted so the request we build is deterministic.
+            "facets": ",".join(sorted(facets)),
             # We want the vocabulary, not the records,
             # so we ask for the smallest page we are allowed to ask for.
             "limit": self.min_limit,

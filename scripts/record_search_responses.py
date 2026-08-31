@@ -30,14 +30,16 @@ from esmporium.query import (
     to_canonical,
 )
 from esmporium.search import (
-    ESGF1Solr,
-    ESGF15Bridge,
-    ESGFNGStac,
     Request,
+    SearchAPIESGF1Solr,
+    SearchAPIESGF15BridgeSolr,
+    SearchAPIESGFNGSTAC,
+    SearchAPIFacade,
     SolrCMIP5Parameters,
     SolrCMIP6Parameters,
-    StacCMIP6Parameters,
-    StacCMIP7Parameters,
+    STACCMIP6Parameters,
+    STACCMIP7Parameters,
+    build_transient_retrying,
 )
 
 OUT_DIR = Path(__file__).parents[1] / "tests" / "test-data" / "search"
@@ -54,58 +56,75 @@ Enough to see the shape of a record, few enough to keep the files reviewable.
 """
 
 
-def facets_to_list(generation: Any) -> set[str]:
+def facets_to_list(facade: SearchAPIFacade) -> set[str]:
     """
-    Work out which facets to record the values of, for one generation
+    Work out which facets to record the values of, for one facade
 
-    Everything the generation's vocabulary can express, rather than a fixed few.
+    Everything the facade's vocabulary can express, rather than a fixed few.
 
     Parameters
     ----------
-    generation
-        The generation whose vocabulary to read
+    facade
+        The facade whose vocabulary to read
 
     Returns
     -------
     :
         The facets to ask about, named the way they are asked for
     """
-    return set(facet_spec(generation.params).expressible_facets)
+    return set(facet_spec(facade.query_style).expressible_facets)
+
+
+def _facade(query_style: Any, search_api: Any) -> SearchAPIFacade:
+    """Pair a query style with a search API, retrying transient failures twice"""
+    return SearchAPIFacade(query_style=query_style, search_api=search_api)
 
 
 CASES = (
     (
         "esgf1-solr-cmip5",
-        "esgf.nci.org.au",
-        ESGF1Solr(params=SolrCMIP5Parameters),
+        _facade(
+            SolrCMIP5Parameters,
+            SearchAPIESGF1Solr("esgf.nci.org.au", build_transient_retrying(2)),
+        ),
         QueryCMIP5(experiment="historical", variable="tas", time_frequency="mon"),
     ),
     (
         "esgf1-solr-cmip6",
-        "esgf.nci.org.au",
-        ESGF1Solr(params=SolrCMIP6Parameters),
+        _facade(
+            SolrCMIP6Parameters,
+            SearchAPIESGF1Solr("esgf.nci.org.au", build_transient_retrying(2)),
+        ),
         QueryCMIP6(experiment_id="historical", variable_id="tas", frequency="mon"),
     ),
     (
         "esgf15-bridge-cmip6",
-        "esgf-node.ornl.gov",
-        ESGF15Bridge(params=SolrCMIP6Parameters),
+        _facade(
+            SolrCMIP6Parameters,
+            SearchAPIESGF15BridgeSolr(
+                "esgf-node.ornl.gov", build_transient_retrying(2)
+            ),
+        ),
         QueryCMIP6(experiment_id="historical", variable_id="tas", frequency="mon"),
     ),
     (
         "esgf-ng-stac-cmip6",
-        "search.east.esgf.io",
-        ESGFNGStac(params=StacCMIP6Parameters),
+        _facade(
+            STACCMIP6Parameters,
+            SearchAPIESGFNGSTAC("search.east.esgf.io", build_transient_retrying(2)),
+        ),
         QueryCMIP6(experiment_id="historical", variable_id="tas", frequency="mon"),
     ),
     (
         "esgf-ng-stac-cmip7",
-        "search.east.esgf.io",
-        ESGFNGStac(params=StacCMIP7Parameters),
+        _facade(
+            STACCMIP7Parameters,
+            SearchAPIESGFNGSTAC("search.east.esgf.io", build_transient_retrying(2)),
+        ),
         QueryCMIP7(variable_id="tas"),
     ),
 )
-"""What to record: a name, the host to ask, the generation, and the query"""
+"""What to record: a name, the facade to ask with, and the query"""
 
 
 def fetch(client: httpx.Client, host: str, request: Request) -> dict[str, Any]:
@@ -164,20 +183,21 @@ def main() -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
     with httpx.Client(follow_redirects=True, timeout=TIMEOUT) as client:
-        for name, host, generation, query in CASES:
+        for name, facade, query in CASES:
             canonical = to_canonical(query)
+            host = facade.search_api.host
 
             write(
                 f"{name}-search",
-                fetch(client, host, generation.build_search_request(canonical, LIMIT)),
+                fetch(client, host, facade.build_search_request(canonical, LIMIT)),
             )
             write(
                 f"{name}-facets",
                 fetch(
                     client,
                     host,
-                    generation.build_get_facet_values_request(
-                        canonical, facets_to_list(generation)
+                    facade.build_get_facet_values_request(
+                        canonical, facets_to_list(facade)
                     ),
                 ),
             )

@@ -135,7 +135,7 @@ class SearchAPI(Protocol):
     A search API endpoint we can query
 
     These interfaces are low-level.
-    They that mirror the ESGF search APIs directly.
+    They mirror the ESGF search APIs directly.
     It is extremely easy to make invalid queries using interfaces of this type.
     If you want to make queries, we recommend using instances of
     [esmporium.search.search_api_facade.SearchAPIFacade][]'s instead
@@ -182,8 +182,8 @@ class SearchAPI(Protocol):
             i.e. the maximum number of records in one response.
 
             This is not the total number of matches;
-            that comes back in the response itself
-            and is what [get_search_result_count][(c).get_search_result_count] is for.
+            that comes back in the response itself and is what
+            [get_search_result_n_matches][(c).get_search_result_n_matches] reads.
 
         Returns
         -------
@@ -222,8 +222,7 @@ class SearchAPI(Protocol):
         NoSearchResultNumberOfMatchesReturned
             `raw` does not report the number of records that matched the search
         """
-        # TODO: ensure implmentations raise NoSearchResultNumberOfMatchesReturned
-        # rather than NoResultCountReturned
+        # TODO: ensure implementations raise NoSearchResultNumberOfMatchesReturned
         ...
 
     def build_get_facet_values_for_project_request(
@@ -260,7 +259,7 @@ class SearchAPI(Protocol):
         ----------
         raw
             The response to read, i.e. the answer to a request built with
-            [build_get_facet_values_request][(c).build_get_facet_values_request].
+            [build_get_facet_values_for_project_request][(c).build_get_facet_values_for_project_request].
 
         facets
             The facets we asked about.
@@ -296,7 +295,7 @@ class SearchAPI(Protocol):
         ----------
         raw
             The response to read, i.e. the answer to a request built with
-            [build_get_facet_values_request][(c).build_get_facet_values_request].
+            [build_get_facet_values_for_project_request][(c).build_get_facet_values_for_project_request].
 
         facets
             The facets we asked about.
