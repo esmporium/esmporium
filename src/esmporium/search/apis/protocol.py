@@ -105,6 +105,31 @@ class NoFacetValuesReturned(ValueError):
         )
 
 
+class UncompilableFacetPatternError(ValueError):
+    """
+    Raised when an API describes a facet with a pattern we cannot compile
+    """
+
+    def __init__(self, facet: str, pattern: str) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        facet
+            The facet the pattern was given for
+
+        pattern
+            The pattern we could not compile
+        """
+        self.facet = facet
+        self.pattern = pattern
+        super().__init__(
+            f"The pattern given for {facet!r} is not a valid regular expression, "
+            f"so we cannot check values against it: {pattern!r}"
+        )
+
+
 class SearchAPI(Protocol):
     """
     A search API endpoint we can query
@@ -284,5 +309,11 @@ class SearchAPI(Protocol):
             A facet this response does not describe with a pattern is left out
             (higher level functions are left to decide what to do
             about facets which are requested but not returned by this parsing).
+
+        Raises
+        ------
+        UncompilableFacetPatternError
+            A pattern specified for a given facet name
+            is not able to be compiled as a regular expression.
         """
         ...

@@ -1,5 +1,5 @@
 """
-ESGF1 search API class
+ESGF1.5 bridge search API class
 """
 
 from __future__ import annotations
@@ -22,9 +22,9 @@ from esmporium.search.apis.request import Request
 
 
 @dataclass(frozen=True)
-class SearchAPIESGF15Bridge:
+class SearchAPIESGF15BridgeSolr:
     """
-    ESGF1.5 bridge search API
+    ESGF1.5 bridge search API that uses the SOLR format
 
     Instances of this class should mirror the (relevant) behaviour
     of the ESGF1.5 bridge search APIs.
