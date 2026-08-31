@@ -14,22 +14,42 @@ from typing import Any
 import httpx
 
 from esmporium.query import QueryProtocol, to_canonical
+from esmporium.search.apis import NoSearchResultNumberOfMatchesReturned, SearchAPI
 from esmporium.search.esgf_generations import (
     DEFAULT_LIMIT,
-    NoResultCountReturned,
     Request,
 )
 from esmporium.search.health import SearchAPICall, SearchAPICallObserver
-from esmporium.search.search_api import (
+from esmporium.search.search_api_facade import (
     DEFAULT_SELECTOR,
-    SearchAPIOld,
-    SearchAPISelector,
-    SelectorOfferedNoAPIError,
+    SearchAPIFacadeSelector,
+    SelectorOfferedNoAPIFacadeError,
 )
 
 logger = logging.getLogger(__name__)
 
 
+def get_url(api: SearchAPI, request: Request) -> str:
+    """
+    Build the full URL for a request to a given API
+
+    Parameters
+    ----------
+    api
+        The API we want to ask
+
+    request
+        The request to make
+
+    Returns
+    -------
+    :
+        The URL to send `request` to
+    """
+    return f"{api.scheme}://{api.host}{request.path}"
+
+
+# TODO: make these public
 def _curl_equivalent(request: httpx.Request) -> str:
     """
     Render an httpx request as a `curl` command which reproduces it
@@ -59,8 +79,9 @@ def _curl_equivalent(request: httpx.Request) -> str:
     return " ".join(parts)
 
 
+# TODO: make these public
 def _log_request_as_url_and_curl(
-    api: SearchAPIOld,
+    api: SearchAPI,
     request: httpx.Request,
     # Make the level to log at a parameter, rather than being hard-coded
 ) -> None:
@@ -122,7 +143,7 @@ class SearchAPIRequestError(RuntimeError):
         )
 
 
-def _result_count_or_none(api: SearchAPIOld, raw: dict[str, Any]) -> int | None:
+def _result_count_or_none(api: SearchAPI, raw: dict[str, Any]) -> int | None:
     """
     Read how many records a response reported, or `None` if it reported none
 
@@ -143,14 +164,14 @@ def _result_count_or_none(api: SearchAPIOld, raw: dict[str, Any]) -> int | None:
         The number of records reported, or `None` if the response carries no count
     """
     try:
-        return api.generation.result_count(raw)
-    except NoResultCountReturned:
+        return api.get_search_result_n_matches(raw)
+    except NoSearchResultNumberOfMatchesReturned:
         return None
 
 
 def fire(
     client: httpx.Client,
-    api: SearchAPIOld,
+    api: SearchAPI,
     request: Request,
     observer: SearchAPICallObserver | None = None,
 ) -> dict[str, Any]:
@@ -186,7 +207,7 @@ def fire(
     """
     built = client.build_request(
         request.method,
-        api.url(request),
+        get_url(api, request),
         params=request.params,
         json=request.json_body,
         timeout=api.timeout,
@@ -340,7 +361,7 @@ class SearchOutcome:
 
 def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection seams
     query: QueryProtocol,
-    selector: SearchAPISelector = DEFAULT_SELECTOR,
+    selector: SearchAPIFacadeSelector = DEFAULT_SELECTOR,
     *,
     stop_at_first_result: bool = True,
     limit: int = DEFAULT_LIMIT,
@@ -348,7 +369,7 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
     observer: SearchAPICallObserver | None = None,
 ) -> SearchOutcome:
     """
-    Search the endpoints the selector yields, and collect their raw JSON
+    Search the facades the selector yields, and collect their raw JSON
 
     Parameters
     ----------
@@ -356,7 +377,7 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
         The query to use for the search
 
     selector
-        Chooses which endpoint to try at each attempt, and when to stop.
+        Chooses which facade to try at each attempt, and when to stop.
 
     stop_at_first_result
         If `True` (the default), return as soon as one endpoint answers.
@@ -378,7 +399,8 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
         If `None`, one is built for the call and closed at the end.
 
     observer
-        Told about each request to each endpoint, so its health can be recorded.
+        Told about each request to each API.
+
         If `None` (the default), nothing is recorded.
         See [esmporium.search.health][] for how to build one.
 
@@ -391,9 +413,8 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
 
     Raises
     ------
-    SelectorOfferedNoAPIError
-        `selector` had no endpoint to offer for this query,
-        so there was nobody to search
+    SelectorOfferedNoAPIFacadeError
+        `selector` had no facade to offer for this query at all
 
     NoAPIWouldAnswerError
         The selector offered at least one endpoint and none of them answered
@@ -434,7 +455,7 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
             client.close()
 
     if not asked_someone:
-        raise SelectorOfferedNoAPIError(canonical, selector)
+        raise SelectorOfferedNoAPIFacadeError(canonical, selector)
 
     if not results and refusals:
         raise NoAPIWouldAnswerError(tuple(refusals.values()))

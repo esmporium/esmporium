@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Annotated, ClassVar
 
 from pydantic import BaseModel, ConfigDict
+from tenacity import Retrying
 
 from esmporium.query import (
     FacetValues,
@@ -26,21 +27,10 @@ from esmporium.query import (
 from esmporium.search.apis import (
     SearchAPI,
     SearchAPIESGF1Solr,
-    SearchAPIESGF15Bridge,
+    SearchAPIESGF15BridgeSolr,
     SearchAPIESGFNGSTAC,
 )
-
-# from esmporium.search.esgf_generations import (
-#     ESGF1Solr,
-#     ESGF15Bridge,
-#     ESGFNGStac,
-#     SolrCMIP5Parameters,
-#     SolrCMIP6Parameters,
-#     SolrCMIP7Parameters,
-#     StacCMIP5Parameters,
-#     StacCMIP6Parameters,
-#     StacCMIP7Parameters,
-# )
+from esmporium.search.retry import build_transient_retrying
 
 
 @dataclass(frozen=True)
@@ -680,9 +670,16 @@ class SearchAPIFacadeStore:
         return matches[0].facade
 
     @classmethod
-    def intialise_with_default_api_facades(cls) -> SearchAPIFacadeStore:
+    def intialise_with_default_api_facades(
+        cls, retrying: Retrying = build_transient_retrying(3)
+    ) -> SearchAPIFacadeStore:
         """
         Initialise with our default API facade set
+
+        Parameters
+        ----------
+        retrying
+            Retrying strategy to use with all the APIs
 
         Returns
         -------
@@ -706,7 +703,7 @@ class SearchAPIFacadeStore:
             ),
             (
                 SolrCMIP5Parameters,
-                SearchAPIESGF15Bridge,
+                SearchAPIESGF15BridgeSolr,
                 "esgf-node.ornl.gov",
             ),
             (
@@ -744,7 +741,7 @@ class SearchAPIFacadeStore:
             ),
             (
                 SolrCMIP6Parameters,
-                SearchAPIESGF15Bridge,
+                SearchAPIESGF15BridgeSolr,
                 "esgf-node.ornl.gov",
             ),
             (
@@ -792,19 +789,21 @@ class SearchAPIFacadeStore:
             ),
         )
 
-        for projects, (query_style, search_api_type, host) in (
+        for projects, facade_definitions in (
             (("CMIP5"), cmip5_facades),
             (("CMIP6", "CMIP6Plus"), cmip6_facades),
             (("CMIP7"), cmip7_facades),
         ):
-            classifications_l.append(
-                SearchAPIFacadeClassification(
-                    SearchAPIFacade(
-                        query_style=query_style, search_api=search_api_type(host=host)
-                    ),
-                    projects=projects,
+            for query_style, search_api_type, host in facade_definitions:
+                classifications_l.append(
+                    SearchAPIFacadeClassification(
+                        SearchAPIFacade(
+                            query_style=query_style,
+                            search_api=search_api_type(host=host, retrying=retrying),
+                        ),
+                        projects=projects,
+                    )
                 )
-            )
 
         res = cls(classifications=tuple(classifications_l))
 
@@ -821,7 +820,7 @@ This should not be taken to be exhaustive.
 You may need to add more APIs or adjust retry policies etc. yourself.
 """
 
-DEFAULT_SEARCH_APIS_BY_PROJECT: Mapping[str, Sequence[SearchAPIFacade]] = {
+DEFAULT_SEARCH_API_FACADES_BY_PROJECT: Mapping[str, Sequence[SearchAPIFacade]] = {
     project: INBUILT_SEARCH_API_FACADE_STORE.get_api_facades_for_project(project)
     for project in ("CMIP5", "CMIP6", "CMIP7")
 }
@@ -829,5 +828,5 @@ DEFAULT_SEARCH_APIS_BY_PROJECT: Mapping[str, Sequence[SearchAPIFacade]] = {
 Default search APIs to use, grouped by project
 """
 
-DEFAULT_SELECTOR = build_project_list_selector(DEFAULT_SEARCH_APIS_BY_PROJECT)
+DEFAULT_SELECTOR = build_project_list_selector(DEFAULT_SEARCH_API_FACADES_BY_PROJECT)
 """The selector used when the caller does not choose one"""

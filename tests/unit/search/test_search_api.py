@@ -7,17 +7,20 @@ from __future__ import annotations
 import pytest
 
 from esmporium.query import QueryCanonical
-from esmporium.search import Request, SearchAPIOld, build_list_selector
-from esmporium.search.retry import build_transient_retrying
-from esmporium.search.search_api import (
-    SOLR_CMIP6,
+from esmporium.search import (
+    Request,
+    SearchAPI,
+    SearchAPIESGF1Solr,
+    build_list_selector,
     build_project_list_selector,
+    build_transient_retrying,
+    get_url,
 )
 
 
-def make_api(host: str) -> SearchAPIOld:
+def make_api(host: str) -> SearchAPI:
     """Build a SearchAPI whose only interesting field, for these tests, is its host"""
-    return SearchAPIOld(host, SOLR_CMIP6, build_transient_retrying(1))
+    return SearchAPIESGF1Solr(host, retrying=build_transient_retrying(1))
 
 
 def canonical(*projects: str) -> QueryCanonical:
@@ -25,12 +28,11 @@ def canonical(*projects: str) -> QueryCanonical:
     return QueryCanonical(project=projects)
 
 
-def test_url_uses_the_scheme_and_host():
-    """The URL is the scheme, the host and the request's path"""
+def test_url_building():
     api = make_api("esgf.example.org")
     request = Request("GET", "/esg-search/search")
 
-    assert api.url(request) == "https://esgf.example.org/esg-search/search"
+    assert get_url(api, request) == "https://esgf.example.org/esg-search/search"
 
 
 def test_url_can_use_http():

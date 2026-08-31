@@ -33,11 +33,11 @@ from esmporium.query import (
 from esmporium.search.esgf_generations import native_facet_names
 from esmporium.search.health import SearchAPICallObserver
 from esmporium.search.search import SearchAPIRequestError, fire
-from esmporium.search.search_api import (
+from esmporium.search.search_api_facade import (
     DEFAULT_SELECTOR,
-    SearchAPIOld,
-    SearchAPISelector,
-    SelectorOfferedNoAPIError,
+    SearchAPIFacade,
+    SearchAPIFacadeSelector,
+    SelectorOfferedNoAPIFacadeError,
 )
 
 CloseMatcher = Callable[[str, set[str]], tuple[str, ...]]
@@ -371,19 +371,19 @@ class CouldNotGetAllowedValuesError(RuntimeError):
 
 
 def allowed_values_from_api(
-    api: SearchAPIOld,
+    facade: SearchAPIFacade,
     client: httpx.Client,
     canonical: QueryCanonical,
     facets: set[str],
     observer: SearchAPICallObserver | None = None,
 ) -> AllowedValues:
     """
-    Get what a search API can tell us about the allowed values of some facets
+    Get what a search API facade can tell us about the allowed values of some facets
 
     Parameters
     ----------
-    api
-        The API to ask
+    facade
+        The API facade to ask
 
     client
         The HTTP client to ask with
@@ -395,22 +395,24 @@ def allowed_values_from_api(
         Facets for which to get the allowed values
 
     observer
-        Told about the request to `api`, so its health can be recorded.
+        Told about the request to `facade.search_api`.
+
         If `None` (the default), nothing is recorded.
 
     Returns
     -------
     :
-        What `api` can say about each facet
+        What `facade` can say about each facet
 
-        Facets `api` has no name for are simply absent:
+        Facets `facade` has no name for are simply absent:
         we cannot ask about what it cannot express.
 
     Raises
     ------
     CouldNotGetAllowedValuesError
-        `api` could not be reached, or would not answer
+        `facade.search_api` could not be reached, or would not answer
     """
+    # TODO: rewire all of this
     askable = set(native_facet_names(api.generation.params, facets))
 
     request = api.generation.build_get_facet_values_request(canonical, askable)
@@ -469,7 +471,7 @@ class ValueCheckOutcome:
 
 def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberate injection seams
     query: QueryProtocol,
-    selector: SearchAPISelector = DEFAULT_SELECTOR,
+    selector: SearchAPIFacadeSelector = DEFAULT_SELECTOR,
     *,
     stop_at_first_result: bool = True,
     close_matches: CloseMatcher = close_matches_difflib,
@@ -491,7 +493,7 @@ def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberat
         Query to check
 
     selector
-        How to pick the API to ask about allowed values at each attempt
+        Chooses which facade to try at each attempt, and when to stop.
 
     stop_at_first_result
         If `True` (the default), report on the first endpoint which answers.
@@ -512,7 +514,8 @@ def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberat
         If `None`, one is built for the call and closed at the end.
 
     observer
-        Told about each request to each API, so its health can be recorded.
+        Told about each request to each API.
+
         If `None` (the default), nothing is recorded.
         See [esmporium.search.health][] for how to build one.
 
@@ -571,7 +574,7 @@ def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberat
             client.close()
 
     if not asked_someone:
-        raise SelectorOfferedNoAPIError(canonical, selector)
+        raise SelectorOfferedNoAPIFacadeError(canonical, selector)
 
     if not reports and refusals:
         raise NoSourceWouldAnswerError(tuple(refusals.values()))
