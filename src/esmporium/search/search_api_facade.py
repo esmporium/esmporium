@@ -2,9 +2,11 @@
 Search API facade
 
 This contains our facades to search APIs.
-These facades are introduced to add more robust handling.
+These facades are introduced to add more robust
+query creation, result parsing and error handling.
 Complete documentation of this will be added in future.
 """
+# TODO: devs - add more complete docs in a follow up PR
 
 from __future__ import annotations
 

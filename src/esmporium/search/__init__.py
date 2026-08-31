@@ -1,11 +1,9 @@
 """
 Searching ESGF
 
-Queries are written in whichever vocabulary suits the user
-(see [esmporium.query][]),
-then translated into the vocabulary of the search API being spoken to
-and rendered into that API's wire format.
-Both of those live in [esmporium.search.esgf_generations][].
+Queries can be written in whichever vocabulary suits the user (see [esmporium.query][])
+and search results are (will be) automatically translated into the database
+(see [esmporium.db][]).
 """
 
 from esmporium.search.apis import (

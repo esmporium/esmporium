@@ -16,6 +16,7 @@ makes error handling and clarity much simpler,
 so we are ok with paying the price of having to make more than one search request
 if we need to search more than one project.
 """
+# TODO: delete once refactoring is finished
 
 from __future__ import annotations
 
