@@ -26,7 +26,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Annotated, Any, ClassVar, Protocol, cast
+from typing import Annotated, Any, Protocol, cast
 
 from pydantic import BaseModel, ConfigDict
 from tenacity import Retrying
@@ -53,44 +53,42 @@ from esmporium.search.apis import (
 from esmporium.search.retry import build_transient_retrying
 
 
-class STACParams(QueryProtocol, Protocol):
+class STACParameters(QueryProtocol, Protocol):
     """
-    A STAC parameter class
+    A STAC parameter specification class
 
-    The prefix lives with the parameter class because it co-varies exactly with
-    the project each parameter class is paired to
-    (because, with the STAC API, you can only search one project at a time).
+    The prefix lives with the parameter class
+    because it is required to determine the names used by STAC search APIs.
 
-    On STAC parameter classes, there should also be no `project` field.
-    The prefix implicitly defines the supported project.
-    When we build queries, the builder should make sure that the query
-    aligns with the project (i.e. prefix).
+    As a result of the use of prefixes, on STAC parameter classes,
+    there should also be no `project` field.
+    The prefix specifies the project.
+    When building queries, the query builder should make sure
+    that the query aligns with the prefix.
     """
 
-    prefix: ClassVar[str]
+    prefix: str
     """
-    The prefix to put in front of each field name to get the API property name
+    The prefix to put in front of each field name to get the search API facet name
 
-    This also implicitly defines the project which can be searched
-    using parameters from this class and STAC APIs which use this parameter class.
-    With STAC, there is a tight coupling between prefixes i.e. projects and searches.
-    As a result, each STAC search request can only search a single project,
-    which isn't the case with ESGF1
-    (having said this, for better error messaging related to facet names,
-    our ESGF1 search APIs are also tightly coupled to specific projects).
+    This also (implicitly) defines the project
+    which can be searched using these STAC parameters.
     """
 
 
 class UnaskableFacetError(AssertionError):
     """
-    Raised when we ask for a facet we could never have asked the API about
+    Raised when we ask for a facet we could never have asked an API about
 
     This error means a facets request was built
-    and sent naming a facet the vocabulary has no name for, which
-    [check_facets_expressible][(m).check_facets_expressible]
+    and sent naming a facet the vocabulary has no name for,
+    which [check_facets_expressible][(m).check_facets_expressible]
     exists to prevent.
     Raising this means something got past the checks in
-    [check_facets_expressible][(m).check_facets_expressible].
+    [check_facets_expressible][(m).check_facets_expressible]
+    or a user bypassed
+    [check_facets_expressible][(m).check_facets_expressible]
+    in the first place.
     """
 
     def __init__(self, params: type[QueryProtocol], facets: set[str]) -> None:
@@ -118,42 +116,44 @@ class UnaskableFacetError(AssertionError):
 
 class OneProjectRequiredError(ValueError):
     """
-    Raised when a STAC search is given anything other than exactly one project
-
-    On these APIs the project is the collection being searched,
-    and a search is scoped to a single collection,
-    so "no project" and "several projects" are both unanswerable.
+    Raised when a exactly one project is required, but there isn't exactly one project
     """
 
-    def __init__(self, projects: tuple[str, ...]) -> None:
+    def __init__(self, query: QueryCanonical, projects: tuple[str, ...]) -> None:
         """
         Initialise the error
 
         Parameters
         ----------
+        query
+            Query which does not specify exactly one project
+
         projects
             The projects which were asked for
         """
+        self.query = query
         self.projects = projects
         super().__init__(
-            "A STAC search is scoped to one collection, and therefore to one "
-            f"project. Received {len(projects)}: {projects}. "
-            "Search each project separately and combine the results."
+            f"Received {len(projects)}: {projects}. "
+            "We need the query to have exactly one project. "
+            f"{query=}"
         )
 
 
 class ProjectPrefixMismatchError(ValueError):
     """
-    Raised when a STAC vocabulary is used to search a project it does not describe
+    Raised when there is a mismatch between project and prefix for STAC-based searches
 
-    Each collection names its properties with its own prefix
-    (`cmip6:` for CMIP6, `cmip6plus:` for CMIP6Plus, and so on),
-    so a vocabulary used against the wrong collection
-    builds a filter which cannot match anything.
-    Nothing comes back, and nothing says why, which is the worst of both worlds.
+    ESGF STAC APIs name their collections' properties
+    with a specific prefix
+    (TODO Claude: check if there is a rule for this
+    e.g. the prefix is always the lowercase version of the project,
+    or whether it is more complicated than that),
+    so a mismatch will mean that we build requests which cannot match anything.
+    Without this error, no results would come back and nothing would say why.
     """
 
-    def __init__(self, project: str, params: type[STACParams]) -> None:
+    def __init__(self, project: str, query_style: type[STACParameters]) -> None:
         """
         Initialise the error
 
@@ -162,131 +162,234 @@ class ProjectPrefixMismatchError(ValueError):
         project
             The project which was asked for
 
-        params
-            The vocabulary which was going to be used to search it
+        query_style
+            The query style which was going to be used to search for `project`'s data
         """
         self.project = project
-        self.params = params
+        self.params = query_style
         super().__init__(
-            f"{params.__name__} writes its properties with the "
-            f"{params.prefix!r} prefix, so it cannot describe the {project!r} "
-            "collection. Use the parameter class for that project."
+            f"{query_style.__name__} writes its properties with the "
+            f"{query_style.prefix!r} prefix, "
+            f"so it cannot describe the {project!r} collection. "
+            f"You need to use the query class specific to {project}."
         )
 
 
-def native_facet_names(params: type[QueryProtocol], facets: set[str]) -> dict[str, str]:
+def get_mapping_to_native_facet_names(
+    query_style: type[QueryProtocol], facets: set[str]
+) -> dict[str, str]:
     """
-    Work out what a vocabulary calls each of the facets being asked about
+    Work out what each of the facets being asked about is called in a given query style
+
+    The name is slightly misleading.
+    We only include each value in `facets` in the output if it is either
+    already specific to `query_style`
+    or is a canonical name that can be handled by `query_style`.
+    Further jumps
+    (e.g. is this a facet name which can be mapped to `query_style`
+    if we go via the canonical name)
+    are not checked.
+    All other values in `facets` are left out,
+    so the caller can see/has to check which ones went missing.
 
     Parameters
     ----------
-    params
-        The vocabulary to translate into
+    query_style
+        The query style to check for which to get the mapping
 
     facets
-        The facets to translate, named as above
+        The facets for which to get the mapping
 
     Returns
     -------
     :
-        The name `params` uses for each facet it can express,
-        keyed by the name it was asked for
-
-        Facets `params` cannot express are left out,
-        so the caller can see which ones went missing.
+        Mapping from values in `facets` to the name that `query_style` uses.
     """
-    spec = facet_spec(params)
+    spec = facet_spec(query_style)
 
     res: dict[str, str] = {}
     for facet in facets:
         canonical_native = spec.canonical_to_native.get(facet)
         if canonical_native is not None:
+            # In this query style, this facet name maps to a canonical name
             res[facet] = canonical_native
 
         elif facet in spec.query_specific_facets:
+            # This facet name is specific to this query style
+            # (and therefore maps to itself)
             res[facet] = facet
 
-        # Facets not handled above are dropped,
+        # # TODO Claude: should we also have the below
+        # elif facet in spec.native_to_canonical:
+        #     # This facet is already in this query's style
+        #     # (and therefore maps to itself)
+        #     res[facet] = facet
+
+        # No mapping for this facet, hence do not include in the mapping.
         # we expect the caller to check for and handle this.
 
     return res
 
 
-def unexpressible_facets(params: type[QueryProtocol], facets: set[str]) -> set[str]:
+def get_unexpressible_facets(
+    query_style: type[QueryProtocol], facets: set[str]
+) -> set[str]:
     """
-    Work out which of the given facets a vocabulary has no name for
+    Work out which of the given facets a query style has no name for
+
+    The name is slightly misleading.
+    We consider a facet unexpressible if it is not in the result of
+    [get_mapping_to_native_facet_names][(m).]
+    (see [get_mapping_to_native_facet_names][(m).]'s docstring
+    for why the name is slightly misleading).
 
     Parameters
     ----------
-    params
-        The vocabulary to check against
+    query_style
+        The query style to check against
 
     facets
-        The facets to check, named as
-        [native_facet_names][(m).native_facet_names] describes
+        The facets to check
 
     Returns
     -------
     :
-        The facets which `params` cannot express
+        The facets which `query_style` cannot express
+        (according to [get_mapping_to_native_facet_names][(m).])
     """
-    return set(facets) - set(native_facet_names(params, facets))
+    return set(facets) - set(get_mapping_to_native_facet_names(query_style, facets))
 
 
-def check_facets_expressible(params: type[QueryProtocol], facets: set[str]) -> None:
+def check_facets_expressible(
+    query_style: type[QueryProtocol], facets: set[str]
+) -> None:
     """
-    Check that a vocabulary can express every facet being asked about
+    Check that a query style can express every facet being asked about
+
+    The name is slightly misleading.
+    We consider a facet expressible if it is not in the result of
+    [get_unexpressible_facets][(m).]
+    (see [get_unexpressible_facets][(m).]'s docstring
+    for why the name is slightly misleading).
 
     Parameters
     ----------
-    params
-        The vocabulary to check against
+    query_style
+        The query style to check against
 
     facets
-        The facets to check, named as
-        [native_facet_names][(m).native_facet_names] describes
+        The facets to check
 
     Raises
     ------
     FacetNotExpressibleError
-        `params` cannot express one or more of `facets`
+        `query_style` cannot express one or more of `facets`
     """
-    unexpressible = unexpressible_facets(params, facets)
+    unexpressible = get_unexpressible_facets(query_style, facets)
     if unexpressible:
-        raise FacetNotExpressibleError(unexpressible, facet_spec(params).name)
+        raise FacetNotExpressibleError(unexpressible, facet_spec(query_style).name)
 
 
-def check_facets_askable(params: type[QueryProtocol], facets: set[str]) -> None:
+def check_facets_askable(query_style: type[QueryProtocol], facets: set[str]) -> None:
     """
-    Check that every facet being read is one we could have asked the API about
+    Check that every facet being read is one we could have asked about
 
-    Unlike [check_facets_expressible][(m).check_facets_expressible],
+    Unlike [check_facets_expressible][(m).],
     which guards the request we are about to build,
     this guards a response we have already been given.
     Getting here with a facet this vocabulary cannot express
     means a request was built and sent that never should have been,
     so the fault is ours rather than the caller's.
 
+    The same caveats about which values of `facets` are supported
+    that apply to [check_facets_expressible][(m).] also apply here.
+
+
     Parameters
     ----------
-    params
-        The vocabulary the response is written in
+    query_style
+        The query style the response is written in
 
     facets
-        The facets being read, named as
-        [native_facet_names][(m).native_facet_names] describes
+        The facets to check
 
     Raises
     ------
     UnaskableFacetError
-        `params` cannot express one of `facets`
+        `query_style` cannot express one of `facets`
     """
-    unexpressible = unexpressible_facets(params, facets)
+    unexpressible = get_unexpressible_facets(query_style, facets)
     if unexpressible:
-        raise UnaskableFacetError(params, unexpressible)
+        raise UnaskableFacetError(query_style, unexpressible)
 
 
-def stac_collection(canonical: QueryCanonical, params: type[STACParams]) -> str:
+def get_mapping_to_wire_facet_names(
+    query_style: type[QueryProtocol], facets: set[str]
+) -> dict[str, str]:
+    """
+    Get the mapping to facet names used by a given search API
+
+    The name is slightly misleading.
+    We only return a mapping for facets that are included in
+    [get_mapping_to_native_facet_names][(m).]
+    (see [get_mapping_to_native_facet_names][(m).]'s docstring
+    for why the name is slightly misleading).
+    All facet values in `facets` which do not appear in the result of
+    [get_mapping_to_native_facet_names][(m).] are left out,
+    so the caller can see/has to check which ones went missing.
+
+    Parameters
+    ----------
+    query_style
+        Query style for which to get the mapping
+
+    facets
+        The facets for which to get the mapping
+
+    Returns
+    -------
+    :
+        Mapping from values in `facets` to the name that `query_style` uses.
+    """
+    wire_names = get_mapping_to_native_facet_names(query_style, facets)
+
+    prefix = getattr(query_style, "prefix", None)
+    if prefix is not None:
+        wire_names = {
+            facet_name: f"{prefix}:{stem}" for facet_name, stem in wire_names.items()
+        }
+
+    return wire_names
+
+
+def get_single_project(canonical: QueryCanonical) -> str:
+    """
+    Get a single project from a query
+
+    Parameters
+    ----------
+    canonical
+        Query from which to get the project
+
+    Returns
+    -------
+    :
+        Single project specified by `canonical`
+
+    Raises
+    ------
+    OneProjectRequiredError
+        `canonical` does not name exactly one project
+    """
+    if len(canonical.project) != 1:
+        raise OneProjectRequiredError(canonical.project)
+
+    return canonical.project[0]
+
+
+def get_stac_collection(
+    canonical: QueryCanonical, query_style: type[STACParameters]
+) -> str:
     """
     Work out which STAC collection a query is asking about
 
@@ -295,17 +398,13 @@ def stac_collection(canonical: QueryCanonical, params: type[STACParams]) -> str:
     canonical
         The query whose project to read
 
-    params
-        The vocabulary the query is going to be written in
+    query_style
+        The query style the query is going to be written in
 
     Returns
     -------
     :
         The collection to search
-
-        This is the project exactly as the caller wrote it,
-        because the caller knows what they typed
-        and second-guessing their capitalisation would only hide their mistakes.
 
     Raises
     ------
@@ -313,14 +412,16 @@ def stac_collection(canonical: QueryCanonical, params: type[STACParams]) -> str:
         `canonical` does not name exactly one project
 
     ProjectPrefixMismatchError
-        `params` does not describe the project `canonical` names
+        `params.prefix` does not match the project that `canonical` names
     """
     if len(canonical.project) != 1:
         raise OneProjectRequiredError(canonical.project)
 
     collection = canonical.project[0]
-    if collection.lower() != params.prefix:
-        raise ProjectPrefixMismatchError(collection, params)
+    # TODO Claude: are 100% certain that this logic is correct
+    # i.e. the prefix is always the lowercase version of the collection (i.e. project)
+    if collection.lower() != query_style.prefix:
+        raise ProjectPrefixMismatchError(collection, query_style)
 
     return collection
 
@@ -334,6 +435,9 @@ def stac_collection(canonical: QueryCanonical, params: type[STACParams]) -> str:
 # so users don't have to write this up themselves if they don't want.
 #
 # Maybe move these into their own module.
+#
+# TODO: consider renaming query_style to params throughout this module
+# to better align with these definitions.
 class SolrCMIP5Parameters(BaseModel):
     """CMIP5 facet values under their ESGF1/Solr parameter names"""
 
@@ -513,7 +617,7 @@ class STACCMIP5Parameters(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    prefix: ClassVar[str] = "cmip5"
+    prefix: str = "cmip5"
     """See [STACParams.prefix][(m).STACParams.prefix]."""
 
     model: Annotated[FacetValues, QueryFacet("model")] = ()
@@ -559,7 +663,7 @@ class STACCMIP6Parameters(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    prefix: ClassVar[str] = "cmip6"
+    prefix: str = "cmip6"
     """See [STACParams.prefix][(m).STACParams.prefix]."""
 
     source_id: Annotated[FacetValues, QueryFacet("model")] = ()
@@ -616,7 +720,7 @@ class STACCMIP7Parameters(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    prefix: ClassVar[str] = "cmip7"
+    prefix: str = "cmip7"
     """See [STACParams.prefix][(m).STACParams.prefix]."""
 
     source_id: Annotated[FacetValues, QueryFacet("model")] = ()
@@ -696,13 +800,14 @@ class SearchAPIFacade:
     (in practice this is a tiny price to pay,
     so we deliberately make this tradeoff throughout the package).
 
-    The facade owns the vocabulary translation:
+    The facade owns the vocabulary translation.
     [build_search_request][(c).build_search_request] and
     [build_get_facet_values_request][(c).build_get_facet_values_request]
-    turn a canonical query into a request in `search_api`'s wire format, and
+    turn a canonical query into a request in `search_api`'s wire format.
     [parse_facet_values][(c).parse_facet_values] and
     [parse_facet_patterns][(c).parse_facet_patterns]
-    read `search_api`'s answer back into the canonical vocabulary.
+    read the raw answers from the search APIs
+    back into our canonical vocabulary.
     """
 
     query_style: type[QueryProtocol]
@@ -714,45 +819,6 @@ class SearchAPIFacade:
     """
     The search API for which we are providing a facade
     """
-
-    @property
-    def _stac_prefix(self) -> str | None:
-        """
-        The STAC property prefix for this facade, or `None` if it is not STAC-shaped
-
-        A STAC vocabulary carries a `prefix` (e.g. `cmip6`) which every property
-        name is written under; a Solr vocabulary does not, and names its project
-        as an ordinary facet. This tells the two apart.
-        """
-        return getattr(self.query_style, "prefix", None)
-
-    def _wire_facet_names(self, facets: set[str]) -> dict[str, str]:
-        """
-        Map each canonical facet to the name `search_api` speaks it under
-
-        For a STAC vocabulary the wire name carries the collection's prefix
-        (`cmip6:experiment_id`); for a Solr vocabulary it is just the parameter
-        name (`experiment_id`). Facets this vocabulary cannot express are dropped.
-        """
-        names = native_facet_names(self.query_style, facets)
-        prefix = self._stac_prefix
-        if prefix is not None:
-            return {canonical: f"{prefix}:{stem}" for canonical, stem in names.items()}
-
-        return names
-
-    @staticmethod
-    def _single_project(canonical: QueryCanonical) -> str:
-        """Pull the one project out of a query, or explain why we cannot"""
-        if len(canonical.project) != 1:
-            msg = (
-                "We can only unambiguously scope a facet-values request "
-                "if there is exactly one project, "
-                f"received: {canonical.project}"
-            )
-            raise ValueError(msg)
-
-        return canonical.project[0]
 
     def askable_facets(self, facets: set[str]) -> set[str]:
         """
@@ -772,7 +838,7 @@ class SearchAPIFacade:
         :
             The facets `query_style` can express, named canonically
         """
-        return set(native_facet_names(self.query_style, facets))
+        return set(get_mapping_to_native_facet_names(self.query_style, facets))
 
     def build_search_request(self, canonical: QueryCanonical, limit: int) -> Request:
         """
@@ -815,7 +881,7 @@ class SearchAPIFacade:
         # so it is translated out of the query and into a `collection` facet,
         # and every other property carries the collection's prefix.
         query_style = cast("type[STACParams]", self.query_style)
-        collection = stac_collection(canonical, query_style)
+        collection = get_stac_collection(canonical, query_style)
         without_project = canonical.model_copy(update={"project": ()})
         native = from_canonical(canonical=without_project, to=self.query_style)
 
@@ -830,9 +896,6 @@ class SearchAPIFacade:
     ) -> Request:
         """
         Build a request which lists the values of the given facets
-
-        The facade is already scoped to one project, so it derives the project
-        from `canonical` rather than taking it as an argument.
 
         Parameters
         ----------
@@ -862,17 +925,22 @@ class SearchAPIFacade:
             A STAC facade was given a project its vocabulary does not describe
         """
         check_facets_expressible(self.query_style, facets)
-        wire_facets = set(self._wire_facet_names(facets).values())
 
-        if self._stac_prefix is None:
-            project = self._single_project(canonical)
+        wire_facet_names = set(
+            get_mapping_to_wire_facet_names(self.query_style, facets).values()
+        )
+
+        if getattr(self.query_style, "prefix", None) is None:
+            project = get_single_project(canonical)
+
         else:
-            project = stac_collection(
-                canonical, cast("type[STACParams]", self.query_style)
+            project = get_stac_collection(
+                canonical, cast("type[STACParameters]", self.query_style)
             )
 
+        # Up to here
         return self.search_api.build_get_facet_values_for_project_request(
-            wire_facets, project
+            wire_facet_names, project
         )
 
     def parse_facet_values(

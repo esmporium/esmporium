@@ -222,7 +222,6 @@ class SearchAPI(Protocol):
         NoSearchResultNumberOfMatchesReturned
             `raw` does not report the number of records that matched the search
         """
-        # TODO: ensure implementations raise NoSearchResultNumberOfMatchesReturned
         ...
 
     def build_get_facet_values_for_project_request(

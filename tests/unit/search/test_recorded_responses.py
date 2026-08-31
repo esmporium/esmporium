@@ -46,7 +46,7 @@ from esmporium.search import (
     STACCMIP6Parameters,
     STACCMIP7Parameters,
     build_transient_retrying,
-    native_facet_names,
+    get_mapping_to_native_facet_names,
 )
 
 RECORDED_DIR = Path(__file__).parents[2] / "test-data" / "search"
@@ -222,7 +222,9 @@ def test_recorded_facets_which_are_not_enumerated_are_left_out(name, facade):
     prefix = f"{facade.query_style.prefix}:"
     asked_for = {
         native: asked
-        for asked, native in native_facet_names(facade.query_style, facets).items()
+        for asked, native in get_mapping_to_native_facet_names(
+            facade.query_style, facets
+        ).items()
     }
     not_enumerated = {
         asked
@@ -256,7 +258,9 @@ def test_recorded_variant_label_is_summarised_as_a_pattern(name, facade):
     """
     raw = load(f"{name}-facets")
 
-    (native,) = native_facet_names(facade.query_style, {"variant_label"}).values()
+    (native,) = get_mapping_to_native_facet_names(
+        facade.query_style, {"variant_label"}
+    ).values()
     summary = raw["summaries"][f"{facade.query_style.prefix}:{native}"]
 
     assert isinstance(summary, str), (

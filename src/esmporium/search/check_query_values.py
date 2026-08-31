@@ -404,15 +404,13 @@ def allowed_values_from_api(
         What `facade` can say about each facet
 
         Facets `facade` has no name for are simply absent:
-        we cannot ask about what it cannot express.
+        as the caller you need to decide what to do about these absences.
 
     Raises
     ------
     CouldNotGetAllowedValuesError
-        `facade.search_api` could not be reached, or would not answer
+        Allowed value information could not be retrieved from `facade.search_api`
     """
-    # Only ask about the facets this facade's vocabulary can express; the rest
-    # have no name to ask them under, so the caller records them as unchecked.
     askable = facade.askable_facets(facets)
 
     request = facade.build_get_facet_values_request(canonical, askable)

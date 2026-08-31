@@ -99,6 +99,8 @@ CASES = (
         ),
         QueryCMIP7(variable_id="tas"),
     ),
+    # TODO: should we add in west queries too here, at least for CMIP7,
+    # given that west and east aren't actually identical?
 )
 """What to record: a name, the facade to ask with, and the query"""
 

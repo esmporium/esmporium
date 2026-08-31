@@ -65,7 +65,7 @@ def stac_summary_values(raw: dict[str, Any], facets: set[str]) -> dict[str, set[
             values = {
                 value
                 for value in summary
-                # TODO: Why is this isinstance check needed?
+                # TODO Claude: Why is this isinstance check needed?
                 if isinstance(value, str)
             }
             if values:
@@ -174,7 +174,7 @@ class SearchAPIESGFNGSTAC:
                 limit, min_limit=self.min_limit, max_limit=self.max_limit
             )
 
-        json_body = {
+        json_body: dict[str, Any] = {
             "filter-lang": "cql2-json",
             "limit": limit,
         }
@@ -221,9 +221,7 @@ class SearchAPIESGFNGSTAC:
         """
         See [SearchAPI.build_get_facet_values_for_project_request][esmporium.search.apis.SearchAPI.build_get_facet_values_for_project_request].
         """  # noqa: E501
-        # Assumes project has been mapped to the intended collection style
-        # (the facade passes the collection exactly as the caller wrote it,
-        # e.g. `CMIP6`).
+        # Assumes project has been mapped to the intended collection style.
         return Request("GET", f"/collections/{project}")
 
     def parse_facet_values(

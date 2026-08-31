@@ -33,12 +33,7 @@ class FacetNotExpressibleError(ValueError):
         Parameters
         ----------
         facets
-            The facet(s) under consideration
-
-            A single facet may be passed on its own.
-            Pass all of them when they are all known at once:
-            being told about one facet at a time
-            means fixing them one at a time.
+            The facet(s) that cannot be expressed
 
         query_class
             The name of the query class in which `facets` cannot be expressed
