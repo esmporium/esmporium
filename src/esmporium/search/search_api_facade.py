@@ -1,34 +1,26 @@
 """
-Search API implementation
+Search API facade
 
-This contains our search API interface,
-the pre-built search APIs we know how to talk to
-and pre-built options for how to pick between them.
-
-Note that, in our implementaiton, generation objects are tightly coupled to projects
-which is why there is e.g. [SOLR_CMIP5][(m).] and [SOLR_CMIP6][(m).],
-rather than just a single SOLR generation instance.
-This choice is made so that error handling and reporting is much simpler,
-but costs extra requests if we want to search more than one project.
-This is a tradeoff we are ok making.
+This contains our facades to search APIs.
+These facades are introduced to add more robust handling.
+Complete documentation of this will be added in future.
 """
+# TODO: add note for devs to read text in FUTURE-DOCS.md
+# TODO: add full documentation
+# once we are at the point of loading data based on our database
+# (this facade idea is going to pervade that part too,
+# so we hold off until we know how that looks).
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
-
-from tenacity import Retrying
 
 from esmporium.query import QueryCanonical
 from esmporium.search.esgf_generations import (
     ESGF1Solr,
     ESGF15Bridge,
     ESGFNGStac,
-    Request,
-    SearchAPIGeneration,
     SolrCMIP5Parameters,
     SolrCMIP6Parameters,
     SolrCMIP7Parameters,
@@ -40,246 +32,28 @@ from esmporium.search.retry import build_transient_retrying
 
 
 @dataclass(frozen=True)
-class SearchAPI:
+class SearchAPIFacade:
     """
-    A search API endpoint we can query
+    A search API facade
 
-    This is a low-level class that mirrors the ESGF search APIs directly.
-    It is extremely easy to make invalid queries using this class.
-    If you want to make queries, we recommend using
-    [esmporium.search.SearchAPIFacade][]'s instead
-    because of their more robust query creation, result parsing and error handling.
-    """
-
-    host: str
-    """The host that provides this API, e.g. `esgf.nci.org.au`"""
-
-    retrying: Retrying
-    """The retry policy to use when hitting this API"""
-
-    timeout: float = 30.0
-    """
-    How long to wait on a single request to this host, in seconds
-
-    Most hosts reply quickly e.g. 5 seconds.
-    The slowest hosts take around 30 seconds.
-    In general, you want to make this as short as possible
-    because waiting for a reply that will never come
-    can make your retries take forever.
+    This turns the search API from something which will accept queries for any project,
+    into something which will only accept queries for a single project.
+    This makes query creation, result parsing and error handling much more robust,
+    at the price of having to make multiple queries
+    if we want to search more than one project
+    (in practice this is a tiny price to pay,
+    so we deliberately make this tradeoff throughout the package).
     """
 
-    scheme: str = "https"
+    query_style: type[QueryProtocol]
     """
-    The URL scheme to reach this host over
-    """
-
-    def url(self, request: Request) -> str:
-        """
-        Build the full URL for a request to this API
-
-        Parameters
-        ----------
-        request
-            The request to make to this host
-
-        Returns
-        -------
-        :
-            The URL to send `request` to
-        """
-        return f"{self.scheme}://{self.host}{request.path}"
-
-    def build_search_request(
-        self,
-        facet_values: Mapping[str, tuple[str, ...]],
-        limit: int,
-    ) -> Request:
-        """
-        Build a search request to this API
-
-        Parameters
-        ----------
-        facet_values
-            Facet values to use in the search
-
-        limit
-            The PAGE size to ask for,
-            i.e. the maximum number of records in one response.
-
-            This is not the total number of matches;
-            that comes back in the response itself
-            and is what [get_search_result_count][(c).get_search_result_count] is for.
-
-        Returns
-        -------
-        :
-            The request to send
-        """
-        ...
-
-    def get_search_result_count(self, raw: dict[str, Any]) -> int:
-        """
-        Get the total number of search results out of a raw response
-
-        Parameters
-        ----------
-        raw
-            The raw response to read
-
-        Returns
-        -------
-        :
-            The number of search results
-
-        Raises
-        ------
-        NoResultCountReturned
-            `raw` does not report a count we can read
-        """
-        # TODO: rename NoResultCountReturned to NoSearchResultCountReturned
-        ...
-
-    def build_get_facet_values_request(self, facets: set[str]) -> Request:
-        """
-        Build a request which lists the values of the given facets
-
-        Parameters
-        ----------
-        facets
-            The facets to list the values of.
-
-        Returns
-        -------
-        :
-            The request to send
-        """
-        ...
-
-    def parse_facet_values(
-        self, raw: dict[str, Any], facets: set[str]
-    ) -> dict[str, set[str]]:
-        """
-        Read the available facet values out of a raw response
-
-        Parameters
-        ----------
-        raw
-            The response to read, i.e. the answer to a request built with
-            [build_get_facet_values_request][(c).build_get_facet_values_request].
-
-        facets
-            The facets we asked about.
-
-        Returns
-        -------
-        :
-            The values which are available, keyed by the facet name.
-
-            A facet whose values the API does not enumerate is left out
-            (higher level functions are left to decide what to do
-            about facets which are requested but not returned by this parsing).
-
-        Raises
-        ------
-        NoFacetValuesReturned
-            The response does not enumerate facet values at all
-        """
-        ...
-
-    def parse_facet_patterns(
-        self, raw: dict[str, Any], facets: set[str]
-    ) -> dict[str, re.Pattern[str]]:
-        """
-        Read the supported facet patterns out of a raw response
-
-        The counterpart to [parse_facet_values][(c).parse_facet_values],
-        for the facets an API describes by their form rather than by listing them.
-        A facet should be described one way or the other, never both,
-        so the two should never report the same facet.
-
-        Parameters
-        ----------
-        raw
-            The response to read, i.e. the answer to a request built with
-            [build_get_facet_values_request][(c).build_get_facet_values_request].
-
-        facets
-            The facets we asked about.
-
-        Returns
-        -------
-        :
-            The values which are available, keyed by the facet name.
-
-            A facet this response does not describe with a pattern is left out
-            (higher level functions are left to decide what to do
-            about facets which are requested but not returned by this parsing).
-        """
-        ...
-
-
-# TODO:
-# - make search/apis/protocol.py etc. so we can split this a bit more clearly
-# - delete SearchAPIOld
-# - move all the pre-built API generation definitions into facade
-# - add concrete implementations of different generations into search/apis
-# - move pre-built facade instances into search_api_facade
-# - move SearchAPISelector and associated errors into search_api_facade and rename
-# - add FacetSpecificSearchAPIStore
-#   or whatever we are going to call it into search_api_facade
-# - review with claude (given changes, what do you think, what tests are missing etc.)
-
-
-@dataclass(frozen=True)
-class SearchAPIOld:
-    """
-    One search endpoint we can hit
+    The query style that this facade uses
     """
 
-    host: str
-    """The host to send requests to, e.g. `esgf.nci.org.au`"""
-
-    generation: SearchAPIGeneration
+    search_api: SearchAPI
     """
-    The (request/wire) format this host speaks
-
-    This also handles the vocabulary that this API understands
+    The search API for which we are providing a facade
     """
-
-    retrying: Retrying
-    """The retry policy to use when hitting this API"""
-
-    timeout: float = 30.0
-    """
-    How long to wait on a single request to this host, in seconds
-
-    Most hosts reply quickly e.g. 5 seconds.
-    The slowest hosts take around 30 seconds.
-    In general, you want to make this as short as possible
-    because waiting for a reply that will never come
-    can kill the speed in your retries.
-    """
-
-    scheme: str = "https"
-    """
-    The URL scheme to reach this host over
-    """
-
-    def url(self, request: Request) -> str:
-        """
-        Build the full URL for a request against this host
-
-        Parameters
-        ----------
-        request
-            The request to make to this host
-
-        Returns
-        -------
-        :
-            The URL to send `request` to
-        """
-        return f"{self.scheme}://{self.host}{request.path}"
 
 
 # Pre-built search API generations.

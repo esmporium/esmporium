@@ -720,29 +720,6 @@ class SearchAPIGeneration(Protocol):
     The wire format spoken by a family of ESGF search endpoints
     """
 
-    @property
-    def params(self) -> type[QueryProtocol]:
-        """
-        The vocabulary this generation speaks
-
-        Part of the contract rather than an implementation detail:
-        a caller needs it to work out what this generation calls a facet,
-        and whether it has a name for it at all
-        (see [native_facet_names][(m).native_facet_names]).
-
-        Read-only here on purpose.
-        A generation is paired with its vocabulary when it is built,
-        and the implementations narrow this
-        (a STAC generation's `params` is a
-        [StacParams][(m).StacParams]), which only holds if nobody can rebind it.
-        """
-        ...
-
-    @property
-    def name(self) -> str:
-        """What to call this generation in a message to the user"""
-        ...
-
     def build_search_request(self, canonical: QueryCanonical, limit: int) -> Request:
         """
         Turn a canonical query into a request in this generation's format
