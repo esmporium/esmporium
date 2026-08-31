@@ -14,22 +14,20 @@ import pytest
 
 from esmporium.query import QueryCMIP5, QueryCMIP6, QueryCMIP7
 from esmporium.search import (
-    ESGF1Solr,
     NoAPIWouldAnswerError,
+    SearchAPIESGF1Solr,
+    SearchAPIESGF15BridgeSolr,
+    SearchAPIESGFNGSTAC,
+    SearchAPIFacade,
+    SolrCMIP5Parameters,
     SolrCMIP6Parameters,
+    SolrCMIP7Parameters,
+    STACCMIP5Parameters,
+    STACCMIP6Parameters,
+    STACCMIP7Parameters,
     build_list_selector,
     build_transient_retrying,
     search,
-)
-from esmporium.search.search_api import (
-    BRIDGE_CMIP6,
-    SOLR_CMIP5,
-    SOLR_CMIP6,
-    SOLR_CMIP7,
-    STAC_CMIP5,
-    STAC_CMIP6,
-    STAC_CMIP7,
-    SearchAPIOld,
 )
 
 pytestmark = pytest.mark.hits_esgf_search_api
@@ -37,32 +35,57 @@ pytestmark = pytest.mark.hits_esgf_search_api
 TIMEOUT = 60.0
 """How long to wait for a node, in seconds"""
 
+
+def solr(query_style, host: str) -> SearchAPIFacade:
+    """An ESGF1/Solr facade for `host`, retrying transient failures twice"""
+    return SearchAPIFacade(
+        query_style=query_style,
+        search_api=SearchAPIESGF1Solr(host, build_transient_retrying(2)),
+    )
+
+
+def bridge(query_style, host: str) -> SearchAPIFacade:
+    """An ESGF1.5 bridge facade for `host`, retrying transient failures twice"""
+    return SearchAPIFacade(
+        query_style=query_style,
+        search_api=SearchAPIESGF15BridgeSolr(host, build_transient_retrying(2)),
+    )
+
+
+def stac(query_style, host: str) -> SearchAPIFacade:
+    """An ESGF-NG/STAC facade for `host`, retrying transient failures twice"""
+    return SearchAPIFacade(
+        query_style=query_style,
+        search_api=SearchAPIESGFNGSTAC(host, build_transient_retrying(2)),
+    )
+
+
 CMIP6_QUERY = QueryCMIP6(experiment_id="historical", variable_id="tas", frequency="mon")
 """A CMIP6 query we expect every CMIP6 node to have data for"""
 
 LIVE_CASES = (
     pytest.param(
-        SearchAPIOld("esgf.nci.org.au", SOLR_CMIP5, build_transient_retrying(2)),
+        solr(SolrCMIP5Parameters, "esgf.nci.org.au"),
         QueryCMIP5(experiment="historical", variable="tas", time_frequency="mon"),
         id="solr-cmip5",
     ),
     pytest.param(
-        SearchAPIOld("esgf.nci.org.au", SOLR_CMIP6, build_transient_retrying(2)),
+        solr(SolrCMIP6Parameters, "esgf.nci.org.au"),
         CMIP6_QUERY,
         id="solr-cmip6",
     ),
     pytest.param(
-        SearchAPIOld("search.east.esgf.io", STAC_CMIP6, build_transient_retrying(2)),
+        stac(STACCMIP6Parameters, "search.east.esgf.io"),
         CMIP6_QUERY,
         id="esgf-ng-cmip6",
     ),
     pytest.param(
-        SearchAPIOld("search.east.esgf.io", STAC_CMIP7, build_transient_retrying(2)),
+        stac(STACCMIP7Parameters, "search.east.esgf.io"),
         QueryCMIP7(variable_id="tas"),
         id="esgf-ng-cmip7",
     ),
     pytest.param(
-        SearchAPIOld("esgf.nci.org.au", SOLR_CMIP7, build_transient_retrying(2)),
+        solr(SolrCMIP7Parameters, "esgf.nci.org.au"),
         QueryCMIP7(variable_id="tas"),
         id="solr-cmip7",
     ),
@@ -84,43 +107,43 @@ and the search would come back with everything rather than with nothing.
 # keys silently), so the name here has to be a real field of that class.
 FACET_NAME_CASES = (
     pytest.param(
-        SearchAPIOld("esgf.nci.org.au", SOLR_CMIP5, build_transient_retrying(2)),
+        solr(SolrCMIP5Parameters, "esgf.nci.org.au"),
         QueryCMIP5(experiment="historical", variable="tas", time_frequency="mon"),
         "variable",
         id="solr-cmip5",
     ),
     pytest.param(
-        SearchAPIOld("esgf.nci.org.au", SOLR_CMIP6, build_transient_retrying(2)),
+        solr(SolrCMIP6Parameters, "esgf.nci.org.au"),
         CMIP6_QUERY,
         "variable_id",
         id="solr-cmip6",
     ),
     pytest.param(
-        SearchAPIOld("esgf.nci.org.au", SOLR_CMIP7, build_transient_retrying(2)),
+        solr(SolrCMIP7Parameters, "esgf.nci.org.au"),
         QueryCMIP7(variable_id="tas"),
         "variable_id",
         id="solr-cmip7",
     ),
     pytest.param(
-        SearchAPIOld("esgf-node.ornl.gov", BRIDGE_CMIP6, build_transient_retrying(2)),
+        bridge(SolrCMIP6Parameters, "esgf-node.ornl.gov"),
         CMIP6_QUERY,
         "variable_id",
         id="bridge-cmip6",
     ),
     pytest.param(
-        SearchAPIOld("search.east.esgf.io", STAC_CMIP5, build_transient_retrying(2)),
+        stac(STACCMIP5Parameters, "search.east.esgf.io"),
         QueryCMIP5(experiment="historical", variable="tas", time_frequency="mon"),
         "variable",
         id="esgf-ng-cmip5",
     ),
     pytest.param(
-        SearchAPIOld("search.east.esgf.io", STAC_CMIP6, build_transient_retrying(2)),
+        stac(STACCMIP6Parameters, "search.east.esgf.io"),
         CMIP6_QUERY,
         "variable_id",
         id="esgf-ng-cmip6",
     ),
     pytest.param(
-        SearchAPIOld("search.east.esgf.io", STAC_CMIP7, build_transient_retrying(2)),
+        stac(STACCMIP7Parameters, "search.east.esgf.io"),
         QueryCMIP7(variable_id="tas"),
         "variable_id",
         id="esgf-ng-cmip7",
@@ -164,17 +187,17 @@ def and_or_query(query_cls, variable_field, experiment_field):
 
 AND_OR_CASES = (
     pytest.param(
-        SearchAPIOld("esgf.nci.org.au", SOLR_CMIP5, build_transient_retrying(2)),
+        solr(SolrCMIP5Parameters, "esgf.nci.org.au"),
         and_or_query(QueryCMIP5, "variable", "experiment"),
         id="solr-cmip5",
     ),
     pytest.param(
-        SearchAPIOld("esgf-node.ornl.gov", BRIDGE_CMIP6, build_transient_retrying(2)),
+        bridge(SolrCMIP6Parameters, "esgf-node.ornl.gov"),
         and_or_query(QueryCMIP6, "variable_id", "experiment_id"),
         id="bridge-cmip6",
     ),
     pytest.param(
-        SearchAPIOld("search.east.esgf.io", STAC_CMIP7, build_transient_retrying(2)),
+        stac(STACCMIP7Parameters, "search.east.esgf.io"),
         and_or_query(QueryCMIP7, "variable_id", "experiment_id"),
         id="esgf-ng-cmip7",
     ),
@@ -208,9 +231,9 @@ def search_or_skip(query, api, client, limit, observer=None):
             observer=observer,
         )
     except NoAPIWouldAnswerError:
-        pytest.skip(f"{api.host} did not answer, so it is down or unwell")
+        pytest.skip(f"{api.search_api.host} did not answer, so it is down or unwell")
 
-    raw: dict = outcome.results[api.host]
+    raw: dict = outcome.results[api.search_api.host]
 
     return raw
 
@@ -227,18 +250,18 @@ def test_search_returns_results(client, api, query, recorded):
 
     raw = search_or_skip(query, api, client, limit=5, observer=observer)
 
-    assert api.generation.result_count(raw) > 0
+    assert api.search_api.get_search_result_n_matches(raw) > 0
 
     # One row per attempt, all for this host, timed; the last is the success.
     calls = read_calls()
     assert calls, "expected at least one recorded call"
-    assert all(call.host == api.host for call in calls)
+    assert all(call.host == api.search_api.host for call in calls)
     assert all(call.response_time_seconds > 0.0 for call in calls)
     assert [call.attempt_number for call in calls] == list(range(1, len(calls) + 1))
     success = calls[-1]
     assert success.success is True
     assert success.response_code == 200
-    assert success.num_results == api.generation.result_count(raw)
+    assert success.num_results == api.search_api.get_search_result_n_matches(raw)
 
 
 @pytest.mark.parametrize("api, query, poison_field", FACET_NAME_CASES)
@@ -261,13 +284,13 @@ def test_search_applies_the_facets_we_send(client, api, query, poison_field, rec
     nonsense = query.model_copy(update={poison_field: (NOT_A_REAL_VALUE,)})
     raw = search_or_skip(nonsense, api, client, limit=5, observer=observer)
 
-    assert api.generation.result_count(raw) == 0
+    assert api.search_api.get_search_result_n_matches(raw) == 0
 
     # A response that matched nothing is still a successful call, and recorded.
     # One row per attempt; the final, successful one carries the zero count.
     calls = read_calls()
     assert calls, "expected at least one recorded call"
-    assert all(call.host == api.host for call in calls)
+    assert all(call.host == api.search_api.host for call in calls)
     assert all(call.response_time_seconds > 0.0 for call in calls)
     success = calls[-1]
     assert success.success is True
@@ -307,9 +330,13 @@ def test_aggregating_over_nodes_finds_more_than_one_node(client):
     the comparison is between genuinely different holdings rather than between
     federation-wide sweeps that would mirror one another.
     """
-    local_solr = ESGF1Solr(params=SolrCMIP6Parameters, distrib=False)
     nodes = [
-        SearchAPIOld(host, local_solr, build_transient_retrying(2))
+        SearchAPIFacade(
+            query_style=SolrCMIP6Parameters,
+            search_api=SearchAPIESGF1Solr(
+                host, build_transient_retrying(2), distrib=False
+            ),
+        )
         for host in (
             "esgf.nci.org.au",
             "esgf.ceda.ac.uk",
@@ -365,13 +392,14 @@ def test_search_ands_across_facets(client, api, make_query):
 
     def count(variables, experiments):
         query = make_query(variables, experiments)
-        return api.generation.result_count(search_or_skip(query, api, client, limit=1))
+        raw = search_or_skip(query, api, client, limit=1)
+        return api.search_api.get_search_result_n_matches(raw)
 
     for variable in AND_OR_VARIABLES:
         for experiment in AND_OR_EXPERIMENTS:
             if count((variable,), (experiment,)) == 0:
                 pytest.skip(
-                    f"{api.host} has no data for variable={variable}, "
+                    f"{api.search_api.host} has no data for variable={variable}, "
                     f"experiment={experiment}, so this combination cannot show "
                     "whether the facets ANDed"
                 )
@@ -396,7 +424,8 @@ def test_search_ors_within_a_facet(client, api, make_query):
 
     def count(variables, experiments):
         query = make_query(variables, experiments)
-        return api.generation.result_count(search_or_skip(query, api, client, limit=1))
+        raw = search_or_skip(query, api, client, limit=1)
+        return api.search_api.get_search_result_n_matches(raw)
 
     experiment = AND_OR_EXPERIMENTS[:1]
     separately = [count((variable,), experiment) for variable in AND_OR_VARIABLES]
@@ -407,12 +436,14 @@ def test_search_ors_within_a_facet(client, api, make_query):
         # `test_search_ands_across_facets` is where a missing combination is
         # reported, so saying it twice here would only be noise.
         pytest.skip(
-            f"{api.host} matched nothing for one of {AND_OR_VARIABLES} on their "
-            "own, so there is nothing to compare the combined search against"
+            f"{api.search_api.host} matched nothing for one of "
+            f"{AND_OR_VARIABLES} on their own, so there is nothing to compare "
+            "the combined search against"
         )
 
     assert together >= max(separately), (
-        f"asking {api.host} for {AND_OR_VARIABLES} together matched {together}, "
+        f"asking {api.search_api.host} for {AND_OR_VARIABLES} together "
+        f"matched {together}, "
         f"fewer than the {max(separately)} matched by one of them alone: "
         "the values are not being ORed within the facet"
     )

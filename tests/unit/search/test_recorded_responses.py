@@ -12,19 +12,17 @@ refreshed. Refresh them with `uv run python scripts/record_search_responses.py`
 and read the diff.
 
 Two kinds of recording are read here,
-because a search API generation answers two kinds of question:
+because a search API facade answers two kinds of question:
 how to do searches
-(currently only checked with how many results a search matched (`result_count`),
-but this will expand when start parsing results to Datasets)
+(currently only checked with how many results a search matched
+(`get_search_result_n_matches`),
+but this will expand when we start parsing results to Datasets)
 and which values a facet has (`parse_facet_values`).
 
-Both are tested against the generation directly, rather than by mocking a
-transport and going in through `search` or `check_query_values`.
-What is under test here is the parsing, and the generation is the thing which
-parses; the recording is already the API's own answer, so there is nothing left
-to mock. Going in from the top would only add layers for a failure to be
-reported through, and would leave the reader working out whether a broken
-recording meant a broken parser or broken wiring.
+The count is read off the wire-format layer (`facade.search_api`) directly,
+because it is keyed the same way whatever vocabulary asked for it.
+The facet values are read through the facade, because reading them back into the
+canonical vocabulary is the facade's job.
 The wiring is covered on its own, with mocked responses we wrote, in
 `test_search.py` and `test_check_query_values.py`.
 """
@@ -39,13 +37,15 @@ import pytest
 
 from esmporium.query import facet_spec
 from esmporium.search import (
-    ESGF1Solr,
-    ESGF15Bridge,
-    ESGFNGStac,
+    SearchAPIESGF1Solr,
+    SearchAPIESGF15BridgeSolr,
+    SearchAPIESGFNGSTAC,
+    SearchAPIFacade,
     SolrCMIP5Parameters,
     SolrCMIP6Parameters,
-    StacCMIP6Parameters,
-    StacCMIP7Parameters,
+    STACCMIP6Parameters,
+    STACCMIP7Parameters,
+    build_transient_retrying,
     native_facet_names,
 )
 
@@ -61,9 +61,22 @@ and it is what the recorded query asked for.
 """
 
 
-def every_facet(generation):
+def facade(query_style, search_api_cls, host="recorded.example") -> SearchAPIFacade:
     """
-    Get every facet a generation's vocabulary can express
+    Build a facade for parsing a recording
+
+    The host and retry policy are irrelevant here (nothing is sent),
+    so any values will do.
+    """
+    return SearchAPIFacade(
+        query_style=query_style,
+        search_api=search_api_cls(host, build_transient_retrying(1)),
+    )
+
+
+def every_facet(facade: SearchAPIFacade) -> set[str]:
+    """
+    Get every facet a facade's vocabulary can express
 
     This has to match `facets_to_list` in `scripts/record_search_responses.py`:
     asking here for something the recording never asked the API about
@@ -71,41 +84,45 @@ def every_facet(generation):
 
     Parameters
     ----------
-    generation
-        The generation whose vocabulary to read
+    facade
+        The facade whose vocabulary to read
 
     Returns
     -------
     :
         The facets it can express, named the way they are asked for
     """
-    return set(facet_spec(generation.params).expressible_facets)
+    return set(facet_spec(facade.query_style).expressible_facets)
 
 
 RECORDED_CASES = (
     pytest.param(
-        "esgf1-solr-cmip5", ESGF1Solr(params=SolrCMIP5Parameters), id="esgf1-solr-cmip5"
+        "esgf1-solr-cmip5",
+        facade(SolrCMIP5Parameters, SearchAPIESGF1Solr),
+        id="esgf1-solr-cmip5",
     ),
     pytest.param(
-        "esgf1-solr-cmip6", ESGF1Solr(params=SolrCMIP6Parameters), id="esgf1-solr-cmip6"
+        "esgf1-solr-cmip6",
+        facade(SolrCMIP6Parameters, SearchAPIESGF1Solr),
+        id="esgf1-solr-cmip6",
     ),
     pytest.param(
         "esgf15-bridge-cmip6",
-        ESGF15Bridge(params=SolrCMIP6Parameters),
+        facade(SolrCMIP6Parameters, SearchAPIESGF15BridgeSolr),
         id="esgf15-bridge-cmip6",
     ),
     pytest.param(
         "esgf-ng-stac-cmip6",
-        ESGFNGStac(params=StacCMIP6Parameters),
+        facade(STACCMIP6Parameters, SearchAPIESGFNGSTAC),
         id="esgf-ng-stac-cmip6",
     ),
     pytest.param(
         "esgf-ng-stac-cmip7",
-        ESGFNGStac(params=StacCMIP7Parameters),
+        facade(STACCMIP7Parameters, SearchAPIESGFNGSTAC),
         id="esgf-ng-stac-cmip7",
     ),
 )
-"""Each recording, with the generation which asked for it"""
+"""Each recording, with the facade which asked for it"""
 
 
 def load(name):
@@ -131,20 +148,20 @@ def load(name):
     return json.loads(path.read_text())
 
 
-@pytest.mark.parametrize("name, generation", RECORDED_CASES)
-def test_result_count_of_a_recorded_search(name, generation):
+@pytest.mark.parametrize("name, facade", RECORDED_CASES)
+def test_result_count_of_a_recorded_search(name, facade):
     """Test that we can count the matches in a response an API really sent"""
     raw = load(f"{name}-search")
 
-    assert generation.result_count(raw) > 0
+    assert facade.search_api.get_search_result_n_matches(raw) > 0
 
 
-@pytest.mark.parametrize("name, generation", RECORDED_CASES)
-def test_parse_facet_values_of_a_recorded_response(name, generation):
+@pytest.mark.parametrize("name, facade", RECORDED_CASES)
+def test_parse_facet_values_of_a_recorded_response(name, facade):
     """Test that we can read the facet values out of a response an API really sent"""
     raw = load(f"{name}-facets")
 
-    res = generation.parse_facet_values(raw, PROBE_FACETS)
+    res = facade.parse_facet_values(raw, PROBE_FACETS)
 
     assert set(res) <= PROBE_FACETS, "we were told about a facet we did not ask about"
     assert "tas" in res["variable"]
@@ -152,8 +169,8 @@ def test_parse_facet_values_of_a_recorded_response(name, generation):
     assert res["reporting_interval"]
 
 
-@pytest.mark.parametrize("name, generation", RECORDED_CASES)
-def test_recorded_facet_values_are_well_formed(name, generation):
+@pytest.mark.parametrize("name, facade", RECORDED_CASES)
+def test_recorded_facet_values_are_well_formed(name, facade):
     """
     Test the shape of what we hand back, on real data
 
@@ -167,9 +184,9 @@ def test_recorded_facet_values_are_well_formed(name, generation):
     "this facet has no valid values", which is never what we mean.
     """
     raw = load(f"{name}-facets")
-    facets = every_facet(generation)
+    facets = every_facet(facade)
 
-    res = generation.parse_facet_values(raw, facets)
+    res = facade.parse_facet_values(raw, facets)
 
     assert res, "no facet was reported at all"
     assert set(res) <= facets, "we were told about a facet we did not ask about"
@@ -184,8 +201,8 @@ STAC_RECORDED_CASES = tuple(case for case in RECORDED_CASES if "stac" in str(cas
 """The recorded cases whose API describes its facet values in a STAC collection"""
 
 
-@pytest.mark.parametrize("name, generation", STAC_RECORDED_CASES)
-def test_recorded_facets_which_are_not_enumerated_are_left_out(name, generation):
+@pytest.mark.parametrize("name, facade", STAC_RECORDED_CASES)
+def test_recorded_facets_which_are_not_enumerated_are_left_out(name, facade):
     """
     Test that a facet the API describes without listing its values is left out
 
@@ -198,14 +215,14 @@ def test_recorded_facets_which_are_not_enumerated_are_left_out(name, generation)
     if the API starts listing something it used to describe as a pattern.
     """
     raw = load(f"{name}-facets")
-    facets = every_facet(generation)
+    facets = every_facet(facade)
 
-    res = generation.parse_facet_values(raw, facets)
+    res = facade.parse_facet_values(raw, facets)
 
-    prefix = f"{generation.params.prefix}:"
+    prefix = f"{facade.query_style.prefix}:"
     asked_for = {
         native: asked
-        for asked, native in native_facet_names(generation.params, facets).items()
+        for asked, native in native_facet_names(facade.query_style, facets).items()
     }
     not_enumerated = {
         asked
@@ -227,8 +244,8 @@ def test_recorded_facets_which_are_not_enumerated_are_left_out(name, generation)
     )
 
 
-@pytest.mark.parametrize("name, generation", STAC_RECORDED_CASES)
-def test_recorded_variant_label_is_summarised_as_a_pattern(name, generation):
+@pytest.mark.parametrize("name, facade", STAC_RECORDED_CASES)
+def test_recorded_variant_label_is_summarised_as_a_pattern(name, facade):
     """
     Test that the generated identifier we build on really is described as a pattern
 
@@ -239,8 +256,8 @@ def test_recorded_variant_label_is_summarised_as_a_pattern(name, generation):
     """
     raw = load(f"{name}-facets")
 
-    (native,) = native_facet_names(generation.params, {"variant_label"}).values()
-    summary = raw["summaries"][f"{generation.params.prefix}:{native}"]
+    (native,) = native_facet_names(facade.query_style, {"variant_label"}).values()
+    summary = raw["summaries"][f"{facade.query_style.prefix}:{native}"]
 
     assert isinstance(summary, str), (
         f"{native} was summarised as a {type(summary).__name__}, not a pattern"

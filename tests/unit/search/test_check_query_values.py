@@ -18,18 +18,18 @@ from esmporium.search import (
     FindingKind,
     NoSourceWouldAnswerError,
     NotAFacetOfTheQueryError,
+    SearchAPIESGF1Solr,
+    SearchAPIESGFNGSTAC,
+    SearchAPIFacade,
+    SelectorOfferedNoAPIFacadeError,
+    SolrCMIP6Parameters,
+    STACCMIP6Parameters,
     allowed_values_from_api,
     check_query_values,
     check_query_values_low,
     compare_values,
     facets_the_user_set,
     values_set_for,
-)
-from esmporium.search.search_api import (
-    SOLR_CMIP6,
-    STAC_CMIP6,
-    SearchAPIOld,
-    SelectorOfferedNoAPIError,
 )
 
 
@@ -167,8 +167,11 @@ def once():
 
 
 def solr_api(host="node.example"):
-    """A CMIP6/Solr SearchAPI that retries once and never sleeps."""
-    return SearchAPIOld(host, SOLR_CMIP6, once())
+    """A CMIP6/Solr facade that retries once and never sleeps."""
+    return SearchAPIFacade(
+        query_style=SolrCMIP6Parameters,
+        search_api=SearchAPIESGF1Solr(host, once()),
+    )
 
 
 def test_solr_source_lists_values_keyed_by_canonical_facet():
@@ -315,7 +318,7 @@ def test_high_with_no_api_to_ask_raises():
     and it reads far too much like "nothing to report",
     so it is said out loud instead.
     """
-    with pytest.raises(SelectorOfferedNoAPIError, match="CMIP5"):
+    with pytest.raises(SelectorOfferedNoAPIFacadeError, match="CMIP5"):
         check_query_values(
             QueryCMIP5(experiment="abrupt-4xco2", variable="tas"),
             selector=lambda canonical, attempt: None,
@@ -639,13 +642,16 @@ def test_a_facet_the_apis_vocabulary_cannot_express_is_not_asked_about():
         )
     )
 
-    api = SearchAPIOld("stac.example", STAC_CMIP6, once())
+    api = SearchAPIFacade(
+        query_style=STACCMIP6Parameters,
+        search_api=SearchAPIESGFNGSTAC("stac.example", once()),
+    )
     canonical = canonical_cmip6(experiment_id="Historical")
     facets = facets_the_user_set(canonical)
 
     allowed = allowed_values_from_api(api, client, canonical, facets)
 
-    report = check_query_values_low(canonical, allowed, api.host)
+    report = check_query_values_low(canonical, allowed, api.search_api.host)
 
     assert report.findings == (
         FacetFinding("experiment", "Historical", "case", ("historical",)),

@@ -17,9 +17,9 @@ from esmporium.search import (
     SolrCMIP5Parameters,
     SolrCMIP6Parameters,
     SolrCMIP7Parameters,
-    StacCMIP5Parameters,
-    StacCMIP6Parameters,
-    StacCMIP7Parameters,
+    STACCMIP5Parameters,
+    STACCMIP6Parameters,
+    STACCMIP7Parameters,
 )
 
 
@@ -41,7 +41,7 @@ from esmporium.search import (
             id="solr-cmip5",
         ),
         pytest.param(
-            StacCMIP5Parameters(
+            STACCMIP5Parameters(
                 model=("model",),
                 institute=("institution",),
                 experiment=("experiment",),
@@ -69,7 +69,7 @@ from esmporium.search import (
             id="solr-cmip6",
         ),
         pytest.param(
-            StacCMIP6Parameters(
+            STACCMIP6Parameters(
                 source_id=("model",),
                 institution_id=("institution",),
                 experiment_id=("experiment",),
@@ -97,7 +97,7 @@ from esmporium.search import (
             id="solr-cmip7",
         ),
         pytest.param(
-            StacCMIP7Parameters(
+            STACCMIP7Parameters(
                 source_id=("model",),
                 institution_id=("institution",),
                 experiment_id=("experiment",),
@@ -207,7 +207,7 @@ def test_every_query_class_translates_to_every_other(exp):
                 # With the STAC API,
                 # the project is the collection ID
                 # and must be handled by the API generation
-                # so `StacCMIP7Parameters` has no `project` facet
+                # so `STACCMIP7Parameters` has no `project` facet
                 # and the query must not ask for one.
                 project=(),
                 source_id=("model",),
@@ -228,7 +228,7 @@ def test_every_query_class_translates_to_every_other(exp):
                 region=("region",),
                 other_terms={"custom_other": ("other_terms",)},
             ),
-            StacCMIP7Parameters(
+            STACCMIP7Parameters(
                 source_id=("model",),
                 institution_id=("institution",),
                 experiment_id=("experiment",),
@@ -351,37 +351,37 @@ def test_full_query_is_supported(start_query, exp_params):
         ),
         pytest.param(
             QueryCanonical(model=("model",), resolution=("resolution",)),
-            StacCMIP5Parameters,
+            STACCMIP5Parameters,
             pytest.raises(
                 FacetNotExpressibleError,
-                match="facet 'resolution' cannot be represented in StacCMIP5Parameters",
+                match="facet 'resolution' cannot be represented in STACCMIP5Parameters",
             ),
             id="canonical-resolution-stac-cmip5-target",
         ),
         pytest.param(
             QueryCanonical(project=("CMIP5",), model=("model",)),
-            StacCMIP5Parameters,
+            STACCMIP5Parameters,
             pytest.raises(
                 FacetNotExpressibleError,
-                match="facet 'project' cannot be represented in StacCMIP5Parameters",
+                match="facet 'project' cannot be represented in STACCMIP5Parameters",
             ),
             id="canonical-project-stac-cmip5-target",
         ),
         pytest.param(
             QueryCanonical(project=("CMIP6",), model=("model",)),
-            StacCMIP6Parameters,
+            STACCMIP6Parameters,
             pytest.raises(
                 FacetNotExpressibleError,
-                match="facet 'project' cannot be represented in StacCMIP6Parameters",
+                match="facet 'project' cannot be represented in STACCMIP6Parameters",
             ),
             id="canonical-project-stac-cmip6-target",
         ),
         pytest.param(
             QueryCanonical(project=("CMIP7",), model=("model",)),
-            StacCMIP7Parameters,
+            STACCMIP7Parameters,
             pytest.raises(
                 FacetNotExpressibleError,
-                match="facet 'project' cannot be represented in StacCMIP7Parameters",
+                match="facet 'project' cannot be represented in STACCMIP7Parameters",
             ),
             id="canonical-project-stac-cmip7-target",
         ),

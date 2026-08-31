@@ -5,28 +5,46 @@ This contains our facades to search APIs.
 These facades are introduced to add more robust
 query creation, result parsing and error handling.
 Complete documentation of this will be added in future.
+
+A facade pairs a *query style* (the vocabulary a project is written in,
+e.g. [SolrCMIP6Parameters][(m).SolrCMIP6Parameters])
+with a *search API* (the wire format spoken by a family of endpoints,
+e.g. [SearchAPIESGF1Solr][esmporium.search.apis.SearchAPIESGF1Solr]).
+The query style is the facade's own concern:
+it is the facade which turns a canonical query into the names and shapes
+a search API speaks, and which turns the answer back into the canonical vocabulary.
+The search API knows nothing about canonical queries;
+it only knows how to encode a request and decode a response for its wire format.
+Keeping the two layers visibly distinct is deliberate:
+every consumer reaches through to `facade.search_api.host` explicitly,
+rather than the facade re-exposing it, so it is always clear which layer you are on.
 """
 # TODO: devs - add more complete docs in a follow up PR
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Annotated, ClassVar
+from typing import Annotated, Any, ClassVar, Protocol, cast
 
 from pydantic import BaseModel, ConfigDict
 from tenacity import Retrying
 
 from esmporium.query import (
+    FacetNotExpressibleError,
     FacetValues,
     FacetValuesByName,
     QueryCanonical,
     QueryFacet,
     QueryProtocol,
     SourceQuery,
+    facet_spec,
     facet_values_from_attributes,
+    from_canonical,
 )
 from esmporium.search.apis import (
+    Request,
     SearchAPI,
     SearchAPIESGF1Solr,
     SearchAPIESGF15BridgeSolr,
@@ -35,29 +53,276 @@ from esmporium.search.apis import (
 from esmporium.search.retry import build_transient_retrying
 
 
-@dataclass(frozen=True)
-class SearchAPIFacade:
+class STACParams(QueryProtocol, Protocol):
     """
-    A search API facade
+    A STAC parameter class
 
-    This turns the search API from something which will accept queries for any project,
-    into something which will only accept queries for a single project.
-    This makes query creation, result parsing and error handling much more robust,
-    at the price of having to make multiple queries
-    if we want to search more than one project
-    (in practice this is a tiny price to pay,
-    so we deliberately make this tradeoff throughout the package).
-    """
+    The prefix lives with the parameter class because it co-varies exactly with
+    the project each parameter class is paired to
+    (because, with the STAC API, you can only search one project at a time).
 
-    query_style: type[QueryProtocol]
-    """
-    The query style that this facade uses
+    On STAC parameter classes, there should also be no `project` field.
+    The prefix implicitly defines the supported project.
+    When we build queries, the builder should make sure that the query
+    aligns with the project (i.e. prefix).
     """
 
-    search_api: SearchAPI
+    prefix: ClassVar[str]
     """
-    The search API for which we are providing a facade
+    The prefix to put in front of each field name to get the API property name
+
+    This also implicitly defines the project which can be searched
+    using parameters from this class and STAC APIs which use this parameter class.
+    With STAC, there is a tight coupling between prefixes i.e. projects and searches.
+    As a result, each STAC search request can only search a single project,
+    which isn't the case with ESGF1
+    (having said this, for better error messaging related to facet names,
+    our ESGF1 search APIs are also tightly coupled to specific projects).
     """
+
+
+class UnaskableFacetError(AssertionError):
+    """
+    Raised when we ask for a facet we could never have asked the API about
+
+    This error means a facets request was built
+    and sent naming a facet the vocabulary has no name for, which
+    [check_facets_expressible][(m).check_facets_expressible]
+    exists to prevent.
+    Raising this means something got past the checks in
+    [check_facets_expressible][(m).check_facets_expressible].
+    """
+
+    def __init__(self, params: type[QueryProtocol], facets: set[str]) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        params
+            The vocabulary the response is written in
+
+        facets
+            The facets which could not have been asked about,
+            named as [native_facet_names][(m).native_facet_names] describes
+        """
+        self.params = params
+        self.facets = facets
+        named = ", ".join(sorted(facets))
+        super().__init__(
+            f"{params.__name__} has no name for {named}, "
+            "so we cannot have asked the API about it and it cannot be in this "
+            "response. This request should never have been built."
+        )
+
+
+class OneProjectRequiredError(ValueError):
+    """
+    Raised when a STAC search is given anything other than exactly one project
+
+    On these APIs the project is the collection being searched,
+    and a search is scoped to a single collection,
+    so "no project" and "several projects" are both unanswerable.
+    """
+
+    def __init__(self, projects: tuple[str, ...]) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        projects
+            The projects which were asked for
+        """
+        self.projects = projects
+        super().__init__(
+            "A STAC search is scoped to one collection, and therefore to one "
+            f"project. Received {len(projects)}: {projects}. "
+            "Search each project separately and combine the results."
+        )
+
+
+class ProjectPrefixMismatchError(ValueError):
+    """
+    Raised when a STAC vocabulary is used to search a project it does not describe
+
+    Each collection names its properties with its own prefix
+    (`cmip6:` for CMIP6, `cmip6plus:` for CMIP6Plus, and so on),
+    so a vocabulary used against the wrong collection
+    builds a filter which cannot match anything.
+    Nothing comes back, and nothing says why, which is the worst of both worlds.
+    """
+
+    def __init__(self, project: str, params: type[STACParams]) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        project
+            The project which was asked for
+
+        params
+            The vocabulary which was going to be used to search it
+        """
+        self.project = project
+        self.params = params
+        super().__init__(
+            f"{params.__name__} writes its properties with the "
+            f"{params.prefix!r} prefix, so it cannot describe the {project!r} "
+            "collection. Use the parameter class for that project."
+        )
+
+
+def native_facet_names(params: type[QueryProtocol], facets: set[str]) -> dict[str, str]:
+    """
+    Work out what a vocabulary calls each of the facets being asked about
+
+    Parameters
+    ----------
+    params
+        The vocabulary to translate into
+
+    facets
+        The facets to translate, named as above
+
+    Returns
+    -------
+    :
+        The name `params` uses for each facet it can express,
+        keyed by the name it was asked for
+
+        Facets `params` cannot express are left out,
+        so the caller can see which ones went missing.
+    """
+    spec = facet_spec(params)
+
+    res: dict[str, str] = {}
+    for facet in facets:
+        canonical_native = spec.canonical_to_native.get(facet)
+        if canonical_native is not None:
+            res[facet] = canonical_native
+
+        elif facet in spec.query_specific_facets:
+            res[facet] = facet
+
+        # Facets not handled above are dropped,
+        # we expect the caller to check for and handle this.
+
+    return res
+
+
+def unexpressible_facets(params: type[QueryProtocol], facets: set[str]) -> set[str]:
+    """
+    Work out which of the given facets a vocabulary has no name for
+
+    Parameters
+    ----------
+    params
+        The vocabulary to check against
+
+    facets
+        The facets to check, named as
+        [native_facet_names][(m).native_facet_names] describes
+
+    Returns
+    -------
+    :
+        The facets which `params` cannot express
+    """
+    return set(facets) - set(native_facet_names(params, facets))
+
+
+def check_facets_expressible(params: type[QueryProtocol], facets: set[str]) -> None:
+    """
+    Check that a vocabulary can express every facet being asked about
+
+    Parameters
+    ----------
+    params
+        The vocabulary to check against
+
+    facets
+        The facets to check, named as
+        [native_facet_names][(m).native_facet_names] describes
+
+    Raises
+    ------
+    FacetNotExpressibleError
+        `params` cannot express one or more of `facets`
+    """
+    unexpressible = unexpressible_facets(params, facets)
+    if unexpressible:
+        raise FacetNotExpressibleError(unexpressible, facet_spec(params).name)
+
+
+def check_facets_askable(params: type[QueryProtocol], facets: set[str]) -> None:
+    """
+    Check that every facet being read is one we could have asked the API about
+
+    Unlike [check_facets_expressible][(m).check_facets_expressible],
+    which guards the request we are about to build,
+    this guards a response we have already been given.
+    Getting here with a facet this vocabulary cannot express
+    means a request was built and sent that never should have been,
+    so the fault is ours rather than the caller's.
+
+    Parameters
+    ----------
+    params
+        The vocabulary the response is written in
+
+    facets
+        The facets being read, named as
+        [native_facet_names][(m).native_facet_names] describes
+
+    Raises
+    ------
+    UnaskableFacetError
+        `params` cannot express one of `facets`
+    """
+    unexpressible = unexpressible_facets(params, facets)
+    if unexpressible:
+        raise UnaskableFacetError(params, unexpressible)
+
+
+def stac_collection(canonical: QueryCanonical, params: type[STACParams]) -> str:
+    """
+    Work out which STAC collection a query is asking about
+
+    Parameters
+    ----------
+    canonical
+        The query whose project to read
+
+    params
+        The vocabulary the query is going to be written in
+
+    Returns
+    -------
+    :
+        The collection to search
+
+        This is the project exactly as the caller wrote it,
+        because the caller knows what they typed
+        and second-guessing their capitalisation would only hide their mistakes.
+
+    Raises
+    ------
+    OneProjectRequiredError
+        `canonical` does not name exactly one project
+
+    ProjectPrefixMismatchError
+        `params` does not describe the project `canonical` names
+    """
+    if len(canonical.project) != 1:
+        raise OneProjectRequiredError(canonical.project)
+
+    collection = canonical.project[0]
+    if collection.lower() != params.prefix:
+        raise ProjectPrefixMismatchError(collection, params)
+
+    return collection
 
 
 # The parameters used for different projects with different APIs.
@@ -241,7 +506,7 @@ class SolrCMIP7Parameters(BaseModel):
         return facet_values_from_attributes(self)
 
 
-class StacCMIP5Parameters(BaseModel):
+class STACCMIP5Parameters(BaseModel):
     """
     CMIP5 facet values under their ESGF-NG/STAC property stems
     """
@@ -249,7 +514,7 @@ class StacCMIP5Parameters(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     prefix: ClassVar[str] = "cmip5"
-    """See [StacParams.prefix][esmporium.search.esgf_generations.StacParams.prefix]."""
+    """See [STACParams.prefix][(m).STACParams.prefix]."""
 
     model: Annotated[FacetValues, QueryFacet("model")] = ()
     """See [Dataset.model][esmporium.db.schema.Dataset.model]."""
@@ -289,13 +554,13 @@ class StacCMIP5Parameters(BaseModel):
         return facet_values_from_attributes(self)
 
 
-class StacCMIP6Parameters(BaseModel):
+class STACCMIP6Parameters(BaseModel):
     """CMIP6 facet values under their ESGF-NG/STAC property stems"""
 
     model_config = ConfigDict(extra="forbid")
 
     prefix: ClassVar[str] = "cmip6"
-    """See [StacParams.prefix][esmporium.search.esgf_generations.StacParams.prefix]."""
+    """See [STACParams.prefix][(m).STACParams.prefix]."""
 
     source_id: Annotated[FacetValues, QueryFacet("model")] = ()
     """See [Dataset.model][esmporium.db.schema.Dataset.model]."""
@@ -344,7 +609,7 @@ class StacCMIP6Parameters(BaseModel):
         return facet_values_from_attributes(self)
 
 
-class StacCMIP7Parameters(BaseModel):
+class STACCMIP7Parameters(BaseModel):
     """
     CMIP7 facet values under their ESGF-NG/STAC property stems
     """
@@ -352,7 +617,7 @@ class StacCMIP7Parameters(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     prefix: ClassVar[str] = "cmip7"
-    """See [StacParams.prefix][esmporium.search.esgf_generations.StacParams.prefix]."""
+    """See [STACParams.prefix][(m).STACParams.prefix]."""
 
     source_id: Annotated[FacetValues, QueryFacet("model")] = ()
     """See [Dataset.model][esmporium.db.schema.Dataset.model]."""
@@ -418,13 +683,297 @@ class StacCMIP7Parameters(BaseModel):
         return facet_values_from_attributes(self)
 
 
+@dataclass(frozen=True)
+class SearchAPIFacade:
+    """
+    A search API facade
+
+    This turns the search API from something which will accept queries for any project,
+    into something which will only accept queries for a single project.
+    This makes query creation, result parsing and error handling much more robust,
+    at the price of having to make multiple queries
+    if we want to search more than one project
+    (in practice this is a tiny price to pay,
+    so we deliberately make this tradeoff throughout the package).
+
+    The facade owns the vocabulary translation:
+    [build_search_request][(c).build_search_request] and
+    [build_get_facet_values_request][(c).build_get_facet_values_request]
+    turn a canonical query into a request in `search_api`'s wire format, and
+    [parse_facet_values][(c).parse_facet_values] and
+    [parse_facet_patterns][(c).parse_facet_patterns]
+    read `search_api`'s answer back into the canonical vocabulary.
+    """
+
+    query_style: type[QueryProtocol]
+    """
+    The query style that this facade uses
+    """
+
+    search_api: SearchAPI
+    """
+    The search API for which we are providing a facade
+    """
+
+    @property
+    def _stac_prefix(self) -> str | None:
+        """
+        The STAC property prefix for this facade, or `None` if it is not STAC-shaped
+
+        A STAC vocabulary carries a `prefix` (e.g. `cmip6`) which every property
+        name is written under; a Solr vocabulary does not, and names its project
+        as an ordinary facet. This tells the two apart.
+        """
+        return getattr(self.query_style, "prefix", None)
+
+    def _wire_facet_names(self, facets: set[str]) -> dict[str, str]:
+        """
+        Map each canonical facet to the name `search_api` speaks it under
+
+        For a STAC vocabulary the wire name carries the collection's prefix
+        (`cmip6:experiment_id`); for a Solr vocabulary it is just the parameter
+        name (`experiment_id`). Facets this vocabulary cannot express are dropped.
+        """
+        names = native_facet_names(self.query_style, facets)
+        prefix = self._stac_prefix
+        if prefix is not None:
+            return {canonical: f"{prefix}:{stem}" for canonical, stem in names.items()}
+
+        return names
+
+    @staticmethod
+    def _single_project(canonical: QueryCanonical) -> str:
+        """Pull the one project out of a query, or explain why we cannot"""
+        if len(canonical.project) != 1:
+            msg = (
+                "We can only unambiguously scope a facet-values request "
+                "if there is exactly one project, "
+                f"received: {canonical.project}"
+            )
+            raise ValueError(msg)
+
+        return canonical.project[0]
+
+    def askable_facets(self, facets: set[str]) -> set[str]:
+        """
+        Get the subset of `facets` this facade's vocabulary can express
+
+        The rest cannot be asked about (there is no name to ask them under),
+        so the caller is expected to record them as unchecked rather than
+        pretend a source was silent about them.
+
+        Parameters
+        ----------
+        facets
+            The facets to filter, named canonically
+
+        Returns
+        -------
+        :
+            The facets `query_style` can express, named canonically
+        """
+        return set(native_facet_names(self.query_style, facets))
+
+    def build_search_request(self, canonical: QueryCanonical, limit: int) -> Request:
+        """
+        Build a search request for a canonical query
+
+        Parameters
+        ----------
+        canonical
+            Query to render
+
+        limit
+            The page size to ask for,
+            i.e. the maximum number of records in one response.
+
+        Returns
+        -------
+        :
+            The request to send to `search_api`
+
+        Raises
+        ------
+        FacetNotExpressibleError
+            `canonical` sets a facet this facade's vocabulary cannot express
+
+        LimitOutOfRangeError
+            `limit` is outside the range `search_api` accepts
+
+        OneProjectRequiredError
+            A STAC facade was given anything other than exactly one project
+
+        ProjectPrefixMismatchError
+            A STAC facade was given a project its vocabulary does not describe
+        """
+        prefix = self._stac_prefix
+        if prefix is None:
+            native = from_canonical(canonical=canonical, to=self.query_style)
+            return self.search_api.build_search_request(native.facet_values(), limit)
+
+        # With this API, the project is the collection ID rather than a property,
+        # so it is translated out of the query and into a `collection` facet,
+        # and every other property carries the collection's prefix.
+        query_style = cast("type[STACParams]", self.query_style)
+        collection = stac_collection(canonical, query_style)
+        without_project = canonical.model_copy(update={"project": ()})
+        native = from_canonical(canonical=without_project, to=self.query_style)
+
+        facet_values: dict[str, tuple[str, ...]] = {"collection": (collection,)}
+        for stem, values in native.facet_values().items():
+            facet_values[f"{prefix}:{stem}"] = values
+
+        return self.search_api.build_search_request(facet_values, limit)
+
+    def build_get_facet_values_request(
+        self, canonical: QueryCanonical, facets: set[str]
+    ) -> Request:
+        """
+        Build a request which lists the values of the given facets
+
+        The facade is already scoped to one project, so it derives the project
+        from `canonical` rather than taking it as an argument.
+
+        Parameters
+        ----------
+        canonical
+            The query whose project to scope to
+
+        facets
+            The facets to list the values of, named canonically.
+
+            Every one has to be a facet this vocabulary can express,
+            because there is no way to ask about one that is not.
+
+        Returns
+        -------
+        :
+            The request to send to `search_api`
+
+        Raises
+        ------
+        FacetNotExpressibleError
+            This facade's vocabulary cannot express one of `facets`
+
+        OneProjectRequiredError
+            A STAC facade was given anything other than exactly one project
+
+        ProjectPrefixMismatchError
+            A STAC facade was given a project its vocabulary does not describe
+        """
+        check_facets_expressible(self.query_style, facets)
+        wire_facets = set(self._wire_facet_names(facets).values())
+
+        if self._stac_prefix is None:
+            project = self._single_project(canonical)
+        else:
+            project = stac_collection(
+                canonical, cast("type[STACParams]", self.query_style)
+            )
+
+        return self.search_api.build_get_facet_values_for_project_request(
+            wire_facets, project
+        )
+
+    def parse_facet_values(
+        self, raw: dict[str, Any], facets: set[str]
+    ) -> dict[str, set[str]]:
+        """
+        Read the available facet values out of a raw response
+
+        Parameters
+        ----------
+        raw
+            The response to read, i.e. the answer to a request built with
+            [build_get_facet_values_request][(c).build_get_facet_values_request]
+
+        facets
+            The facets we asked about, named canonically
+
+        Returns
+        -------
+        :
+            The values which are available, keyed by the canonical facet name
+
+            A facet whose values the API does not enumerate is left out.
+
+        Raises
+        ------
+        NoFacetValuesReturned
+            The response does not enumerate facet values at all
+
+        UnaskableFacetError
+            This facade's vocabulary cannot express one of `facets`,
+            so this response was never going to answer the question
+        """
+        return self._read_back(self.search_api.parse_facet_values, raw, facets)
+
+    def parse_facet_patterns(
+        self, raw: dict[str, Any], facets: set[str]
+    ) -> dict[str, re.Pattern[str]]:
+        """
+        Read the supported facet patterns out of a raw response
+
+        The counterpart to [parse_facet_values][(c).parse_facet_values],
+        for the facets an API describes by their form rather than by listing them.
+
+        Parameters
+        ----------
+        raw
+            The response to read, i.e. the answer to a request built with
+            [build_get_facet_values_request][(c).build_get_facet_values_request]
+
+        facets
+            The facets we asked about, named canonically
+
+        Returns
+        -------
+        :
+            The pattern each facet's values must take, keyed by the canonical name
+
+        Raises
+        ------
+        UncompilableFacetPatternError
+            A pattern given for a facet is not a valid regular expression
+
+        UnaskableFacetError
+            This facade's vocabulary cannot express one of `facets`
+        """
+        return self._read_back(self.search_api.parse_facet_patterns, raw, facets)
+
+    def _read_back(
+        self,
+        parse: Callable[[dict[str, Any], set[str]], dict[str, Any]],
+        raw: dict[str, Any],
+        facets: set[str],
+    ) -> dict[str, Any]:
+        """
+        Parse a facet-values response and translate its keys back to canonical names
+
+        `parse` reads `raw` keyed by the wire names; this asks it about the wire
+        names for `facets`, then hands the answer back under the names they were
+        asked for.
+        """
+        check_facets_askable(self.query_style, facets)
+
+        wire = self._wire_facet_names(facets)
+        asked_for = {wire_name: canonical for canonical, wire_name in wire.items()}
+
+        native_keyed = parse(raw, set(wire.values()))
+        return {
+            asked_for[wire_name]: value
+            for wire_name, value in native_keyed.items()
+            if wire_name in asked_for
+        }
+
+
 SearchAPIFacadeSelector = Callable[[QueryCanonical, int], SearchAPIFacade | None]
 """
 Chooses which facade to try next
 
 Given the canonical query and a 0-based attempt index,
 returns the next
-[SearchAPIFacade][esmporium.search.search_api.SearchAPIFacade] to try,
+[SearchAPIFacade][esmporium.search.search_api_facade.SearchAPIFacade] to try,
 or `None` to say that there is nothing to try for this query and attempt number.
 """
 
@@ -507,7 +1056,7 @@ def build_project_list_selector(
     Returns
     -------
     :
-        A selector which yields faades in an order specific to the query's project
+        A selector which yields facades in an order specific to the query's project
     """
 
     def select(canonical: QueryCanonical, attempt: int) -> SearchAPIFacade | None:
@@ -581,7 +1130,7 @@ class SearchAPIFacadeClassification:
 @dataclass(frozen=True)
 class SearchAPIFacadeStore:
     """
-    A store of seach API facades
+    A store of search API facades
 
     This store helps manage a set of API facades
     and get them in more convenient ways than looking through lists.
@@ -646,10 +1195,13 @@ class SearchAPIFacadeStore:
         :
             API facade for `project` that uses `host`
         """
-        matches_host = self.get_api_facades_from_host(host)
-        matches = [v for v in matches_host if project in v.projects]
+        matches = [
+            v
+            for v in self.classifications
+            if v.facade.search_api.host == host and project in v.projects
+        ]
         if len(matches) < 1:
-            host_projects = {}
+            host_projects: dict[str, list[str]] = {}
             for v in self.classifications:
                 host_projects.setdefault(v.facade.search_api.host, []).extend(
                     v.projects
@@ -672,8 +1224,8 @@ class SearchAPIFacadeStore:
         return matches[0].facade
 
     @classmethod
-    def intialise_with_default_api_facades(
-        cls, retrying: Retrying = build_transient_retrying(3)
+    def initialise_with_default_api_facades(
+        cls, retrying: Retrying | None = None
     ) -> SearchAPIFacadeStore:
         """
         Initialise with our default API facade set
@@ -681,12 +1233,18 @@ class SearchAPIFacadeStore:
         Parameters
         ----------
         retrying
-            Retrying strategy to use with all the APIs
+            Retrying strategy to use with all the APIs.
+
+            If `None` (the default), a fresh
+            [build_transient_retrying][esmporium.search.retry.build_transient_retrying]
+            is built for each API. This matters because a `Retrying` carries
+            per-run state, so sharing one across APIs is not safe once calls can
+            be made in parallel; pass your own only if you know you want it shared.
 
         Returns
         -------
         :
-            Initalised object
+            Initialised object
         """
         classifications_l = []
 
@@ -719,12 +1277,12 @@ class SearchAPIFacadeStore:
                 "esgf-data.dkrz.de",
             ),
             (
-                StacCMIP5Parameters,
+                STACCMIP5Parameters,
                 SearchAPIESGFNGSTAC,
                 "search.east.esgf.io",
             ),
             (
-                StacCMIP5Parameters,
+                STACCMIP5Parameters,
                 SearchAPIESGFNGSTAC,
                 "search.west.esgf.io",
             ),
@@ -757,12 +1315,12 @@ class SearchAPIFacadeStore:
                 "esgf-data.dkrz.de",
             ),
             (
-                StacCMIP6Parameters,
+                STACCMIP6Parameters,
                 SearchAPIESGFNGSTAC,
                 "search.east.esgf.io",
             ),
             (
-                StacCMIP6Parameters,
+                STACCMIP6Parameters,
                 SearchAPIESGFNGSTAC,
                 "search.west.esgf.io",
             ),
@@ -780,28 +1338,41 @@ class SearchAPIFacadeStore:
                 "esgf-data.dkrz.de",
             ),
             (
-                StacCMIP7Parameters,
+                STACCMIP7Parameters,
                 SearchAPIESGFNGSTAC,
                 "search.east.esgf.io",
             ),
             (
-                StacCMIP7Parameters,
+                STACCMIP7Parameters,
                 SearchAPIESGFNGSTAC,
                 "search.west.esgf.io",
             ),
         )
 
+        # To add CMIP6Plus support in future:
+        # add a `cmip6plus_facades` block here (its own STAC vocabulary with a
+        # `cmip6plus` prefix would be needed, as STACCMIP6Parameters is tied to
+        # the `cmip6` collection), classify it against `("CMIP6Plus",)` in the
+        # loop below, and add "CMIP6Plus" to DEFAULT_SEARCH_API_FACADES_BY_PROJECT.
         for projects, facade_definitions in (
-            (("CMIP5"), cmip5_facades),
-            (("CMIP6", "CMIP6Plus"), cmip6_facades),
-            (("CMIP7"), cmip7_facades),
+            (("CMIP5",), cmip5_facades),
+            (("CMIP6",), cmip6_facades),
+            (("CMIP7",), cmip7_facades),
         ):
             for query_style, search_api_type, host in facade_definitions:
+                # A fresh retry policy per API unless the caller shared one:
+                # tenacity's Retrying carries per-run state.
+                api_retrying = (
+                    retrying if retrying is not None else build_transient_retrying(3)
+                )
+                search_api = cast(
+                    "SearchAPI", search_api_type(host=host, retrying=api_retrying)
+                )
                 classifications_l.append(
                     SearchAPIFacadeClassification(
                         SearchAPIFacade(
                             query_style=query_style,
-                            search_api=search_api_type(host=host, retrying=retrying),
+                            search_api=search_api,
                         ),
                         projects=projects,
                     )
@@ -813,7 +1384,7 @@ class SearchAPIFacadeStore:
 
 
 INBUILT_SEARCH_API_FACADE_STORE = (
-    SearchAPIFacadeStore.intialise_with_default_api_facades()
+    SearchAPIFacadeStore.initialise_with_default_api_facades()
 )
 """
 Our in-built search API facade store.

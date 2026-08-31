@@ -27,7 +27,6 @@ from pathlib import Path
 from sqlmodel import create_engine
 
 from esmporium.db import (
-    DEFAULT_SEARCH_APIS_BY_PROJECT,
     HostHealth,
     aggregate_host_health,
     build_health_selector,
@@ -43,6 +42,7 @@ from esmporium.query import (
     to_canonical,
 )
 from esmporium.search import search
+from esmporium.search.search_api_facade import DEFAULT_SEARCH_API_FACADES_BY_PROJECT
 
 # One broad-ish query per project, so several nodes have data to compare.
 EXAMPLE_QUERIES: dict[str, QueryProtocol] = {
@@ -83,12 +83,14 @@ def print_health_table(health: dict[str, HostHealth]) -> None:
 
 def ranked_hosts(engine, project: str) -> list[str]:
     """Return the host order the speed-ranked selector would hand `search()`."""
-    selector = build_health_selector(engine, rank=get_median_response_time_for_ranking)
+    selector = build_health_selector(
+        engine, ranker=get_median_response_time_for_ranking
+    )
     canonical = to_canonical(EXAMPLE_QUERIES[project])
     hosts: list[str] = []
     attempt = 0
     while (api := selector(canonical, attempt)) is not None:
-        hosts.append(api.host)
+        hosts.append(api.search_api.host)
         attempt += 1
     return hosts
 
@@ -110,7 +112,9 @@ def main() -> None:
         gather_health(engine)
 
         pool_hosts = {
-            api.host for pool in DEFAULT_SEARCH_APIS_BY_PROJECT.values() for api in pool
+            api.search_api.host
+            for pool in DEFAULT_SEARCH_API_FACADES_BY_PROJECT.values()
+            for api in pool
         }
         health = aggregate_host_health(engine, pool_hosts)
 

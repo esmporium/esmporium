@@ -14,10 +14,10 @@ from typing import Any
 import httpx
 
 from esmporium.query import QueryProtocol, to_canonical
-from esmporium.search.apis import NoSearchResultNumberOfMatchesReturned, SearchAPI
-from esmporium.search.esgf_generations import (
-    DEFAULT_LIMIT,
+from esmporium.search.apis import (
+    NoSearchResultNumberOfMatchesReturned,
     Request,
+    SearchAPI,
 )
 from esmporium.search.health import SearchAPICall, SearchAPICallObserver
 from esmporium.search.search_api_facade import (
@@ -27,6 +27,15 @@ from esmporium.search.search_api_facade import (
 )
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_LIMIT: int = 10_000
+"""
+The page size we ask each endpoint for if the caller does not choose one
+
+This is the maximum number of records in one response, not the total number of
+matches (which comes back in the response itself). Each search API enforces its
+own accepted range and will refuse a page size outside it.
+"""
 
 
 def get_url(api: SearchAPI, request: Request) -> str:
@@ -431,20 +440,21 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
 
     try:
         attempt = 0
-        while (api := selector(canonical, attempt)) is not None:
+        while (facade := selector(canonical, attempt)) is not None:
             asked_someone = True
-            request = api.generation.build_search_request(canonical, limit)
+            request = facade.build_search_request(canonical, limit)
+            host = facade.search_api.host
             try:
-                raw = fire(client, api, request, observer)
+                raw = fire(client, facade.search_api, request, observer)
             except SearchAPIRequestError as exc:
-                refusals[api.host] = CouldNotSearchError(api.host, cause=exc)
+                refusals[host] = CouldNotSearchError(host, cause=exc)
             else:
                 # Note: if the selector offers the same host twice,
                 # the second answer simply replaces the first here.
                 # That is wasteful, because we run the query again,
                 # but it is not wrong: the answers are for the same query
                 # from the same host, so either will do.
-                results[api.host] = raw
+                results[host] = raw
                 if stop_at_first_result:
                     break
 

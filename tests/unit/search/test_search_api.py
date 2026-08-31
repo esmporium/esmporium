@@ -37,12 +37,12 @@ def test_url_building():
 
 def test_url_can_use_http():
     """A host which only offers http can be reached over it"""
-    api = SearchAPIOld(
-        "esgf.example.org", SOLR_CMIP6, build_transient_retrying(1), scheme="http"
+    api = SearchAPIESGF1Solr(
+        "esgf.example.org", retrying=build_transient_retrying(1), scheme="http"
     )
     request = Request("GET", "/esg-search/search")
 
-    assert api.url(request) == "http://esgf.example.org/esg-search/search"
+    assert get_url(api, request) == "http://esgf.example.org/esg-search/search"
 
 
 def test_list_selector_yields_in_order_then_stops():

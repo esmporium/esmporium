@@ -220,13 +220,13 @@ def _rank_pool(
     signal to fall back to the default order rather than invent a ranking from
     nothing.
     """
-    have_data = [api for api in pool if api.host in health]
+    have_data = [api for api in pool if api.search_api.host in health]
     if not have_data:
         return None
 
-    no_data = [api for api in pool if api.host not in health]
+    no_data = [api for api in pool if api.search_api.host not in health]
     # `sorted` is stable, so hosts that tie on the key keep their pool order.
-    ranked = sorted(have_data, key=lambda api: ranker(health[api.host]))
+    ranked = sorted(have_data, key=lambda api: ranker(health[api.search_api.host]))
     return ranked + no_data
 
 
@@ -268,7 +268,7 @@ def build_health_selector(
     )
 
     # Aggregate only the hosts we could actually pick, once, up front.
-    all_hosts = {api.host for pool in pools.values() for api in pool}
+    all_hosts = {api.search_api.host for pool in pools.values() for api in pool}
     health = aggregate_host_health(engine, all_hosts)
 
     def select(canonical: QueryCanonical, attempt: int) -> SearchAPIFacade | None:
@@ -281,5 +281,4 @@ def build_health_selector(
 
         return ranked[attempt] if attempt < len(ranked) else None
 
-    return select
     return select
