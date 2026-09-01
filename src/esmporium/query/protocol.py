@@ -46,7 +46,7 @@ class QueryProtocol(Protocol):
         ...
 
 
-def _accept_without_validation(value: object) -> object:
+def accept_without_validation(value: object) -> object:
     """
     Hand a value straight back, unvalidated
 
@@ -63,9 +63,7 @@ def _accept_without_validation(value: object) -> object:
     return value
 
 
-SourceQuery = Annotated[
-    QueryProtocol | None, PlainValidator(_accept_without_validation)
-]
+SourceQuery = Annotated[QueryProtocol | None, PlainValidator(accept_without_validation)]
 """
 The type of a query's `source_query` field
 

@@ -6,18 +6,22 @@ These facades are introduced to add more robust
 query creation, result parsing and error handling.
 Complete documentation of this will be added in future.
 
-A facade pairs a *query style* (the vocabulary a project is written in,
+A facade pairs a *query style*
+(the vocabulary a project is written in,
 e.g. [SolrCMIP6Parameters][(m).SolrCMIP6Parameters])
-with a *search API* (the wire format spoken by a family of endpoints,
+with a *search API*
+(the format spoken by a family of endpoints,
 e.g. [SearchAPIESGF1Solr][esmporium.search.apis.SearchAPIESGF1Solr]).
-The query style is the facade's own concern:
-it is the facade which turns a canonical query into the names and shapes
-a search API speaks, and which turns the answer back into the canonical vocabulary.
-The search API knows nothing about canonical queries;
-it only knows how to encode a request and decode a response for its wire format.
-Keeping the two layers visibly distinct is deliberate:
-every consumer reaches through to `facade.search_api.host` explicitly,
-rather than the facade re-exposing it, so it is always clear which layer you are on.
+The query style is the facade's concern:
+it is the facade which turns a canonical query into the names
+and shapes a search API speaks,
+and which turns the answer back into the canonical vocabulary.
+The search API (not the facade layer) knows nothing about canonical queries;
+it only knows how to encode a request and decode a response for its own format.
+Keeping the two layers visibly distinct is deliberate.
+for example, every facade user reaches through to `facade.search_api.host` explicitly,
+rather than the facade re-exposing it,
+so it is always clear where things are coming from.
 """
 # TODO: devs - add more complete docs in a follow up PR
 
@@ -26,7 +30,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Annotated, Any, ClassVar, Protocol, cast
+from typing import Annotated, Any, ClassVar, cast
 
 from pydantic import BaseModel, ConfigDict
 from tenacity import Retrying
@@ -51,29 +55,7 @@ from esmporium.search.apis import (
     SearchAPIESGFNGSTAC,
 )
 from esmporium.search.retry import build_transient_retrying
-
-
-class STACParameters(QueryProtocol, Protocol):
-    """
-    A STAC parameter specification class
-
-    The prefix lives with the parameter class
-    because it is required to determine the names used by STAC search APIs.
-
-    As a result of the use of prefixes, on STAC parameter classes,
-    there should also be no `project` field.
-    The prefix specifies the project.
-    When building queries, the query builder should make sure
-    that the query aligns with the prefix.
-    """
-
-    prefix: ClassVar[str]
-    """
-    The prefix to put in front of each field name to get the search API facet name
-
-    This also (implicitly) defines the project
-    which can be searched using these STAC parameters.
-    """
+from esmporium.search.search_api_facade.parameters import PrefixMappingFacadeParameters
 
 
 class UnaskableFacetError(AssertionError):
@@ -153,7 +135,9 @@ class ProjectPrefixMismatchError(ValueError):
     Without this error, no results would come back and nothing would say why.
     """
 
-    def __init__(self, project: str, query_style: type[STACParameters]) -> None:
+    def __init__(
+        self, project: str, facade_parameters: PrefixMappingFacadeParameters
+    ) -> None:
         """
         Initialise the error
 
@@ -162,16 +146,16 @@ class ProjectPrefixMismatchError(ValueError):
         project
             The project which was asked for
 
-        query_style
-            The query style which was going to be used to search for `project`'s data
+        facade_parameters
+            The facade parameter definition
         """
         self.project = project
-        self.params = query_style
+        self.facade_parameters = facade_parameters
         super().__init__(
-            f"{query_style.__name__} writes its properties with the "
-            f"{query_style.prefix!r} prefix, "
+            f"{facade_parameters.__name__} writes its API facets with the "
+            f"{facade_parameters.prefix!r} prefix, "
             f"so it cannot describe the {project!r} collection. "
-            f"You need to use the query class specific to {project}."
+            f"You need to use the facade parameter class specific to {project}."
         )
 
 
@@ -387,8 +371,11 @@ def get_single_project(canonical: QueryCanonical) -> str:
     return canonical.project[0]
 
 
+# TODO: move this onto PrefixMappingFacadeParameters
+# and rename PrefixMappingFacadeParameters
+# to STACFacadeParameters
 def get_stac_collection(
-    canonical: QueryCanonical, query_style: type[STACParameters]
+    canonical: QueryCanonical, facade_parameters: PrefixMappingFacadeParameters
 ) -> str:
     """
     Work out which STAC collection a query is asking about
@@ -398,8 +385,8 @@ def get_stac_collection(
     canonical
         The query whose project to read
 
-    query_style
-        The query style the query is going to be written in
+    facade_parameters
+        The facade parameter definition
 
     Returns
     -------
@@ -420,8 +407,8 @@ def get_stac_collection(
     collection = canonical.project[0]
     # TODO Claude: are 100% certain that this logic is correct
     # i.e. the prefix is always the lowercase version of the collection (i.e. project)
-    if collection.lower() != query_style.prefix:
-        raise ProjectPrefixMismatchError(collection, query_style)
+    if collection.lower() != facade_parameters.prefix:
+        raise ProjectPrefixMismatchError(collection, facade_parameters)
 
     return collection
 
@@ -880,8 +867,7 @@ class SearchAPIFacade:
         # With this API, the project is the collection ID rather than a property,
         # so it is translated out of the query and into a `collection` facet,
         # and every other property carries the collection's prefix.
-        query_style = cast("type[STACParameters]", self.query_style)
-        collection = get_stac_collection(canonical, query_style)
+        collection = get_stac_collection(canonical, self.query_style)
         without_project = canonical.model_copy(update={"project": ()})
         native = from_canonical(canonical=without_project, to=self.query_style)
 
@@ -934,9 +920,7 @@ class SearchAPIFacade:
             project = get_single_project(canonical)
 
         else:
-            project = get_stac_collection(
-                canonical, cast("type[STACParameters]", self.query_style)
-            )
+            project = get_stac_collection(canonical, self.query_style)
 
         # Up to here
         return self.search_api.build_get_facet_values_for_project_request(

@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, PlainValidator
 
 from esmporium.query import (
     FacetValues,
@@ -32,6 +32,7 @@ from esmporium.query import (
     facet_spec,
     facet_values_from_attributes,
 )
+from esmporium.query.protocol import accept_without_validation
 
 
 def get_mapping_to_query_style_facet_names(
@@ -91,7 +92,9 @@ class DirectMappingFacadeParameters(BaseModel):
     Facade parameters where the API facet names are defined by the base query style
     """
 
-    base_query_style: type[QueryProtocol]
+    base_query_style: Annotated[
+        type[QueryProtocol], PlainValidator(accept_without_validation)
+    ]
     """See [FacadeParametersProtocol.base_query_style][esmporium.search.search_api_facade.parameters.protocol.FacadeParametersProtocol.base_query_style]."""  # noqa: E501
 
     def get_mapping_to_api_facet_names(self, facets: set[str]) -> dict[str, str]:
@@ -294,7 +297,9 @@ class PrefixMappingFacadeParameters(BaseModel):
     Prefix to apply when creating the API facet names
     """
 
-    base_query_style: type[QueryProtocol]
+    base_query_style: Annotated[
+        type[QueryProtocol], PlainValidator(accept_without_validation)
+    ]
     """See [FacadeParametersProtocol.base_query_style][esmporium.search.search_api_facade.parameters.protocol.FacadeParametersProtocol.base_query_style]."""  # noqa: E501
 
     def get_mapping_to_api_facet_names(self, facets: set[str]) -> dict[str, str]:

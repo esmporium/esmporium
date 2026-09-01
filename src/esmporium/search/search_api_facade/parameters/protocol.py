@@ -8,9 +8,11 @@ is better expressed as more than just a pure mapping.
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Annotated, Protocol
 
-from esmporium.query.protocol import QueryProtocol
+from pydantic import PlainValidator
+
+from esmporium.query.protocol import QueryProtocol, accept_without_validation
 
 
 class FacadeParametersProtocol(Protocol):
@@ -18,7 +20,9 @@ class FacadeParametersProtocol(Protocol):
     A facade parameter definition we support
     """
 
-    base_query_style: type[QueryProtocol]
+    base_query_style: Annotated[
+        type[QueryProtocol], PlainValidator(accept_without_validation)
+    ]
     """
     Base query style
 
