@@ -263,7 +263,7 @@ def test_a_query_we_did_not_write_can_be_translated():
 
     @dataclass
     class QueryMIP1:
-        """A query in MIP1's vocabulary"""
+        """A query under MIP1's own parameter names"""
 
         mip: Annotated[tuple[str, ...], QueryFacet("project")] = ()
         esm: Annotated[tuple[str, ...], QueryFacet("model")] = ()
@@ -292,7 +292,7 @@ def test_a_query_we_did_not_write_fails_loud_on_a_facet_it_cannot_express():
 
     @dataclass
     class QueryMIP1:
-        """A query in MIP1's vocabulary, which has no concept of a variable"""
+        """A query under MIP1's own names, which has no concept of a variable"""
 
         esm: Annotated[tuple[str, ...], QueryFacet("model")] = ()
         other_terms: dict[str, tuple[str, ...]] = field(default_factory=dict)

@@ -45,7 +45,7 @@ def test_a_facet_is_renamed_values_are_unchanged():
 
 def test_a_query_specific_facet_stays_put():
     """
-    A facet with no canonical equivalent is held under its native name.
+    A facet with no canonical equivalent keeps the query style's parameter name.
 
     There is nothing to translate it to, so it is kept as the user wrote it.
     """

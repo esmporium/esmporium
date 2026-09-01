@@ -327,9 +327,7 @@ class ProjectPrefixMismatchError(ValueError):
     Without this error, no results would come back and nothing would say why.
     """
 
-    def __init__(
-        self, project: str, prefix: str, facade_parameters: STACFacadeParameters
-    ) -> None:
+    def __init__(self, project: str, facade_parameters: STACFacadeParameters) -> None:
         """
         Initialise the error
 
@@ -338,21 +336,22 @@ class ProjectPrefixMismatchError(ValueError):
         project
             The project which was asked for
 
-        prefix
-            The prefix we expect
-
         facade_parameters
             The facade parameter definition
         """
         self.project = project
-        self.prefix = prefix
         self.facade_parameters = facade_parameters
+        self.prefix = facade_parameters.prefix
+        expected_prefix = facade_parameters.project_to_prefix_converter(project)
+        self.expected_prefix = expected_prefix
+
         super().__init__(
-            f"For {project=}, we expected {prefix=}."
+            f"This facade has {facade_parameters.prefix=!r}, "
+            f"but for {project=!r} and these `facade_parameters`, "
+            f"we have {expected_prefix=!r}. "
             f"You may need to create a new {type(facade_parameters).__name__} "
             "instance and inject different checks of consistency "
-            "between projects and prefixes. "
-            f"For reference, {facade_parameters=}."
+            "between projects and prefixes."
         )
 
 
@@ -458,7 +457,7 @@ class STACFacadeParameters(BaseModel):
 
         project = canonical.project[0]
         if self.project_to_prefix_converter(project) != self.prefix:
-            raise ProjectPrefixMismatchError(project, self.prefix, self)
+            raise ProjectPrefixMismatchError(project, self)
 
         collection = self.project_to_collection_converter(project)
 

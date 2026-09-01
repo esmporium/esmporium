@@ -49,7 +49,7 @@ Not included:
 - tracking queries in our database, that comes later
 
 
-## PR1.5
+## PR1.5 Done, see https://github.com/esmporium/esmporium/pull/16
 
 Search API health
 If this PR is small enough, consider also adding a selector function that picks the API to use based on health information (e.g. pick the API which has the fastest response with results for the given project)
@@ -67,7 +67,7 @@ Integration tests:
     - do this both for ESGF-1 ESGF15-bridge and ESGF-NG (don't worry about testing across all query classes though). This can just be part of the existing integration tests, no need to add new tests.
         - only done on select queries: no point duplicating the tests across code paths that won't vary by search API (we think)
 
-## PR1.7
+## PR1.7 Done, see https://github.com/esmporium/esmporium/pull/18
 
 Use Search API health information from the database to select/rank APIs for the next request
 
@@ -86,16 +86,16 @@ Tests:
 
 Unit tests:
 
-- [ ] I feel a little lost with tests still, but I will have a crack and you can provide feedback.
+- [x] I feel a little lost with tests still, but I will have a crack and you can provide feedback.
     - Test that a mock health table with various hosts with different results and request times (and attempt numbers) rank the way we want them to. Creates output of ranked hosts that can be injected back to search.
       ZN reply: yep this is what we want
 
 Integration tests:
 
-- [ ] Are there any integration tests here? Feels like maybe just unit tests if we are only performing live tests on a single host?
+- [x] Are there any integration tests here? Feels like maybe just unit tests if we are only performing live tests on a single host?
     - ZN: yep no integration tests for this. The functionality is nice to have, not something we need to make bullet proof. Also setting up an integration test that was more than just running a bunch of searches then using this selector would be hard, and this simple integration test is very expensive to run and of very little value.
 
-## PR2
+## PR2, in progress
 
 Converting search results into Datasets
 
@@ -126,6 +126,14 @@ Integration tests:
 Not included:
 
 - parent stuff, that comes later
+
+## PR2.2
+
+Add tests that the same request is built if a user uses `other_terms` instead of our supported names.
+
+They can be unit tests (I think).
+
+This is how we check that `other_terms` will actually end up in requests to search APIs.
 
 ## PR2.5
 

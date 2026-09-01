@@ -26,7 +26,7 @@ from esmporium.query import (
 @dataclass
 class QueryMIP1:
     """
-    A query in MIP1's vocabulary, which is not one of ours
+    A query under MIP1's own parameter names, which is not one of ours
 
     It calls the project facet `mip`,
     so it doubles as the case of a query which does not use our name for the project.
@@ -76,7 +76,7 @@ def test_no_target_project_error(query, project_facet: str):
 def test_no_project_facet_at_all_error():
     @dataclass
     class QueryMIP1NoProject:
-        """A query in MIP1's vocabulary, which has no concept of a project"""
+        """A query under MIP1's own names, which has no concept of a project"""
 
         esm: Annotated[tuple[str, ...], QueryFacet("model")] = ()
         other_terms: dict[str, tuple[str, ...]] = field(default_factory=dict)

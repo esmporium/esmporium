@@ -251,6 +251,25 @@ class SearchAPIFacade:
         -------
         :
             The request to send to `search_api`
+
+        Raises
+        ------
+        FacetNotExpressibleError
+            `canonical` sets a facet this facade's query style cannot express
+
+        LimitOutOfRangeError
+            `limit` is outside the range `search_api` accepts
+
+        OneProjectRequiredError
+            `self.parameters` needs exactly one project
+            and `canonical` specifies zero or more than one
+            (e.g. our STAC facades need this;
+            see [get_collection][esmporium.search.STACFacadeParameters.get_collection])
+
+        ProjectPrefixMismatchError
+            The facade parameters were given a project
+            whose prefix disagrees with the one they write
+            (again, our STAC facades are the ones which check this)
         """
         facet_values = self.parameters.get_search_request_facet_values(canonical)
         return self.search_api.build_search_request(facet_values, limit)

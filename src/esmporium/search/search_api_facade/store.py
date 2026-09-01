@@ -144,6 +144,21 @@ class SearchAPIFacadeStore:
         -------
         :
             API facade for `project` that uses `host`
+
+        Raises
+        ------
+        ValueError
+            We have no API facade which pairs `host` with `project`.
+
+            The message lists every host we do have,
+            with the projects each of them supports.
+
+        AssertionError
+            We have more than one API facade
+            which pairs `host` with `project`, so the answer is ambiguous.
+
+            This is a bug in whoever built the store rather than a caller error:
+            a host should be classified against a given project only once.
         """
         matches = [
             v
