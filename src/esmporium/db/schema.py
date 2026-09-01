@@ -460,3 +460,22 @@ class SearchAPICallRecord(EsmporiumBase, table=True):
             response_time_seconds=call.response_time_seconds,
             attempt_number=call.attempt_number,
         )
+
+
+class DatasetVersionSpecific(EsmporiumBase, table=True):
+    """
+    Dataset version information
+
+    The results of a single dataset may be published multiple
+    times (e.g. following updates). The same dataset may include
+    multiple versions.
+
+    We note that version specific dataset information does not
+    include data access (e.g. data node) information. That lives
+    elsewhere.
+    """
+
+    version_id: str = Field(primary_key=True)
+    """"""
+
+    id: str = Field(foreign_key="dataset.id", index=True)
