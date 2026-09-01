@@ -37,11 +37,11 @@ import pytest
 
 from esmporium.query import facet_spec
 from esmporium.search import (
+    ESGF1CMIP5ParametersQueryStyle,
     SearchAPIESGF1Solr,
     SearchAPIESGF15BridgeSolr,
     SearchAPIESGFNGSTAC,
     SearchAPIFacade,
-    SolrCMIP5Parameters,
     SolrCMIP6Parameters,
     STACCMIP6Parameters,
     STACCMIP7Parameters,
@@ -98,7 +98,7 @@ def every_facet(facade: SearchAPIFacade) -> set[str]:
 RECORDED_CASES = (
     pytest.param(
         "esgf1-solr-cmip5",
-        facade(SolrCMIP5Parameters, SearchAPIESGF1Solr),
+        facade(ESGF1CMIP5ParametersQueryStyle, SearchAPIESGF1Solr),
         id="esgf1-solr-cmip5",
     ),
     pytest.param(

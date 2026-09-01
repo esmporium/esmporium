@@ -14,12 +14,12 @@ import pytest
 
 from esmporium.query import QueryCMIP5, QueryCMIP6, QueryCMIP7
 from esmporium.search import (
+    INBUILT_SEARCH_API_FACADE_STORE,
     NoAPIWouldAnswerError,
     SearchAPIESGF1Solr,
     SearchAPIESGF15BridgeSolr,
     SearchAPIESGFNGSTAC,
     SearchAPIFacade,
-    SolrCMIP5Parameters,
     SolrCMIP6Parameters,
     SolrCMIP7Parameters,
     STACCMIP5Parameters,
@@ -65,7 +65,9 @@ CMIP6_QUERY = QueryCMIP6(experiment_id="historical", variable_id="tas", frequenc
 
 LIVE_CASES = (
     pytest.param(
-        solr(SolrCMIP5Parameters, "esgf.nci.org.au"),
+        INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
+            "CMIP5", "esgf.nci.org.au"
+        ),
         QueryCMIP5(experiment="historical", variable="tas", time_frequency="mon"),
         id="solr-cmip5",
     ),
@@ -107,7 +109,9 @@ and the search would come back with everything rather than with nothing.
 # keys silently), so the name here has to be a real field of that class.
 FACET_NAME_CASES = (
     pytest.param(
-        solr(SolrCMIP5Parameters, "esgf.nci.org.au"),
+        INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
+            "CMIP5", "esgf.nci.org.au"
+        ),
         QueryCMIP5(experiment="historical", variable="tas", time_frequency="mon"),
         "variable",
         id="solr-cmip5",
@@ -187,7 +191,9 @@ def and_or_query(query_cls, variable_field, experiment_field):
 
 AND_OR_CASES = (
     pytest.param(
-        solr(SolrCMIP5Parameters, "esgf.nci.org.au"),
+        INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
+            "CMIP5", "esgf.nci.org.au"
+        ),
         and_or_query(QueryCMIP5, "variable", "experiment"),
         id="solr-cmip5",
     ),

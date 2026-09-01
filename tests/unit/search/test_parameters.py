@@ -14,7 +14,7 @@ from esmporium.query import (
     to_canonical,
 )
 from esmporium.search import (
-    SolrCMIP5Parameters,
+    ESGF1CMIP5ParametersQueryStyle,
     SolrCMIP6Parameters,
     SolrCMIP7Parameters,
     STACCMIP5Parameters,
@@ -27,7 +27,7 @@ from esmporium.search import (
     "exp",
     (
         pytest.param(
-            SolrCMIP5Parameters(
+            ESGF1CMIP5ParametersQueryStyle(
                 model=("model",),
                 institute=("institution",),
                 experiment=("experiment",),
@@ -152,7 +152,7 @@ def test_every_query_class_translates_to_every_other(exp):
                 product=("product",),
                 other_terms={"custom_other": ("other_terms",)},
             ),
-            SolrCMIP5Parameters(
+            ESGF1CMIP5ParametersQueryStyle(
                 project=("project",),
                 model=("model",),
                 institute=("institution",),
@@ -287,12 +287,12 @@ def test_full_query_is_supported(start_query, exp_params):
                     source_id=("model",), sub_experiment_id=("sub_experiment_id",)
                 )
             ),
-            SolrCMIP5Parameters,
+            ESGF1CMIP5ParametersQueryStyle,
             pytest.raises(
                 FacetNotExpressibleError,
                 match=(
                     "facet 'sub_experiment_id' cannot be represented "
-                    "in SolrCMIP5Parameters"
+                    "in ESGF1CMIP5ParametersQueryStyle"
                 ),
             ),
             id="cmip6-specific-facet-cmip5-target",
@@ -331,10 +331,13 @@ def test_full_query_is_supported(start_query, exp_params):
             QueryCanonical(
                 project=("CMIP5",), model=("model",), activity=("activity",)
             ),
-            SolrCMIP5Parameters,
+            ESGF1CMIP5ParametersQueryStyle,
             pytest.raises(
                 FacetNotExpressibleError,
-                match="facet 'activity' cannot be represented in SolrCMIP5Parameters",
+                match=(
+                    "facet 'activity' cannot be represented in "
+                    "ESGF1CMIP5ParametersQueryStyle"
+                ),
             ),
             id="canonical-activity-solr-cmip5-target",
         ),
@@ -342,10 +345,13 @@ def test_full_query_is_supported(start_query, exp_params):
             QueryCanonical(
                 project=("CMIP5",), model=("model",), grid_label=("grid_label",)
             ),
-            SolrCMIP5Parameters,
+            ESGF1CMIP5ParametersQueryStyle,
             pytest.raises(
                 FacetNotExpressibleError,
-                match="facet 'grid_label' cannot be represented in SolrCMIP5Parameters",
+                match=(
+                    "facet 'grid_label' cannot be represented in "
+                    "ESGF1CMIP5ParametersQueryStyle"
+                ),
             ),
             id="canonical-grid-label-solr-cmip5-target",
         ),

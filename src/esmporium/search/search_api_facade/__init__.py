@@ -57,6 +57,12 @@ from esmporium.search.apis import (
 from esmporium.search.retry import build_transient_retrying
 from esmporium.search.search_api_facade.parameters import (
     ESGF1_CMIP5_FACADE_PARAMETERS,
+    ESGF1_CMIP6_FACADE_PARAMETERS,
+    ESGF1_CMIP7_FACADE_PARAMETERS,
+    ESGFNG_CMIP5_FACADE_PARAMETERS,
+    ESGFNG_CMIP6_FACADE_PARAMETERS,
+    ESGFNG_CMIP7_FACADE_PARAMETERS,
+    ESGF1CMIP5ParametersQueryStyle,
     FacadeParametersProtocol,
     PrefixMappingFacadeParameters,
 )
@@ -415,64 +421,6 @@ def get_stac_collection(
         raise ProjectPrefixMismatchError(collection, facade_parameters)
 
     return collection
-
-
-# The parameters used for different projects with different APIs.
-# These are almost identical to the queries,
-# but we have both definitions because there can be subtle differences
-# and we don't want to couple these things unnecessarily.
-#
-# We also pre-build various facades at the end of this file
-# so users don't have to write this up themselves if they don't want.
-#
-# Maybe move these into their own module.
-#
-# TODO: consider renaming query_style to params throughout this module
-# to better align with these definitions.
-class SolrCMIP5Parameters(BaseModel):
-    """CMIP5 facet values under their ESGF1/Solr parameter names"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    project: Annotated[FacetValues, QueryFacet("project")] = ()
-    """See [Dataset.project][esmporium.db.schema.Dataset.project]."""
-
-    model: Annotated[FacetValues, QueryFacet("model")] = ()
-    """See [Dataset.model][esmporium.db.schema.Dataset.model]."""
-
-    institute: Annotated[FacetValues, QueryFacet("institution")] = ()
-    """See [Dataset.institution][esmporium.db.schema.Dataset.institution]."""
-
-    experiment: Annotated[FacetValues, QueryFacet("experiment")] = ()
-    """See [Dataset.experiment][esmporium.db.schema.Dataset.experiment]."""
-
-    variable: Annotated[FacetValues, QueryFacet("variable")] = ()
-    """See [Dataset.variable][esmporium.db.schema.Dataset.variable]."""
-
-    ensemble: Annotated[FacetValues, QueryFacet("variant_label")] = ()
-    """See [Dataset.variant_label][esmporium.db.schema.Dataset.variant_label]."""
-
-    time_frequency: Annotated[FacetValues, QueryFacet("reporting_interval")] = ()
-    """See [Dataset.reporting_interval][esmporium.db.schema.Dataset.reporting_interval]."""  # noqa: E501
-
-    cmor_table: Annotated[FacetValues, QueryFacet("processing_id")] = ()
-    """See [Dataset.processing_id][esmporium.db.schema.Dataset.processing_id]."""
-
-    realm: Annotated[FacetValues, QueryFacet("realm")] = ()
-    """See [Dataset.realm][esmporium.query.canonical_query.QueryCanonical.realm]."""
-
-    product: Annotated[FacetValues, QueryFacet(None)] = ()
-    """See [QueryCMIP5.product][esmporium.query.known_queries.QueryCMIP5.product]."""
-
-    other_terms: FacetValuesByName = {}
-    """See [Query.other_terms][esmporium.query.known_queries.Query.other_terms]."""
-
-    source_query: SourceQuery = None
-    """See [Query.source_query][esmporium.query.known_queries.Query.source_query]."""
-
-    def facet_values(self) -> dict[str, tuple[str, ...]]:
-        """Facets that are set, keyed by this class's own (wire) names"""
-        return facet_values_from_attributes(self)
 
 
 class SolrCMIP6Parameters(BaseModel):
@@ -1313,32 +1261,32 @@ class SearchAPIFacadeStore:
                 "esg-dn1.nsc.liu.se",
             ),
             (
-                SolrCMIP5Parameters,
+                ESGF1_CMIP5_FACADE_PARAMETERS,
                 SearchAPIESGF1Solr,
                 "esgf.nci.org.au",
             ),
             (
-                SolrCMIP5Parameters,
+                ESGF1_CMIP5_FACADE_PARAMETERS,
                 SearchAPIESGF15BridgeSolr,
                 "esgf-node.ornl.gov",
             ),
             (
-                SolrCMIP5Parameters,
+                ESGF1_CMIP5_FACADE_PARAMETERS,
                 SearchAPIESGF1Solr,
                 "esgf.ceda.ac.uk",
             ),
             (
-                SolrCMIP5Parameters,
+                ESGF1_CMIP5_FACADE_PARAMETERS,
                 SearchAPIESGF1Solr,
                 "esgf-data.dkrz.de",
             ),
             (
-                STACCMIP5Parameters,
+                ESGFNG_CMIP5_FACADE_PARAMETERS,
                 SearchAPIESGFNGSTAC,
                 "search.east.esgf.io",
             ),
             (
-                STACCMIP5Parameters,
+                ESGFNG_CMIP5_FACADE_PARAMETERS,
                 SearchAPIESGFNGSTAC,
                 "search.west.esgf.io",
             ),
@@ -1346,37 +1294,37 @@ class SearchAPIFacadeStore:
 
         cmip6_facades = (
             (
-                SolrCMIP6Parameters,
+                ESGF1_CMIP6_FACADE_PARAMETERS,
                 SearchAPIESGF1Solr,
                 "esg-dn1.nsc.liu.se",
             ),
             (
-                SolrCMIP6Parameters,
+                ESGF1_CMIP6_FACADE_PARAMETERS,
                 SearchAPIESGF1Solr,
                 "esgf.nci.org.au",
             ),
             (
-                SolrCMIP6Parameters,
+                ESGF1_CMIP6_FACADE_PARAMETERS,
                 SearchAPIESGF15BridgeSolr,
                 "esgf-node.ornl.gov",
             ),
             (
-                SolrCMIP6Parameters,
+                ESGF1_CMIP6_FACADE_PARAMETERS,
                 SearchAPIESGF1Solr,
                 "esgf.ceda.ac.uk",
             ),
             (
-                SolrCMIP6Parameters,
+                ESGF1_CMIP6_FACADE_PARAMETERS,
                 SearchAPIESGF1Solr,
                 "esgf-data.dkrz.de",
             ),
             (
-                STACCMIP6Parameters,
+                ESGFNG_CMIP6_FACADE_PARAMETERS,
                 SearchAPIESGFNGSTAC,
                 "search.east.esgf.io",
             ),
             (
-                STACCMIP6Parameters,
+                ESGFNG_CMIP6_FACADE_PARAMETERS,
                 SearchAPIESGFNGSTAC,
                 "search.west.esgf.io",
             ),
@@ -1384,32 +1332,34 @@ class SearchAPIFacadeStore:
 
         cmip7_facades = (
             (
-                SolrCMIP7Parameters,
+                ESGF1_CMIP7_FACADE_PARAMETERS,
                 SearchAPIESGF1Solr,
                 "esgf.nci.org.au",
             ),
             (
-                SolrCMIP7Parameters,
+                ESGF1_CMIP7_FACADE_PARAMETERS,
                 SearchAPIESGF1Solr,
                 "esgf-data.dkrz.de",
             ),
             (
-                STACCMIP7Parameters,
+                ESGFNG_CMIP7_FACADE_PARAMETERS,
                 SearchAPIESGFNGSTAC,
                 "search.east.esgf.io",
             ),
             (
-                STACCMIP7Parameters,
+                ESGFNG_CMIP7_FACADE_PARAMETERS,
                 SearchAPIESGFNGSTAC,
                 "search.west.esgf.io",
             ),
         )
 
         # To add CMIP6Plus support in future:
-        # add a `cmip6plus_facades` block here (its own STAC vocabulary with a
-        # `cmip6plus` prefix would be needed, as STACCMIP6Parameters is tied to
-        # the `cmip6` collection), classify it against `("CMIP6Plus",)` in the
-        # loop below, and add "CMIP6Plus" to DEFAULT_SEARCH_API_FACADES_BY_PROJECT.
+        # add a `cmip6plus_facades` block here
+        # (its own STAC vocabulary with a `cmip6plus` prefix would be needed,
+        # as STACCMIP6Parameters is tied to the `cmip6` collection),
+        # classify it against `("CMIP6Plus",)`
+        # in the loop below,
+        # and add "CMIP6Plus" to DEFAULT_SEARCH_API_FACADES_BY_PROJECT.
         for projects, facade_definitions in (
             (("CMIP5",), cmip5_facades),
             (("CMIP6",), cmip6_facades),
@@ -1459,3 +1409,7 @@ Default search APIs to use, grouped by project
 
 DEFAULT_SELECTOR = build_project_list_selector(DEFAULT_SEARCH_API_FACADES_BY_PROJECT)
 """The selector used when the caller does not choose one"""
+
+__all__ = [
+    "ESGF1CMIP5ParametersQueryStyle",
+]

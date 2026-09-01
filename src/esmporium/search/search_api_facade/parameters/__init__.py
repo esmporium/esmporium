@@ -10,6 +10,7 @@ from esmporium.search.search_api_facade.parameters.known_facade_parameters impor
     ESGFNG_CMIP6_FACADE_PARAMETERS,
     ESGFNG_CMIP7_FACADE_PARAMETERS,
     DirectMappingFacadeParameters,
+    ESGF1CMIP5ParametersQueryStyle,
     PrefixMappingFacadeParameters,
 )
 from esmporium.search.search_api_facade.parameters.protocol import (
@@ -24,6 +25,7 @@ __all__ = [
     "ESGFNG_CMIP6_FACADE_PARAMETERS",
     "ESGFNG_CMIP7_FACADE_PARAMETERS",
     "DirectMappingFacadeParameters",
+    "ESGF1CMIP5ParametersQueryStyle",
     "FacadeParametersProtocol",
     "PrefixMappingFacadeParameters",
 ]
