@@ -90,7 +90,7 @@ from esmporium.search import (
                 variable_id=("variable",),
                 variant_label=("variant_label",),
                 frequency=("reporting_interval",),
-                branding_suffix=("processing_id",),
+                variable_branding_suffix=("processing_id",),
                 realm=("realm",),
                 other_terms={"custom_other": ("other_terms",)},
             ),
