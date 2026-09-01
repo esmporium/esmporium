@@ -66,7 +66,7 @@ def make_search_api(
 ) -> SearchAPIFacade:
     """Build a CMIP6-Solr facade for `host`"""
     return SearchAPIFacade(
-        query_style=SolrCMIP6Parameters,
+        parameters=SolrCMIP6Parameters,
         search_api=SearchAPIESGF1Solr(host, fast_retrying(attempts), timeout=timeout),
     )
 
@@ -291,7 +291,7 @@ def test_search_curl_reproduces_a_post_body(caplog):
     """The curl-equivalent of a POST carries its method and body"""
     # STAC is our POST wire format, so search it to exercise the POST path.
     stac_api = SearchAPIFacade(
-        query_style=STACCMIP6Parameters,
+        parameters=STACCMIP6Parameters,
         search_api=SearchAPIESGFNGSTAC("search.example.io", fast_retrying(1)),
     )
     selector = build_list_selector([stac_api])

@@ -169,7 +169,7 @@ def once():
 def solr_api(host="node.example"):
     """A CMIP6/Solr facade that retries once and never sleeps."""
     return SearchAPIFacade(
-        query_style=SolrCMIP6Parameters,
+        parameters=SolrCMIP6Parameters,
         search_api=SearchAPIESGF1Solr(host, once()),
     )
 
@@ -643,7 +643,7 @@ def test_a_facet_the_apis_vocabulary_cannot_express_is_not_asked_about():
     )
 
     api = SearchAPIFacade(
-        query_style=STACCMIP6Parameters,
+        parameters=STACCMIP6Parameters,
         search_api=SearchAPIESGFNGSTAC("stac.example", once()),
     )
     canonical = canonical_cmip6(experiment_id="Historical")

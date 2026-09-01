@@ -76,11 +76,11 @@ def make_api(host, *, stac=False, attempts=1) -> SearchAPIFacade:
     """Build a CMIP6 facade for `host` with a no-sleep retry policy."""
     if stac:
         return SearchAPIFacade(
-            query_style=STACCMIP6Parameters,
+            parameters=STACCMIP6Parameters,
             search_api=SearchAPIESGFNGSTAC(host, fast_retrying(attempts)),
         )
     return SearchAPIFacade(
-        query_style=SolrCMIP6Parameters,
+        parameters=SolrCMIP6Parameters,
         search_api=SearchAPIESGF1Solr(host, fast_retrying(attempts)),
     )
 

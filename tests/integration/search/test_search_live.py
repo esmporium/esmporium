@@ -39,7 +39,7 @@ TIMEOUT = 60.0
 def solr(query_style, host: str) -> SearchAPIFacade:
     """An ESGF1/Solr facade for `host`, retrying transient failures twice"""
     return SearchAPIFacade(
-        query_style=query_style,
+        parameters=query_style,
         search_api=SearchAPIESGF1Solr(host, build_transient_retrying(2)),
     )
 
@@ -47,7 +47,7 @@ def solr(query_style, host: str) -> SearchAPIFacade:
 def bridge(query_style, host: str) -> SearchAPIFacade:
     """An ESGF1.5 bridge facade for `host`, retrying transient failures twice"""
     return SearchAPIFacade(
-        query_style=query_style,
+        parameters=query_style,
         search_api=SearchAPIESGF15BridgeSolr(host, build_transient_retrying(2)),
     )
 
@@ -55,7 +55,7 @@ def bridge(query_style, host: str) -> SearchAPIFacade:
 def stac(query_style, host: str) -> SearchAPIFacade:
     """An ESGF-NG/STAC facade for `host`, retrying transient failures twice"""
     return SearchAPIFacade(
-        query_style=query_style,
+        parameters=query_style,
         search_api=SearchAPIESGFNGSTAC(host, build_transient_retrying(2)),
     )
 
@@ -332,7 +332,7 @@ def test_aggregating_over_nodes_finds_more_than_one_node(client):
     """
     nodes = [
         SearchAPIFacade(
-            query_style=SolrCMIP6Parameters,
+            parameters=SolrCMIP6Parameters,
             search_api=SearchAPIESGF1Solr(
                 host, build_transient_retrying(2), distrib=False
             ),

@@ -49,7 +49,7 @@ CMIP6 = to_canonical(
 def solr6(host="node.example") -> SearchAPIFacade:
     """A CMIP6/Solr facade"""
     return SearchAPIFacade(
-        query_style=SolrCMIP6Parameters,
+        parameters=SolrCMIP6Parameters,
         search_api=SearchAPIESGF1Solr(host, build_transient_retrying(1)),
     )
 
@@ -57,7 +57,7 @@ def solr6(host="node.example") -> SearchAPIFacade:
 def stac6(host="stac.example") -> SearchAPIFacade:
     """A CMIP6/STAC facade"""
     return SearchAPIFacade(
-        query_style=STACCMIP6Parameters,
+        parameters=STACCMIP6Parameters,
         search_api=SearchAPIESGFNGSTAC(host, build_transient_retrying(1)),
     )
 
@@ -231,7 +231,7 @@ def test_store_gets_the_one_facade_for_a_project_from_a_host():
     facade = a_store().get_api_facade_for_project_from_host("CMIP5", "host-a")
 
     assert facade.search_api.host == "host-a"
-    assert facade.query_style is SolrCMIP6Parameters
+    assert facade.parameters is SolrCMIP6Parameters
 
 
 def test_store_get_for_a_project_from_a_host_that_has_no_such_pairing_raises():

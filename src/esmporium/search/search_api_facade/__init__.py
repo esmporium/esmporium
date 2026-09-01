@@ -55,7 +55,11 @@ from esmporium.search.apis import (
     SearchAPIESGFNGSTAC,
 )
 from esmporium.search.retry import build_transient_retrying
-from esmporium.search.search_api_facade.parameters import PrefixMappingFacadeParameters
+from esmporium.search.search_api_facade.parameters import (
+    ESGF1_CMIP5_FACADE_PARAMETERS,
+    FacadeParametersProtocol,
+    PrefixMappingFacadeParameters,
+)
 
 
 class UnaskableFacetError(AssertionError):
@@ -797,9 +801,9 @@ class SearchAPIFacade:
     back into our canonical vocabulary.
     """
 
-    query_style: type[QueryProtocol]
+    parameters: FacadeParametersProtocol
     """
-    The query style that this facade uses
+    The parameters that this facade uses
     """
 
     search_api: SearchAPI
@@ -825,7 +829,7 @@ class SearchAPIFacade:
         :
             The facets `query_style` can express, named canonically
         """
-        return set(get_mapping_to_native_facet_names(self.query_style, facets))
+        return set(get_mapping_to_native_facet_names(self.parameters, facets))
 
     def build_search_request(self, canonical: QueryCanonical, limit: int) -> Request:
         """
@@ -859,17 +863,17 @@ class SearchAPIFacade:
         ProjectPrefixMismatchError
             A STAC facade was given a project its vocabulary does not describe
         """
-        prefix = getattr(self.query_style, "prefix", None)
+        prefix = getattr(self.parameters, "prefix", None)
         if prefix is None:
-            native = from_canonical(canonical=canonical, to=self.query_style)
+            native = from_canonical(canonical=canonical, to=self.parameters)
             return self.search_api.build_search_request(native.facet_values(), limit)
 
         # With this API, the project is the collection ID rather than a property,
         # so it is translated out of the query and into a `collection` facet,
         # and every other property carries the collection's prefix.
-        collection = get_stac_collection(canonical, self.query_style)
+        collection = get_stac_collection(canonical, self.parameters)
         without_project = canonical.model_copy(update={"project": ()})
-        native = from_canonical(canonical=without_project, to=self.query_style)
+        native = from_canonical(canonical=without_project, to=self.parameters)
 
         facet_values: dict[str, tuple[str, ...]] = {"collection": (collection,)}
         for stem, values in native.facet_values().items():
@@ -910,17 +914,17 @@ class SearchAPIFacade:
         ProjectPrefixMismatchError
             A STAC facade was given a project its vocabulary does not describe
         """
-        check_facets_expressible(self.query_style, facets)
+        check_facets_expressible(self.parameters, facets)
 
         wire_facet_names = set(
-            get_mapping_to_wire_facet_names(self.query_style, facets).values()
+            get_mapping_to_wire_facet_names(self.parameters, facets).values()
         )
 
-        if getattr(self.query_style, "prefix", None) is None:
+        if getattr(self.parameters, "prefix", None) is None:
             project = get_single_project(canonical)
 
         else:
-            project = get_stac_collection(canonical, self.query_style)
+            project = get_stac_collection(canonical, self.parameters)
 
         # Up to here
         return self.search_api.build_get_facet_values_for_project_request(
@@ -1006,9 +1010,9 @@ class SearchAPIFacade:
         names for `facets`, then hands the answer back under the names they were
         asked for.
         """
-        check_facets_askable(self.query_style, facets)
+        check_facets_askable(self.parameters, facets)
 
-        wire = get_mapping_to_wire_facet_names(self.query_style, facets)
+        wire = get_mapping_to_wire_facet_names(self.parameters, facets)
         asked_for = {wire_name: canonical for canonical, wire_name in wire.items()}
 
         native_keyed = parse(raw, set(wire.values()))
@@ -1304,7 +1308,7 @@ class SearchAPIFacadeStore:
         # One for another day.
         cmip5_facades = (
             (
-                SolrCMIP5Parameters,
+                ESGF1_CMIP5_FACADE_PARAMETERS,
                 SearchAPIESGF1Solr,
                 "esg-dn1.nsc.liu.se",
             ),
@@ -1411,7 +1415,7 @@ class SearchAPIFacadeStore:
             (("CMIP6",), cmip6_facades),
             (("CMIP7",), cmip7_facades),
         ):
-            for query_style, search_api_type, host in facade_definitions:
+            for facade_parameters, search_api_type, host in facade_definitions:
                 # A fresh retry policy per API unless the caller shared one:
                 # tenacity's Retrying carries per-run state.
                 api_retrying = (
@@ -1423,7 +1427,7 @@ class SearchAPIFacadeStore:
                 classifications_l.append(
                     SearchAPIFacadeClassification(
                         SearchAPIFacade(
-                            query_style=query_style,
+                            parameters=facade_parameters,
                             search_api=search_api,
                         ),
                         projects=projects,

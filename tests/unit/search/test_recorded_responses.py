@@ -69,7 +69,7 @@ def facade(query_style, search_api_cls, host="recorded.example") -> SearchAPIFac
     so any values will do.
     """
     return SearchAPIFacade(
-        query_style=query_style,
+        parameters=query_style,
         search_api=search_api_cls(host, build_transient_retrying(1)),
     )
 
@@ -92,7 +92,7 @@ def every_facet(facade: SearchAPIFacade) -> set[str]:
     :
         The facets it can express, named the way they are asked for
     """
-    return set(facet_spec(facade.query_style).expressible_facets)
+    return set(facet_spec(facade.parameters).expressible_facets)
 
 
 RECORDED_CASES = (
@@ -219,11 +219,12 @@ def test_recorded_facets_which_are_not_enumerated_are_left_out(name, facade):
 
     res = facade.parse_facet_values(raw, facets)
 
-    prefix = f"{facade.query_style.prefix}:"
+    prefix = f"{facade.parameters.prefix}:"
+
     asked_for = {
         native: asked
         for asked, native in get_mapping_to_native_facet_names(
-            facade.query_style, facets
+            facade.parameters, facets
         ).items()
     }
     not_enumerated = {
@@ -259,9 +260,9 @@ def test_recorded_variant_label_is_summarised_as_a_pattern(name, facade):
     raw = load(f"{name}-facets")
 
     (native,) = get_mapping_to_native_facet_names(
-        facade.query_style, {"variant_label"}
+        facade.parameters, {"variant_label"}
     ).values()
-    summary = raw["summaries"][f"{facade.query_style.prefix}:{native}"]
+    summary = raw["summaries"][f"{facade.parameters.prefix}:{native}"]
 
     assert isinstance(summary, str), (
         f"{native} was summarised as a {type(summary).__name__}, not a pattern"

@@ -162,7 +162,7 @@ def seed(engine, *calls: SearchAPICall) -> None:
 def api(host: str) -> SearchAPIFacade:
     """Build a CMIP6-Solr facade for `host` (only the host matters to ranking)."""
     return SearchAPIFacade(
-        query_style=SolrCMIP6Parameters,
+        parameters=SolrCMIP6Parameters,
         search_api=SearchAPIESGF1Solr(host, build_transient_retrying(1)),
     )
 

@@ -146,7 +146,7 @@ def main() -> None:
                     facade.search_api,
                     facade.build_get_facet_values_request(
                         canonical,
-                        set(facet_spec(facade.query_style).expressible_facets),
+                        set(facet_spec(facade.parameters).expressible_facets),
                     ),
                 ),
             )
