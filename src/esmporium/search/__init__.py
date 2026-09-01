@@ -75,7 +75,6 @@ from esmporium.search.search_api_facade import (
     check_facets_expressible,
     get_mapping_to_native_facet_names,
     get_unexpressible_facets,
-    stac_collection,
 )
 
 __all__ = [
@@ -100,6 +99,7 @@ __all__ = [
     "STACCMIP5Parameters",
     "STACCMIP6Parameters",
     "STACCMIP7Parameters",
+    "STACParameters",
     "STACParams",
     "SearchAPI",
     "SearchAPICall",
@@ -135,12 +135,12 @@ __all__ = [
     "fan_out",
     "fire",
     "get_mapping_to_native_facet_names",
+    "get_unexpressible_facets",
     "get_url",
     "search",
     "solr_bool",
     "solr_facet_values",
     "solr_num_found",
-    "stac_collection",
     "stac_summary_patterns",
     "stac_summary_values",
     "unexpressible_facets",

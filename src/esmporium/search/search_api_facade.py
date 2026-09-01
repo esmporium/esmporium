@@ -26,7 +26,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Annotated, Any, Protocol, cast
+from typing import Annotated, Any, ClassVar, Protocol, cast
 
 from pydantic import BaseModel, ConfigDict
 from tenacity import Retrying
@@ -67,7 +67,7 @@ class STACParameters(QueryProtocol, Protocol):
     that the query aligns with the prefix.
     """
 
-    prefix: str
+    prefix: ClassVar[str]
     """
     The prefix to put in front of each field name to get the search API facet name
 
@@ -415,7 +415,7 @@ def get_stac_collection(
         `params.prefix` does not match the project that `canonical` names
     """
     if len(canonical.project) != 1:
-        raise OneProjectRequiredError(canonical.project)
+        raise OneProjectRequiredError(canonical, canonical.project)
 
     collection = canonical.project[0]
     # TODO Claude: are 100% certain that this logic is correct
@@ -617,7 +617,7 @@ class STACCMIP5Parameters(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    prefix: str = "cmip5"
+    prefix: ClassVar[str] = "cmip5"
     """See [STACParams.prefix][(m).STACParams.prefix]."""
 
     model: Annotated[FacetValues, QueryFacet("model")] = ()
@@ -663,7 +663,7 @@ class STACCMIP6Parameters(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    prefix: str = "cmip6"
+    prefix: ClassVar[str] = "cmip6"
     """See [STACParams.prefix][(m).STACParams.prefix]."""
 
     source_id: Annotated[FacetValues, QueryFacet("model")] = ()
@@ -720,7 +720,7 @@ class STACCMIP7Parameters(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    prefix: str = "cmip7"
+    prefix: ClassVar[str] = "cmip7"
     """See [STACParams.prefix][(m).STACParams.prefix]."""
 
     source_id: Annotated[FacetValues, QueryFacet("model")] = ()
@@ -872,7 +872,7 @@ class SearchAPIFacade:
         ProjectPrefixMismatchError
             A STAC facade was given a project its vocabulary does not describe
         """
-        prefix = self._stac_prefix
+        prefix = getattr(self.query_style, "prefix", None)
         if prefix is None:
             native = from_canonical(canonical=canonical, to=self.query_style)
             return self.search_api.build_search_request(native.facet_values(), limit)
@@ -880,7 +880,7 @@ class SearchAPIFacade:
         # With this API, the project is the collection ID rather than a property,
         # so it is translated out of the query and into a `collection` facet,
         # and every other property carries the collection's prefix.
-        query_style = cast("type[STACParams]", self.query_style)
+        query_style = cast("type[STACParameters]", self.query_style)
         collection = get_stac_collection(canonical, query_style)
         without_project = canonical.model_copy(update={"project": ()})
         native = from_canonical(canonical=without_project, to=self.query_style)
@@ -1024,7 +1024,7 @@ class SearchAPIFacade:
         """
         check_facets_askable(self.query_style, facets)
 
-        wire = self._wire_facet_names(facets)
+        wire = get_mapping_to_wire_facet_names(self.query_style, facets)
         asked_for = {wire_name: canonical for canonical, wire_name in wire.items()}
 
         native_keyed = parse(raw, set(wire.values()))
