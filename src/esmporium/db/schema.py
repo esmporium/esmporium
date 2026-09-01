@@ -475,7 +475,45 @@ class DatasetVersionSpecific(EsmporiumBase, table=True):
     elsewhere.
     """
 
+    # TODO: Have to include full directory?
     version_id: str = Field(primary_key=True)
-    """"""
+    """Version information added to [Dataset.id][esmporium.db.schema.Dataset.id]."""
 
+    # TODO: Include 'key' in name?
     id: str = Field(foreign_key="dataset.id", index=True)
+    """See [Dataset.id][esmporium.db.schema.Dataset.id]."""
+
+    # TODO: useful link for project-specific tables?
+    project: str
+    """See [Dataset.project][esmporium.db.schema.Dataset.project]."""
+
+    version: str
+    """ Mostly by date but not always for CMIP5 - wild west of information"""
+
+    # TODO: is this information useful?
+    # is_latest: bool | None = None
+    # size: int | None = None
+    # number_of_files: int | None = None
+
+    # TODO: dataset version specific included parent + header information
+
+    # TODO: Save this addition for future?
+    # If lives here, could need columns because CMIP7 data have that info.
+
+
+class DatasetAccessInformation(EsmporiumBase, table=True):
+    """
+    Data (node) access for each dataset version.
+
+    A single dataset version may be hosted on multiple data
+    nodes.
+    """
+
+    version_key: str = Field(
+        foreign_key="datasetversion.version_id",
+    )  # primary key?
+
+    data_node: str = Field(primary_key=True)
+    """Hostname of the data node serving the copy of this dataset"""
+
+    replica: bool | None = None
