@@ -28,7 +28,7 @@ class UnaskableFacetError(AssertionError):
     Raised when we ask for a facet we could never have asked an API about
 
     This error means a facets request was built
-    and sent naming a facet the vocabulary has no name for,
+    and sent naming a facet the query style has no parameter name for,
     which [check_facets_expressible][(m).check_facets_expressible]
     exists to prevent.
     Raising this means something got past the checks in
@@ -45,7 +45,7 @@ class UnaskableFacetError(AssertionError):
         Parameters
         ----------
         params
-            The vocabulary the response is written in
+            The query style the response is written in
 
         facets
             The facets which could not have been asked about,
@@ -129,7 +129,7 @@ def check_facets_askable(query_style: type[QueryProtocol], facets: set[str]) -> 
     Unlike [check_facets_expressible][(m).],
     which guards the request we are about to build,
     this guards a response we have already been given.
-    Getting here with a facet this vocabulary cannot express
+    Getting here with a facet this query style cannot express
     means a request was built and sent that never should have been,
     so the fault is ours rather than the caller's.
 
@@ -193,14 +193,14 @@ class SearchAPIFacade:
     (in practice this is a tiny price to pay,
     so we deliberately make this tradeoff throughout the package).
 
-    The facade owns the vocabulary translation.
+    The facade owns the name translation.
     [build_search_request][(c).build_search_request] and
     [build_get_facet_values_request][(c).build_get_facet_values_request]
-    turn a canonical query into a request in `search_api`'s wire format.
+    turn a canonical query into a request using `search_api`'s API parameter names.
     [parse_facet_values][(c).parse_facet_values] and
     [parse_facet_patterns][(c).parse_facet_patterns]
     read the raw answers from the search APIs
-    back into our canonical vocabulary.
+    back into canonical names.
     """
 
     parameters: FacadeParametersProtocol
@@ -222,12 +222,15 @@ class SearchAPIFacade:
         Parameters
         ----------
         facets
-            The facets to filter, named canonically
+            The facets to filter, named as they were asked for,
+            i.e. canonically or, for a facet with no canonical equivalent,
+            by the name the query style gives it
 
         Returns
         -------
         :
-            The facets `parameters` can express, named canonically
+            The subset of `facets` which `parameters` can express,
+            named the same way they were passed in
         """
         return set(self.parameters.get_mapping_to_api_facet_names(facets))
 
@@ -264,9 +267,11 @@ class SearchAPIFacade:
             The query whose project to scope to
 
         facets
-            The facets to list the values of, named canonically.
+            The facets to list the values of, named as they were asked for,
+            i.e. canonically or, for a facet with no canonical equivalent,
+            by the name the query style gives it.
 
-            Every one has to be a facet this vocabulary can express,
+            Every one has to be a facet this query style can express,
             because there is no way to ask about one that is not.
 
         Returns
@@ -277,10 +282,10 @@ class SearchAPIFacade:
         Raises
         ------
         FacetNotExpressibleError
-            This facade's vocabulary cannot express one of `facets`
+            This facade's query style cannot express one of `facets`
 
         OneProjectRequiredError
-            `canonical` specifies zero or more than one projec
+            `canonical` specifies zero or more than one project
 
             Getting facet values for one project at a time
             makes error handling much easier.
@@ -311,22 +316,25 @@ class SearchAPIFacade:
             [build_get_facet_values_request][(c).build_get_facet_values_request]
 
         facets
-            The facets we asked about, named canonically
+            The facets we asked about, named as they were asked for,
+            i.e. canonically or, for a facet with no canonical equivalent,
+            by the name the query style gives it
 
         Returns
         -------
         :
-            The values which are available, keyed by the canonical facet name
+            The values which are available,
+            keyed by the same names `facets` used
 
             A facet whose values the API does not enumerate is left out.
 
         Raises
         ------
-        NoFacetValuesReturned
+        NoFacetValuesReturnedError
             The response does not enumerate facet values at all
 
         UnaskableFacetError
-            This facade's vocabulary cannot express one of `facets`,
+            This facade's query style cannot express one of `facets`,
             so this response was never going to answer the question
         """
         return self._read_back(self.search_api.parse_facet_values, raw, facets)
@@ -347,20 +355,28 @@ class SearchAPIFacade:
             [build_get_facet_values_request][(c).build_get_facet_values_request]
 
         facets
-            The facets we asked about, named canonically
+            The facets we asked about, named as they were asked for,
+            i.e. canonically or, for a facet with no canonical equivalent,
+            by the name the query style gives it
 
         Returns
         -------
         :
-            The pattern each facet's values must take, keyed by the canonical name
+            The pattern each facet's values must take,
+            keyed by the same names `facets` used
+
+            A facet the API does not describe with a pattern is left out.
 
         Raises
         ------
+        NoFacetValuesReturnedError
+            The response does not describe facets at all
+
         UncompilableFacetPatternError
             A pattern given for a facet is not a valid regular expression
 
         UnaskableFacetError
-            This facade's vocabulary cannot express one of `facets`
+            This facade's query style cannot express one of `facets`
         """
         return self._read_back(self.search_api.parse_facet_patterns, raw, facets)
 
@@ -371,17 +387,17 @@ class SearchAPIFacade:
         facets: set[str],
     ) -> dict[str, Any]:
         """
-        Parse a facet-values response and translate its keys back to canonical names
+        Parse a facet-values response and translate its keys back
 
-        `parse` reads `raw` keyed by the API names;
-        this asks it about the API names for `facets`,
+        `parse` reads `raw` keyed by the API parameter names;
+        this asks it about the API parameter names for `facets`,
         then hands the answer back under the names they were asked for.
         """
         check_facets_askable(self.parameters.base_query_style, facets)
 
         api_name_map = self.parameters.get_mapping_to_api_facet_names(facets)
         asked_for_map = {
-            api_name: canonical for canonical, api_name in api_name_map.items()
+            api_name: asked_for for asked_for, api_name in api_name_map.items()
         }
 
         res_api_keyed = parse(raw, set(api_name_map.values()))

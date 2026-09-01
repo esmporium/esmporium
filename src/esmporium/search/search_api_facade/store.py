@@ -4,6 +4,7 @@ Store for multiple search API facades
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import cast
 
@@ -25,6 +26,31 @@ from esmporium.search.search_api_facade.parameters import (
     ESGFNG_CMIP6_FACADE_PARAMETERS,
     ESGFNG_CMIP7_FACADE_PARAMETERS,
 )
+
+RetryingBuilder = Callable[[], Retrying]
+"""
+Builds a retry policy
+
+Called once per API, so each API gets a policy of its own.
+"""
+
+
+def build_default_retrying(attempts: int = 3) -> Retrying:
+    """
+    Build the retry policy our default API facades use
+
+    Parameters
+    ----------
+    attempts
+        Maximum number of attempts to allow before giving up
+
+    Returns
+    -------
+    :
+        A [build_transient_retrying][esmporium.search.retry.build_transient_retrying]
+        policy allowing `attempts` attempts.
+    """
+    return build_transient_retrying(attempts)
 
 
 @dataclass(frozen=True)
@@ -149,21 +175,17 @@ class SearchAPIFacadeStore:
 
     @classmethod
     def initialise_with_default_api_facades(
-        cls, retrying: Retrying | None = None
+        cls, create_retrying: RetryingBuilder = build_default_retrying
     ) -> SearchAPIFacadeStore:
         """
         Initialise with our default API facade set
 
         Parameters
         ----------
-        retrying
-            Retrying strategy to use with all the APIs.
+        create_retrying
+            Builds the retrying strategy to use with an API.
 
-            If `None` (the default), a fresh
-            [build_transient_retrying][esmporium.search.retry.build_transient_retrying]
-            is built for each API. This matters because a `Retrying` carries
-            per-run state, so sharing one across APIs is not safe once calls can
-            be made in parallel; pass your own only if you know you want it shared.
+            We call this once per API, so each API gets a policy of its own.
 
         Returns
         -------
@@ -275,7 +297,7 @@ class SearchAPIFacadeStore:
 
         # To add CMIP6Plus support in future:
         # add a `cmip6plus_facades` block here
-        # (its own STAC vocabulary with a `cmip6plus` prefix would be needed,
+        # (its own STAC query style with a `cmip6plus` prefix would be needed,
         # as ESGFNG_CMIP6_FACADE_PARAMETERS is tied to the `cmip6` collection),
         # classify it against `("CMIP6Plus",)`
         # in the loop below,
@@ -286,13 +308,10 @@ class SearchAPIFacadeStore:
             (("CMIP7",), cmip7_facades),
         ):
             for facade_parameters, search_api_type, host in facade_definitions:
-                # A fresh retry policy per API unless the caller shared one:
+                # A fresh retry policy per API:
                 # tenacity's Retrying carries per-run state.
-                api_retrying = (
-                    retrying if retrying is not None else build_transient_retrying(3)
-                )
                 search_api = cast(
-                    "SearchAPI", search_api_type(host=host, retrying=api_retrying)
+                    "SearchAPI", search_api_type(host=host, retrying=create_retrying())
                 )
                 classifications_l.append(
                     SearchAPIFacadeClassification(

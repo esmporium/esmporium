@@ -13,8 +13,8 @@ from tenacity import Retrying
 
 from esmporium.search.apis.protocol import (
     LimitOutOfRangeError,
-    NoFacetValuesReturned,
-    NoSearchResultNumberOfMatchesReturned,
+    NoFacetValuesReturnedError,
+    NoSearchResultNumberOfMatchesReturnedError,
     UncompilableFacetPatternError,
 )
 from esmporium.search.apis.request import Request
@@ -45,14 +45,14 @@ def stac_summary_values(raw: dict[str, Any], facets: set[str]) -> dict[str, set[
 
     Raises
     ------
-    NoFacetValuesReturned
+    NoFacetValuesReturnedError
         `raw` summarises nothing at all,
         so this deployment cannot tell us anything about any facet.
     """
     # An empty block is as useless to us as a missing one:
     # either way this deployment has told us nothing it knows.
     if not raw.get("summaries"):
-        raise NoFacetValuesReturned(raw, "summaries")
+        raise NoFacetValuesReturnedError(raw, "summaries")
 
     res: dict[str, set[str]] = {}
     for api_name, summary in raw["summaries"].items():
@@ -65,7 +65,16 @@ def stac_summary_values(raw: dict[str, Any], facets: set[str]) -> dict[str, set[
             values = {
                 value
                 for value in summary
-                # TODO Claude: Why is this isinstance check needed?
+                # The `isinstance` check ensures that we don't pick up dicts.
+                # The dicts probably shouldn't be there.
+                # Where they are there (e.g. CMIP6 member_id),
+                # that looks like a bug in the CMIP6 CVs
+                # because CMIP6 uses variant_label, not member_id.
+                # Hence leave this for now,
+                # but we should raise an error in CMIP6 CVs at some point
+                # and we should be aware that this means
+                # that member_id is silently dropped from CMIP6 pattern parsing
+                # at the moment, rather than loudly dropped.
                 if isinstance(value, str)
             }
             if values:
@@ -101,7 +110,7 @@ def stac_summary_patterns(
 
     Raises
     ------
-    NoFacetValuesReturned
+    NoFacetValuesReturnedError
         `raw` summarises nothing at all,
         so this deployment cannot tell us anything about any facet.
 
@@ -112,7 +121,7 @@ def stac_summary_patterns(
     # An empty block is as useless to us as a missing one:
     # either way this deployment has told us nothing it knows.
     if not raw.get("summaries"):
-        raise NoFacetValuesReturned(raw, "summaries")
+        raise NoFacetValuesReturnedError(raw, "summaries")
 
     res: dict[str, re.Pattern[str]] = {}
     for api_name, summary in raw["summaries"].items():
@@ -183,7 +192,7 @@ class SearchAPIESGFNGSTAC:
                 "op": "in",
                 "args": [
                     # Assume that the caller puts the prefix on
-                    {"property": f"{facet}"},
+                    {"property": facet},
                     list(values),
                 ],
             }
@@ -211,7 +220,7 @@ class SearchAPIESGFNGSTAC:
             if isinstance(total, int):
                 return total
 
-        raise NoSearchResultNumberOfMatchesReturned(
+        raise NoSearchResultNumberOfMatchesReturnedError(
             raw, "numberMatched / numMatched / context.matched"
         )
 

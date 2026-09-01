@@ -18,7 +18,7 @@ but we should cover the details of when this works and when it doesn't.
 
 Also note that throughout search,
 the facets are what we handle passing and translating
-(except for `other_facets`),
+(except for `other_terms`),
 but the values are ultimately yours to handle and check.
 We do have some helpers to help with identifying potential typos,
 but we do not control the ESGF index
@@ -94,7 +94,7 @@ via our search API facades.
 The point of this is that the user gets an experience with much more robust query generation, result parsing and error handling.
 It just means we have to deal with the headache of making sure that the translation to the raw search API classes is correct,
 and we are also trying to make it possible for the user to effectively still call the raw search APIs directly,
-in case we get this translation wrong (this is what our search API classes and `other_facets` escape hatch on queries is for,
+in case we get this translation wrong (this is what our search API classes and `other_terms` escape hatch on queries is for,
 it allows the user to basically make our `search_cmip5` and `search_cmip6` functions behave like `search_esgf_like`).
 
 This is a choice that we make.

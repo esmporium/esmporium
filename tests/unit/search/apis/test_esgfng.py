@@ -1,10 +1,10 @@
 """
-Test the ESGF-NG/STAC search API wire format
+Test the ESGF-NG/STAC search API format
 
 STAC answers with CQL2 and describes its facet values in a collection document.
 These pin the request we build from facet values and the reading of a collection,
-both in the API's own vocabulary: the caller (the facade) is assumed to have already
-put each property under its collection prefix, and to have named the collection.
+both under the API's own parameter names: the caller (the facade) is assumed to have
+already put each property under its collection prefix, and named the collection.
 """
 
 from __future__ import annotations
@@ -13,8 +13,8 @@ import pytest
 
 from esmporium.search.apis import (
     LimitOutOfRangeError,
-    NoFacetValuesReturned,
-    NoSearchResultNumberOfMatchesReturned,
+    NoFacetValuesReturnedError,
+    NoSearchResultNumberOfMatchesReturnedError,
     SearchAPIESGFNGSTAC,
     UncompilableFacetPatternError,
 )
@@ -86,7 +86,7 @@ def test_get_search_result_n_matches_reads_whichever_spelling_is_present(raw, ex
     ),
 )
 def test_get_search_result_n_matches_with_no_count_raises(raw):
-    with pytest.raises(NoSearchResultNumberOfMatchesReturned):
+    with pytest.raises(NoSearchResultNumberOfMatchesReturnedError):
         api().get_search_result_n_matches(raw)
 
 
@@ -121,8 +121,63 @@ def test_parse_facet_values_reads_only_enumerated_lists():
 
 
 def test_parse_facet_values_without_summaries_raises():
-    with pytest.raises(NoFacetValuesReturned):
+    with pytest.raises(NoFacetValuesReturnedError):
         api().parse_facet_values({}, {"cmip6:variable_id"})
+
+
+# A summary can be a list whose items are not values but pattern objects.
+# `cmip6:member_id` really is shaped like this on search.east.esgf.io
+# (see the recording in tests/test-data/search/esgf-ng-stac-cmip6-facets.json),
+# so this is a real response shape, not a hypothetical one.
+# A dict is not hashable, so reading these as values would not merely be wrong,
+# it would raise `TypeError` while building the set.
+LIST_OF_PATTERNS_COLLECTION = {
+    "summaries": {
+        "cmip6:member_id": [
+            {"pattern": "^r\\d+i\\d+p\\d+f\\d+$"},
+            {"pattern": "^s1976-r\\d+i\\d+p\\d+f\\d+$"},
+        ],
+        "cmip6:variable_id": ["tas", "pr"],
+    }
+}
+
+
+def test_parse_facet_values_ignores_non_string_items_in_a_list_summary():
+    """A list of pattern objects is not a list of values, so it reports nothing"""
+    res = api().parse_facet_values(
+        LIST_OF_PATTERNS_COLLECTION, {"cmip6:member_id", "cmip6:variable_id"}
+    )
+
+    # Left out entirely rather than reported as an empty set:
+    # "we cannot list this one" must stay distinguishable from
+    # "this one has no values".
+    assert res == {"cmip6:variable_id": {"tas", "pr"}}
+
+
+def test_parse_facet_values_keeps_the_strings_in_a_mixed_list_summary():
+    """A list which mixes values and pattern objects still yields its values"""
+    raw = {"summaries": {"cmip6:variable_id": ["tas", {"pattern": "^v.*$"}, "pr"]}}
+
+    assert api().parse_facet_values(raw, {"cmip6:variable_id"}) == {
+        "cmip6:variable_id": {"tas", "pr"}
+    }
+
+
+def test_parse_facet_patterns_does_not_read_a_list_of_patterns():
+    """
+    Test that a list of pattern objects is left out of the patterns too
+
+    `stac_summary_patterns` only reads a summary which is itself a pattern
+    string, so this shape falls out of both halves of the parsing.
+    That is deliberate for now (nothing we name is summarised this way),
+    but it is worth pinning so the day we do want to read it,
+    a test says what the current behaviour was.
+    """
+    res = api().parse_facet_patterns(
+        LIST_OF_PATTERNS_COLLECTION, {"cmip6:member_id", "cmip6:variable_id"}
+    )
+
+    assert res == {}
 
 
 def test_parse_facet_patterns_reads_only_the_patterns():
@@ -133,6 +188,18 @@ def test_parse_facet_patterns_reads_only_the_patterns():
     assert set(res) == {"cmip6:variant_label"}
     assert res["cmip6:variant_label"].fullmatch("r1i1p1f1")
     assert not res["cmip6:variant_label"].fullmatch("r1i1pf1")
+
+
+def test_parse_facet_patterns_without_summaries_raises():
+    """
+    Test that the patterns half is as loud as the values half
+
+    A collection which describes no facet at all cannot tell us anything about
+    the ones we asked for, whether we asked for values or for patterns,
+    so both halves raise rather than quietly reporting nothing.
+    """
+    with pytest.raises(NoFacetValuesReturnedError):
+        api().parse_facet_patterns({}, {"cmip6:variant_label"})
 
 
 def test_parse_facet_patterns_of_an_uncompilable_pattern_raises():

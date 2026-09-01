@@ -42,7 +42,7 @@ class LimitOutOfRangeError(ValueError):
         )
 
 
-class NoSearchResultNumberOfMatchesReturned(ValueError):
+class NoSearchResultNumberOfMatchesReturnedError(ValueError):
     """
     Raised when a search response does not say how many records matched a search
     """
@@ -72,7 +72,7 @@ class NoSearchResultNumberOfMatchesReturned(ValueError):
         )
 
 
-class NoFacetValuesReturned(ValueError):
+class NoFacetValuesReturnedError(ValueError):
     """
     Raised when a response does not enumerate facet values at all
 
@@ -138,7 +138,7 @@ class SearchAPI(Protocol):
     They mirror the ESGF search APIs directly.
     It is extremely easy to make invalid queries using interfaces of this type.
     If you want to make queries, we recommend using instances of
-    [esmporium.search.search_api_facade.SearchAPIFacade][]'s instead
+    [esmporium.search.search_api_facade.SearchAPIFacade][] instead
     because of their more robust query creation, result parsing and error handling.
     """
 
@@ -219,7 +219,7 @@ class SearchAPI(Protocol):
 
         Raises
         ------
-        NoSearchResultNumberOfMatchesReturned
+        NoSearchResultNumberOfMatchesReturnedError
             `raw` does not report the number of records that matched the search
         """
         ...
@@ -274,8 +274,8 @@ class SearchAPI(Protocol):
 
         Raises
         ------
-        NoFacetValuesReturned
-            The response does not enumerate facet values at all
+        NoFacetValuesReturnedError
+            The response does not describe facets at all.
         """
         ...
 
@@ -302,7 +302,7 @@ class SearchAPI(Protocol):
         Returns
         -------
         :
-            The values which are available, keyed by the facet name.
+            The pattern which is supported, keyed by the facet name.
 
             A facet this response does not describe with a pattern is left out
             (higher level functions are left to decide what to do
@@ -310,6 +310,9 @@ class SearchAPI(Protocol):
 
         Raises
         ------
+        NoFacetValuesReturnedError
+            The response does not describe facets at all.
+
         UncompilableFacetPatternError
             A pattern specified for a given facet name
             is not able to be compiled as a regular expression.

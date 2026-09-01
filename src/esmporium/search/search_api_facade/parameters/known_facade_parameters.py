@@ -19,6 +19,7 @@ Known facade parameter definitions
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, PlainValidator
@@ -41,10 +42,10 @@ def get_mapping_to_query_style_facet_names(
     query_style: type[QueryProtocol], facets: set[str]
 ) -> dict[str, str]:
     """
-    Get the mapping from input names to names used by the API
+    Get the mapping from input names to this query style's parameter names
 
     Like everywhere else, mapping is only supported from canonical names
-    or if the facet name is already a project-specific name.
+    or from facets this query style names which have no canonical equivalent.
 
     All values in `facets` which cannot be mapped are left out of the result,
     so the caller can see/has to check which ones went missing.
@@ -60,7 +61,7 @@ def get_mapping_to_query_style_facet_names(
     Returns
     -------
     :
-        Mapping from values in `facets` to the name that `query_style` uses,
+        Mapping from values in `facets` to `query_style`'s parameter name for them,
         for the facet names for which a mapping exists.
     """
     spec = facet_spec(query_style)
@@ -77,12 +78,6 @@ def get_mapping_to_query_style_facet_names(
             # (and therefore maps to itself)
             res[facet] = facet
 
-        # # TODO Claude: should we also have the below
-        # elif facet in spec.native_to_canonical:
-        #     # This facet is already in this query's style
-        #     # (and therefore maps to itself)
-        #     res[facet] = facet
-
         # No mapping for this facet, hence do not include in the mapping.
         # We expect the caller to check for and handle this.
 
@@ -91,7 +86,10 @@ def get_mapping_to_query_style_facet_names(
 
 class DirectMappingFacadeParameters(BaseModel):
     """
-    Facade parameters where the API facet names are defined by the base query style
+    Facade parameters whose API parameter names are the query style's parameter names
+
+    In other words, there is no extra layer on top of the base query style,
+    unlike [STACFacadeParameters][(m).], which adds a collection prefix.
     """
 
     base_query_style: Annotated[
@@ -117,7 +115,7 @@ class DirectMappingFacadeParameters(BaseModel):
         """See [FacadeParametersProtocol.get_search_request_facet_values][esmporium.search.search_api_facade.parameters.protocol.FacadeParametersProtocol.get_search_request_facet_values]."""  # noqa: E501
         native = from_canonical(canonical=canonical, to=self.base_query_style)
 
-        return native.facet_values()
+        return facet_values_from_attributes(native)
 
 
 class ESGF1CMIP5ParametersQueryStyle(BaseModel):
@@ -160,10 +158,6 @@ class ESGF1CMIP5ParametersQueryStyle(BaseModel):
 
     source_query: SourceQuery = None
     """See [Query.source_query][esmporium.query.known_queries.Query.source_query]."""
-
-    def facet_values(self) -> dict[str, tuple[str, ...]]:
-        """See [QueryProtocol.facet_values][esmporium.query.protocol.QueryProtocol.facet_values]."""  # noqa: E501
-        return facet_values_from_attributes(self)
 
 
 ESGF1_CMIP5_FACADE_PARAMETERS = DirectMappingFacadeParameters(
@@ -221,10 +215,6 @@ class ESGF1CMIP6ParametersQueryStyle(BaseModel):
 
     source_query: SourceQuery = None
     """See [Query.source_query][esmporium.query.known_queries.Query.source_query]."""
-
-    def facet_values(self) -> dict[str, tuple[str, ...]]:
-        """Facets that are set, keyed by this class's own (wire) names"""
-        return facet_values_from_attributes(self)
 
 
 ESGF1_CMIP6_FACADE_PARAMETERS = DirectMappingFacadeParameters(
@@ -295,10 +285,6 @@ class ESGF1CMIP7ParametersQueryStyle(BaseModel):
     source_query: SourceQuery = None
     """See [Query.source_query][esmporium.query.known_queries.Query.source_query]."""
 
-    def facet_values(self) -> dict[str, tuple[str, ...]]:
-        """Facets that are set, keyed by this class's own (wire) names"""
-        return facet_values_from_attributes(self)
-
 
 ESGF1_CMIP7_FACADE_PARAMETERS = DirectMappingFacadeParameters(
     base_query_style=ESGF1CMIP7ParametersQueryStyle
@@ -308,7 +294,7 @@ ESGF1_CMIP7_FACADE_PARAMETERS = DirectMappingFacadeParameters(
 
 class OneProjectRequiredError(ValueError):
     """
-    Raised when a exactly one project is required, but there isn't exactly one project
+    Raised when exactly one project is required, but there isn't exactly one project
     """
 
     def __init__(self, query: QueryCanonical, projects: tuple[str, ...]) -> None:
@@ -336,16 +322,14 @@ class ProjectPrefixMismatchError(ValueError):
     """
     Raised when there is a mismatch between project and prefix
 
-    ESGF STAC APIs name their collections' properties
-    with a specific prefix
-    (TODO Claude: check if there is a rule for this
-    e.g. the prefix is always the lowercase version of the project,
-    or whether it is more complicated than that),
+    ESGF STAC APIs name their collections' properties with a specific prefix,
     so a mismatch will mean that we build requests which cannot match anything.
     Without this error, no results would come back and nothing would say why.
     """
 
-    def __init__(self, project: str, facade_parameters: STACFacadeParameters) -> None:
+    def __init__(
+        self, project: str, prefix: str, facade_parameters: STACFacadeParameters
+    ) -> None:
         """
         Initialise the error
 
@@ -354,37 +338,72 @@ class ProjectPrefixMismatchError(ValueError):
         project
             The project which was asked for
 
+        prefix
+            The prefix we expect
+
         facade_parameters
             The facade parameter definition
         """
         self.project = project
+        self.prefix = prefix
         self.facade_parameters = facade_parameters
         super().__init__(
-            f"{facade_parameters.base_query_style.__name__} "
-            "writes its API facets with the "
-            f"{facade_parameters.prefix!r} prefix, "
-            f"so it cannot describe the {project!r} collection. "
-            f"You need to use the facade parameter class specific to {project}."
+            f"For {project=}, we expected {prefix=}."
+            f"You may need to create a new {type(facade_parameters).__name__} "
+            "instance and inject different checks of consistency "
+            "between projects and prefixes. "
+            f"For reference, {facade_parameters=}."
         )
+
+
+def identity_string(in_string: str) -> str:
+    """
+    Return the input string unchanged
+
+    Parameters
+    ----------
+    in_string
+        Input value
+
+    Returns
+    -------
+    :
+        `in_string`
+    """
+    return in_string
 
 
 class STACFacadeParameters(BaseModel):
     """
     Facade parameters for ESGF-NG STAC facades
 
-    In these, the API facet names include a prefix
+    In these, the API parameter names are the query style's parameter names
+    with a collection prefix on the front,
     and project must be handled carefully when being passed.
     """
 
     prefix: str
     """
-    Prefix to apply when creating the API facet names
+    Prefix to apply when creating the API parameter names
     """
 
     base_query_style: Annotated[
         type[QueryProtocol], PlainValidator(accept_without_validation)
     ]
     """See [FacadeParametersProtocol.base_query_style][esmporium.search.search_api_facade.parameters.protocol.FacadeParametersProtocol.base_query_style]."""  # noqa: E501
+
+    project_to_collection_converter: Callable[[str], str] = identity_string
+    """
+    Function which converts a project name into a collection name
+    """
+
+    project_to_prefix_converter: Callable[[str], str] = str.lower
+    """
+    Function which converts a project name into the expected facet name prefix
+
+    This is used to check consistency between projects specified in queries
+    and `self.prefix`.
+    """
 
     def get_facet_values_request_facet_names(
         self, canonical: QueryCanonical, facets: set[str]
@@ -437,12 +456,11 @@ class STACFacadeParameters(BaseModel):
         if len(canonical.project) != 1:
             raise OneProjectRequiredError(canonical, canonical.project)
 
-        collection = canonical.project[0]
-        # TODO Claude: are we 100% certain that this logic is correct
-        # i.e. the prefix is always the lowercase version
-        # of the collection (i.e. project)
-        if collection.lower() != self.prefix:
-            raise ProjectPrefixMismatchError(collection, self)
+        project = canonical.project[0]
+        if self.project_to_prefix_converter(project) != self.prefix:
+            raise ProjectPrefixMismatchError(project, self.prefix, self)
+
+        collection = self.project_to_collection_converter(project)
 
         return collection
 
@@ -457,7 +475,7 @@ class STACFacadeParameters(BaseModel):
         # Special project handling
         facet_values: dict[str, tuple[str, ...]] = {"collection": (collection,)}
         # Other facets are 'normal'
-        for facet_name, values in native.facet_values().items():
+        for facet_name, values in facet_values_from_attributes(native).items():
             facet_values[f"{self.prefix}:{facet_name}"] = values
 
         return facet_values
@@ -500,10 +518,6 @@ class ESGFNGCMIP5ParametersQueryStyle(BaseModel):
 
     source_query: SourceQuery = None
     """See [Query.source_query][esmporium.query.known_queries.Query.source_query]."""
-
-    def facet_values(self) -> dict[str, tuple[str, ...]]:
-        """Facets that are set, keyed by this class's own (stem) names"""
-        return facet_values_from_attributes(self)
 
 
 ESGFNG_CMIP5_FACADE_PARAMETERS = STACFacadeParameters(
@@ -559,10 +573,6 @@ class ESGFNGCMIP6ParametersQueryStyle(BaseModel):
 
     source_query: SourceQuery = None
     """See [Query.source_query][esmporium.query.known_queries.Query.source_query]."""
-
-    def facet_values(self) -> dict[str, tuple[str, ...]]:
-        """Facets that are set, keyed by this class's own (stem) names"""
-        return facet_values_from_attributes(self)
 
 
 ESGFNG_CMIP6_FACADE_PARAMETERS = STACFacadeParameters(
@@ -635,10 +645,6 @@ class ESGFNGCMIP7ParametersQueryStyle(BaseModel):
 
     source_query: SourceQuery = None
     """See [Query.source_query][esmporium.query.known_queries.Query.source_query]."""
-
-    def facet_values(self) -> dict[str, tuple[str, ...]]:
-        """Facets that are set, keyed by this class's own (stem) names"""
-        return facet_values_from_attributes(self)
 
 
 ESGFNG_CMIP7_FACADE_PARAMETERS = STACFacadeParameters(

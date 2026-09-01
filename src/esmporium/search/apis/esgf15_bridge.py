@@ -91,7 +91,7 @@ class SearchAPIESGF15BridgeSolr:
             "format": "application/solr+json",
             # Sorted so the request we build is deterministic.
             "facets": ",".join(sorted(facets)),
-            # We want the vocabulary, not the records,
+            # We want the facet values, not the records,
             # so we ask for the smallest page we are allowed to ask for.
             "limit": self.min_limit,
             "project": project,

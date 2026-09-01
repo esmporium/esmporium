@@ -1,10 +1,10 @@
 """
-Test the ESGF1/Solr search API wire format
+Test the ESGF1/Solr search API format
 
 These never touch the network. They pin the two halves of the API separately:
 given facet values, the request we build; given a response, what we read out of it.
-The facet values and facet names here are already in the API's own (wire) vocabulary,
-because translating the canonical vocabulary into it is the facade's job, not this
+The facet values and facet names here are already the API parameter names,
+because translating canonical names into them is the facade's job, not this
 layer's (that translation is tested in `tests/unit/search/test_facade.py`).
 """
 
@@ -14,8 +14,8 @@ import pytest
 
 from esmporium.search.apis import (
     LimitOutOfRangeError,
-    NoFacetValuesReturned,
-    NoSearchResultNumberOfMatchesReturned,
+    NoFacetValuesReturnedError,
+    NoSearchResultNumberOfMatchesReturnedError,
     SearchAPIESGF1Solr,
 )
 from esmporium.search.retry import build_transient_retrying
@@ -94,12 +94,12 @@ def test_get_search_result_n_matches(raw, exp):
 )
 def test_get_search_result_n_matches_with_no_count_raises(raw):
     """A response we cannot read a count out of is one we have not understood"""
-    with pytest.raises(NoSearchResultNumberOfMatchesReturned):
+    with pytest.raises(NoSearchResultNumberOfMatchesReturnedError):
         api().get_search_result_n_matches(raw)
 
 
 def test_build_get_facet_values_request_names_the_facets_sorted():
-    """The facets are listed under their wire names, sorted, so the request is stable"""
+    """The facets are listed under their API names, sorted, so the request is stable"""
     request = api().build_get_facet_values_for_project_request(
         {"variable_id", "experiment_id"}, "CMIP6"
     )
@@ -136,7 +136,7 @@ def test_parse_facet_values_keeps_only_the_asked_for_facets():
     ),
 )
 def test_parse_facet_values_with_nothing_to_read_raises(raw):
-    with pytest.raises(NoFacetValuesReturned):
+    with pytest.raises(NoFacetValuesReturnedError):
         api().parse_facet_values(raw, {"variable_id"})
 
 

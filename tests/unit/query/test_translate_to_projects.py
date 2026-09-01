@@ -19,7 +19,6 @@ from esmporium.query import (
     QueryFacet,
     SourceQuery,
     UnknownProjectError,
-    facet_values_from_attributes,
     translate_to_projects,
 )
 
@@ -38,10 +37,6 @@ class QueryMIP1:
     vintage: Annotated[tuple[str, ...], QueryFacet(None)] = ()
     other_terms: dict[str, tuple[str, ...]] = field(default_factory=dict)
     source_query: SourceQuery = None
-
-    def facet_values(self) -> dict[str, tuple[str, ...]]:
-        """See `QueryProtocol.facet_values`"""
-        return facet_values_from_attributes(self)
 
 
 def test_each_project_gets_its_own_query(common_inputs, common_expected):
@@ -86,10 +81,6 @@ def test_no_project_facet_at_all_error():
         esm: Annotated[tuple[str, ...], QueryFacet("model")] = ()
         other_terms: dict[str, tuple[str, ...]] = field(default_factory=dict)
         source_query: SourceQuery = None
-
-        def facet_values(self) -> dict[str, tuple[str, ...]]:
-            """See `QueryProtocol.facet_values`"""
-            return facet_values_from_attributes(self)
 
     with pytest.raises(
         NoTargetProjectError,

@@ -27,9 +27,10 @@ class FacadeParametersProtocol(Protocol):
     """
     Base query style
 
-    Mapping to facets as used by the actual API
+    This supplies the query style parameter names.
+    Getting from those to the API parameter names
     can involve an extra layer on top of this base style
-    (e.g. ESGF-NG's prefix).
+    (e.g. ESGF-NG's collection prefix).
     """
 
     def get_facet_values_request_facet_names(
@@ -39,7 +40,8 @@ class FacadeParametersProtocol(Protocol):
         Get the facet names to use in a facet values request
 
         Like everywhere else, mapping is only supported from canonical names
-        or if the facet name is already a project-specific name.
+        or from facets this query style names
+        which have no canonical equivalent.
 
         Parameters
         ----------
@@ -52,7 +54,7 @@ class FacadeParametersProtocol(Protocol):
         Returns
         -------
         :
-            Facet names to use in a facet values request
+            API parameter names to use in a facet values request
         """
         ...
 
@@ -61,7 +63,8 @@ class FacadeParametersProtocol(Protocol):
         Get the mapping from input names to names used by the API
 
         Like everywhere else, mapping is only supported from canonical names
-        or if the facet name is already a project-specific name.
+        or from facets this query style names
+        which have no canonical equivalent.
 
         Parameters
         ----------
@@ -71,7 +74,7 @@ class FacadeParametersProtocol(Protocol):
         Returns
         -------
         :
-            Mapping from values in `facets` to the name that the API uses.
+            Mapping from values in `facets` to the API parameter name.
         """
         ...
 

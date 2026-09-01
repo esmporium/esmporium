@@ -32,19 +32,6 @@ class QueryProtocol(Protocol):
         """
         ...
 
-    # @Claude, given the implementation of this is always the same,
-    # can we just get rid of this and replace with facet_values_from_attributes
-    # everywhere? Backwards compatibility isn't an issue
-    def facet_values(self) -> dict[str, tuple[str, ...]]:
-        """
-        Get the facets which are set, keyed by this query's name
-
-        Facets which are not set are left out,
-        so that "not asked for" and "asked for nothing" cannot be confused.
-        `other_terms` is not a facet, so it is not included.
-        """
-        ...
-
 
 def accept_without_validation(value: object) -> object:
     """

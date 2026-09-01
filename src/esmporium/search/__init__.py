@@ -1,15 +1,15 @@
 """
 Searching ESGF
 
-Queries can be written in whichever vocabulary suits the user (see [esmporium.query][])
+Queries can be written in whichever query style suits the user (see [esmporium.query][])
 and search results are (will be) automatically translated into the database
 (see [esmporium.db][]).
 """
 
 from esmporium.search.apis import (
     LimitOutOfRangeError,
-    NoFacetValuesReturned,
-    NoSearchResultNumberOfMatchesReturned,
+    NoFacetValuesReturnedError,
+    NoSearchResultNumberOfMatchesReturnedError,
     Request,
     SearchAPI,
     SearchAPIESGF1Solr,
@@ -60,6 +60,7 @@ from esmporium.search.search_api_facade import (
     ESGFNG_CMIP6_FACADE_PARAMETERS,
     ESGFNG_CMIP7_FACADE_PARAMETERS,
     INBUILT_SEARCH_API_FACADE_STORE,
+    DirectMappingFacadeParameters,
     ESGF1CMIP5ParametersQueryStyle,
     ESGF1CMIP6ParametersQueryStyle,
     ESGF1CMIP7ParametersQueryStyle,
@@ -68,18 +69,22 @@ from esmporium.search.search_api_facade import (
     ESGFNGCMIP7ParametersQueryStyle,
     OneProjectRequiredError,
     ProjectPrefixMismatchError,
+    RetryingBuilder,
     SearchAPIFacade,
     SearchAPIFacadeClassification,
     SearchAPIFacadeSelector,
     SearchAPIFacadeStore,
     SelectorOfferedNoAPIFacadeError,
+    STACFacadeParameters,
     UnaskableFacetError,
+    build_default_retrying,
     build_list_selector,
     build_project_list_selector,
     check_facets_askable,
     check_facets_expressible,
     get_mapping_to_query_style_facet_names,
     get_unexpressible_facets,
+    identity_string,
 )
 
 __all__ = [
@@ -96,6 +101,7 @@ __all__ = [
     "AllowedValues",
     "CouldNotGetAllowedValuesError",
     "CouldNotSearchError",
+    "DirectMappingFacadeParameters",
     "ESGF1CMIP5ParametersQueryStyle",
     "ESGF1CMIP6ParametersQueryStyle",
     "ESGF1CMIP7ParametersQueryStyle",
@@ -106,13 +112,15 @@ __all__ = [
     "FindingKind",
     "LimitOutOfRangeError",
     "NoAPIWouldAnswerError",
-    "NoFacetValuesReturned",
-    "NoSearchResultNumberOfMatchesReturned",
+    "NoFacetValuesReturnedError",
+    "NoSearchResultNumberOfMatchesReturnedError",
     "NoSourceWouldAnswerError",
     "NotAFacetOfTheQueryError",
     "OneProjectRequiredError",
     "ProjectPrefixMismatchError",
     "Request",
+    "RetryingBuilder",
+    "STACFacadeParameters",
     "SearchAPI",
     "SearchAPICall",
     "SearchAPICallObserver",
@@ -131,6 +139,7 @@ __all__ = [
     "ValueCheckOutcome",
     "ValueReport",
     "allowed_values_from_api",
+    "build_default_retrying",
     "build_list_selector",
     "build_project_list_selector",
     "build_transient_retrying",
@@ -146,6 +155,7 @@ __all__ = [
     "get_mapping_to_query_style_facet_names",
     "get_unexpressible_facets",
     "get_url",
+    "identity_string",
     "search",
     "values_set_for",
 ]

@@ -20,6 +20,7 @@ from esmporium.search.search_api_facade.parameters.known_facade_parameters impor
     ProjectPrefixMismatchError,
     STACFacadeParameters,
     get_mapping_to_query_style_facet_names,
+    identity_string,
 )
 from esmporium.search.search_api_facade.parameters.protocol import (
     FacadeParametersProtocol,
@@ -44,4 +45,5 @@ __all__ = [
     "ProjectPrefixMismatchError",
     "STACFacadeParameters",
     "get_mapping_to_query_style_facet_names",
+    "identity_string",
 ]

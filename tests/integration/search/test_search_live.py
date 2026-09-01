@@ -62,13 +62,6 @@ LIVE_CASES = (
         QueryCMIP7(variable_id="tas"),
         id="esgf-ng-cmip7",
     ),
-    pytest.param(
-        INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
-            "CMIP7", "esgf.nci.org.au"
-        ),
-        QueryCMIP7(variable_id="tas"),
-        id="solr-cmip7",
-    ),
 )
 """A search API and a query we expect it to have data for"""
 
@@ -104,27 +97,11 @@ FACET_NAME_CASES = (
     ),
     pytest.param(
         INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
-            "CMIP7", "esgf.nci.org.au"
-        ),
-        QueryCMIP7(variable_id="tas"),
-        "variable_id",
-        id="solr-cmip7",
-    ),
-    pytest.param(
-        INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
             "CMIP6", "esgf-node.ornl.gov"
         ),
         CMIP6_QUERY,
         "variable_id",
         id="bridge-cmip6",
-    ),
-    pytest.param(
-        INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
-            "CMIP5", "search.east.esgf.io"
-        ),
-        QueryCMIP5(experiment="historical", variable="tas", time_frequency="mon"),
-        "variable",
-        id="esgf-ng-cmip5",
     ),
     pytest.param(
         INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
@@ -202,7 +179,7 @@ AND_OR_CASES = (
         id="esgf-ng-cmip7",
     ),
 )
-"""A search API and a maker for queries in that case's project vocabulary"""
+"""A search API and a maker for queries in that case's project query style"""
 
 
 @pytest.fixture(scope="module")

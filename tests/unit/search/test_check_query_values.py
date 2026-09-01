@@ -628,7 +628,7 @@ def test_values_set_for_a_facet_the_query_cannot_hold_raises():
         values_set_for(canonical, "sub_experiment_id")
 
 
-def test_a_facet_the_apis_vocabulary_cannot_express_is_not_asked_about():
+def test_a_facet_the_apis_query_style_cannot_express_is_not_asked_about():
     """
     Test that we do not build a request asking about a facet the API has no name for
 
@@ -664,7 +664,7 @@ def test_a_canonically_built_query_reads_back_canonically():
     Test that a query with no source query is named canonically
 
     There is no other name to give it, so the canonical one is the honest answer
-    rather than a guess at which dialect the caller had in mind.
+    rather than a guess at which query style the caller had in mind.
     """
     canonical = canonical_cmip6(experiment_id="Historical").model_copy(
         update={"source_query": None}

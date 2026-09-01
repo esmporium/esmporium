@@ -1,10 +1,10 @@
 """
-Test the search API facade: the layer that owns vocabulary translation
+Test the search API facade: the layer that owns the name translation
 
-The wire formats are tested in `tests/unit/search/apis/`; here we test what the
-facade adds on top of them: turning a canonical query into a request in the
-vocabulary the wire format speaks, and turning the answer back into the canonical
-vocabulary. The `SearchAPIFacadeStore` lookups are tested here too.
+The API formats are tested in `tests/unit/search/apis/`; here we test what the
+facade adds on top of them: turning a canonical query into a request under the
+API parameter names, and turning the answer back into the names it was asked
+under. The `SearchAPIFacadeStore` lookups are tested here too.
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ from esmporium.search import (
     ESGF1_CMIP6_FACADE_PARAMETERS,
     ESGFNG_CMIP6_FACADE_PARAMETERS,
     INBUILT_SEARCH_API_FACADE_STORE,
+    ESGFNGCMIP6ParametersQueryStyle,
     LimitOutOfRangeError,
     OneProjectRequiredError,
     ProjectPrefixMismatchError,
@@ -31,8 +32,10 @@ from esmporium.search import (
     SearchAPIFacade,
     SearchAPIFacadeClassification,
     SearchAPIFacadeStore,
+    STACFacadeParameters,
     UnaskableFacetError,
     build_transient_retrying,
+    identity_string,
 )
 
 CMIP6 = to_canonical(
@@ -43,7 +46,7 @@ CMIP6 = to_canonical(
         table_id="Amon",
     )
 )
-"""A CMIP6 query written in its own dialect, canonicalised"""
+"""A CMIP6 query written in its own query style, canonicalised"""
 
 
 def solr6(host="node.example") -> SearchAPIFacade:
@@ -66,7 +69,7 @@ def stac6(host="stac.example") -> SearchAPIFacade:
 
 
 def test_solr_build_search_request_translates_the_query():
-    """The canonical facets come through under the Solr wire names, incl. project"""
+    """The canonical facets come through under the Solr parameter names, incl. project"""  # noqa: E501
     params = solr6().build_search_request(CMIP6, limit=25).params
 
     assert params["project"] == ["CMIP6"]
@@ -115,7 +118,7 @@ def test_build_get_facet_values_request_refuses_an_unexpressible_facet():
         solr6().build_get_facet_values_request(CMIP6, {"variable", "product"})
 
 
-# --- reading a response back into the canonical vocabulary --------------------
+# --- reading a response back into the names it was asked under ----------------
 
 
 def test_solr_parse_facet_values_reads_back_into_canonical_names():
@@ -142,7 +145,7 @@ def test_stac_parse_facet_values_strips_the_prefix_and_ignores_other_projects():
         "summaries": {
             "cmip6:variable_id": ["tas", "pr"],
             "cmip6:frequency": ["mon"],
-            # Another project's property; it must not be read with this vocabulary.
+            # Another project's property; it must not be read with this query style.
             "cmip7:variable_id": ["should-not-be-read"],
         }
     }
@@ -162,12 +165,12 @@ def test_stac_parse_facet_patterns_reads_back_into_canonical_names():
 
 
 def test_parse_facet_values_of_an_unexpressible_facet_raises():
-    """Reading a facet the vocabulary cannot express is our bug, not the caller's"""
+    """Reading a facet the query style cannot express is our bug, not the caller's"""
     with pytest.raises(UnaskableFacetError, match="project"):
         stac6().parse_facet_values({"summaries": {}}, {"project"})
 
 
-def test_askable_facets_drops_what_the_vocabulary_cannot_express():
+def test_askable_facets_drops_what_the_query_style_cannot_express():
     # STAC has no `project` property (the project is the collection).
     assert stac6().askable_facets({"variable", "project"}) == {"variable"}
 
@@ -191,13 +194,128 @@ def test_askable_facets_drops_what_the_vocabulary_cannot_express():
         pytest.param(
             QueryCanonical(project=("CMIP7",)),
             ProjectPrefixMismatchError,
-            id="a-project-this-vocabulary-does-not-describe",
+            id="a-project-this-query-style-does-not-describe",
         ),
     ),
 )
 def test_stac_build_search_request_needs_one_matching_project(canonical, exp):
     with pytest.raises(exp):
         stac6().build_search_request(canonical, limit=1)
+
+
+@pytest.mark.parametrize(
+    "canonical, exp",
+    (
+        pytest.param(
+            QueryCanonical(project=()),
+            OneProjectRequiredError,
+            id="no-project",
+        ),
+        pytest.param(
+            QueryCanonical(project=("CMIP6", "CMIP7")),
+            OneProjectRequiredError,
+            id="two-projects",
+        ),
+        pytest.param(
+            QueryCanonical(project=("CMIP7",)),
+            ProjectPrefixMismatchError,
+            id="a-project-this-query-style-does-not-describe",
+        ),
+    ),
+)
+def test_stac_build_get_facet_values_request_needs_one_matching_project(canonical, exp):
+    """
+    Test that the facet values path applies the same rule as the search path
+
+    Both paths have to check, not just the search one.
+    Without the check here, a mismatched project builds a request for the wrong
+    collection, whose properties all carry a prefix this facade does not read,
+    so `parse_facet_values` hands back `{}` and nothing says why -
+    exactly the silence `ProjectPrefixMismatchError` exists to break.
+    """
+    with pytest.raises(exp):
+        stac6().build_get_facet_values_request(canonical, {"variable"})
+
+
+def test_stac_facet_values_of_a_mismatched_collection_would_be_silent():
+    """
+    Test the failure the check above prevents, so its value is on the record
+
+    A CMIP7 collection read with a CMIP6 facade reports nothing at all,
+    because every property in it carries `cmip7:` rather than `cmip6:`.
+    """
+    cmip7_collection = {
+        "summaries": {
+            "cmip7:variable_id": ["tas"],
+            "cmip7:experiment_id": ["historical"],
+        }
+    }
+
+    assert (
+        stac6().parse_facet_values(cmip7_collection, {"variable", "experiment"}) == {}
+    )
+
+
+# --- STAC's injectable project -> collection and prefix rules -----------------
+
+
+def test_stac_default_converters_lowercase_the_project_for_the_prefix():
+    """The observed ESGF-NG convention: collection `CMIP6`, properties `cmip6:`"""
+    assert ESGFNG_CMIP6_FACADE_PARAMETERS.get_collection(CMIP6) == "CMIP6"
+    assert ESGFNG_CMIP6_FACADE_PARAMETERS.prefix == "cmip6"
+
+
+def test_stac_project_to_collection_converter_is_used():
+    """A deployment which names its collection differently is expressible"""
+    parameters = STACFacadeParameters(
+        base_query_style=ESGFNGCMIP6ParametersQueryStyle,
+        prefix="cmip6",
+        project_to_collection_converter=str.lower,
+    )
+
+    assert parameters.get_collection(CMIP6) == "cmip6"
+
+    facade = SearchAPIFacade(
+        parameters=parameters,
+        search_api=SearchAPIESGFNGSTAC("stac.example", build_transient_retrying(1)),
+    )
+    body = facade.build_search_request(CMIP6, limit=5).json_body
+    clauses = body["filter"]["args"]
+
+    assert {"op": "in", "args": [{"property": "collection"}, ["cmip6"]]} in clauses
+
+
+def test_stac_project_to_prefix_converter_is_used():
+    """
+    Test that the project -> prefix rule is a convention we can override
+
+    Lowercasing is what every ESGF-NG collection we have seen does, but it is
+    not a rule in the STAC standard, so a deployment is free to disagree.
+    """
+    parameters = STACFacadeParameters(
+        base_query_style=ESGFNGCMIP6ParametersQueryStyle,
+        prefix="CMIP6",
+        # This deployment prefixes with the project exactly as written.
+        project_to_prefix_converter=identity_string,
+    )
+
+    assert parameters.get_collection(CMIP6) == "CMIP6"
+    assert parameters.get_mapping_to_api_facet_names({"variable"}) == {
+        "variable": "CMIP6:variable_id"
+    }
+
+
+def test_stac_a_prefix_converter_which_disagrees_still_raises():
+    """Injecting a rule does not switch the check off, it only changes the rule"""
+    parameters = STACFacadeParameters(
+        base_query_style=ESGFNGCMIP6ParametersQueryStyle,
+        prefix="cmip6",
+        # Under this rule `CMIP6` should be prefixed `CMIP6`, not `cmip6`.
+        project_to_prefix_converter=identity_string,
+    )
+
+    with pytest.raises(ProjectPrefixMismatchError, match="cmip6"):
+        parameters.get_collection(CMIP6)
 
 
 # --- the facade store ---------------------------------------------------------
@@ -254,3 +372,79 @@ def test_store_get_for_an_ambiguous_pairing_is_an_assertion_error():
 def test_inbuilt_store_does_not_substring_match_project_names():
     """`CMIP` is not a project, so it must match nothing (not every CMIP* pool)"""
     assert INBUILT_SEARCH_API_FACADE_STORE.get_api_facades_for_project("CMIP") == []
+
+
+# --- the default store's retry policies ---------------------------------------
+
+
+def all_facades(store: SearchAPIFacadeStore):
+    """Every facade a store holds, whatever project it is classified against"""
+    return [classification.facade for classification in store.classifications]
+
+
+def test_default_store_gives_every_api_its_own_retry_policy():
+    """
+    Test that no two APIs share a `Retrying`
+
+    A tenacity `Retrying` carries per-run state, so sharing one across APIs
+    is not safe once calls can be made in parallel.
+    Identity is what matters here, hence `id` rather than equality.
+    """
+    store = SearchAPIFacadeStore.initialise_with_default_api_facades()
+    facades = all_facades(store)
+
+    retryings = [id(f.search_api.retrying) for f in facades]
+
+    assert len(facades) > 1, "this test needs more than one API to say anything"
+    assert len(set(retryings)) == len(retryings)
+
+
+def test_default_store_builds_one_retry_policy_per_api():
+    """The builder is called once per API, no more and no fewer"""
+    calls = 0
+
+    def create_retrying():
+        nonlocal calls
+        calls += 1
+        return build_transient_retrying(1)
+
+    store = SearchAPIFacadeStore.initialise_with_default_api_facades(
+        create_retrying=create_retrying
+    )
+
+    assert calls == len(store.classifications)
+
+
+def test_default_store_uses_the_policy_the_builder_returns():
+    """An injected builder's policy is the one the APIs actually get"""
+    store = SearchAPIFacadeStore.initialise_with_default_api_facades(
+        create_retrying=lambda: build_transient_retrying(7)
+    )
+
+    for facade in all_facades(store):
+        assert facade.search_api.retrying.stop.max_attempt_number == 7
+
+
+def test_default_store_can_be_asked_to_share_one_policy():
+    """
+    Test that sharing is still possible, it just has to be asked for
+
+    Making the parameter a builder means sharing cannot happen by accident,
+    not that it cannot happen at all.
+    """
+    shared = build_transient_retrying(2)
+
+    store = SearchAPIFacadeStore.initialise_with_default_api_facades(
+        create_retrying=lambda: shared
+    )
+
+    assert {id(f.search_api.retrying) for f in all_facades(store)} == {id(shared)}
+
+
+def test_inbuilt_store_gives_every_api_its_own_retry_policy():
+    """The store we hand out by default gets the same treatment"""
+    facades = all_facades(INBUILT_SEARCH_API_FACADE_STORE)
+
+    retryings = [id(f.search_api.retrying) for f in facades]
+
+    assert len(set(retryings)) == len(retryings)

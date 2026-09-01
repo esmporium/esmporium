@@ -448,10 +448,6 @@ class Query(BaseModel):
     Useful for debugging the results of translations
     """
 
-    def facet_values(self) -> dict[str, tuple[str, ...]]:
-        """See [QueryProtocol.facet_values][esmporium.query.protocol.QueryProtocol.facet_values]."""  # noqa: E501
-        return facet_values_from_attributes(self)
-
 
 class QueryCMIP5(BaseModel):
     """
@@ -506,10 +502,6 @@ class QueryCMIP5(BaseModel):
 
     source_query: SourceQuery = None
     """See [Query.source_query][(m).Query.source_query]."""
-
-    def facet_values(self) -> dict[str, tuple[str, ...]]:
-        """See [QueryProtocol.facet_values][esmporium.query.protocol.QueryProtocol.facet_values]."""  # noqa: E501
-        return facet_values_from_attributes(self)
 
 
 class QueryCMIP6(BaseModel):
@@ -573,10 +565,6 @@ class QueryCMIP6(BaseModel):
 
     source_query: SourceQuery = None
     """See [Query.source_query][(m).Query.source_query]."""
-
-    def facet_values(self) -> dict[str, tuple[str, ...]]:
-        """See [QueryProtocol.facet_values][esmporium.query.protocol.QueryProtocol.facet_values]."""  # noqa: E501
-        return facet_values_from_attributes(self)
 
 
 class QueryCMIP7(BaseModel):
@@ -651,7 +639,3 @@ class QueryCMIP7(BaseModel):
 
     source_query: SourceQuery = None
     """See [Query.source_query][(m).Query.source_query]."""
-
-    def facet_values(self) -> dict[str, tuple[str, ...]]:
-        """See [QueryProtocol.facet_values][esmporium.query.protocol.QueryProtocol.facet_values]."""  # noqa: E501
-        return facet_values_from_attributes(self)

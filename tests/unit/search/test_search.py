@@ -289,7 +289,7 @@ def test_search_logs_the_request_at_debug(caplog):
 
 def test_search_curl_reproduces_a_post_body(caplog):
     """The curl-equivalent of a POST carries its method and body"""
-    # STAC is our POST wire format, so search it to exercise the POST path.
+    # STAC is our POST-based API format, so search it to exercise the POST path.
     stac_api = SearchAPIFacade(
         parameters=ESGFNG_CMIP6_FACADE_PARAMETERS,
         search_api=SearchAPIESGFNGSTAC("search.example.io", fast_retrying(1)),

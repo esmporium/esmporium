@@ -15,7 +15,7 @@ import httpx
 
 from esmporium.query import QueryProtocol, to_canonical
 from esmporium.search.apis import (
-    NoSearchResultNumberOfMatchesReturned,
+    NoSearchResultNumberOfMatchesReturnedError,
     Request,
     SearchAPI,
 )
@@ -134,7 +134,7 @@ class SearchAPIRequestError(RuntimeError):
     whether the host never answered (a transport error or timeout)
     or answered with something we could not use (a bad status, unreadable JSON).
 
-    Higher-level callers are expected to translate this into their own vocabulary.
+    Higher-level callers are expected to translate this into their own terms.
     """
 
     def __init__(self, host: str) -> None:
@@ -174,7 +174,7 @@ def _result_count_or_none(api: SearchAPI, raw: dict[str, Any]) -> int | None:
     """
     try:
         return api.get_search_result_n_matches(raw)
-    except NoSearchResultNumberOfMatchesReturned:
+    except NoSearchResultNumberOfMatchesReturnedError:
         return None
 
 

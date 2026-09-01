@@ -11,6 +11,7 @@ from esmporium.query import (
     QueryCanonical,
     QueryCMIP5,
     QueryCMIP6,
+    facet_values_from_attributes,
     from_canonical,
     to_canonical,
 )
@@ -90,7 +91,7 @@ def test_an_empty_canonical_facet_leaves_the_targets_default_alone():
     """
     result = from_canonical(canonical=QueryCanonical(model="ACCESS-CM2"), to=QueryCMIP6)
 
-    assert result.facet_values() == {
+    assert facet_values_from_attributes(result) == {
         "project": ("CMIP6",),
         "source_id": ("ACCESS-CM2",),
     }

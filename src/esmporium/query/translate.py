@@ -12,6 +12,7 @@ from esmporium.query.known_queries import (
     QueryCMIP7,
     UnknownProjectError,
     facet_spec,
+    facet_values_from_attributes,
 )
 from esmporium.query.protocol import QueryProtocol
 
@@ -87,7 +88,7 @@ def to_canonical(query: QueryProtocol) -> QueryCanonical:
 
     canonical_fields: dict[str, tuple[str, ...]] = {}
     query_specific: dict[str, tuple[str, ...]] = {}
-    for native, values in query.facet_values().items():
+    for native, values in facet_values_from_attributes(query).items():
         canonical = spec.native_to_canonical.get(native)
         if canonical is None:
             query_specific[native] = values

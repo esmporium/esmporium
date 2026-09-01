@@ -20,9 +20,9 @@ but this will expand when we start parsing results to Datasets)
 and which values a facet has (`parse_facet_values`).
 
 The count is read off the wire-format layer (`facade.search_api`) directly,
-because it is keyed the same way whatever vocabulary asked for it.
+because it is keyed the same way whatever query style asked for it.
 The facet values are read through the facade, because reading them back into the
-canonical vocabulary is the facade's job.
+canonical names is the facade's job.
 The wiring is covered on its own, with mocked responses we wrote, in
 `test_search.py` and `test_check_query_values.py`.
 """
@@ -76,7 +76,7 @@ def facade(parameters, search_api_cls, host="recorded.example") -> SearchAPIFaca
 
 def every_facet(facade: SearchAPIFacade) -> set[str]:
     """
-    Get every facet a facade's vocabulary can express
+    Get every facet a facade's query style can express
 
     This has to match `facets_to_list` in `scripts/record_search_responses.py`:
     asking here for something the recording never asked the API about
@@ -85,7 +85,7 @@ def every_facet(facade: SearchAPIFacade) -> set[str]:
     Parameters
     ----------
     facade
-        The facade whose vocabulary to read
+        The facade whose query style to read
 
     Returns
     -------
@@ -174,9 +174,9 @@ def test_recorded_facet_values_are_well_formed(name, facade):
     """
     Test the shape of what we hand back, on real data
 
-    Every facet the vocabulary can express is asked about, so this covers the
+    Every facet the query style can express is asked about, so this covers the
     facets which the APIs describe in ways that are not a list of values,
-    as well as those they do. It also covers the dialect-specific names
+    as well as those they do. It also covers the query-style-specific names
     (`product` on CMIP5, and so on), which are the ones we guessed at.
 
     A facet we report has to have at least one value:
