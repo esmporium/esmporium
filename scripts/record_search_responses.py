@@ -30,14 +30,14 @@ from esmporium.query import (
     to_canonical,
 )
 from esmporium.search import (
+    ESGF1_CMIP5_FACADE_PARAMETERS,
+    ESGF1_CMIP6_FACADE_PARAMETERS,
+    ESGFNG_CMIP6_FACADE_PARAMETERS,
+    ESGFNG_CMIP7_FACADE_PARAMETERS,
     SearchAPIESGF1Solr,
     SearchAPIESGF15BridgeSolr,
     SearchAPIESGFNGSTAC,
     SearchAPIFacade,
-    SolrCMIP5Parameters,
-    SolrCMIP6Parameters,
-    STACCMIP6Parameters,
-    STACCMIP7Parameters,
     build_transient_retrying,
     fire,
 )
@@ -60,7 +60,7 @@ CASES = (
     (
         "esgf1-solr-cmip5",
         SearchAPIFacade(
-            SolrCMIP5Parameters,
+            ESGF1_CMIP5_FACADE_PARAMETERS,
             SearchAPIESGF1Solr("esgf.nci.org.au", build_transient_retrying(2)),
         ),
         QueryCMIP5(experiment="historical", variable="tas", time_frequency="mon"),
@@ -68,7 +68,7 @@ CASES = (
     (
         "esgf1-solr-cmip6",
         SearchAPIFacade(
-            SolrCMIP6Parameters,
+            ESGF1_CMIP6_FACADE_PARAMETERS,
             SearchAPIESGF1Solr("esgf.nci.org.au", build_transient_retrying(2)),
         ),
         QueryCMIP6(experiment_id="historical", variable_id="tas", frequency="mon"),
@@ -76,7 +76,7 @@ CASES = (
     (
         "esgf15-bridge-cmip6",
         SearchAPIFacade(
-            SolrCMIP6Parameters,
+            ESGF1_CMIP6_FACADE_PARAMETERS,
             SearchAPIESGF15BridgeSolr(
                 "esgf-node.ornl.gov", build_transient_retrying(2)
             ),
@@ -86,7 +86,7 @@ CASES = (
     (
         "esgf-ng-stac-cmip6",
         SearchAPIFacade(
-            STACCMIP6Parameters,
+            ESGFNG_CMIP6_FACADE_PARAMETERS,
             SearchAPIESGFNGSTAC("search.east.esgf.io", build_transient_retrying(2)),
         ),
         QueryCMIP6(experiment_id="historical", variable_id="tas", frequency="mon"),
@@ -94,7 +94,7 @@ CASES = (
     (
         "esgf-ng-stac-cmip7",
         SearchAPIFacade(
-            STACCMIP7Parameters,
+            ESGFNG_CMIP7_FACADE_PARAMETERS,
             SearchAPIESGFNGSTAC("search.east.esgf.io", build_transient_retrying(2)),
         ),
         QueryCMIP7(variable_id="tas"),
@@ -146,7 +146,11 @@ def main() -> None:
                     facade.search_api,
                     facade.build_get_facet_values_request(
                         canonical,
-                        set(facet_spec(facade.parameters).expressible_facets),
+                        set(
+                            facet_spec(
+                                facade.parameters.base_query_style
+                            ).expressible_facets
+                        ),
                     ),
                 ),
             )

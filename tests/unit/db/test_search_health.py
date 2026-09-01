@@ -19,9 +19,9 @@ from esmporium.db import (
 from esmporium.query import QueryCanonical, QueryCMIP6
 from esmporium.search import (
     DEFAULT_SEARCH_API_FACADES_BY_PROJECT,
+    ESGF1_CMIP6_FACADE_PARAMETERS,
     SearchAPIESGF1Solr,
     SearchAPIFacade,
-    SolrCMIP6Parameters,
     build_list_selector,
     search,
 )
@@ -162,7 +162,7 @@ def seed(engine, *calls: SearchAPICall) -> None:
 def api(host: str) -> SearchAPIFacade:
     """Build a CMIP6-Solr facade for `host` (only the host matters to ranking)."""
     return SearchAPIFacade(
-        parameters=SolrCMIP6Parameters,
+        parameters=ESGF1_CMIP6_FACADE_PARAMETERS,
         search_api=SearchAPIESGF1Solr(host, build_transient_retrying(1)),
     )
 

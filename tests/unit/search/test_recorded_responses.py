@@ -37,16 +37,16 @@ import pytest
 
 from esmporium.query import facet_spec
 from esmporium.search import (
-    ESGF1CMIP5ParametersQueryStyle,
+    ESGF1_CMIP5_FACADE_PARAMETERS,
+    ESGF1_CMIP6_FACADE_PARAMETERS,
+    ESGFNG_CMIP6_FACADE_PARAMETERS,
+    ESGFNG_CMIP7_FACADE_PARAMETERS,
     SearchAPIESGF1Solr,
     SearchAPIESGF15BridgeSolr,
     SearchAPIESGFNGSTAC,
     SearchAPIFacade,
-    SolrCMIP6Parameters,
-    STACCMIP6Parameters,
-    STACCMIP7Parameters,
     build_transient_retrying,
-    get_mapping_to_native_facet_names,
+    get_mapping_to_query_style_facet_names,
 )
 
 RECORDED_DIR = Path(__file__).parents[2] / "test-data" / "search"
@@ -61,7 +61,7 @@ and it is what the recorded query asked for.
 """
 
 
-def facade(query_style, search_api_cls, host="recorded.example") -> SearchAPIFacade:
+def facade(parameters, search_api_cls, host="recorded.example") -> SearchAPIFacade:
     """
     Build a facade for parsing a recording
 
@@ -69,7 +69,7 @@ def facade(query_style, search_api_cls, host="recorded.example") -> SearchAPIFac
     so any values will do.
     """
     return SearchAPIFacade(
-        parameters=query_style,
+        parameters=parameters,
         search_api=search_api_cls(host, build_transient_retrying(1)),
     )
 
@@ -92,33 +92,33 @@ def every_facet(facade: SearchAPIFacade) -> set[str]:
     :
         The facets it can express, named the way they are asked for
     """
-    return set(facet_spec(facade.parameters).expressible_facets)
+    return set(facet_spec(facade.parameters.base_query_style).expressible_facets)
 
 
 RECORDED_CASES = (
     pytest.param(
         "esgf1-solr-cmip5",
-        facade(ESGF1CMIP5ParametersQueryStyle, SearchAPIESGF1Solr),
+        facade(ESGF1_CMIP5_FACADE_PARAMETERS, SearchAPIESGF1Solr),
         id="esgf1-solr-cmip5",
     ),
     pytest.param(
         "esgf1-solr-cmip6",
-        facade(SolrCMIP6Parameters, SearchAPIESGF1Solr),
+        facade(ESGF1_CMIP6_FACADE_PARAMETERS, SearchAPIESGF1Solr),
         id="esgf1-solr-cmip6",
     ),
     pytest.param(
         "esgf15-bridge-cmip6",
-        facade(SolrCMIP6Parameters, SearchAPIESGF15BridgeSolr),
+        facade(ESGF1_CMIP6_FACADE_PARAMETERS, SearchAPIESGF15BridgeSolr),
         id="esgf15-bridge-cmip6",
     ),
     pytest.param(
         "esgf-ng-stac-cmip6",
-        facade(STACCMIP6Parameters, SearchAPIESGFNGSTAC),
+        facade(ESGFNG_CMIP6_FACADE_PARAMETERS, SearchAPIESGFNGSTAC),
         id="esgf-ng-stac-cmip6",
     ),
     pytest.param(
         "esgf-ng-stac-cmip7",
-        facade(STACCMIP7Parameters, SearchAPIESGFNGSTAC),
+        facade(ESGFNG_CMIP7_FACADE_PARAMETERS, SearchAPIESGFNGSTAC),
         id="esgf-ng-stac-cmip7",
     ),
 )
@@ -223,8 +223,8 @@ def test_recorded_facets_which_are_not_enumerated_are_left_out(name, facade):
 
     asked_for = {
         native: asked
-        for asked, native in get_mapping_to_native_facet_names(
-            facade.parameters, facets
+        for asked, native in get_mapping_to_query_style_facet_names(
+            facade.parameters.base_query_style, facets
         ).items()
     }
     not_enumerated = {
@@ -259,8 +259,8 @@ def test_recorded_variant_label_is_summarised_as_a_pattern(name, facade):
     """
     raw = load(f"{name}-facets")
 
-    (native,) = get_mapping_to_native_facet_names(
-        facade.parameters, {"variant_label"}
+    (native,) = get_mapping_to_query_style_facet_names(
+        facade.parameters.base_query_style, {"variant_label"}
     ).values()
     summary = raw["summaries"][f"{facade.parameters.prefix}:{native}"]
 

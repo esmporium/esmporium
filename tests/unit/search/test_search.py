@@ -19,13 +19,13 @@ from tenacity import Retrying, retry_if_exception, stop_after_attempt
 
 from esmporium.query import QueryCMIP6
 from esmporium.search import (
+    ESGF1_CMIP6_FACADE_PARAMETERS,
+    ESGFNG_CMIP6_FACADE_PARAMETERS,
     NoAPIWouldAnswerError,
     SearchAPIESGF1Solr,
     SearchAPIESGFNGSTAC,
     SearchAPIFacade,
     SelectorOfferedNoAPIFacadeError,
-    SolrCMIP6Parameters,
-    STACCMIP6Parameters,
     build_list_selector,
     search,
 )
@@ -66,7 +66,7 @@ def make_search_api(
 ) -> SearchAPIFacade:
     """Build a CMIP6-Solr facade for `host`"""
     return SearchAPIFacade(
-        parameters=SolrCMIP6Parameters,
+        parameters=ESGF1_CMIP6_FACADE_PARAMETERS,
         search_api=SearchAPIESGF1Solr(host, fast_retrying(attempts), timeout=timeout),
     )
 
@@ -291,7 +291,7 @@ def test_search_curl_reproduces_a_post_body(caplog):
     """The curl-equivalent of a POST carries its method and body"""
     # STAC is our POST wire format, so search it to exercise the POST path.
     stac_api = SearchAPIFacade(
-        parameters=STACCMIP6Parameters,
+        parameters=ESGFNG_CMIP6_FACADE_PARAMETERS,
         search_api=SearchAPIESGFNGSTAC("search.example.io", fast_retrying(1)),
     )
     selector = build_list_selector([stac_api])

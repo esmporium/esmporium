@@ -20,13 +20,13 @@ from tenacity import Retrying, retry_if_exception, stop_after_attempt
 
 from esmporium.query import QueryCMIP6, to_canonical
 from esmporium.search import (
+    ESGF1_CMIP6_FACADE_PARAMETERS,
+    ESGFNG_CMIP6_FACADE_PARAMETERS,
     NoAPIWouldAnswerError,
     SearchAPIESGF1Solr,
     SearchAPIESGFNGSTAC,
     SearchAPIFacade,
     SearchAPIRequestError,
-    SolrCMIP6Parameters,
-    STACCMIP6Parameters,
     build_list_selector,
     check_query_values,
     fan_out,
@@ -76,11 +76,11 @@ def make_api(host, *, stac=False, attempts=1) -> SearchAPIFacade:
     """Build a CMIP6 facade for `host` with a no-sleep retry policy."""
     if stac:
         return SearchAPIFacade(
-            parameters=STACCMIP6Parameters,
+            parameters=ESGFNG_CMIP6_FACADE_PARAMETERS,
             search_api=SearchAPIESGFNGSTAC(host, fast_retrying(attempts)),
         )
     return SearchAPIFacade(
-        parameters=SolrCMIP6Parameters,
+        parameters=ESGF1_CMIP6_FACADE_PARAMETERS,
         search_api=SearchAPIESGF1Solr(host, fast_retrying(attempts)),
     )
 

@@ -12,6 +12,8 @@ from tenacity import Retrying, stop_after_attempt
 
 from esmporium.query import QueryCMIP5, QueryCMIP6, to_canonical
 from esmporium.search import (
+    ESGF1_CMIP6_FACADE_PARAMETERS,
+    ESGFNG_CMIP6_FACADE_PARAMETERS,
     AllowedValues,
     CouldNotGetAllowedValuesError,
     FacetFinding,
@@ -22,8 +24,6 @@ from esmporium.search import (
     SearchAPIESGFNGSTAC,
     SearchAPIFacade,
     SelectorOfferedNoAPIFacadeError,
-    SolrCMIP6Parameters,
-    STACCMIP6Parameters,
     allowed_values_from_api,
     check_query_values,
     check_query_values_low,
@@ -169,7 +169,7 @@ def once():
 def solr_api(host="node.example"):
     """A CMIP6/Solr facade that retries once and never sleeps."""
     return SearchAPIFacade(
-        parameters=SolrCMIP6Parameters,
+        parameters=ESGF1_CMIP6_FACADE_PARAMETERS,
         search_api=SearchAPIESGF1Solr(host, once()),
     )
 
@@ -643,7 +643,7 @@ def test_a_facet_the_apis_vocabulary_cannot_express_is_not_asked_about():
     )
 
     api = SearchAPIFacade(
-        parameters=STACCMIP6Parameters,
+        parameters=ESGFNG_CMIP6_FACADE_PARAMETERS,
         search_api=SearchAPIESGFNGSTAC("stac.example", once()),
     )
     canonical = canonical_cmip6(experiment_id="Historical")

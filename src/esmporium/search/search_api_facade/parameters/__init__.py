@@ -11,7 +11,13 @@ from esmporium.search.search_api_facade.parameters.known_facade_parameters impor
     ESGFNG_CMIP7_FACADE_PARAMETERS,
     DirectMappingFacadeParameters,
     ESGF1CMIP5ParametersQueryStyle,
+    ESGF1CMIP6ParametersQueryStyle,
+    ESGF1CMIP7ParametersQueryStyle,
+    ESGFNGCMIP5ParametersQueryStyle,
+    ESGFNGCMIP6ParametersQueryStyle,
+    ESGFNGCMIP7ParametersQueryStyle,
     PrefixMappingFacadeParameters,
+    get_mapping_to_query_style_facet_names,
 )
 from esmporium.search.search_api_facade.parameters.protocol import (
     FacadeParametersProtocol,
@@ -26,6 +32,12 @@ __all__ = [
     "ESGFNG_CMIP7_FACADE_PARAMETERS",
     "DirectMappingFacadeParameters",
     "ESGF1CMIP5ParametersQueryStyle",
+    "ESGF1CMIP6ParametersQueryStyle",
+    "ESGF1CMIP7ParametersQueryStyle",
+    "ESGFNGCMIP5ParametersQueryStyle",
+    "ESGFNGCMIP6ParametersQueryStyle",
+    "ESGFNGCMIP7ParametersQueryStyle",
     "FacadeParametersProtocol",
     "PrefixMappingFacadeParameters",
+    "get_mapping_to_query_style_facet_names",
 ]

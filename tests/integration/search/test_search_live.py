@@ -14,17 +14,11 @@ import pytest
 
 from esmporium.query import QueryCMIP5, QueryCMIP6, QueryCMIP7
 from esmporium.search import (
+    ESGF1_CMIP6_FACADE_PARAMETERS,
     INBUILT_SEARCH_API_FACADE_STORE,
     NoAPIWouldAnswerError,
     SearchAPIESGF1Solr,
-    SearchAPIESGF15BridgeSolr,
-    SearchAPIESGFNGSTAC,
     SearchAPIFacade,
-    SolrCMIP6Parameters,
-    SolrCMIP7Parameters,
-    STACCMIP5Parameters,
-    STACCMIP6Parameters,
-    STACCMIP7Parameters,
     build_list_selector,
     build_transient_retrying,
     search,
@@ -34,30 +28,6 @@ pytestmark = pytest.mark.hits_esgf_search_api
 
 TIMEOUT = 60.0
 """How long to wait for a node, in seconds"""
-
-
-def solr(query_style, host: str) -> SearchAPIFacade:
-    """An ESGF1/Solr facade for `host`, retrying transient failures twice"""
-    return SearchAPIFacade(
-        parameters=query_style,
-        search_api=SearchAPIESGF1Solr(host, build_transient_retrying(2)),
-    )
-
-
-def bridge(query_style, host: str) -> SearchAPIFacade:
-    """An ESGF1.5 bridge facade for `host`, retrying transient failures twice"""
-    return SearchAPIFacade(
-        parameters=query_style,
-        search_api=SearchAPIESGF15BridgeSolr(host, build_transient_retrying(2)),
-    )
-
-
-def stac(query_style, host: str) -> SearchAPIFacade:
-    """An ESGF-NG/STAC facade for `host`, retrying transient failures twice"""
-    return SearchAPIFacade(
-        parameters=query_style,
-        search_api=SearchAPIESGFNGSTAC(host, build_transient_retrying(2)),
-    )
 
 
 CMIP6_QUERY = QueryCMIP6(experiment_id="historical", variable_id="tas", frequency="mon")
@@ -72,22 +42,30 @@ LIVE_CASES = (
         id="solr-cmip5",
     ),
     pytest.param(
-        solr(SolrCMIP6Parameters, "esgf.nci.org.au"),
+        INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
+            "CMIP6", "esgf.nci.org.au"
+        ),
         CMIP6_QUERY,
         id="solr-cmip6",
     ),
     pytest.param(
-        stac(STACCMIP6Parameters, "search.east.esgf.io"),
+        INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
+            "CMIP6", "search.east.esgf.io"
+        ),
         CMIP6_QUERY,
         id="esgf-ng-cmip6",
     ),
     pytest.param(
-        stac(STACCMIP7Parameters, "search.east.esgf.io"),
+        INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
+            "CMIP7", "search.east.esgf.io"
+        ),
         QueryCMIP7(variable_id="tas"),
         id="esgf-ng-cmip7",
     ),
     pytest.param(
-        solr(SolrCMIP7Parameters, "esgf.nci.org.au"),
+        INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
+            "CMIP7", "esgf.nci.org.au"
+        ),
         QueryCMIP7(variable_id="tas"),
         id="solr-cmip7",
     ),
@@ -117,37 +95,49 @@ FACET_NAME_CASES = (
         id="solr-cmip5",
     ),
     pytest.param(
-        solr(SolrCMIP6Parameters, "esgf.nci.org.au"),
+        INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
+            "CMIP6", "esgf.nci.org.au"
+        ),
         CMIP6_QUERY,
         "variable_id",
         id="solr-cmip6",
     ),
     pytest.param(
-        solr(SolrCMIP7Parameters, "esgf.nci.org.au"),
+        INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
+            "CMIP7", "esgf.nci.org.au"
+        ),
         QueryCMIP7(variable_id="tas"),
         "variable_id",
         id="solr-cmip7",
     ),
     pytest.param(
-        bridge(SolrCMIP6Parameters, "esgf-node.ornl.gov"),
+        INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
+            "CMIP6", "esgf-node.ornl.gov"
+        ),
         CMIP6_QUERY,
         "variable_id",
         id="bridge-cmip6",
     ),
     pytest.param(
-        stac(STACCMIP5Parameters, "search.east.esgf.io"),
+        INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
+            "CMIP5", "search.east.esgf.io"
+        ),
         QueryCMIP5(experiment="historical", variable="tas", time_frequency="mon"),
         "variable",
         id="esgf-ng-cmip5",
     ),
     pytest.param(
-        stac(STACCMIP6Parameters, "search.east.esgf.io"),
+        INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
+            "CMIP6", "search.east.esgf.io"
+        ),
         CMIP6_QUERY,
         "variable_id",
         id="esgf-ng-cmip6",
     ),
     pytest.param(
-        stac(STACCMIP7Parameters, "search.east.esgf.io"),
+        INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
+            "CMIP7", "search.east.esgf.io"
+        ),
         QueryCMIP7(variable_id="tas"),
         "variable_id",
         id="esgf-ng-cmip7",
@@ -198,12 +188,16 @@ AND_OR_CASES = (
         id="solr-cmip5",
     ),
     pytest.param(
-        bridge(SolrCMIP6Parameters, "esgf-node.ornl.gov"),
+        INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
+            "CMIP6", "esgf-node.ornl.gov"
+        ),
         and_or_query(QueryCMIP6, "variable_id", "experiment_id"),
         id="bridge-cmip6",
     ),
     pytest.param(
-        stac(STACCMIP7Parameters, "search.east.esgf.io"),
+        INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
+            "CMIP7", "search.east.esgf.io"
+        ),
         and_or_query(QueryCMIP7, "variable_id", "experiment_id"),
         id="esgf-ng-cmip7",
     ),
@@ -338,7 +332,7 @@ def test_aggregating_over_nodes_finds_more_than_one_node(client):
     """
     nodes = [
         SearchAPIFacade(
-            parameters=SolrCMIP6Parameters,
+            parameters=ESGF1_CMIP6_FACADE_PARAMETERS,
             search_api=SearchAPIESGF1Solr(
                 host, build_transient_retrying(2), distrib=False
             ),

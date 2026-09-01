@@ -36,7 +36,7 @@ from esmporium.query.protocol import accept_without_validation
 
 
 def get_mapping_to_query_style_facet_names(
-    query_style: QueryProtocol, facets: set[str]
+    query_style: type[QueryProtocol], facets: set[str]
 ) -> dict[str, str]:
     """
     Get the mapping from input names to names used by the API
@@ -151,6 +151,7 @@ class ESGF1CMIP5ParametersQueryStyle(BaseModel):
 ESGF1_CMIP5_FACADE_PARAMETERS = DirectMappingFacadeParameters(
     base_query_style=ESGF1CMIP5ParametersQueryStyle
 )
+"""Parameters for CMIP5 with an ESGF1 API"""
 
 
 class ESGF1CMIP6ParametersQueryStyle(BaseModel):
@@ -211,6 +212,7 @@ class ESGF1CMIP6ParametersQueryStyle(BaseModel):
 ESGF1_CMIP6_FACADE_PARAMETERS = DirectMappingFacadeParameters(
     base_query_style=ESGF1CMIP6ParametersQueryStyle
 )
+"""Parameters for CMIP6 with an ESGF1 API"""
 
 
 class ESGF1CMIP7ParametersQueryStyle(BaseModel):
@@ -283,6 +285,7 @@ class ESGF1CMIP7ParametersQueryStyle(BaseModel):
 ESGF1_CMIP7_FACADE_PARAMETERS = DirectMappingFacadeParameters(
     base_query_style=ESGF1CMIP7ParametersQueryStyle
 )
+"""Parameters for CMIP7 with an ESGF1 API"""
 
 
 class PrefixMappingFacadeParameters(BaseModel):
@@ -360,6 +363,7 @@ ESGFNG_CMIP5_FACADE_PARAMETERS = PrefixMappingFacadeParameters(
     base_query_style=ESGFNGCMIP5ParametersQueryStyle,
     prefix="cmip5",
 )
+"""Parameters for CMIP5 with an ESGF-NG API"""
 
 
 class ESGFNGCMIP6ParametersQueryStyle(BaseModel):
@@ -418,6 +422,7 @@ ESGFNG_CMIP6_FACADE_PARAMETERS = PrefixMappingFacadeParameters(
     base_query_style=ESGFNGCMIP6ParametersQueryStyle,
     prefix="cmip6",
 )
+"""Parameters for CMIP6 with an ESGF-NG API"""
 
 
 class ESGFNGCMIP7ParametersQueryStyle(BaseModel):
@@ -493,3 +498,4 @@ ESGFNG_CMIP7_FACADE_PARAMETERS = PrefixMappingFacadeParameters(
     base_query_style=ESGFNGCMIP7ParametersQueryStyle,
     prefix="cmip7",
 )
+"""Parameters for CMIP7 with an ESGF-NG API"""
