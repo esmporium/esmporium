@@ -569,7 +569,7 @@ class SolrCMIP7Parameters(BaseModel):
     frequency: Annotated[FacetValues, QueryFacet("reporting_interval")] = ()
     """See [Dataset.reporting_interval][esmporium.db.schema.Dataset.reporting_interval]."""  # noqa: E501
 
-    branding_suffix: Annotated[FacetValues, QueryFacet("processing_id")] = ()
+    variable_branding_suffix: Annotated[FacetValues, QueryFacet("processing_id")] = ()
     """See [Dataset.processing_id][esmporium.db.schema.Dataset.processing_id]."""
 
     activity_id: Annotated[FacetValues, QueryFacet("activity")] = ()
