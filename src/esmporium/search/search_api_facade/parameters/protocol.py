@@ -32,21 +32,27 @@ class FacadeParametersProtocol(Protocol):
     (e.g. ESGF-NG's prefix).
     """
 
-    def get_search_request_facet_values(
-        self, canonical: QueryCanonical
-    ) -> dict[str, tuple[str, ...]]:
+    def get_facet_values_request_facet_names(
+        self, canonical: QueryCanonical, facets: set[str]
+    ) -> set[str]:
         """
-        Get the facet values to use in a search request
+        Get the facet names to use in a facet values request
+
+        Like everywhere else, mapping is only supported from canonical names
+        or if the facet name is already a project-specific name.
 
         Parameters
         ----------
         canonical
-            Canonical query for which to get the search request facet values
+            Canonical query for which to get the facet names
+
+        facets
+            The facets names of interest
 
         Returns
         -------
         :
-            Facet values to use in a search request
+            Facet names to use in a facet values request
         """
         ...
 
@@ -66,5 +72,23 @@ class FacadeParametersProtocol(Protocol):
         -------
         :
             Mapping from values in `facets` to the name that the API uses.
+        """
+        ...
+
+    def get_search_request_facet_values(
+        self, canonical: QueryCanonical
+    ) -> dict[str, tuple[str, ...]]:
+        """
+        Get the facet values to use in a search request
+
+        Parameters
+        ----------
+        canonical
+            Canonical query for which to get the search request facet values
+
+        Returns
+        -------
+        :
+            Facet values to use in a search request
         """
         ...

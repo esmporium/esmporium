@@ -99,6 +99,14 @@ class DirectMappingFacadeParameters(BaseModel):
     ]
     """See [FacadeParametersProtocol.base_query_style][esmporium.search.search_api_facade.parameters.protocol.FacadeParametersProtocol.base_query_style]."""  # noqa: E501
 
+    def get_facet_values_request_facet_names(
+        self, canonical: QueryCanonical, facets: set[str]
+    ) -> set[str]:
+        """See [FacadeParametersProtocol.get_facet_values_request_facet_names][esmporium.search.search_api_facade.parameters.protocol.FacadeParametersProtocol.get_facet_values_request_facet_names]."""  # noqa: E501
+        res = set(self.get_mapping_to_api_facet_names(facets).values())
+
+        return res
+
     def get_mapping_to_api_facet_names(self, facets: set[str]) -> dict[str, str]:
         """See [FacadeParametersProtocol.get_mapping_to_api_facet_names][esmporium.search.search_api_facade.parameters.protocol.FacadeParametersProtocol.get_mapping_to_api_facet_names]."""  # noqa: E501
         return get_mapping_to_query_style_facet_names(self.base_query_style, facets)
@@ -378,6 +386,17 @@ class STACFacadeParameters(BaseModel):
     ]
     """See [FacadeParametersProtocol.base_query_style][esmporium.search.search_api_facade.parameters.protocol.FacadeParametersProtocol.base_query_style]."""  # noqa: E501
 
+    def get_facet_values_request_facet_names(
+        self, canonical: QueryCanonical, facets: set[str]
+    ) -> set[str]:
+        """See [FacadeParametersProtocol.get_facet_values_request_facet_names][esmporium.search.search_api_facade.parameters.protocol.FacadeParametersProtocol.get_facet_values_request_facet_names]."""  # noqa: E501
+        # check alignment of project and prefix
+        self.get_collection(canonical)
+
+        res = set(self.get_mapping_to_api_facet_names(facets).values())
+
+        return res
+
     def get_mapping_to_api_facet_names(self, facets: set[str]) -> dict[str, str]:
         """See [FacadeParametersProtocol.get_mapping_to_api_facet_names][esmporium.search.search_api_facade.parameters.protocol.FacadeParametersProtocol.get_mapping_to_api_facet_names]."""  # noqa: E501
         raw = get_mapping_to_query_style_facet_names(self.base_query_style, facets)
@@ -388,10 +407,33 @@ class STACFacadeParameters(BaseModel):
 
         return res
 
-    def get_search_request_facet_values(
-        self, canonical: QueryCanonical
-    ) -> dict[str, tuple[str, ...]]:
-        """See [FacadeParametersProtocol.get_search_request_facet_values][esmporium.search.search_api_facade.parameters.protocol.FacadeParametersProtocol.get_search_request_facet_values]."""  # noqa: E501
+    def get_collection(self, canonical: QueryCanonical) -> str:
+        """
+        Get the STAC collection to pass to the ESGF-NG API
+
+        Parameters
+        ----------
+        canonical
+            Canonical query from which to get the collection
+
+        Returns
+        -------
+        :
+            STAC collection to pass to the API
+
+        Raises
+        ------
+        OneProjectRequiredError
+            `canonical` has anything other than exactly one project
+
+            The way the ESGF-NG API is set up,
+            only one collection can be specified at a time.
+            Given that project drives the collection,
+            this means we can only handle one project at a time.
+
+        ProjectPrefixMismatchError
+            `canonical.project` disagrees with `self.prefix`
+        """
         if len(canonical.project) != 1:
             raise OneProjectRequiredError(canonical, canonical.project)
 
@@ -402,6 +444,13 @@ class STACFacadeParameters(BaseModel):
         if collection.lower() != self.prefix:
             raise ProjectPrefixMismatchError(collection, self)
 
+        return collection
+
+    def get_search_request_facet_values(
+        self, canonical: QueryCanonical
+    ) -> dict[str, tuple[str, ...]]:
+        """See [FacadeParametersProtocol.get_search_request_facet_values][esmporium.search.search_api_facade.parameters.protocol.FacadeParametersProtocol.get_search_request_facet_values]."""  # noqa: E501
+        collection = self.get_collection(canonical)
         without_project = canonical.model_copy(update={"project": ()})
         native = from_canonical(canonical=without_project, to=self.base_query_style)
 

@@ -248,20 +248,6 @@ class SearchAPIFacade:
         -------
         :
             The request to send to `search_api`
-
-        Raises
-        ------
-        FacetNotExpressibleError
-            `canonical` sets a facet this facade's vocabulary cannot express
-
-        LimitOutOfRangeError
-            `limit` is outside the range `search_api` accepts
-
-        OneProjectRequiredError
-            A STAC facade was given anything other than exactly one project
-
-        ProjectPrefixMismatchError
-            A STAC facade was given a project its vocabulary does not describe
         """
         facet_values = self.parameters.get_search_request_facet_values(canonical)
         return self.search_api.build_search_request(facet_values, limit)
@@ -294,20 +280,22 @@ class SearchAPIFacade:
             This facade's vocabulary cannot express one of `facets`
 
         OneProjectRequiredError
-            A STAC facade was given anything other than exactly one project
+            `canonical` specifies zero or more than one projec
 
-        ProjectPrefixMismatchError
-            A STAC facade was given a project its vocabulary does not describe
+            Getting facet values for one project at a time
+            makes error handling much easier.
+            If you want to get facet values for multiple projects at a time,
+            use the low-level functions directly.
         """
         check_facets_expressible(self.parameters.base_query_style, facets)
-
-        wire_facet_names = set(
-            self.parameters.get_mapping_to_api_facet_names(facets).values()
-        )
         project = get_single_project(canonical)
 
+        api_facet_names = self.parameters.get_facet_values_request_facet_names(
+            canonical, facets
+        )
+
         return self.search_api.build_get_facet_values_for_project_request(
-            wire_facet_names, project
+            api_facet_names, project
         )
 
     def parse_facet_values(
