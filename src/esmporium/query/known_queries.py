@@ -615,6 +615,10 @@ class QueryCMIP7(BaseModel):
     grid_label: Annotated[FacetValues, QueryFacet("grid_label")] = ()
     """See [Dataset.grid_label][esmporium.db.schema.Dataset.grid_label]."""
 
+    # TODO: consider changing this to variable_branding_suffix
+    # to match the APIs.
+    # I can't remember where we got branding_suffix from,
+    # CMIP7 guidance pages?
     branding_suffix: Annotated[FacetValues, QueryFacet("processing_id")] = ()
     """See [Dataset.processing_id][esmporium.db.schema.Dataset.processing_id]."""
 
