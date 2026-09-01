@@ -361,6 +361,7 @@ class SearchOutcome:
     What came of a search: the endpoints which answered, and those which did not
     """
 
+    # list of datasets / tuple
     results: dict[str, Any]
     """The raw JSON each endpoint answered with, keyed by host"""
 
