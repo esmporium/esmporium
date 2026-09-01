@@ -204,11 +204,9 @@ def test_every_query_class_translates_to_every_other(exp):
         ),
         pytest.param(
             QueryCMIP7(
-                # With the STAC API,
-                # the project is the collection ID
-                # and must be handled by the API generation
-                # so `ESGFNGCMIP7ParametersQueryStyle` has no `project` facet
-                # and the query must not ask for one.
+                # With the STAC API, the project is the collection ID
+                # and must be handled by the facade parameters before translating.
+                # As a result, we have to make sure there is no project here either.
                 project=(),
                 source_id=("model",),
                 institution_id=("institution",),
