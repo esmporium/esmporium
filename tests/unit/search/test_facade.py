@@ -38,7 +38,9 @@ from esmporium.search import (
     identity_string,
 )
 
-CMIP6 = to_canonical(
+# This file is where at least some of the tests in PR2.2 should be added.
+
+CMIP6_CANONICALISED = to_canonical(
     QueryCMIP6(
         experiment_id=("historical", "ssp126"),
         variable_id="tas",
@@ -49,16 +51,16 @@ CMIP6 = to_canonical(
 """A CMIP6 query written in its own query style, canonicalised"""
 
 
-def solr6(host="node.example") -> SearchAPIFacade:
-    """A CMIP6/Solr facade"""
+def api_facade_cmip6_esgf1(host="node.example") -> SearchAPIFacade:
+    """A CMIP6/ESGF1 facade"""
     return SearchAPIFacade(
         parameters=ESGF1_CMIP6_FACADE_PARAMETERS,
         search_api=SearchAPIESGF1Solr(host, build_transient_retrying(1)),
     )
 
 
-def stac6(host="stac.example") -> SearchAPIFacade:
-    """A CMIP6/STAC facade"""
+def api_facade_cmip6_esgfng(host="stac.example") -> SearchAPIFacade:
+    """A CMIP6/ESGF-NG facade"""
     return SearchAPIFacade(
         parameters=ESGFNG_CMIP6_FACADE_PARAMETERS,
         search_api=SearchAPIESGFNGSTAC(host, build_transient_retrying(1)),
@@ -68,9 +70,13 @@ def stac6(host="stac.example") -> SearchAPIFacade:
 # --- building requests from a canonical query ---------------------------------
 
 
-def test_solr_build_search_request_translates_the_query():
-    """The canonical facets come through under the Solr parameter names, incl. project"""  # noqa: E501
-    params = solr6().build_search_request(CMIP6, limit=25).params
+def test_esgf1_build_search_request_translates_the_query():
+    """The canonical facets come through under the ESGF1 parameter names, incl. project"""  # noqa: E501
+    params = (
+        api_facade_cmip6_esgf1()
+        .build_search_request(CMIP6_CANONICALISED, limit=25)
+        .params
+    )
 
     assert params["project"] == ["CMIP6"]
     assert params["experiment_id"] == ["historical", "ssp126"]
@@ -79,9 +85,13 @@ def test_solr_build_search_request_translates_the_query():
     assert params["table_id"] == ["Amon"]
 
 
-def test_stac_build_search_request_scopes_by_collection_and_prefixes():
+def test_esgfng_build_search_request_scopes_by_collection_and_prefixes():
     """The project becomes the collection; every other property carries the prefix"""
-    body = stac6().build_search_request(CMIP6, limit=25).json_body
+    body = (
+        api_facade_cmip6_esgfng()
+        .build_search_request(CMIP6_CANONICALISED, limit=25)
+        .json_body
+    )
     clauses = body["filter"]["args"]
 
     assert {"op": "in", "args": [{"property": "collection"}, ["CMIP6"]]} in clauses
@@ -94,34 +104,40 @@ def test_stac_build_search_request_scopes_by_collection_and_prefixes():
     assert "cmip6:project" not in properties
 
 
-def test_solr_build_get_facet_values_request_scopes_to_the_project():
-    request = solr6().build_get_facet_values_request(CMIP6, {"experiment", "variable"})
+def test_esgf1_build_get_facet_values_request_scopes_to_the_project():
+    request = api_facade_cmip6_esgf1().build_get_facet_values_request(
+        CMIP6_CANONICALISED, {"experiment", "variable"}
+    )
 
     assert request.params["project"] == "CMIP6"
     assert request.params["facets"] == "experiment_id,variable_id"
 
 
-def test_stac_build_get_facet_values_request_asks_for_the_collection():
-    request = stac6().build_get_facet_values_request(CMIP6, {"variable"})
+def test_esgfng_build_get_facet_values_request_asks_for_the_collection():
+    request = api_facade_cmip6_esgfng().build_get_facet_values_request(
+        CMIP6_CANONICALISED, {"variable"}
+    )
 
     assert request.path == "/collections/CMIP6"
 
 
 def test_build_search_request_delegates_limit_checking():
     with pytest.raises(LimitOutOfRangeError):
-        solr6().build_search_request(CMIP6, limit=10_001)
+        api_facade_cmip6_esgf1().build_search_request(CMIP6_CANONICALISED, limit=10_001)
 
 
 def test_build_get_facet_values_request_refuses_an_unexpressible_facet():
     """`product` is CMIP5's alone, so a CMIP6 facade cannot ask about it"""
     with pytest.raises(FacetNotExpressibleError, match="product"):
-        solr6().build_get_facet_values_request(CMIP6, {"variable", "product"})
+        api_facade_cmip6_esgf1().build_get_facet_values_request(
+            CMIP6_CANONICALISED, {"variable", "product"}
+        )
 
 
 # --- reading a response back into the names it was asked under ----------------
 
 
-def test_solr_parse_facet_values_reads_back_into_canonical_names():
+def test_esgf1_parse_facet_values_reads_back_into_canonical_names():
     """The response is keyed by the API's names; we hand back the canonical ones"""
     raw = {
         "facet_counts": {
@@ -132,7 +148,9 @@ def test_solr_parse_facet_values_reads_back_into_canonical_names():
         }
     }
 
-    res = solr6().parse_facet_values(raw, {"experiment", "reporting_interval"})
+    res = api_facade_cmip6_esgf1().parse_facet_values(
+        raw, {"experiment", "reporting_interval"}
+    )
 
     assert res == {
         "experiment": {"historical", "ssp126"},
@@ -140,25 +158,30 @@ def test_solr_parse_facet_values_reads_back_into_canonical_names():
     }
 
 
-def test_stac_parse_facet_values_strips_the_prefix_and_ignores_other_projects():
+def test_esgfng_parse_facet_values_strips_the_prefix_and_ignores_other_projects():
     raw = {
         "summaries": {
             "cmip6:variable_id": ["tas", "pr"],
             "cmip6:frequency": ["mon"],
             # Another project's property; it must not be read with this query style.
+            # It should be impossible to get this,
+            # because you have to specify the collection when getting the facet values,
+            # but just in case.
             "cmip7:variable_id": ["should-not-be-read"],
         }
     }
 
-    res = stac6().parse_facet_values(raw, {"variable", "reporting_interval"})
+    res = api_facade_cmip6_esgfng().parse_facet_values(
+        raw, {"variable", "reporting_interval"}
+    )
 
     assert res == {"variable": {"tas", "pr"}, "reporting_interval": {"mon"}}
 
 
-def test_stac_parse_facet_patterns_reads_back_into_canonical_names():
+def test_esgfng_parse_facet_patterns_reads_back_into_canonical_names():
     raw = {"summaries": {"cmip6:variant_label": "^r\\d+i\\d+p\\d+f\\d+$"}}
 
-    res = stac6().parse_facet_patterns(raw, {"variant_label"})
+    res = api_facade_cmip6_esgfng().parse_facet_patterns(raw, {"variant_label"})
 
     assert set(res) == {"variant_label"}
     assert isinstance(res["variant_label"], re.Pattern)
@@ -167,15 +190,17 @@ def test_stac_parse_facet_patterns_reads_back_into_canonical_names():
 def test_parse_facet_values_of_an_unexpressible_facet_raises():
     """Reading a facet the query style cannot express is our bug, not the caller's"""
     with pytest.raises(UnaskableFacetError, match="project"):
-        stac6().parse_facet_values({"summaries": {}}, {"project"})
+        api_facade_cmip6_esgfng().parse_facet_values({"summaries": {}}, {"project"})
 
 
 def test_askable_facets_drops_what_the_query_style_cannot_express():
-    # STAC has no `project` property (the project is the collection).
-    assert stac6().askable_facets({"variable", "project"}) == {"variable"}
+    # ESGF-NG has no `project` property (the project is the collection).
+    assert api_facade_cmip6_esgfng().askable_facets({"variable", "project"}) == {
+        "variable"
+    }
 
 
-# --- STAC's one-project-and-matching-prefix rule ------------------------------
+# --- ESGF-NG's one-project-and-matching-prefix rule ------------------------------
 
 
 @pytest.mark.parametrize(
@@ -198,9 +223,9 @@ def test_askable_facets_drops_what_the_query_style_cannot_express():
         ),
     ),
 )
-def test_stac_build_search_request_needs_one_matching_project(canonical, exp):
+def test_esgfng_build_search_request_needs_one_matching_project(canonical, exp):
     with pytest.raises(exp):
-        stac6().build_search_request(canonical, limit=1)
+        api_facade_cmip6_esgfng().build_search_request(canonical, limit=1)
 
 
 @pytest.mark.parametrize(
@@ -223,21 +248,19 @@ def test_stac_build_search_request_needs_one_matching_project(canonical, exp):
         ),
     ),
 )
-def test_stac_build_get_facet_values_request_needs_one_matching_project(canonical, exp):
+def test_esgfng_build_get_facet_values_request_needs_one_matching_project(
+    canonical, exp
+):
     """
     Test that the facet values path applies the same rule as the search path
-
-    Both paths have to check, not just the search one.
-    Without the check here, a mismatched project builds a request for the wrong
-    collection, whose properties all carry a prefix this facade does not read,
-    so `parse_facet_values` hands back `{}` and nothing says why -
-    exactly the silence `ProjectPrefixMismatchError` exists to break.
     """
     with pytest.raises(exp):
-        stac6().build_get_facet_values_request(canonical, {"variable"})
+        api_facade_cmip6_esgfng().build_get_facet_values_request(
+            canonical, {"variable"}
+        )
 
 
-def test_stac_facet_values_of_a_mismatched_collection_would_be_silent():
+def test_esgfng_facet_values_of_a_mismatched_collection_would_be_silent():
     """
     Test the failure the check above prevents, so its value is on the record
 
@@ -252,20 +275,23 @@ def test_stac_facet_values_of_a_mismatched_collection_would_be_silent():
     }
 
     assert (
-        stac6().parse_facet_values(cmip7_collection, {"variable", "experiment"}) == {}
+        api_facade_cmip6_esgfng().parse_facet_values(
+            cmip7_collection, {"variable", "experiment"}
+        )
+        == {}
     )
 
 
-# --- STAC's injectable project -> collection and prefix rules -----------------
+# --- ESGF-NG's injectable project -> collection and prefix rules -----------------
 
 
-def test_stac_default_converters_lowercase_the_project_for_the_prefix():
+def test_esgfng_default_converters_lowercase_the_project_for_the_prefix():
     """The observed ESGF-NG convention: collection `CMIP6`, properties `cmip6:`"""
-    assert ESGFNG_CMIP6_FACADE_PARAMETERS.get_collection(CMIP6) == "CMIP6"
+    assert ESGFNG_CMIP6_FACADE_PARAMETERS.get_collection(CMIP6_CANONICALISED) == "CMIP6"
     assert ESGFNG_CMIP6_FACADE_PARAMETERS.prefix == "cmip6"
 
 
-def test_stac_project_to_collection_converter_is_used():
+def test_stac_facade_project_to_collection_converter_is_used():
     """A deployment which names its collection differently is expressible"""
     parameters = STACFacadeParameters(
         base_query_style=ESGFNGCMIP6ParametersQueryStyle,
@@ -273,19 +299,19 @@ def test_stac_project_to_collection_converter_is_used():
         project_to_collection_converter=str.lower,
     )
 
-    assert parameters.get_collection(CMIP6) == "cmip6"
+    assert parameters.get_collection(CMIP6_CANONICALISED) == "cmip6"
 
     facade = SearchAPIFacade(
         parameters=parameters,
         search_api=SearchAPIESGFNGSTAC("stac.example", build_transient_retrying(1)),
     )
-    body = facade.build_search_request(CMIP6, limit=5).json_body
+    body = facade.build_search_request(CMIP6_CANONICALISED, limit=5).json_body
     clauses = body["filter"]["args"]
 
     assert {"op": "in", "args": [{"property": "collection"}, ["cmip6"]]} in clauses
 
 
-def test_stac_project_to_prefix_converter_is_used():
+def test_stac_facade_project_to_prefix_converter_is_used():
     """
     Test that the project -> prefix rule is a convention we can override
 
@@ -299,13 +325,13 @@ def test_stac_project_to_prefix_converter_is_used():
         project_to_prefix_converter=identity_string,
     )
 
-    assert parameters.get_collection(CMIP6) == "CMIP6"
+    assert parameters.get_collection(CMIP6_CANONICALISED) == "CMIP6"
     assert parameters.get_mapping_to_api_facet_names({"variable"}) == {
         "variable": "CMIP6:variable_id"
     }
 
 
-def test_stac_a_prefix_converter_which_disagrees_still_raises():
+def test_stac_facade_prefix_converter_which_disagrees_still_raises():
     """Injecting a rule does not switch the check off, it only changes the rule"""
     parameters = STACFacadeParameters(
         base_query_style=ESGFNGCMIP6ParametersQueryStyle,
@@ -315,7 +341,7 @@ def test_stac_a_prefix_converter_which_disagrees_still_raises():
     )
 
     with pytest.raises(ProjectPrefixMismatchError, match="cmip6"):
-        parameters.get_collection(CMIP6)
+        parameters.get_collection(CMIP6_CANONICALISED)
 
 
 # --- the facade store ---------------------------------------------------------
@@ -325,8 +351,12 @@ def a_store() -> SearchAPIFacadeStore:
     """A small store: host-a serves CMIP5+CMIP6, host-b serves CMIP6 only"""
     return SearchAPIFacadeStore(
         classifications=(
-            SearchAPIFacadeClassification(solr6("host-a"), ("CMIP5", "CMIP6")),
-            SearchAPIFacadeClassification(stac6("host-b"), ("CMIP6",)),
+            SearchAPIFacadeClassification(
+                api_facade_cmip6_esgf1("host-a"), ("CMIP5", "CMIP6")
+            ),
+            SearchAPIFacadeClassification(
+                api_facade_cmip6_esgfng("host-b"), ("CMIP6",)
+            ),
         )
     )
 
@@ -353,19 +383,47 @@ def test_store_gets_the_one_facade_for_a_project_from_a_host():
 
 
 def test_store_get_for_a_project_from_a_host_that_has_no_such_pairing_raises():
-    with pytest.raises(ValueError, match="No API from"):
+    with pytest.raises(
+        ValueError,
+        match=(
+            re.escape("No API from host='host-a' is associated with project='CMIP7'. ")
+            + r"Available hosts and supported projects:.*\s*"
+            + re.escape("  - host-a: ['CMIP5', 'CMIP6']")
+            + r".*\s*"
+            + re.escape("- host-b: ['CMIP6']")
+        ),
+    ):
         a_store().get_api_facade_for_project_from_host("CMIP7", "host-a")
 
 
 def test_store_get_for_an_ambiguous_pairing_is_an_assertion_error():
     store = SearchAPIFacadeStore(
         classifications=(
-            SearchAPIFacadeClassification(solr6("dup"), ("CMIP6",)),
-            SearchAPIFacadeClassification(stac6("dup"), ("CMIP6",)),
+            SearchAPIFacadeClassification(api_facade_cmip6_esgf1("dup"), ("CMIP6",)),
+            SearchAPIFacadeClassification(api_facade_cmip6_esgfng("dup"), ("CMIP6",)),
         )
     )
-
-    with pytest.raises(AssertionError, match="More than one candidate"):
+    with pytest.raises(
+        AssertionError,
+        match=(
+            re.escape("More than one candidate for host='dup' and project='CMIP6'. ")
+            + re.escape("matches_summary=[")
+            + '"'
+            + re.escape(
+                "facade host='dup', facade API type='SearchAPIESGF1Solr', "
+                "supported projects=('CMIP6',)"
+            )
+            + '"'
+            + ", "
+            + '"'
+            + re.escape(
+                "facade host='dup', facade API type='SearchAPIESGFNGSTAC', "
+                "supported projects=('CMIP6',)"
+            )
+            + '"'
+            + re.escape("]. matches=")
+        ),
+    ):
         store.get_api_facade_for_project_from_host("CMIP6", "dup")
 
 

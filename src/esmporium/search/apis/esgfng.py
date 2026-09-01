@@ -212,13 +212,22 @@ class SearchAPIESGFNGSTAC:
         # west reports `numMatched` and `context.matched`.
         # We try everything, starting with the correct (STAC) spelling.
         context = raw.get("context")
-        for total in (
-            raw.get("numberMatched"),
-            raw.get("numMatched"),
-            context.get("matched") if isinstance(context, dict) else None,
-        ):
+        for loc, total in [
+            ("numberMatched", raw.get("numberMatched")),
+            ("numMatched", raw.get("numMatched")),
+            (
+                "context.matched",
+                context.get("matched") if isinstance(context, dict) else None,
+            ),
+        ]:
             if isinstance(total, int):
                 return total
+
+            elif total is not None:
+                msg = (
+                    f"We expected to get an integer at {loc}, but instead got {total!r}"
+                )
+                raise TypeError(msg)
 
         raise NoSearchResultNumberOfMatchesReturnedError(
             raw, "numberMatched / numMatched / context.matched"

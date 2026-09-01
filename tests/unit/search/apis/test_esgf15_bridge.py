@@ -67,7 +67,7 @@ def test_parse_facet_values_reads_the_solr_shape():
 
 
 def test_parse_facet_values_with_nothing_to_read_raises():
-    with pytest.raises(NoFacetValuesReturnedError):
+    with pytest.raises(NoFacetValuesReturnedError, match="pinme"):
         api().parse_facet_values({}, {"variable_id"})
 
 

@@ -183,7 +183,19 @@ class SearchAPIFacadeStore:
             raise ValueError(msg)
 
         elif len(matches) > 1:
-            msg = f"More than one candidate for {host=} and {project=}. {matches=}"
+            matches_summary = [
+                (
+                    f"facade host={v.facade.search_api.host!r}, "
+                    f"facade API type={type(v.facade.search_api).__name__!r}, "
+                    f"supported projects={v.projects!r}"
+                )
+                for v in matches
+            ]
+            msg = (
+                f"More than one candidate for {host=} and {project=}. "
+                f"{matches_summary=}. {matches=}"
+            )
+
             raise AssertionError(msg)
 
         return matches[0].facade

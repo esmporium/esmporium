@@ -69,6 +69,12 @@ def get_solr_search_result_n_matches(raw: dict[str, Any]) -> int:
     num_found = raw.get("response", {}).get("numFound")
     if isinstance(num_found, int):
         return num_found
+    elif num_found is not None:
+        msg = (
+            "We expected to get an integer at 'response.numFound', "
+            f"but instead got {num_found!r}"
+        )
+        raise TypeError(msg)
 
     raise NoSearchResultNumberOfMatchesReturnedError(raw, "response.numFound")
 

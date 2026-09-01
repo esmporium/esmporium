@@ -205,7 +205,9 @@ def test_every_query_class_translates_to_every_other(exp):
         pytest.param(
             QueryCMIP7(
                 # With the STAC API, the project is the collection ID
-                # and must be handled by the facade parameters before translating.
+                # and must be handled by the facade parameter methods
+                # before translating to the ESGF-NG parameter names
+                # (because there is no ESGF-NG parameter equivalent for project).
                 # As a result, we have to make sure there is no project here either.
                 project=(),
                 source_id=("model",),

@@ -10,6 +10,8 @@ layer's (that translation is tested in `tests/unit/search/test_facade.py`).
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from esmporium.search.apis import (
@@ -85,16 +87,50 @@ def test_get_search_result_n_matches(raw, exp):
 
 
 @pytest.mark.parametrize(
-    "raw",
+    "raw, exp",
     (
-        pytest.param({"response": {"docs": []}}, id="no-count"),
-        pytest.param({}, id="nothing-we-recognise"),
-        pytest.param({"response": {"numFound": "3"}}, id="a-count-we-cannot-read"),
+        pytest.param(
+            {"response": {"docs": []}},
+            pytest.raises(
+                NoSearchResultNumberOfMatchesReturnedError,
+                match=re.escape(
+                    "This response does not report "
+                    "how many records matched the search. "
+                    "We expected to read the count from 'response.numFound', "
+                    "but 'numFound' is not in 'response', there is only: 'docs'"
+                ),
+            ),
+            id="no-count",
+        ),
+        pytest.param(
+            {},
+            pytest.raises(
+                NoSearchResultNumberOfMatchesReturnedError,
+                match=re.escape(
+                    "This response does not report "
+                    "how many records matched the search. "
+                    "We expected to read the count from 'response.numFound', "
+                    "but the response is empty."
+                ),
+            ),
+            id="nothing-we-recognise",
+        ),
+        pytest.param(
+            {"response": {"numFound": "3"}},
+            pytest.raises(
+                TypeError,
+                match=re.escape(
+                    "We expected to get an integer at 'response.numFound', "
+                    "but instead got '3'"
+                ),
+            ),
+            id="a-count-we-cannot-read",
+        ),
     ),
 )
-def test_get_search_result_n_matches_with_no_count_raises(raw):
+def test_get_search_result_n_matches_with_no_count_raises(raw, exp):
     """A response we cannot read a count out of is one we have not understood"""
-    with pytest.raises(NoSearchResultNumberOfMatchesReturnedError):
+    with exp:
         api().get_search_result_n_matches(raw)
 
 
@@ -136,8 +172,13 @@ def test_parse_facet_values_keeps_only_the_asked_for_facets():
     ),
 )
 def test_parse_facet_values_with_nothing_to_read_raises(raw):
-    with pytest.raises(NoFacetValuesReturnedError):
+    with pytest.raises(NoFacetValuesReturnedError, match="pinme"):
         api().parse_facet_values(raw, {"variable_id"})
+
+
+def test_no_facet_value_returned_error_when_there_is_a_match_raises():
+    with pytest.raises(AssertionError, match="pinme"):
+        NoFacetValuesReturnedError({"hi": {"bye": 1}}, expected_at="hi.bye")
 
 
 def test_parse_facet_patterns_is_always_empty():

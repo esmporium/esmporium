@@ -15,7 +15,7 @@ from esmporium.search.apis.request import Request
 
 class LimitOutOfRangeError(ValueError):
     """
-    Raised when a page size is one the search APIs will not accept
+    Raised when a page size is one a search API will not accept
     """
 
     def __init__(self, limit: int, min_limit: int, max_limit: int) -> None:
@@ -62,13 +62,45 @@ class NoSearchResultNumberOfMatchesReturnedError(ValueError):
         self.raw = raw
         self.expected_at = expected_at
 
-        keys = ", ".join(sorted(raw)) if raw else "nothing at all"
+        expected_at_split = expected_at.split(".")
+        current_level = raw
+        current_level_keys = sorted(current_level)
+        for level, part in enumerate(expected_at_split):
+            if part in current_level_keys:
+                # We have this part, keep looking
+                current_level = current_level[part]
+                current_level_keys = sorted(current_level)
+                continue
+
+            missing_part = part
+            path_that_exists = ".".join(expected_at_split[:level])
+            keys_at_path_that_exists = sorted(current_level)
+            break
+
+        else:
+            found_value = current_level[part]
+            expected_at_rep = "".join(f"[{part}]" for part in expected_at.split("."))
+            msg = f"{expected_at} is in {raw}, raw{expected_at_rep}={found_value}"
+            raise AssertionError(msg)
+
+        if raw:
+            if keys_at_path_that_exists:
+                tmp = ", ".join(f"{v!r}" for v in sorted(keys_at_path_that_exists))
+                keys_at_path_that_exists_string = f"there is only: {tmp}"
+            else:
+                keys_at_path_that_exists_string = "there are no keys at this path"
+
+            explanation = (
+                f"but {missing_part!r} is not in {path_that_exists!r}, "
+                f"{keys_at_path_that_exists_string}."
+            )
+        else:
+            explanation = "but the response is empty."
+
         super().__init__(
             "This response does not report how many records matched the search. "
             f"We expected to read the count from {expected_at!r}, "
-            # TODO: make this more robust as the issue might be for a key
-            # lower than the top level.
-            f"but the response's top-level keys are: {keys}."
+            f"{explanation}"
         )
 
 

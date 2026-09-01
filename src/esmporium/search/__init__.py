@@ -41,13 +41,14 @@ from esmporium.search.health import (
 )
 from esmporium.search.retry import build_transient_retrying
 from esmporium.search.search import (
-    DEFAULT_LIMIT,
     CouldNotSearchError,
     NoAPIWouldAnswerError,
     SearchAPIRequestError,
     SearchOutcome,
+    curl_equivalent,
     fire,
     get_url,
+    log_request_as_url_and_curl,
     search,
 )
 from esmporium.search.search_api_facade import (
@@ -88,7 +89,6 @@ from esmporium.search.search_api_facade import (
 )
 
 __all__ = [
-    "DEFAULT_LIMIT",
     "DEFAULT_SEARCH_API_FACADES_BY_PROJECT",
     "DEFAULT_SELECTOR",
     "ESGF1_CMIP5_FACADE_PARAMETERS",
@@ -149,6 +149,7 @@ __all__ = [
     "check_query_values_low",
     "close_matches_difflib",
     "compare_values",
+    "curl_equivalent",
     "facets_the_user_set",
     "fan_out",
     "fire",
@@ -156,6 +157,7 @@ __all__ = [
     "get_unexpressible_facets",
     "get_url",
     "identity_string",
+    "log_request_as_url_and_curl",
     "search",
     "values_set_for",
 ]

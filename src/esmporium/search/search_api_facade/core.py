@@ -23,44 +23,6 @@ from esmporium.search.search_api_facade.parameters import (
 )
 
 
-class UnaskableFacetError(AssertionError):
-    """
-    Raised when we ask for a facet we could never have asked an API about
-
-    This error means a facets request was built
-    and sent naming a facet the query style has no parameter name for,
-    which [check_facets_expressible][(m).check_facets_expressible]
-    exists to prevent.
-    Raising this means something got past the checks in
-    [check_facets_expressible][(m).check_facets_expressible]
-    or a user bypassed
-    [check_facets_expressible][(m).check_facets_expressible]
-    in the first place.
-    """
-
-    def __init__(self, params: type[QueryProtocol], facets: set[str]) -> None:
-        """
-        Initialise the error
-
-        Parameters
-        ----------
-        params
-            The query style the response is written in
-
-        facets
-            The facets which could not have been asked about,
-            named as [get_mapping_to_query_style_facet_names][(m).] describes
-        """
-        self.params = params
-        self.facets = facets
-        named = ", ".join(sorted(facets))
-        super().__init__(
-            f"{params.__name__} has no name for {named}, "
-            "so we cannot have asked the API about it and it cannot be in this "
-            "response. This request should never have been built."
-        )
-
-
 def get_unexpressible_facets(
     query_style: type[QueryProtocol], facets: set[str]
 ) -> set[str]:
@@ -120,6 +82,44 @@ def check_facets_expressible(
     unexpressible = get_unexpressible_facets(query_style, facets)
     if unexpressible:
         raise FacetNotExpressibleError(unexpressible, facet_spec(query_style).name)
+
+
+class UnaskableFacetError(AssertionError):
+    """
+    Raised when we ask for a facet we could never have asked an API about
+
+    This error means a facets request was built
+    and sent naming a facet the query style has no parameter name for,
+    which [check_facets_expressible][(m).check_facets_expressible]
+    exists to prevent.
+    Raising this means something got past the checks in
+    [check_facets_expressible][(m).check_facets_expressible]
+    or a user bypassed
+    [check_facets_expressible][(m).check_facets_expressible]
+    in the first place.
+    """
+
+    def __init__(self, params: type[QueryProtocol], facets: set[str]) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        params
+            The query style the response is written in
+
+        facets
+            The facets which could not have been asked about,
+            named as [get_mapping_to_query_style_facet_names][(m).] describes
+        """
+        self.params = params
+        self.facets = facets
+        named = ", ".join(sorted(facets))
+        super().__init__(
+            f"{params.__name__} has no name for {named}, "
+            "so we cannot have asked the API about it and it cannot be in this "
+            "response. This request should never have been built."
+        )
 
 
 def check_facets_askable(query_style: type[QueryProtocol], facets: set[str]) -> None:
@@ -191,7 +191,7 @@ class SearchAPIFacade:
     at the price of having to make multiple queries
     if we want to search more than one project
     (in practice this is a tiny price to pay,
-    so we deliberately make this tradeoff throughout the package).
+    so we deliberately make this tradeoff throughout esmporium).
 
     The facade owns the name translation.
     [build_search_request][(c).build_search_request] and
@@ -399,6 +399,9 @@ class SearchAPIFacade:
         """
         return self._read_back(self.search_api.parse_facet_patterns, raw, facets)
 
+    # TODO: when we add an equivalent for reading search results,
+    # make this method and the search result reading method public,
+    # upgrade docstrings to the standards in the rest of the repository etc.
     def _read_back(
         self,
         parse: Callable[[dict[str, Any], set[str]], dict[str, Any]],
@@ -408,23 +411,27 @@ class SearchAPIFacade:
         """
         Parse a facet-values response and translate its keys back
 
-        `parse` reads `raw` keyed by the API parameter names;
-        this asks it about the API parameter names for `facets`,
+        `parse` reads `raw` keyed by the API parameter names.
+        This method asks `parse` about the API parameter names for `facets`,
         then hands the answer back under the names they were asked for.
+        Any facets which were asked for but were not included in the output of `parse`
+        do not appear in the result: the caller must handle these drops.
         """
         check_facets_askable(self.parameters.base_query_style, facets)
 
-        api_name_map = self.parameters.get_mapping_to_api_facet_names(facets)
-        asked_for_map = {
-            api_name: asked_for for asked_for, api_name in api_name_map.items()
+        api_name_lookup = self.parameters.get_mapping_to_api_facet_names(facets)
+        res_api_keyed = parse(raw, set(api_name_lookup.values()))
+
+        asked_for_name_lookup = {
+            api_name: asked_for for asked_for, api_name in api_name_lookup.items()
         }
 
-        res_api_keyed = parse(raw, set(api_name_map.values()))
-
         res = {
-            asked_for_map[api_name]: value
+            asked_for_name_lookup[api_name]: value
             for api_name, value in res_api_keyed.items()
-            if api_name in asked_for_map
+            # Guard against facets which cannot be parsed out of the response.
+            # This silently drops - the caller has to handle these drops.
+            if api_name in asked_for_name_lookup
         }
 
         return res

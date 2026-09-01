@@ -86,7 +86,7 @@ def test_get_search_result_n_matches_reads_whichever_spelling_is_present(raw, ex
     ),
 )
 def test_get_search_result_n_matches_with_no_count_raises(raw):
-    with pytest.raises(NoSearchResultNumberOfMatchesReturnedError):
+    with pytest.raises(NoSearchResultNumberOfMatchesReturnedError, match="pinme"):
         api().get_search_result_n_matches(raw)
 
 
@@ -121,7 +121,7 @@ def test_parse_facet_values_reads_only_enumerated_lists():
 
 
 def test_parse_facet_values_without_summaries_raises():
-    with pytest.raises(NoFacetValuesReturnedError):
+    with pytest.raises(NoFacetValuesReturnedError, match="pinme"):
         api().parse_facet_values({}, {"cmip6:variable_id"})
 
 
@@ -198,7 +198,7 @@ def test_parse_facet_patterns_without_summaries_raises():
     the ones we asked for, whether we asked for values or for patterns,
     so both halves raise rather than quietly reporting nothing.
     """
-    with pytest.raises(NoFacetValuesReturnedError):
+    with pytest.raises(NoFacetValuesReturnedError, match="pinme"):
         api().parse_facet_patterns({}, {"cmip6:variant_label"})
 
 
