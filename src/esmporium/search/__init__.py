@@ -147,11 +147,5 @@ __all__ = [
     "get_unexpressible_facets",
     "get_url",
     "search",
-    "solr_bool",
-    "solr_facet_values",
-    "solr_num_found",
-    "stac_summary_patterns",
-    "stac_summary_values",
-    "unexpressible_facets",
     "values_set_for",
 ]
