@@ -6,13 +6,13 @@ These facades are introduced to add more robust
 query creation, result parsing and error handling.
 Complete documentation of this will be added in future.
 
-A facade pairs a *query style*
-(the vocabulary a project is written in,
-e.g. [SolrCMIP6Parameters][(m).SolrCMIP6Parameters])
+A facade pairs a *parameter definition*
+(the vocabulary a project is written in for a family of APIs,
+e.g. [ESGF1_CMIP6_FACADE_PARAMETERS][(m).ESGF1_CMIP6_FACADE_PARAMETERS])
 with a *search API*
 (the format spoken by a family of endpoints,
 e.g. [SearchAPIESGF1Solr][esmporium.search.apis.SearchAPIESGF1Solr]).
-The query style is the facade's concern:
+The parameter definition is the facade's concern:
 it is the facade which turns a canonical query into the names
 and shapes a search API speaks,
 and which turns the answer back into the canonical vocabulary.
@@ -30,22 +30,15 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Annotated, Any, ClassVar, cast
+from typing import Any, cast
 
-from pydantic import BaseModel, ConfigDict
 from tenacity import Retrying
 
 from esmporium.query import (
     FacetNotExpressibleError,
-    FacetValues,
-    FacetValuesByName,
     QueryCanonical,
-    QueryFacet,
     QueryProtocol,
-    SourceQuery,
     facet_spec,
-    facet_values_from_attributes,
-    from_canonical,
 )
 from esmporium.search.apis import (
     Request,
@@ -63,8 +56,15 @@ from esmporium.search.search_api_facade.parameters import (
     ESGFNG_CMIP6_FACADE_PARAMETERS,
     ESGFNG_CMIP7_FACADE_PARAMETERS,
     ESGF1CMIP5ParametersQueryStyle,
+    ESGF1CMIP6ParametersQueryStyle,
+    ESGF1CMIP7ParametersQueryStyle,
+    ESGFNGCMIP5ParametersQueryStyle,
+    ESGFNGCMIP6ParametersQueryStyle,
+    ESGFNGCMIP7ParametersQueryStyle,
     FacadeParametersProtocol,
-    PrefixMappingFacadeParameters,
+    OneProjectRequiredError,
+    ProjectPrefixMismatchError,
+    get_mapping_to_query_style_facet_names,
 )
 
 
@@ -94,7 +94,7 @@ class UnaskableFacetError(AssertionError):
 
         facets
             The facets which could not have been asked about,
-            named as [native_facet_names][(m).native_facet_names] describes
+            named as [get_mapping_to_query_style_facet_names][(m).] describes
         """
         self.params = params
         self.facets = facets
@@ -106,125 +106,6 @@ class UnaskableFacetError(AssertionError):
         )
 
 
-class OneProjectRequiredError(ValueError):
-    """
-    Raised when a exactly one project is required, but there isn't exactly one project
-    """
-
-    def __init__(self, query: QueryCanonical, projects: tuple[str, ...]) -> None:
-        """
-        Initialise the error
-
-        Parameters
-        ----------
-        query
-            Query which does not specify exactly one project
-
-        projects
-            The projects which were asked for
-        """
-        self.query = query
-        self.projects = projects
-        super().__init__(
-            f"Received {len(projects)}: {projects}. "
-            "We need the query to have exactly one project. "
-            f"{query=}"
-        )
-
-
-class ProjectPrefixMismatchError(ValueError):
-    """
-    Raised when there is a mismatch between project and prefix for STAC-based searches
-
-    ESGF STAC APIs name their collections' properties
-    with a specific prefix
-    (TODO Claude: check if there is a rule for this
-    e.g. the prefix is always the lowercase version of the project,
-    or whether it is more complicated than that),
-    so a mismatch will mean that we build requests which cannot match anything.
-    Without this error, no results would come back and nothing would say why.
-    """
-
-    def __init__(
-        self, project: str, facade_parameters: PrefixMappingFacadeParameters
-    ) -> None:
-        """
-        Initialise the error
-
-        Parameters
-        ----------
-        project
-            The project which was asked for
-
-        facade_parameters
-            The facade parameter definition
-        """
-        self.project = project
-        self.facade_parameters = facade_parameters
-        super().__init__(
-            f"{facade_parameters.__name__} writes its API facets with the "
-            f"{facade_parameters.prefix!r} prefix, "
-            f"so it cannot describe the {project!r} collection. "
-            f"You need to use the facade parameter class specific to {project}."
-        )
-
-
-def get_mapping_to_native_facet_names(
-    query_style: type[QueryProtocol], facets: set[str]
-) -> dict[str, str]:
-    """
-    Work out what each of the facets being asked about is called in a given query style
-
-    The name is slightly misleading.
-    We only include each value in `facets` in the output if it is either
-    already specific to `query_style`
-    or is a canonical name that can be handled by `query_style`.
-    Further jumps
-    (e.g. is this a facet name which can be mapped to `query_style`
-    if we go via the canonical name)
-    are not checked.
-    All other values in `facets` are left out,
-    so the caller can see/has to check which ones went missing.
-
-    Parameters
-    ----------
-    query_style
-        The query style to check for which to get the mapping
-
-    facets
-        The facets for which to get the mapping
-
-    Returns
-    -------
-    :
-        Mapping from values in `facets` to the name that `query_style` uses.
-    """
-    spec = facet_spec(query_style)
-
-    res: dict[str, str] = {}
-    for facet in facets:
-        canonical_native = spec.canonical_to_native.get(facet)
-        if canonical_native is not None:
-            # In this query style, this facet name maps to a canonical name
-            res[facet] = canonical_native
-
-        elif facet in spec.query_specific_facets:
-            # This facet name is specific to this query style
-            # (and therefore maps to itself)
-            res[facet] = facet
-
-        # # TODO Claude: should we also have the below
-        # elif facet in spec.native_to_canonical:
-        #     # This facet is already in this query's style
-        #     # (and therefore maps to itself)
-        #     res[facet] = facet
-
-        # No mapping for this facet, hence do not include in the mapping.
-        # we expect the caller to check for and handle this.
-
-    return res
-
-
 def get_unexpressible_facets(
     query_style: type[QueryProtocol], facets: set[str]
 ) -> set[str]:
@@ -233,9 +114,9 @@ def get_unexpressible_facets(
 
     The name is slightly misleading.
     We consider a facet unexpressible if it is not in the result of
-    [get_mapping_to_native_facet_names][(m).]
-    (see [get_mapping_to_native_facet_names][(m).]'s docstring
-    for why the name is slightly misleading).
+    [get_mapping_to_query_style_facet_names][(m).]
+    (see [get_mapping_to_query_style_facet_names][(m).]'s docstring
+    for which names it can map).
 
     Parameters
     ----------
@@ -249,9 +130,11 @@ def get_unexpressible_facets(
     -------
     :
         The facets which `query_style` cannot express
-        (according to [get_mapping_to_native_facet_names][(m).])
+        (according to [get_mapping_to_query_style_facet_names][(m).])
     """
-    return set(facets) - set(get_mapping_to_native_facet_names(query_style, facets))
+    return set(facets) - set(
+        get_mapping_to_query_style_facet_names(query_style, facets)
+    )
 
 
 def check_facets_expressible(
@@ -317,45 +200,6 @@ def check_facets_askable(query_style: type[QueryProtocol], facets: set[str]) -> 
         raise UnaskableFacetError(query_style, unexpressible)
 
 
-def get_mapping_to_wire_facet_names(
-    query_style: type[QueryProtocol], facets: set[str]
-) -> dict[str, str]:
-    """
-    Get the mapping to facet names used by a given search API
-
-    The name is slightly misleading.
-    We only return a mapping for facets that are included in
-    [get_mapping_to_native_facet_names][(m).]
-    (see [get_mapping_to_native_facet_names][(m).]'s docstring
-    for why the name is slightly misleading).
-    All facet values in `facets` which do not appear in the result of
-    [get_mapping_to_native_facet_names][(m).] are left out,
-    so the caller can see/has to check which ones went missing.
-
-    Parameters
-    ----------
-    query_style
-        Query style for which to get the mapping
-
-    facets
-        The facets for which to get the mapping
-
-    Returns
-    -------
-    :
-        Mapping from values in `facets` to the name that `query_style` uses.
-    """
-    wire_names = get_mapping_to_native_facet_names(query_style, facets)
-
-    prefix = getattr(query_style, "prefix", None)
-    if prefix is not None:
-        wire_names = {
-            facet_name: f"{prefix}:{stem}" for facet_name, stem in wire_names.items()
-        }
-
-    return wire_names
-
-
 def get_single_project(canonical: QueryCanonical) -> str:
     """
     Get a single project from a query
@@ -376,354 +220,9 @@ def get_single_project(canonical: QueryCanonical) -> str:
         `canonical` does not name exactly one project
     """
     if len(canonical.project) != 1:
-        raise OneProjectRequiredError(canonical.project)
-
-    return canonical.project[0]
-
-
-# TODO: move this onto PrefixMappingFacadeParameters
-# and rename PrefixMappingFacadeParameters
-# to STACFacadeParameters
-def get_stac_collection(
-    canonical: QueryCanonical, facade_parameters: PrefixMappingFacadeParameters
-) -> str:
-    """
-    Work out which STAC collection a query is asking about
-
-    Parameters
-    ----------
-    canonical
-        The query whose project to read
-
-    facade_parameters
-        The facade parameter definition
-
-    Returns
-    -------
-    :
-        The collection to search
-
-    Raises
-    ------
-    OneProjectRequiredError
-        `canonical` does not name exactly one project
-
-    ProjectPrefixMismatchError
-        `params.prefix` does not match the project that `canonical` names
-    """
-    if len(canonical.project) != 1:
         raise OneProjectRequiredError(canonical, canonical.project)
 
-    collection = canonical.project[0]
-    # TODO Claude: are 100% certain that this logic is correct
-    # i.e. the prefix is always the lowercase version of the collection (i.e. project)
-    if collection.lower() != facade_parameters.prefix:
-        raise ProjectPrefixMismatchError(collection, facade_parameters)
-
-    return collection
-
-
-class SolrCMIP6Parameters(BaseModel):
-    """
-    CMIP6 facet values under their ESGF1/Solr parameter names
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    project: Annotated[FacetValues, QueryFacet("project")] = ()
-    """See [Dataset.project][esmporium.db.schema.Dataset.project]."""
-
-    source_id: Annotated[FacetValues, QueryFacet("model")] = ()
-    """See [Dataset.model][esmporium.db.schema.Dataset.model]."""
-
-    institution_id: Annotated[FacetValues, QueryFacet("institution")] = ()
-    """See [Dataset.institution][esmporium.db.schema.Dataset.institution]."""
-
-    experiment_id: Annotated[FacetValues, QueryFacet("experiment")] = ()
-    """See [Dataset.experiment][esmporium.db.schema.Dataset.experiment]."""
-
-    variant_label: Annotated[FacetValues, QueryFacet("variant_label")] = ()
-    """See [Dataset.variant_label][esmporium.db.schema.Dataset.variant_label]."""
-
-    variable_id: Annotated[FacetValues, QueryFacet("variable")] = ()
-    """See [Dataset.variable][esmporium.db.schema.Dataset.variable]."""
-
-    frequency: Annotated[FacetValues, QueryFacet("reporting_interval")] = ()
-    """See [Dataset.reporting_interval][esmporium.db.schema.Dataset.reporting_interval]."""  # noqa: E501
-
-    table_id: Annotated[FacetValues, QueryFacet("processing_id")] = ()
-    """See [Dataset.processing_id][esmporium.db.schema.Dataset.processing_id]."""
-
-    activity_id: Annotated[FacetValues, QueryFacet("activity")] = ()
-    """See [Dataset.activity][esmporium.query.canonical_query.QueryCanonical.activity]."""  # noqa: E501
-
-    nominal_resolution: Annotated[FacetValues, QueryFacet("resolution")] = ()
-    """See [Dataset.resolution][esmporium.query.canonical_query.QueryCanonical.resolution]."""  # noqa: E501
-
-    grid_label: Annotated[FacetValues, QueryFacet("grid_label")] = ()
-    """See [Dataset.grid_label][esmporium.db.schema.Dataset.grid_label]."""
-
-    realm: Annotated[FacetValues, QueryFacet("realm")] = ()
-    """See [Dataset.realm][esmporium.query.canonical_query.QueryCanonical.realm]."""
-
-    sub_experiment_id: Annotated[FacetValues, QueryFacet(None)] = ()
-    """See [QueryCMIP6.sub_experiment_id][esmporium.query.known_queries.QueryCMIP6.sub_experiment_id]."""  # noqa: E501
-
-    other_terms: FacetValuesByName = {}
-    """See [Query.other_terms][esmporium.query.known_queries.Query.other_terms]."""
-
-    source_query: SourceQuery = None
-    """See [Query.source_query][esmporium.query.known_queries.Query.source_query]."""
-
-    def facet_values(self) -> dict[str, tuple[str, ...]]:
-        """Facets that are set, keyed by this class's own (wire) names"""
-        return facet_values_from_attributes(self)
-
-
-class SolrCMIP7Parameters(BaseModel):
-    """
-    CMIP7 facet values under their ESGF1/Solr parameter names
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    project: Annotated[FacetValues, QueryFacet("project")] = ()
-    """See [Dataset.project][esmporium.db.schema.Dataset.project]."""
-
-    source_id: Annotated[FacetValues, QueryFacet("model")] = ()
-    """See [Dataset.model][esmporium.db.schema.Dataset.model]."""
-
-    institution_id: Annotated[FacetValues, QueryFacet("institution")] = ()
-    """See [Dataset.institution][esmporium.db.schema.Dataset.institution]."""
-
-    experiment_id: Annotated[FacetValues, QueryFacet("experiment")] = ()
-    """See [Dataset.experiment][esmporium.db.schema.Dataset.experiment]."""
-
-    variable_id: Annotated[FacetValues, QueryFacet("variable")] = ()
-    """See [Dataset.variable][esmporium.db.schema.Dataset.variable]."""
-
-    variant_label: Annotated[FacetValues, QueryFacet("variant_label")] = ()
-    """See [Dataset.variant_label][esmporium.db.schema.Dataset.variant_label]."""
-
-    frequency: Annotated[FacetValues, QueryFacet("reporting_interval")] = ()
-    """See [Dataset.reporting_interval][esmporium.db.schema.Dataset.reporting_interval]."""  # noqa: E501
-
-    variable_branding_suffix: Annotated[FacetValues, QueryFacet("processing_id")] = ()
-    """See [Dataset.processing_id][esmporium.db.schema.Dataset.processing_id]."""
-
-    activity_id: Annotated[FacetValues, QueryFacet("activity")] = ()
-    """See [Dataset.activity][esmporium.query.canonical_query.QueryCanonical.activity]."""  # noqa: E501
-
-    grid_label: Annotated[FacetValues, QueryFacet("grid_label")] = ()
-    """See [Dataset.grid_label][esmporium.db.schema.Dataset.grid_label]."""
-
-    nominal_resolution: Annotated[FacetValues, QueryFacet("resolution")] = ()
-    """See [Dataset.resolution][esmporium.query.canonical_query.QueryCanonical.resolution]."""  # noqa: E501
-
-    realm: Annotated[FacetValues, QueryFacet("realm")] = ()
-    """See [Dataset.realm][esmporium.query.canonical_query.QueryCanonical.realm]."""
-
-    temporal_label: Annotated[FacetValues, QueryFacet(None)] = ()
-    """See [QueryCMIP7.temporal_label][esmporium.query.known_queries.QueryCMIP7.temporal_label]."""  # noqa: E501
-
-    vertical_label: Annotated[FacetValues, QueryFacet(None)] = ()
-    """See [QueryCMIP7.vertical_label][esmporium.query.known_queries.QueryCMIP7.vertical_label]."""  # noqa: E501
-
-    horizontal_label: Annotated[FacetValues, QueryFacet(None)] = ()
-    """See [QueryCMIP7.horizontal_label][esmporium.query.known_queries.QueryCMIP7.horizontal_label]."""  # noqa: E501
-
-    area_label: Annotated[FacetValues, QueryFacet(None)] = ()
-    """See [QueryCMIP7.area_label][esmporium.query.known_queries.QueryCMIP7.area_label]."""  # noqa: E501
-
-    region: Annotated[FacetValues, QueryFacet(None)] = ()
-    """See [QueryCMIP7.region][esmporium.query.known_queries.QueryCMIP7.region]."""
-
-    other_terms: FacetValuesByName = {}
-    """See [Query.other_terms][esmporium.query.known_queries.Query.other_terms]."""
-
-    source_query: SourceQuery = None
-    """See [Query.source_query][esmporium.query.known_queries.Query.source_query]."""
-
-    def facet_values(self) -> dict[str, tuple[str, ...]]:
-        """Facets that are set, keyed by this class's own (wire) names"""
-        return facet_values_from_attributes(self)
-
-
-class STACCMIP5Parameters(BaseModel):
-    """
-    CMIP5 facet values under their ESGF-NG/STAC property stems
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    prefix: ClassVar[str] = "cmip5"
-    """See [STACParams.prefix][(m).STACParams.prefix]."""
-
-    model: Annotated[FacetValues, QueryFacet("model")] = ()
-    """See [Dataset.model][esmporium.db.schema.Dataset.model]."""
-
-    institute: Annotated[FacetValues, QueryFacet("institution")] = ()
-    """See [Dataset.institution][esmporium.db.schema.Dataset.institution]."""
-
-    experiment: Annotated[FacetValues, QueryFacet("experiment")] = ()
-    """See [Dataset.experiment][esmporium.db.schema.Dataset.experiment]."""
-
-    variable: Annotated[FacetValues, QueryFacet("variable")] = ()
-    """See [Dataset.variable][esmporium.db.schema.Dataset.variable]."""
-
-    ensemble: Annotated[FacetValues, QueryFacet("variant_label")] = ()
-    """See [Dataset.variant_label][esmporium.db.schema.Dataset.variant_label]."""
-
-    time_frequency: Annotated[FacetValues, QueryFacet("reporting_interval")] = ()
-    """See [Dataset.reporting_interval][esmporium.db.schema.Dataset.reporting_interval]."""  # noqa: E501
-
-    cmor_table: Annotated[FacetValues, QueryFacet("processing_id")] = ()
-    """See [Dataset.processing_id][esmporium.db.schema.Dataset.processing_id]."""
-
-    realm: Annotated[FacetValues, QueryFacet("realm")] = ()
-    """See [Dataset.realm][esmporium.query.canonical_query.QueryCanonical.realm]."""
-
-    product: Annotated[FacetValues, QueryFacet(None)] = ()
-    """See [QueryCMIP5.product][esmporium.query.known_queries.QueryCMIP5.product]."""
-
-    other_terms: FacetValuesByName = {}
-    """See [Query.other_terms][esmporium.query.known_queries.Query.other_terms]."""
-
-    source_query: SourceQuery = None
-    """See [Query.source_query][esmporium.query.known_queries.Query.source_query]."""
-
-    def facet_values(self) -> dict[str, tuple[str, ...]]:
-        """Facets that are set, keyed by this class's own (stem) names"""
-        return facet_values_from_attributes(self)
-
-
-class STACCMIP6Parameters(BaseModel):
-    """CMIP6 facet values under their ESGF-NG/STAC property stems"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    prefix: ClassVar[str] = "cmip6"
-    """See [STACParams.prefix][(m).STACParams.prefix]."""
-
-    source_id: Annotated[FacetValues, QueryFacet("model")] = ()
-    """See [Dataset.model][esmporium.db.schema.Dataset.model]."""
-
-    institution_id: Annotated[FacetValues, QueryFacet("institution")] = ()
-    """See [Dataset.institution][esmporium.db.schema.Dataset.institution]."""
-
-    experiment_id: Annotated[FacetValues, QueryFacet("experiment")] = ()
-    """See [Dataset.experiment][esmporium.db.schema.Dataset.experiment]."""
-
-    variant_label: Annotated[FacetValues, QueryFacet("variant_label")] = ()
-    """See [Dataset.variant_label][esmporium.db.schema.Dataset.variant_label]."""
-
-    variable_id: Annotated[FacetValues, QueryFacet("variable")] = ()
-    """See [Dataset.variable][esmporium.db.schema.Dataset.variable]."""
-
-    frequency: Annotated[FacetValues, QueryFacet("reporting_interval")] = ()
-    """See [Dataset.reporting_interval][esmporium.db.schema.Dataset.reporting_interval]."""  # noqa: E501
-
-    table_id: Annotated[FacetValues, QueryFacet("processing_id")] = ()
-    """See [Dataset.processing_id][esmporium.db.schema.Dataset.processing_id]."""
-
-    activity_id: Annotated[FacetValues, QueryFacet("activity")] = ()
-    """See [Dataset.activity][esmporium.query.canonical_query.QueryCanonical.activity]."""  # noqa: E501
-
-    nominal_resolution: Annotated[FacetValues, QueryFacet("resolution")] = ()
-    """See [Dataset.resolution][esmporium.query.canonical_query.QueryCanonical.resolution]."""  # noqa: E501
-
-    grid_label: Annotated[FacetValues, QueryFacet("grid_label")] = ()
-    """See [Dataset.grid_label][esmporium.db.schema.Dataset.grid_label]."""
-
-    realm: Annotated[FacetValues, QueryFacet("realm")] = ()
-    """See [Dataset.realm][esmporium.query.canonical_query.QueryCanonical.realm]."""
-
-    sub_experiment_id: Annotated[FacetValues, QueryFacet(None)] = ()
-    """See [QueryCMIP6.sub_experiment_id][esmporium.query.known_queries.QueryCMIP6.sub_experiment_id]."""  # noqa: E501
-
-    other_terms: FacetValuesByName = {}
-    """See [Query.other_terms][esmporium.query.known_queries.Query.other_terms]."""
-
-    source_query: SourceQuery = None
-    """See [Query.source_query][esmporium.query.known_queries.Query.source_query]."""
-
-    def facet_values(self) -> dict[str, tuple[str, ...]]:
-        """Facets that are set, keyed by this class's own (stem) names"""
-        return facet_values_from_attributes(self)
-
-
-class STACCMIP7Parameters(BaseModel):
-    """
-    CMIP7 facet values under their ESGF-NG/STAC property stems
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    prefix: ClassVar[str] = "cmip7"
-    """See [STACParams.prefix][(m).STACParams.prefix]."""
-
-    source_id: Annotated[FacetValues, QueryFacet("model")] = ()
-    """See [Dataset.model][esmporium.db.schema.Dataset.model]."""
-
-    institution_id: Annotated[FacetValues, QueryFacet("institution")] = ()
-    """See [Dataset.institution][esmporium.db.schema.Dataset.institution]."""
-
-    experiment_id: Annotated[FacetValues, QueryFacet("experiment")] = ()
-    """See [Dataset.experiment][esmporium.db.schema.Dataset.experiment]."""
-
-    variant_label: Annotated[FacetValues, QueryFacet("variant_label")] = ()
-    """See [Dataset.variant_label][esmporium.db.schema.Dataset.variant_label]."""
-
-    variable_id: Annotated[FacetValues, QueryFacet("variable")] = ()
-    """See [Dataset.variable][esmporium.db.schema.Dataset.variable]."""
-
-    frequency: Annotated[FacetValues, QueryFacet("reporting_interval")] = ()
-    """See [Dataset.reporting_interval][esmporium.db.schema.Dataset.reporting_interval]."""  # noqa: E501
-
-    # Note for developers:
-    # if anyone ever asks why we don't just use the query classes directly,
-    # this is an example of why.
-    # The query (based on CMIP7 guidance) uses `branding_suffix`,
-    # but the API uses `variable_branding_suffix`, which isn't the same.
-    variable_branding_suffix: Annotated[FacetValues, QueryFacet("processing_id")] = ()
-    """See [Dataset.processing_id][esmporium.db.schema.Dataset.processing_id]."""
-
-    activity_id: Annotated[FacetValues, QueryFacet("activity")] = ()
-    """See [Dataset.activity][esmporium.query.canonical_query.QueryCanonical.activity]."""  # noqa: E501
-
-    nominal_resolution: Annotated[FacetValues, QueryFacet("resolution")] = ()
-    """See [Dataset.resolution][esmporium.query.canonical_query.QueryCanonical.resolution]."""  # noqa: E501
-
-    grid_label: Annotated[FacetValues, QueryFacet("grid_label")] = ()
-    """See [Dataset.grid_label][esmporium.db.schema.Dataset.grid_label]."""
-
-    realm: Annotated[FacetValues, QueryFacet("realm")] = ()
-    """See [Dataset.realm][esmporium.query.canonical_query.QueryCanonical.realm]."""
-
-    temporal_label: Annotated[FacetValues, QueryFacet(None)] = ()
-    """See [QueryCMIP7.temporal_label][esmporium.query.known_queries.QueryCMIP7.temporal_label]."""  # noqa: E501
-
-    vertical_label: Annotated[FacetValues, QueryFacet(None)] = ()
-    """See [QueryCMIP7.vertical_label][esmporium.query.known_queries.QueryCMIP7.vertical_label]."""  # noqa: E501
-
-    horizontal_label: Annotated[FacetValues, QueryFacet(None)] = ()
-    """See [QueryCMIP7.horizontal_label][esmporium.query.known_queries.QueryCMIP7.horizontal_label]."""  # noqa: E501
-
-    area_label: Annotated[FacetValues, QueryFacet(None)] = ()
-    """See [QueryCMIP7.area_label][esmporium.query.known_queries.QueryCMIP7.area_label]."""  # noqa: E501
-
-    region: Annotated[FacetValues, QueryFacet(None)] = ()
-    """See [QueryCMIP7.region][esmporium.query.known_queries.QueryCMIP7.region]."""
-
-    other_terms: FacetValuesByName = {}
-    """See [Query.other_terms][esmporium.query.known_queries.Query.other_terms]."""
-
-    source_query: SourceQuery = None
-    """See [Query.source_query][esmporium.query.known_queries.Query.source_query]."""
-
-    def facet_values(self) -> dict[str, tuple[str, ...]]:
-        """Facets that are set, keyed by this class's own (stem) names"""
-        return facet_values_from_attributes(self)
+    return canonical.project[0]
 
 
 @dataclass(frozen=True)
@@ -761,11 +260,9 @@ class SearchAPIFacade:
 
     def askable_facets(self, facets: set[str]) -> set[str]:
         """
-        Get the subset of `facets` this facade's vocabulary can express
+        Get the subset of `facets` this facade can handle
 
-        The rest cannot be asked about (there is no name to ask them under),
-        so the caller is expected to record them as unchecked rather than
-        pretend a source was silent about them.
+        The rest cannot be asked about (there is no name to ask them under).
 
         Parameters
         ----------
@@ -775,9 +272,9 @@ class SearchAPIFacade:
         Returns
         -------
         :
-            The facets `query_style` can express, named canonically
+            The facets `parameters` can express, named canonically
         """
-        return set(get_mapping_to_native_facet_names(self.parameters, facets))
+        return set(self.parameters.get_mapping_to_api_facet_names(facets))
 
     def build_search_request(self, canonical: QueryCanonical, limit: int) -> Request:
         """
@@ -811,22 +308,7 @@ class SearchAPIFacade:
         ProjectPrefixMismatchError
             A STAC facade was given a project its vocabulary does not describe
         """
-        prefix = getattr(self.parameters, "prefix", None)
-        if prefix is None:
-            native = from_canonical(canonical=canonical, to=self.parameters)
-            return self.search_api.build_search_request(native.facet_values(), limit)
-
-        # With this API, the project is the collection ID rather than a property,
-        # so it is translated out of the query and into a `collection` facet,
-        # and every other property carries the collection's prefix.
-        collection = get_stac_collection(canonical, self.parameters)
-        without_project = canonical.model_copy(update={"project": ()})
-        native = from_canonical(canonical=without_project, to=self.parameters)
-
-        facet_values: dict[str, tuple[str, ...]] = {"collection": (collection,)}
-        for stem, values in native.facet_values().items():
-            facet_values[f"{prefix}:{stem}"] = values
-
+        facet_values = self.parameters.get_search_request_facet_values(canonical)
         return self.search_api.build_search_request(facet_values, limit)
 
     def build_get_facet_values_request(
@@ -862,19 +344,13 @@ class SearchAPIFacade:
         ProjectPrefixMismatchError
             A STAC facade was given a project its vocabulary does not describe
         """
-        check_facets_expressible(self.parameters, facets)
+        check_facets_expressible(self.parameters.base_query_style, facets)
 
         wire_facet_names = set(
-            get_mapping_to_wire_facet_names(self.parameters, facets).values()
+            self.parameters.get_mapping_to_api_facet_names(facets).values()
         )
+        project = get_single_project(canonical)
 
-        if getattr(self.parameters, "prefix", None) is None:
-            project = get_single_project(canonical)
-
-        else:
-            project = get_stac_collection(canonical, self.parameters)
-
-        # Up to here
         return self.search_api.build_get_facet_values_for_project_request(
             wire_facet_names, project
         )
@@ -954,21 +430,26 @@ class SearchAPIFacade:
         """
         Parse a facet-values response and translate its keys back to canonical names
 
-        `parse` reads `raw` keyed by the wire names; this asks it about the wire
-        names for `facets`, then hands the answer back under the names they were
-        asked for.
+        `parse` reads `raw` keyed by the API names;
+        this asks it about the API names for `facets`,
+        then hands the answer back under the names they were asked for.
         """
-        check_facets_askable(self.parameters, facets)
+        check_facets_askable(self.parameters.base_query_style, facets)
 
-        wire = get_mapping_to_wire_facet_names(self.parameters, facets)
-        asked_for = {wire_name: canonical for canonical, wire_name in wire.items()}
-
-        native_keyed = parse(raw, set(wire.values()))
-        return {
-            asked_for[wire_name]: value
-            for wire_name, value in native_keyed.items()
-            if wire_name in asked_for
+        api_name_map = self.parameters.get_mapping_to_api_facet_names(facets)
+        asked_for_map = {
+            api_name: canonical for canonical, api_name in api_name_map.items()
         }
+
+        res_api_keyed = parse(raw, set(api_name_map.values()))
+
+        res = {
+            asked_for_map[api_name]: value
+            for api_name, value in res_api_keyed.items()
+            if api_name in asked_for_map
+        }
+
+        return res
 
 
 SearchAPIFacadeSelector = Callable[[QueryCanonical, int], SearchAPIFacade | None]
@@ -1356,7 +837,7 @@ class SearchAPIFacadeStore:
         # To add CMIP6Plus support in future:
         # add a `cmip6plus_facades` block here
         # (its own STAC vocabulary with a `cmip6plus` prefix would be needed,
-        # as STACCMIP6Parameters is tied to the `cmip6` collection),
+        # as ESGFNG_CMIP6_FACADE_PARAMETERS is tied to the `cmip6` collection),
         # classify it against `("CMIP6Plus",)`
         # in the loop below,
         # and add "CMIP6Plus" to DEFAULT_SEARCH_API_FACADES_BY_PROJECT.
@@ -1411,5 +892,19 @@ DEFAULT_SELECTOR = build_project_list_selector(DEFAULT_SEARCH_API_FACADES_BY_PRO
 """The selector used when the caller does not choose one"""
 
 __all__ = [
+    "ESGF1_CMIP5_FACADE_PARAMETERS",
+    "ESGF1_CMIP6_FACADE_PARAMETERS",
+    "ESGF1_CMIP7_FACADE_PARAMETERS",
+    "ESGFNG_CMIP5_FACADE_PARAMETERS",
+    "ESGFNG_CMIP6_FACADE_PARAMETERS",
+    "ESGFNG_CMIP7_FACADE_PARAMETERS",
     "ESGF1CMIP5ParametersQueryStyle",
+    "ESGF1CMIP6ParametersQueryStyle",
+    "ESGF1CMIP7ParametersQueryStyle",
+    "ESGFNGCMIP5ParametersQueryStyle",
+    "ESGFNGCMIP6ParametersQueryStyle",
+    "ESGFNGCMIP7ParametersQueryStyle",
+    "OneProjectRequiredError",
+    "ProjectPrefixMismatchError",
+    "get_mapping_to_query_style_facet_names",
 ]

@@ -26,11 +26,13 @@ from pydantic import BaseModel, ConfigDict, PlainValidator
 from esmporium.query import (
     FacetValues,
     FacetValuesByName,
+    QueryCanonical,
     QueryFacet,
     QueryProtocol,
     SourceQuery,
     facet_spec,
     facet_values_from_attributes,
+    from_canonical,
 )
 from esmporium.query.protocol import accept_without_validation
 
@@ -100,6 +102,14 @@ class DirectMappingFacadeParameters(BaseModel):
     def get_mapping_to_api_facet_names(self, facets: set[str]) -> dict[str, str]:
         """See [FacadeParametersProtocol.get_mapping_to_api_facet_names][esmporium.search.search_api_facade.parameters.protocol.FacadeParametersProtocol.get_mapping_to_api_facet_names]."""  # noqa: E501
         return get_mapping_to_query_style_facet_names(self.base_query_style, facets)
+
+    def get_search_request_facet_values(
+        self, canonical: QueryCanonical
+    ) -> dict[str, tuple[str, ...]]:
+        """See [FacadeParametersProtocol.get_search_request_facet_values][esmporium.search.search_api_facade.parameters.protocol.FacadeParametersProtocol.get_search_request_facet_values]."""  # noqa: E501
+        native = from_canonical(canonical=canonical, to=self.base_query_style)
+
+        return native.facet_values()
 
 
 class ESGF1CMIP5ParametersQueryStyle(BaseModel):
@@ -288,11 +298,74 @@ ESGF1_CMIP7_FACADE_PARAMETERS = DirectMappingFacadeParameters(
 """Parameters for CMIP7 with an ESGF1 API"""
 
 
-class PrefixMappingFacadeParameters(BaseModel):
+class OneProjectRequiredError(ValueError):
     """
-    Facade parameters where the API facet names include a prefix
+    Raised when a exactly one project is required, but there isn't exactly one project
+    """
 
-    This prefix is prepended to facet names defined by the base query style.
+    def __init__(self, query: QueryCanonical, projects: tuple[str, ...]) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        query
+            Query which does not specify exactly one project
+
+        projects
+            The projects which were asked for
+        """
+        self.query = query
+        self.projects = projects
+        super().__init__(
+            f"Received {len(projects)}: {projects}. "
+            "We need the query to have exactly one project. "
+            f"{query=}"
+        )
+
+
+class ProjectPrefixMismatchError(ValueError):
+    """
+    Raised when there is a mismatch between project and prefix
+
+    ESGF STAC APIs name their collections' properties
+    with a specific prefix
+    (TODO Claude: check if there is a rule for this
+    e.g. the prefix is always the lowercase version of the project,
+    or whether it is more complicated than that),
+    so a mismatch will mean that we build requests which cannot match anything.
+    Without this error, no results would come back and nothing would say why.
+    """
+
+    def __init__(self, project: str, facade_parameters: STACFacadeParameters) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        project
+            The project which was asked for
+
+        facade_parameters
+            The facade parameter definition
+        """
+        self.project = project
+        self.facade_parameters = facade_parameters
+        super().__init__(
+            f"{facade_parameters.base_query_style.__name__} "
+            "writes its API facets with the "
+            f"{facade_parameters.prefix!r} prefix, "
+            f"so it cannot describe the {project!r} collection. "
+            f"You need to use the facade parameter class specific to {project}."
+        )
+
+
+class STACFacadeParameters(BaseModel):
+    """
+    Facade parameters for ESGF-NG STAC facades
+
+    In these, the API facet names include a prefix
+    and project must be handled carefully when being passed.
     """
 
     prefix: str
@@ -314,6 +387,31 @@ class PrefixMappingFacadeParameters(BaseModel):
         }
 
         return res
+
+    def get_search_request_facet_values(
+        self, canonical: QueryCanonical
+    ) -> dict[str, tuple[str, ...]]:
+        """See [FacadeParametersProtocol.get_search_request_facet_values][esmporium.search.search_api_facade.parameters.protocol.FacadeParametersProtocol.get_search_request_facet_values]."""  # noqa: E501
+        if len(canonical.project) != 1:
+            raise OneProjectRequiredError(canonical, canonical.project)
+
+        collection = canonical.project[0]
+        # TODO Claude: are we 100% certain that this logic is correct
+        # i.e. the prefix is always the lowercase version
+        # of the collection (i.e. project)
+        if collection.lower() != self.prefix:
+            raise ProjectPrefixMismatchError(collection, self)
+
+        without_project = canonical.model_copy(update={"project": ()})
+        native = from_canonical(canonical=without_project, to=self.base_query_style)
+
+        # Special project handling
+        facet_values: dict[str, tuple[str, ...]] = {"collection": (collection,)}
+        # Other facets are 'normal'
+        for facet_name, values in native.facet_values().items():
+            facet_values[f"{self.prefix}:{facet_name}"] = values
+
+        return facet_values
 
 
 class ESGFNGCMIP5ParametersQueryStyle(BaseModel):
@@ -359,7 +457,7 @@ class ESGFNGCMIP5ParametersQueryStyle(BaseModel):
         return facet_values_from_attributes(self)
 
 
-ESGFNG_CMIP5_FACADE_PARAMETERS = PrefixMappingFacadeParameters(
+ESGFNG_CMIP5_FACADE_PARAMETERS = STACFacadeParameters(
     base_query_style=ESGFNGCMIP5ParametersQueryStyle,
     prefix="cmip5",
 )
@@ -418,7 +516,7 @@ class ESGFNGCMIP6ParametersQueryStyle(BaseModel):
         return facet_values_from_attributes(self)
 
 
-ESGFNG_CMIP6_FACADE_PARAMETERS = PrefixMappingFacadeParameters(
+ESGFNG_CMIP6_FACADE_PARAMETERS = STACFacadeParameters(
     base_query_style=ESGFNGCMIP6ParametersQueryStyle,
     prefix="cmip6",
 )
@@ -494,7 +592,7 @@ class ESGFNGCMIP7ParametersQueryStyle(BaseModel):
         return facet_values_from_attributes(self)
 
 
-ESGFNG_CMIP7_FACADE_PARAMETERS = PrefixMappingFacadeParameters(
+ESGFNG_CMIP7_FACADE_PARAMETERS = STACFacadeParameters(
     base_query_style=ESGFNGCMIP7ParametersQueryStyle,
     prefix="cmip7",
 )

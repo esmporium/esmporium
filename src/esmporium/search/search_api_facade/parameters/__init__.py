@@ -16,7 +16,9 @@ from esmporium.search.search_api_facade.parameters.known_facade_parameters impor
     ESGFNGCMIP5ParametersQueryStyle,
     ESGFNGCMIP6ParametersQueryStyle,
     ESGFNGCMIP7ParametersQueryStyle,
-    PrefixMappingFacadeParameters,
+    OneProjectRequiredError,
+    ProjectPrefixMismatchError,
+    STACFacadeParameters,
     get_mapping_to_query_style_facet_names,
 )
 from esmporium.search.search_api_facade.parameters.protocol import (
@@ -38,6 +40,8 @@ __all__ = [
     "ESGFNGCMIP6ParametersQueryStyle",
     "ESGFNGCMIP7ParametersQueryStyle",
     "FacadeParametersProtocol",
-    "PrefixMappingFacadeParameters",
+    "OneProjectRequiredError",
+    "ProjectPrefixMismatchError",
+    "STACFacadeParameters",
     "get_mapping_to_query_style_facet_names",
 ]

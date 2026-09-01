@@ -12,7 +12,8 @@ from typing import Annotated, Protocol
 
 from pydantic import PlainValidator
 
-from esmporium.query.protocol import QueryProtocol, accept_without_validation
+from esmporium.query import QueryCanonical, QueryProtocol
+from esmporium.query.protocol import accept_without_validation
 
 
 class FacadeParametersProtocol(Protocol):
@@ -30,6 +31,24 @@ class FacadeParametersProtocol(Protocol):
     can involve an extra layer on top of this base style
     (e.g. ESGF-NG's prefix).
     """
+
+    def get_search_request_facet_values(
+        self, canonical: QueryCanonical
+    ) -> dict[str, tuple[str, ...]]:
+        """
+        Get the facet values to use in a search request
+
+        Parameters
+        ----------
+        canonical
+            Canonical query for which to get the search request facet values
+
+        Returns
+        -------
+        :
+            Facet values to use in a search request
+        """
+        ...
 
     def get_mapping_to_api_facet_names(self, facets: set[str]) -> dict[str, str]:
         """
