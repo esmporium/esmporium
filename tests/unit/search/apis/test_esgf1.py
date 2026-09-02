@@ -164,20 +164,60 @@ def test_parse_facet_values_keeps_only_the_asked_for_facets():
 
 
 @pytest.mark.parametrize(
-    "raw",
+    "raw, exp",
     (
-        pytest.param({}, id="nothing-we-recognise"),
-        pytest.param({"facet_counts": {}}, id="no-facet-fields"),
-        pytest.param({"facet_counts": {"facet_fields": {}}}, id="no-facets"),
+        pytest.param(
+            {},
+            pytest.raises(
+                NoFacetValuesReturnedError,
+                match=re.escape(
+                    "This response does not report facet values. "
+                    "We expected to read the facet values from "
+                    "'facet_counts.facet_fields', "
+                    "but the response is empty."
+                ),
+            ),
+            id="nothing-we-recognise",
+        ),
+        pytest.param(
+            {"facet_counts": {}},
+            pytest.raises(
+                NoFacetValuesReturnedError,
+                match=re.escape(
+                    "This response does not report facet values. "
+                    "We expected to read the facet values from "
+                    "'facet_counts.facet_fields', "
+                    "but 'facet_fields' is not in 'facet_counts', "
+                    "there are no keys at this path."
+                ),
+            ),
+            id="no-facet-fields",
+        ),
+        pytest.param(
+            {"facet_counts": {"facet_fields": {}}},
+            pytest.raises(
+                NoFacetValuesReturnedError,
+                match=re.escape(
+                    "This response does not report facet values. "
+                    "We expected to read the facet values from "
+                    "'facet_counts.facet_fields', "
+                    "but we found {} at 'facet_counts.facet_fields'."
+                ),
+            ),
+            id="no-facets",
+        ),
     ),
 )
-def test_parse_facet_values_with_nothing_to_read_raises(raw):
-    with pytest.raises(NoFacetValuesReturnedError, match="pinme"):
+def test_parse_facet_values_with_nothing_to_read_raises(raw, exp):
+    with exp:
         api().parse_facet_values(raw, {"variable_id"})
 
 
 def test_no_facet_value_returned_error_when_there_is_a_match_raises():
-    with pytest.raises(AssertionError, match="pinme"):
+    with pytest.raises(
+        AssertionError,
+        match=re.escape("hi.bye is in {'hi': {'bye': 1}}, raw[hi][bye]=1"),
+    ):
         NoFacetValuesReturnedError({"hi": {"bye": 1}}, expected_at="hi.bye")
 
 

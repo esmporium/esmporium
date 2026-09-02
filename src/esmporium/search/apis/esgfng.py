@@ -212,14 +212,15 @@ class SearchAPIESGFNGSTAC:
         # west reports `numMatched` and `context.matched`.
         # We try everything, starting with the correct (STAC) spelling.
         context = raw.get("context")
-        for loc, total in [
+        candidates = (
             ("numberMatched", raw.get("numberMatched")),
             ("numMatched", raw.get("numMatched")),
             (
                 "context.matched",
                 context.get("matched") if isinstance(context, dict) else None,
             ),
-        ]:
+        )
+        for loc, total in candidates:
             if isinstance(total, int):
                 return total
 
@@ -230,7 +231,7 @@ class SearchAPIESGFNGSTAC:
                 raise TypeError(msg)
 
         raise NoSearchResultNumberOfMatchesReturnedError(
-            raw, "numberMatched / numMatched / context.matched"
+            raw, tuple(loc for loc, _ in candidates)
         )
 
     def build_get_facet_values_for_project_request(

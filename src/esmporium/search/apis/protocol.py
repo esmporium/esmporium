@@ -13,6 +13,127 @@ from tenacity import Retrying
 from esmporium.search.apis.request import Request
 
 
+def _describe_where_we_looked(expected_at: tuple[str, ...]) -> str:
+    """
+    Describe where we looked for a value in a response
+
+    Parameters
+    ----------
+    expected_at
+        The paths in the response at which we looked,
+        each one a dot-separated path
+
+    Returns
+    -------
+    :
+        The description of where we looked.
+
+        This is written to follow on from "We expected to read ... from ".
+    """
+    if len(expected_at) == 1:
+        return repr(expected_at[0])
+
+    quoted = [repr(path) for path in expected_at]
+
+    return f"one of {', '.join(quoted[:-1])} or {quoted[-1]}"
+
+
+def _explain_why_we_could_not_read_path(raw: dict[str, Any], path: str) -> str:
+    """
+    Explain why we could not read a value at a single path in a response
+
+    Parameters
+    ----------
+    raw
+        The response we could not read the value out of
+
+    path
+        Where in `raw` we looked, as a dot-separated path
+
+    Returns
+    -------
+    :
+        The explanation of what we found at `path` instead.
+
+    Raises
+    ------
+    AssertionError
+        There is in fact a value at `path` in `raw`,
+        so there is nothing to explain and we should not have been asked.
+    """
+    parts = path.split(".")
+    current_level: Any = raw
+    for level, part in enumerate(parts):
+        if isinstance(current_level, Mapping) and part in current_level:
+            # We have this part, keep looking
+            current_level = current_level[part]
+            continue
+
+        path_that_exists = ".".join(parts[:level])
+        where = repr(path_that_exists) if level else "the response's top level"
+        if not isinstance(current_level, Mapping):
+            found = f"we found {current_level!r} rather than keys at this path"
+        elif current_level:
+            keys = ", ".join(f"{key!r}" for key in sorted(current_level))
+            found = f"there is only: {keys}"
+        else:
+            found = "there are no keys at this path"
+
+        return f"{part!r} is not in {where}, {found}"
+
+    if current_level:
+        path_rep = "".join(f"[{part}]" for part in parts)
+        msg = f"{path} is in {raw}, raw{path_rep}={current_level}"
+        raise AssertionError(msg)
+
+    return f"we found {current_level!r} at {path!r}"
+
+
+def _explain_why_we_could_not_read(
+    raw: dict[str, Any], expected_at: tuple[str, ...]
+) -> str:
+    """
+    Explain why we could not read a value out of a response
+
+    Every path we looked at is reported,
+    because any of them could have been the one which answered us.
+
+    Parameters
+    ----------
+    raw
+        The response we could not read the value out of
+
+    expected_at
+        The paths in `raw` at which we looked,
+        each one a dot-separated path
+
+    Returns
+    -------
+    :
+        The explanation of what we found instead.
+
+        This is written to follow on from
+        "We expected to read ... from <where we looked>, ".
+
+    Raises
+    ------
+    AssertionError
+        There is in fact a value at one of `expected_at` in `raw`,
+        so there is nothing to explain and we should not have been asked.
+    """
+    if not raw:
+        # No path can be explained any further than this.
+        return "but the response is empty."
+
+    explanations = [
+        _explain_why_we_could_not_read_path(raw, path) for path in expected_at
+    ]
+    if len(explanations) == 1:
+        return f"but {explanations[0]}."
+
+    return f"but: {'; '.join(explanations)}."
+
+
 class LimitOutOfRangeError(ValueError):
     """
     Raised when a page size is one a search API will not accept
@@ -47,7 +168,7 @@ class NoSearchResultNumberOfMatchesReturnedError(ValueError):
     Raised when a search response does not say how many records matched a search
     """
 
-    def __init__(self, raw: dict[str, Any], expected_at: str) -> None:
+    def __init__(self, raw: dict[str, Any], expected_at: str | tuple[str, ...]) -> None:
         """
         Initialise the error
 
@@ -58,49 +179,21 @@ class NoSearchResultNumberOfMatchesReturnedError(ValueError):
 
         expected_at
             Where in `raw` we looked for the number of records that matched the search
+
+            Some APIs report the count in more than one place,
+            in which case pass every path we looked at
+            and the error will report on all of them.
         """
         self.raw = raw
-        self.expected_at = expected_at
-
-        expected_at_split = expected_at.split(".")
-        current_level = raw
-        current_level_keys = sorted(current_level)
-        for level, part in enumerate(expected_at_split):
-            if part in current_level_keys:
-                # We have this part, keep looking
-                current_level = current_level[part]
-                current_level_keys = sorted(current_level)
-                continue
-
-            missing_part = part
-            path_that_exists = ".".join(expected_at_split[:level])
-            keys_at_path_that_exists = sorted(current_level)
-            break
-
-        else:
-            found_value = current_level[part]
-            expected_at_rep = "".join(f"[{part}]" for part in expected_at.split("."))
-            msg = f"{expected_at} is in {raw}, raw{expected_at_rep}={found_value}"
-            raise AssertionError(msg)
-
-        if raw:
-            if keys_at_path_that_exists:
-                tmp = ", ".join(f"{v!r}" for v in sorted(keys_at_path_that_exists))
-                keys_at_path_that_exists_string = f"there is only: {tmp}"
-            else:
-                keys_at_path_that_exists_string = "there are no keys at this path"
-
-            explanation = (
-                f"but {missing_part!r} is not in {path_that_exists!r}, "
-                f"{keys_at_path_that_exists_string}."
-            )
-        else:
-            explanation = "but the response is empty."
+        self.expected_at = (
+            (expected_at,) if isinstance(expected_at, str) else expected_at
+        )
 
         super().__init__(
             "This response does not report how many records matched the search. "
-            f"We expected to read the count from {expected_at!r}, "
-            f"{explanation}"
+            "We expected to read the count from "
+            f"{_describe_where_we_looked(self.expected_at)}, "
+            f"{_explain_why_we_could_not_read(raw, self.expected_at)}"
         )
 
 
@@ -112,7 +205,7 @@ class NoFacetValuesReturnedError(ValueError):
     but if we expect to get facet values and don't, we want to be loud about it.
     """
 
-    def __init__(self, raw: dict[str, Any], expected_at: str) -> None:
+    def __init__(self, raw: dict[str, Any], expected_at: str | tuple[str, ...]) -> None:
         """
         Initialise the error
 
@@ -123,17 +216,21 @@ class NoFacetValuesReturnedError(ValueError):
 
         expected_at
             Where in `raw` we looked for the facet values
+
+            Some APIs enumerate their facet values in more than one place,
+            in which case pass every path we looked at
+            and the error will report on all of them.
         """
         self.raw = raw
-        self.expected_at = expected_at
+        self.expected_at = (
+            (expected_at,) if isinstance(expected_at, str) else expected_at
+        )
 
-        keys = ", ".join(sorted(raw)) if raw else "nothing at all"
         super().__init__(
             "This response does not report facet values. "
-            f"We expected to read the facet values from {expected_at!r}, "
-            # TODO: make this more robust as the issue might be for a key
-            # lower than the top level.
-            f"but the response's top-level keys are: {keys}."
+            "We expected to read the facet values from "
+            f"{_describe_where_we_looked(self.expected_at)}, "
+            f"{_explain_why_we_could_not_read(raw, self.expected_at)}"
         )
 
 
