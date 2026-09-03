@@ -112,14 +112,19 @@ RECORDED_CASES = (
         id="esgf15-bridge-cmip6",
     ),
     pytest.param(
-        "esgf-ng-stac-cmip6",
+        "esgf-ng-stac-cmip6-east",
         facade(ESGFNG_CMIP6_FACADE_PARAMETERS, SearchAPIESGFNGSTAC),
-        id="esgf-ng-stac-cmip6",
+        id="esgf-ng-stac-cmip6-east",
     ),
     pytest.param(
-        "esgf-ng-stac-cmip7",
+        "esgf-ng-stac-cmip7-east",
         facade(ESGFNG_CMIP7_FACADE_PARAMETERS, SearchAPIESGFNGSTAC),
-        id="esgf-ng-stac-cmip7",
+        id="esgf-ng-stac-cmip7-east",
+    ),
+    pytest.param(
+        "esgf-ng-stac-cmip7-west",
+        facade(ESGFNG_CMIP7_FACADE_PARAMETERS, SearchAPIESGFNGSTAC),
+        id="esgf-ng-stac-cmip7-west",
     ),
 )
 """Each recording, with the facade which asked for it"""
@@ -268,3 +273,43 @@ def test_recorded_variant_label_is_summarised_as_a_pattern(name, facade):
         f"{native} was summarised as a {type(summary).__name__}, not a pattern"
     )
     re.compile(summary)
+
+
+@pytest.mark.parametrize("name, facade", STAC_RECORDED_CASES)
+def test_summary_facet_keys_have_not_drifted_in_case(name, facade):
+    """
+    Test that no summary key differs from ours only by case
+
+    We match summary keys exactly (see `stac_summary_values`): we build
+    lowercase-prefixed names like `cmip7:variable_id` and look for that string.
+    If a deployment renamed a key only by case (say `CMIP7:variable_id`), the
+    exact match would miss it and the facet would be dropped silently, read
+    downstream as "this facet has no enumerable values" rather than as an error.
+
+    This catches that drift by finding a summary key that matches one of our
+    facet names when case is ignored but not when it is respected, and only when
+    the correctly-cased key is absent (so the facet really would be lost). It is
+    the loud counterpart to the exact match the parser deliberately keeps.
+    """
+    raw = load(f"{name}-facets")
+    facets = every_facet(facade)
+    api_names = set(facade.parameters.get_mapping_to_api_facet_names(facets).values())
+
+    summary_keys = set(raw["summaries"])
+    summary_keys_by_lower = {key.lower(): key for key in summary_keys}
+
+    drifted = {
+        api_name: summary_keys_by_lower[api_name.lower()]
+        for api_name in api_names
+        # The exact key we look for is gone,
+        if api_name not in summary_keys
+        # but a differently-cased one is there, so its values would vanish.
+        and api_name.lower() in summary_keys_by_lower
+    }
+
+    assert not drifted, (
+        "these facet keys are present only under a different case, so the "
+        f"parser's exact match would drop them silently: {drifted}. "
+        "A deployment changed the case of a facet key; update the prefix or "
+        "name mapping to match, or the facet's values disappear without an error."
+    )

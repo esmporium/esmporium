@@ -84,7 +84,7 @@ CASES = (
         QueryCMIP6(experiment_id="historical", variable_id="tas", frequency="mon"),
     ),
     (
-        "esgf-ng-stac-cmip6",
+        "esgf-ng-stac-cmip6-east",
         SearchAPIFacade(
             ESGFNG_CMIP6_FACADE_PARAMETERS,
             SearchAPIESGFNGSTAC("search.east.esgf.io", build_transient_retrying(2)),
@@ -92,15 +92,25 @@ CASES = (
         QueryCMIP6(experiment_id="historical", variable_id="tas", frequency="mon"),
     ),
     (
-        "esgf-ng-stac-cmip7",
+        "esgf-ng-stac-cmip7-east",
         SearchAPIFacade(
             ESGFNG_CMIP7_FACADE_PARAMETERS,
             SearchAPIESGFNGSTAC("search.east.esgf.io", build_transient_retrying(2)),
         ),
         QueryCMIP7(variable_id="tas"),
     ),
-    # TODO: should we add in west queries too here, at least for CMIP7,
-    # given that west and east aren't actually identical?
+    # West is recorded alongside east because the two are not identical:
+    # they disagree on where the match count lives
+    # (see `get_search_result_n_matches` in `esmporium.search.apis.esgfng`),
+    # so a real west response is worth parsing against.
+    (
+        "esgf-ng-stac-cmip7-west",
+        SearchAPIFacade(
+            ESGFNG_CMIP7_FACADE_PARAMETERS,
+            SearchAPIESGFNGSTAC("search.west.esgf.io", build_transient_retrying(2)),
+        ),
+        QueryCMIP7(variable_id="tas"),
+    ),
 )
 """What to record: a name, the facade to ask with, and the query"""
 

@@ -53,14 +53,21 @@ LIVE_CASES = (
             "CMIP6", "search.east.esgf.io"
         ),
         CMIP6_QUERY,
-        id="esgf-ng-cmip6",
+        id="esgf-ng-cmip6-east",
     ),
     pytest.param(
         INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
             "CMIP7", "search.east.esgf.io"
         ),
         QueryCMIP7(variable_id="tas"),
-        id="esgf-ng-cmip7",
+        id="esgf-ng-cmip7-east",
+    ),
+    pytest.param(
+        INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
+            "CMIP7", "search.west.esgf.io"
+        ),
+        QueryCMIP7(variable_id="tas"),
+        id="esgf-ng-cmip7-west",
     ),
 )
 """A search API and a query we expect it to have data for"""
@@ -109,7 +116,7 @@ FACET_NAME_CASES = (
         ),
         CMIP6_QUERY,
         "variable_id",
-        id="esgf-ng-cmip6",
+        id="esgf-ng-cmip6-east",
     ),
     pytest.param(
         INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
@@ -117,7 +124,15 @@ FACET_NAME_CASES = (
         ),
         QueryCMIP7(variable_id="tas"),
         "variable_id",
-        id="esgf-ng-cmip7",
+        id="esgf-ng-cmip7-east",
+    ),
+    pytest.param(
+        INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
+            "CMIP7", "search.west.esgf.io"
+        ),
+        QueryCMIP7(variable_id="tas"),
+        "variable_id",
+        id="esgf-ng-cmip7-west",
     ),
 )
 """A search API, a query it matches, and the query field to poison"""
@@ -176,7 +191,14 @@ AND_OR_CASES = (
             "CMIP7", "search.east.esgf.io"
         ),
         and_or_query(QueryCMIP7, "variable_id", "experiment_id"),
-        id="esgf-ng-cmip7",
+        id="esgf-ng-cmip7-east",
+    ),
+    pytest.param(
+        INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
+            "CMIP7", "search.west.esgf.io"
+        ),
+        and_or_query(QueryCMIP7, "variable_id", "experiment_id"),
+        id="esgf-ng-cmip7-west",
     ),
 )
 """A search API and a maker for queries in that case's project query style"""
