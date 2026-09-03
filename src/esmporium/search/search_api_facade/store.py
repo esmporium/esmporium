@@ -205,7 +205,7 @@ class SearchAPIFacadeStore:
         cls, create_retrying: RetryingBuilder = build_default_retrying
     ) -> SearchAPIFacadeStore:
         """
-        Initialise with our default API facade set
+        Initialise with our default API facade set and ordering
 
         Parameters
         ----------
@@ -236,6 +236,8 @@ class SearchAPIFacadeStore:
             ),
             (
                 ESGF1_CMIP5_FACADE_PARAMETERS,
+                # Currently assuming that ESGF1.5 bridge
+                # can use ESGF1 parameters.
                 SearchAPIESGF15BridgeSolr,
                 "esgf-node.ornl.gov",
             ),
@@ -274,6 +276,8 @@ class SearchAPIFacadeStore:
             ),
             (
                 ESGF1_CMIP6_FACADE_PARAMETERS,
+                # Currently assuming that ESGF1.5 bridge
+                # can use ESGF1 parameters.
                 SearchAPIESGF15BridgeSolr,
                 "esgf-node.ornl.gov",
             ),
@@ -301,16 +305,6 @@ class SearchAPIFacadeStore:
 
         cmip7_facades = (
             (
-                ESGF1_CMIP7_FACADE_PARAMETERS,
-                SearchAPIESGF1Solr,
-                "esgf.nci.org.au",
-            ),
-            (
-                ESGF1_CMIP7_FACADE_PARAMETERS,
-                SearchAPIESGF1Solr,
-                "esgf-data.dkrz.de",
-            ),
-            (
                 ESGFNG_CMIP7_FACADE_PARAMETERS,
                 SearchAPIESGFNGSTAC,
                 "search.east.esgf.io",
@@ -319,6 +313,16 @@ class SearchAPIFacadeStore:
                 ESGFNG_CMIP7_FACADE_PARAMETERS,
                 SearchAPIESGFNGSTAC,
                 "search.west.esgf.io",
+            ),
+            (
+                ESGF1_CMIP7_FACADE_PARAMETERS,
+                SearchAPIESGF1Solr,
+                "esgf.nci.org.au",
+            ),
+            (
+                ESGF1_CMIP7_FACADE_PARAMETERS,
+                SearchAPIESGF1Solr,
+                "esgf-data.dkrz.de",
             ),
         )
 
