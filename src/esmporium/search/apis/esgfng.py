@@ -59,6 +59,17 @@ def stac_summary_values(raw: dict[str, Any], facets: set[str]) -> dict[str, set[
 
     res: dict[str, set[str]] = {}
     for api_name, summary in raw["summaries"].items():
+        # This match is deliberately exact (case-sensitive). We only ever build
+        # lowercase-prefixed names (`cmip7:variable_id`), and both ESGF-NG
+        # deployments key their summaries the same way today, so exact matching
+        # works. Do not "fix" this by case-folding the keys: these collections
+        # really do treat case as significant -- east's CMIP6Plus, for one,
+        # carries both `cmip6plus:Conventions` and `cmip6plus:conventions` as
+        # separate keys, so lowering every key would collapse the two and
+        # silently clobber one. The cost of exactness is that a node changing a
+        # key's case would drop that facet silently (it reads as "no enumerable
+        # values"); `test_summary_facet_keys_have_not_drifted_in_case` is what
+        # turns that drift into a loud failure.
         if api_name in facets:
             if not isinstance(summary, list):
                 # A range or a pattern, i.e. not a list of values.
@@ -128,6 +139,7 @@ def stac_summary_patterns(
 
     res: dict[str, re.Pattern[str]] = {}
     for api_name, summary in raw["summaries"].items():
+        # Exact, case-sensitive match, for the reasons in `stac_summary_values`.
         if api_name in facets:
             if not isinstance(summary, str):
                 # Enumerated values or something else.
