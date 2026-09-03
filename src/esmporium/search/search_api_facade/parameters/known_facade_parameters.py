@@ -119,7 +119,12 @@ class DirectMappingFacadeParameters(BaseModel):
 
 
 class ESGF1CMIP5ParametersQueryStyle(BaseModel):
-    """CMIP5 facet values under their ESGF1 parameter names"""
+    """
+    CMIP5 facet values under their ESGF1 parameter names
+
+    At present, these are also used for ESGF1.5 bridge.
+    If that turns out not to work, we will adjust.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -167,7 +172,12 @@ ESGF1_CMIP5_FACADE_PARAMETERS = DirectMappingFacadeParameters(
 
 
 class ESGF1CMIP6ParametersQueryStyle(BaseModel):
-    """CMIP6 facet values under their ESGF1 parameter names"""
+    """
+    CMIP6 facet values under their ESGF1 parameter names
+
+    At present, these are also used for ESGF1.5 bridge.
+    If that turns out not to work, we will adjust.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -224,7 +234,12 @@ ESGF1_CMIP6_FACADE_PARAMETERS = DirectMappingFacadeParameters(
 
 
 class ESGF1CMIP7ParametersQueryStyle(BaseModel):
-    """CMIP7 facet values under their ESGF1 parameter names"""
+    """
+    CMIP7 facet values under their ESGF1 parameter names
+
+    At present, these are also used for ESGF1.5 bridge.
+    If that turns out not to work, we will adjust.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
