@@ -20,6 +20,9 @@ from esmporium.search.apis.protocol import (
 from esmporium.search.apis.request import Request
 
 
+# In future, `aggregations` could be used to return value counts per facet value.
+# Currently, only esgf-ng-east handles aggregation, not west.
+# Sticking to summary for now as this is handled by east and west.
 def stac_summary_values(raw: dict[str, Any], facets: set[str]) -> dict[str, set[str]]:
     """
     Read the available facet values out of a STAC-shaped facet values response
@@ -241,6 +244,13 @@ class SearchAPIESGFNGSTAC:
         See [SearchAPI.build_get_facet_values_for_project_request][esmporium.search.apis.SearchAPI.build_get_facet_values_for_project_request].
         """  # noqa: E501
         # Assumes project has been mapped to the intended collection style.
+        #
+        # The collection name is case-sensitive on east: it must be the exact
+        # ESGF spelling (e.g. `CMIP6Plus`, not `CMIP6PLUS` or `cmip6plus`) or
+        # east returns 404. West is case-insensitive. The response echoes the
+        # name back in its `id` field, and the two deployments disagree on its
+        # case (east keeps `CMIP7`, west lowercases it to `cmip7`), but we never
+        # read `id`, so that difference is nothing we have to handle.
         return Request("GET", f"/collections/{project}")
 
     def parse_facet_values(
