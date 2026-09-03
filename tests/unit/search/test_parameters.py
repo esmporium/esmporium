@@ -14,12 +14,12 @@ from esmporium.query import (
     to_canonical,
 )
 from esmporium.search import (
-    SolrCMIP5Parameters,
-    SolrCMIP6Parameters,
-    SolrCMIP7Parameters,
-    STACCMIP5Parameters,
-    STACCMIP6Parameters,
-    STACCMIP7Parameters,
+    ESGF1CMIP5ParametersQueryStyle,
+    ESGF1CMIP6ParametersQueryStyle,
+    ESGF1CMIP7ParametersQueryStyle,
+    ESGFNGCMIP5ParametersQueryStyle,
+    ESGFNGCMIP6ParametersQueryStyle,
+    ESGFNGCMIP7ParametersQueryStyle,
 )
 
 
@@ -27,7 +27,7 @@ from esmporium.search import (
     "exp",
     (
         pytest.param(
-            SolrCMIP5Parameters(
+            ESGF1CMIP5ParametersQueryStyle(
                 model=("model",),
                 institute=("institution",),
                 experiment=("experiment",),
@@ -41,7 +41,7 @@ from esmporium.search import (
             id="solr-cmip5",
         ),
         pytest.param(
-            STACCMIP5Parameters(
+            ESGFNGCMIP5ParametersQueryStyle(
                 model=("model",),
                 institute=("institution",),
                 experiment=("experiment",),
@@ -55,7 +55,7 @@ from esmporium.search import (
             id="stac-cmip5",
         ),
         pytest.param(
-            SolrCMIP6Parameters(
+            ESGF1CMIP6ParametersQueryStyle(
                 source_id=("model",),
                 institution_id=("institution",),
                 experiment_id=("experiment",),
@@ -69,7 +69,7 @@ from esmporium.search import (
             id="solr-cmip6",
         ),
         pytest.param(
-            STACCMIP6Parameters(
+            ESGFNGCMIP6ParametersQueryStyle(
                 source_id=("model",),
                 institution_id=("institution",),
                 experiment_id=("experiment",),
@@ -83,21 +83,21 @@ from esmporium.search import (
             id="stac-cmip6",
         ),
         pytest.param(
-            SolrCMIP7Parameters(
+            ESGF1CMIP7ParametersQueryStyle(
                 source_id=("model",),
                 institution_id=("institution",),
                 experiment_id=("experiment",),
                 variable_id=("variable",),
                 variant_label=("variant_label",),
                 frequency=("reporting_interval",),
-                branding_suffix=("processing_id",),
+                variable_branding_suffix=("processing_id",),
                 realm=("realm",),
                 other_terms={"custom_other": ("other_terms",)},
             ),
             id="solr-cmip7",
         ),
         pytest.param(
-            STACCMIP7Parameters(
+            ESGFNGCMIP7ParametersQueryStyle(
                 source_id=("model",),
                 institution_id=("institution",),
                 experiment_id=("experiment",),
@@ -152,7 +152,7 @@ def test_every_query_class_translates_to_every_other(exp):
                 product=("product",),
                 other_terms={"custom_other": ("other_terms",)},
             ),
-            SolrCMIP5Parameters(
+            ESGF1CMIP5ParametersQueryStyle(
                 project=("project",),
                 model=("model",),
                 institute=("institution",),
@@ -184,7 +184,7 @@ def test_every_query_class_translates_to_every_other(exp):
                 sub_experiment_id=("sub_experiment_id",),
                 other_terms={"custom_other": ("other_terms",)},
             ),
-            SolrCMIP6Parameters(
+            ESGF1CMIP6ParametersQueryStyle(
                 project=("project",),
                 source_id=("model",),
                 institution_id=("institution",),
@@ -204,11 +204,11 @@ def test_every_query_class_translates_to_every_other(exp):
         ),
         pytest.param(
             QueryCMIP7(
-                # With the STAC API,
-                # the project is the collection ID
-                # and must be handled by the API generation
-                # so `STACCMIP7Parameters` has no `project` facet
-                # and the query must not ask for one.
+                # With the STAC API, the project is the collection ID
+                # and must be handled by the facade parameter methods
+                # before translating to the ESGF-NG parameter names
+                # (because there is no ESGF-NG parameter equivalent for project).
+                # As a result, we have to make sure there is no project here either.
                 project=(),
                 source_id=("model",),
                 institution_id=("institution",),
@@ -228,7 +228,7 @@ def test_every_query_class_translates_to_every_other(exp):
                 region=("region",),
                 other_terms={"custom_other": ("other_terms",)},
             ),
-            STACCMIP7Parameters(
+            ESGFNGCMIP7ParametersQueryStyle(
                 source_id=("model",),
                 institution_id=("institution",),
                 experiment_id=("experiment",),
@@ -265,19 +265,25 @@ def test_full_query_is_supported(start_query, exp_params):
     (
         pytest.param(
             to_canonical(QueryCMIP5(model=("model",), product=("product",))),
-            SolrCMIP6Parameters,
+            ESGF1CMIP6ParametersQueryStyle,
             pytest.raises(
                 FacetNotExpressibleError,
-                match="facet 'product' cannot be represented in SolrCMIP6Parameters",
+                match=(
+                    "facet 'product' cannot be represented in "
+                    "ESGF1CMIP6ParametersQueryStyle"
+                ),
             ),
             id="cmip5-specific-facet-cmip6-target",
         ),
         pytest.param(
             to_canonical(QueryCMIP5(model=("model",), product=("product",))),
-            SolrCMIP7Parameters,
+            ESGF1CMIP7ParametersQueryStyle,
             pytest.raises(
                 FacetNotExpressibleError,
-                match="facet 'product' cannot be represented in SolrCMIP7Parameters",
+                match=(
+                    "facet 'product' cannot be represented in "
+                    "ESGF1CMIP7ParametersQueryStyle"
+                ),
             ),
             id="cmip5-specific-facet-cmip7-target",
         ),
@@ -287,12 +293,12 @@ def test_full_query_is_supported(start_query, exp_params):
                     source_id=("model",), sub_experiment_id=("sub_experiment_id",)
                 )
             ),
-            SolrCMIP5Parameters,
+            ESGF1CMIP5ParametersQueryStyle,
             pytest.raises(
                 FacetNotExpressibleError,
                 match=(
                     "facet 'sub_experiment_id' cannot be represented "
-                    "in SolrCMIP5Parameters"
+                    "in ESGF1CMIP5ParametersQueryStyle"
                 ),
             ),
             id="cmip6-specific-facet-cmip5-target",
@@ -303,12 +309,12 @@ def test_full_query_is_supported(start_query, exp_params):
                     source_id=("model",), sub_experiment_id=("sub_experiment_id",)
                 )
             ),
-            SolrCMIP7Parameters,
+            ESGF1CMIP7ParametersQueryStyle,
             pytest.raises(
                 FacetNotExpressibleError,
                 match=(
                     "facet 'sub_experiment_id' cannot be represented "
-                    "in SolrCMIP7Parameters"
+                    "in ESGF1CMIP7ParametersQueryStyle"
                 ),
             ),
             id="cmip6-specific-facet-cmip7-target",
@@ -317,12 +323,12 @@ def test_full_query_is_supported(start_query, exp_params):
             to_canonical(
                 QueryCMIP7(source_id=("model",), temporal_label=("temporal_label",))
             ),
-            SolrCMIP6Parameters,
+            ESGF1CMIP6ParametersQueryStyle,
             pytest.raises(
                 FacetNotExpressibleError,
                 match=(
                     "facet 'temporal_label' cannot be represented "
-                    "in SolrCMIP6Parameters"
+                    "in ESGF1CMIP6ParametersQueryStyle"
                 ),
             ),
             id="cmip7-specific-facet-cmip6-target",
@@ -331,10 +337,13 @@ def test_full_query_is_supported(start_query, exp_params):
             QueryCanonical(
                 project=("CMIP5",), model=("model",), activity=("activity",)
             ),
-            SolrCMIP5Parameters,
+            ESGF1CMIP5ParametersQueryStyle,
             pytest.raises(
                 FacetNotExpressibleError,
-                match="facet 'activity' cannot be represented in SolrCMIP5Parameters",
+                match=(
+                    "facet 'activity' cannot be represented in "
+                    "ESGF1CMIP5ParametersQueryStyle"
+                ),
             ),
             id="canonical-activity-solr-cmip5-target",
         ),
@@ -342,46 +351,61 @@ def test_full_query_is_supported(start_query, exp_params):
             QueryCanonical(
                 project=("CMIP5",), model=("model",), grid_label=("grid_label",)
             ),
-            SolrCMIP5Parameters,
+            ESGF1CMIP5ParametersQueryStyle,
             pytest.raises(
                 FacetNotExpressibleError,
-                match="facet 'grid_label' cannot be represented in SolrCMIP5Parameters",
+                match=(
+                    "facet 'grid_label' cannot be represented in "
+                    "ESGF1CMIP5ParametersQueryStyle"
+                ),
             ),
             id="canonical-grid-label-solr-cmip5-target",
         ),
         pytest.param(
             QueryCanonical(model=("model",), resolution=("resolution",)),
-            STACCMIP5Parameters,
+            ESGFNGCMIP5ParametersQueryStyle,
             pytest.raises(
                 FacetNotExpressibleError,
-                match="facet 'resolution' cannot be represented in STACCMIP5Parameters",
+                match=(
+                    "facet 'resolution' cannot be represented in "
+                    "ESGFNGCMIP5ParametersQueryStyle"
+                ),
             ),
             id="canonical-resolution-stac-cmip5-target",
         ),
         pytest.param(
             QueryCanonical(project=("CMIP5",), model=("model",)),
-            STACCMIP5Parameters,
+            ESGFNGCMIP5ParametersQueryStyle,
             pytest.raises(
                 FacetNotExpressibleError,
-                match="facet 'project' cannot be represented in STACCMIP5Parameters",
+                match=(
+                    "facet 'project' cannot be represented in "
+                    "ESGFNGCMIP5ParametersQueryStyle"
+                ),
             ),
             id="canonical-project-stac-cmip5-target",
         ),
         pytest.param(
             QueryCanonical(project=("CMIP6",), model=("model",)),
-            STACCMIP6Parameters,
+            ESGFNGCMIP6ParametersQueryStyle,
             pytest.raises(
                 FacetNotExpressibleError,
-                match="facet 'project' cannot be represented in STACCMIP6Parameters",
+                match=(
+                    "facet 'project' cannot be represented in "
+                    "ESGFNGCMIP6ParametersQueryStyle"
+                ),
             ),
             id="canonical-project-stac-cmip6-target",
         ),
         pytest.param(
             QueryCanonical(project=("CMIP7",), model=("model",)),
-            STACCMIP7Parameters,
+            ESGFNGCMIP7ParametersQueryStyle,
             pytest.raises(
                 FacetNotExpressibleError,
-                match="facet 'project' cannot be represented in STACCMIP7Parameters",
+                match=(
+                    "facet 'project' cannot be represented in "
+                    "ESGFNGCMIP7ParametersQueryStyle"
+                ),
             ),
             id="canonical-project-stac-cmip7-target",
         ),

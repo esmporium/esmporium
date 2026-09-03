@@ -387,7 +387,9 @@ def facet_values_from_attributes(query: QueryProtocol) -> dict[str, tuple[str, .
 
 class Query(BaseModel):
     """
-    Query in our vocabulary (i.e. in line with [Dataset][esmporium.db.schema.Dataset])
+    Query under our own names
+
+    That is, in line with [Dataset][esmporium.db.schema.Dataset].
 
     Every facet is its own canonical equivalent,
     which is what makes this the class every other one translates through.
@@ -448,14 +450,10 @@ class Query(BaseModel):
     Useful for debugging the results of translations
     """
 
-    def facet_values(self) -> dict[str, tuple[str, ...]]:
-        """See [QueryProtocol.facet_values][esmporium.query.protocol.QueryProtocol.facet_values]."""  # noqa: E501
-        return facet_values_from_attributes(self)
-
 
 class QueryCMIP5(BaseModel):
     """
-    A query in CMIP5's native vocabulary
+    A query under CMIP5's own parameter names
 
     Facet definitions and language found in:
     https://pcmdi.llnl.gov/mips/cmip5/docs/cmip5_data_reference_syntax_v1-02_clean.pdf?id=25
@@ -507,14 +505,10 @@ class QueryCMIP5(BaseModel):
     source_query: SourceQuery = None
     """See [Query.source_query][(m).Query.source_query]."""
 
-    def facet_values(self) -> dict[str, tuple[str, ...]]:
-        """See [QueryProtocol.facet_values][esmporium.query.protocol.QueryProtocol.facet_values]."""  # noqa: E501
-        return facet_values_from_attributes(self)
-
 
 class QueryCMIP6(BaseModel):
     """
-    A query in CMIP6's native vocabulary
+    A query under CMIP6's own parameter names
 
     Facet definitions and language found in:
     https://docs.google.com/document/d/1h0r8RZr_f3-8egBMMh7aqLwy3snpD6_MrDz1q8n5XUk/edit?tab=t.0
@@ -574,14 +568,10 @@ class QueryCMIP6(BaseModel):
     source_query: SourceQuery = None
     """See [Query.source_query][(m).Query.source_query]."""
 
-    def facet_values(self) -> dict[str, tuple[str, ...]]:
-        """See [QueryProtocol.facet_values][esmporium.query.protocol.QueryProtocol.facet_values]."""  # noqa: E501
-        return facet_values_from_attributes(self)
-
 
 class QueryCMIP7(BaseModel):
     """
-    A query in CMIP7's native vocabulary
+    A query under CMIP7's own parameter names
 
     Facet definitions and language found in:
     https://wcrp-cmip.github.io/cmip7-guidance/docs/CMIP7/Global_Attributes/
@@ -615,6 +605,10 @@ class QueryCMIP7(BaseModel):
     grid_label: Annotated[FacetValues, QueryFacet("grid_label")] = ()
     """See [Dataset.grid_label][esmporium.db.schema.Dataset.grid_label]."""
 
+    # TODO: consider changing this to variable_branding_suffix
+    # to match the APIs.
+    # I can't remember where we got branding_suffix from,
+    # CMIP7 guidance pages?
     branding_suffix: Annotated[FacetValues, QueryFacet("processing_id")] = ()
     """See [Dataset.processing_id][esmporium.db.schema.Dataset.processing_id]."""
 
@@ -647,7 +641,3 @@ class QueryCMIP7(BaseModel):
 
     source_query: SourceQuery = None
     """See [Query.source_query][(m).Query.source_query]."""
-
-    def facet_values(self) -> dict[str, tuple[str, ...]]:
-        """See [QueryProtocol.facet_values][esmporium.query.protocol.QueryProtocol.facet_values]."""  # noqa: E501
-        return facet_values_from_attributes(self)

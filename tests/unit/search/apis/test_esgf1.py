@@ -1,21 +1,23 @@
 """
-Test the ESGF1/Solr search API wire format
+Test the ESGF1/Solr search API format
 
 These never touch the network. They pin the two halves of the API separately:
 given facet values, the request we build; given a response, what we read out of it.
-The facet values and facet names here are already in the API's own (wire) vocabulary,
-because translating the canonical vocabulary into it is the facade's job, not this
+The facet values and facet names here are already the API parameter names,
+because translating canonical names into them is the facade's job, not this
 layer's (that translation is tested in `tests/unit/search/test_facade.py`).
 """
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from esmporium.search.apis import (
     LimitOutOfRangeError,
-    NoFacetValuesReturned,
-    NoSearchResultNumberOfMatchesReturned,
+    NoFacetValuesReturnedError,
+    NoSearchResultNumberOfMatchesReturnedError,
     SearchAPIESGF1Solr,
 )
 from esmporium.search.retry import build_transient_retrying
@@ -85,21 +87,55 @@ def test_get_search_result_n_matches(raw, exp):
 
 
 @pytest.mark.parametrize(
-    "raw",
+    "raw, exp",
     (
-        pytest.param({"response": {"docs": []}}, id="no-count"),
-        pytest.param({}, id="nothing-we-recognise"),
-        pytest.param({"response": {"numFound": "3"}}, id="a-count-we-cannot-read"),
+        pytest.param(
+            {"response": {"docs": []}},
+            pytest.raises(
+                NoSearchResultNumberOfMatchesReturnedError,
+                match=re.escape(
+                    "This response does not report "
+                    "how many records matched the search. "
+                    "We expected to read the count from 'response.numFound', "
+                    "but 'numFound' is not in 'response', there is only: 'docs'"
+                ),
+            ),
+            id="no-count",
+        ),
+        pytest.param(
+            {},
+            pytest.raises(
+                NoSearchResultNumberOfMatchesReturnedError,
+                match=re.escape(
+                    "This response does not report "
+                    "how many records matched the search. "
+                    "We expected to read the count from 'response.numFound', "
+                    "but the response is empty."
+                ),
+            ),
+            id="nothing-we-recognise",
+        ),
+        pytest.param(
+            {"response": {"numFound": "3"}},
+            pytest.raises(
+                TypeError,
+                match=re.escape(
+                    "We expected to get an integer at 'response.numFound', "
+                    "but instead got '3'"
+                ),
+            ),
+            id="a-count-we-cannot-read",
+        ),
     ),
 )
-def test_get_search_result_n_matches_with_no_count_raises(raw):
+def test_get_search_result_n_matches_with_no_count_raises(raw, exp):
     """A response we cannot read a count out of is one we have not understood"""
-    with pytest.raises(NoSearchResultNumberOfMatchesReturned):
+    with exp:
         api().get_search_result_n_matches(raw)
 
 
 def test_build_get_facet_values_request_names_the_facets_sorted():
-    """The facets are listed under their wire names, sorted, so the request is stable"""
+    """The facets are listed under their API names, sorted, so the request is stable"""
     request = api().build_get_facet_values_for_project_request(
         {"variable_id", "experiment_id"}, "CMIP6"
     )
@@ -128,16 +164,61 @@ def test_parse_facet_values_keeps_only_the_asked_for_facets():
 
 
 @pytest.mark.parametrize(
-    "raw",
+    "raw, exp",
     (
-        pytest.param({}, id="nothing-we-recognise"),
-        pytest.param({"facet_counts": {}}, id="no-facet-fields"),
-        pytest.param({"facet_counts": {"facet_fields": {}}}, id="no-facets"),
+        pytest.param(
+            {},
+            pytest.raises(
+                NoFacetValuesReturnedError,
+                match=re.escape(
+                    "This response does not report facet values. "
+                    "We expected to read the facet values from "
+                    "'facet_counts.facet_fields', "
+                    "but the response is empty."
+                ),
+            ),
+            id="nothing-we-recognise",
+        ),
+        pytest.param(
+            {"facet_counts": {}},
+            pytest.raises(
+                NoFacetValuesReturnedError,
+                match=re.escape(
+                    "This response does not report facet values. "
+                    "We expected to read the facet values from "
+                    "'facet_counts.facet_fields', "
+                    "but 'facet_fields' is not in 'facet_counts', "
+                    "there are no keys at this path."
+                ),
+            ),
+            id="no-facet-fields",
+        ),
+        pytest.param(
+            {"facet_counts": {"facet_fields": {}}},
+            pytest.raises(
+                NoFacetValuesReturnedError,
+                match=re.escape(
+                    "This response does not report facet values. "
+                    "We expected to read the facet values from "
+                    "'facet_counts.facet_fields', "
+                    "but we found {} at 'facet_counts.facet_fields'."
+                ),
+            ),
+            id="no-facets",
+        ),
     ),
 )
-def test_parse_facet_values_with_nothing_to_read_raises(raw):
-    with pytest.raises(NoFacetValuesReturned):
+def test_parse_facet_values_with_nothing_to_read_raises(raw, exp):
+    with exp:
         api().parse_facet_values(raw, {"variable_id"})
+
+
+def test_no_facet_value_returned_error_when_there_is_a_match_raises():
+    with pytest.raises(
+        AssertionError,
+        match=re.escape("hi.bye is in {'hi': {'bye': 1}}, raw[hi][bye]=1"),
+    ):
+        NoFacetValuesReturnedError({"hi": {"bye": 1}}, expected_at="hi.bye")
 
 
 def test_parse_facet_patterns_is_always_empty():

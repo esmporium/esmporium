@@ -1,19 +1,21 @@
 """
-Test the ESGF1.5 bridge/Solr search API wire format
+Test the ESGF1.5 bridge/Solr search API format
 
 The facet names are ESGF1's, and the response shape is Solr's, so the reading half
 is shared with `test_esgf1.py`. What differs is the encoding of a search request,
-which is what these pin. Facet values and names are in the API's own vocabulary;
+which is what these pin. Facet values and names are the API's own parameter names;
 the canonical translation is the facade's job and is tested elsewhere.
 """
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from esmporium.search.apis import (
     LimitOutOfRangeError,
-    NoFacetValuesReturned,
+    NoFacetValuesReturnedError,
     SearchAPIESGF15BridgeSolr,
 )
 from esmporium.search.retry import build_transient_retrying
@@ -67,7 +69,15 @@ def test_parse_facet_values_reads_the_solr_shape():
 
 
 def test_parse_facet_values_with_nothing_to_read_raises():
-    with pytest.raises(NoFacetValuesReturned):
+    with pytest.raises(
+        NoFacetValuesReturnedError,
+        match=re.escape(
+            "This response does not report facet values. "
+            "We expected to read the facet values from "
+            "'facet_counts.facet_fields', "
+            "but the response is empty."
+        ),
+    ):
         api().parse_facet_values({}, {"variable_id"})
 
 

@@ -19,9 +19,9 @@ from esmporium.db import (
 from esmporium.query import QueryCanonical, QueryCMIP6
 from esmporium.search import (
     DEFAULT_SEARCH_API_FACADES_BY_PROJECT,
+    ESGF1_CMIP6_FACADE_PARAMETERS,
     SearchAPIESGF1Solr,
     SearchAPIFacade,
-    SolrCMIP6Parameters,
     build_list_selector,
     search,
 )
@@ -159,10 +159,10 @@ def seed(engine, *calls: SearchAPICall) -> None:
         observer(call)
 
 
-def api(host: str) -> SearchAPIFacade:
+def cmip6_solr_api_facade(host: str) -> SearchAPIFacade:
     """Build a CMIP6-Solr facade for `host` (only the host matters to ranking)."""
     return SearchAPIFacade(
-        query_style=SolrCMIP6Parameters,
+        parameters=ESGF1_CMIP6_FACADE_PARAMETERS,
         search_api=SearchAPIESGF1Solr(host, build_transient_retrying(1)),
     )
 
@@ -237,7 +237,13 @@ def test_selector_orders_the_pool_fastest_first(engine):
         make_call(host="fast", response_time_seconds=0.1),
         make_call(host="mid", response_time_seconds=0.5),
     )
-    candidates = {"CMIP6": [api("slow"), api("fast"), api("mid")]}
+    candidates = {
+        "CMIP6": [
+            cmip6_solr_api_facade("slow"),
+            cmip6_solr_api_facade("fast"),
+            cmip6_solr_api_facade("mid"),
+        ]
+    }
 
     selector = build_health_selector(engine, candidates)
 
@@ -251,7 +257,13 @@ def test_selector_appends_hosts_with_no_health_after_ranked_ones(engine):
         make_call(host="slow", response_time_seconds=0.9),
     )
     # "unknown" has never been called, so we cannot judge it.
-    candidates = {"CMIP6": [api("unknown"), api("slow"), api("fast")]}
+    candidates = {
+        "CMIP6": [
+            cmip6_solr_api_facade("unknown"),
+            cmip6_solr_api_facade("slow"),
+            cmip6_solr_api_facade("fast"),
+        ]
+    }
 
     selector = build_health_selector(engine, candidates)
 
@@ -260,8 +272,10 @@ def test_selector_appends_hosts_with_no_health_after_ranked_ones(engine):
 
 def test_selector_falls_back_entirely_when_the_pool_has_no_health(engine):
     # Nothing recorded, so there is nothing to rank on.
-    fallback = build_list_selector([api("fb-1"), api("fb-2")])
-    candidates = {"CMIP6": [api("a"), api("b")]}
+    fallback = build_list_selector(
+        [cmip6_solr_api_facade("fb-1"), cmip6_solr_api_facade("fb-2")]
+    )
+    candidates = {"CMIP6": [cmip6_solr_api_facade("a"), cmip6_solr_api_facade("b")]}
 
     selector = build_health_selector(engine, candidates, fallback=fallback)
 
@@ -286,7 +300,9 @@ def test_selector_injects_into_search_and_is_asked_in_ranked_order(engine):
         make_call(host="slow", response_time_seconds=0.9),
         make_call(host="fast", response_time_seconds=0.1),
     )
-    candidates = {"CMIP6": [api("slow"), api("fast")]}
+    candidates = {
+        "CMIP6": [cmip6_solr_api_facade("slow"), cmip6_solr_api_facade("fast")]
+    }
     selector = build_health_selector(engine, candidates)
 
     # Every node answers, so `results` is keyed in the order they were asked,
@@ -303,7 +319,7 @@ def test_selector_injects_into_search_and_is_asked_in_ranked_order(engine):
 
 def test_selector_needs_exactly_one_project(engine):
     seed(engine, make_call(host="a", response_time_seconds=0.1))
-    selector = build_health_selector(engine, {"CMIP6": [api("a")]})
+    selector = build_health_selector(engine, {"CMIP6": [cmip6_solr_api_facade("a")]})
 
     with pytest.raises(ValueError, match="exactly one project"):
         selector(QueryCanonical(project=()), 0)

@@ -1,5 +1,5 @@
 """
-Structural invariants of the facet vocabulary and the query classes.
+Structural invariants of the canonical facet names and the query classes.
 
 These tests never translate a real query.
 They check that the configuration is internally consistent,
@@ -49,7 +49,7 @@ by_query = pytest.mark.parametrize(
 
 def test_canonical_facets_match_query_fields():
     """
-    Test consistency of canonical vocabulary and query fields
+    Test consistency of the canonical facet names and query fields
 
     These must be the same set - this checks that is the case.
     """

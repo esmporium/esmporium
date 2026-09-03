@@ -32,18 +32,8 @@ class QueryProtocol(Protocol):
         """
         ...
 
-    def facet_values(self) -> dict[str, tuple[str, ...]]:
-        """
-        Get the facets which are set, keyed by this query's name
 
-        Facets which are not set are left out, so that "not asked for" and "asked
-        for nothing" cannot be confused. `other_terms` is not a facet, so it is not
-        included.
-        """
-        ...
-
-
-def _accept_without_validation(value: object) -> object:
+def accept_without_validation(value: object) -> object:
     """
     Hand a value straight back, unvalidated
 
@@ -60,9 +50,7 @@ def _accept_without_validation(value: object) -> object:
     return value
 
 
-SourceQuery = Annotated[
-    QueryProtocol | None, PlainValidator(_accept_without_validation)
-]
+SourceQuery = Annotated[QueryProtocol | None, PlainValidator(accept_without_validation)]
 """
 The type of a query's `source_query` field
 

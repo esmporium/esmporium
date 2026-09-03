@@ -12,6 +12,8 @@ from tenacity import Retrying, stop_after_attempt
 
 from esmporium.query import QueryCMIP5, QueryCMIP6, to_canonical
 from esmporium.search import (
+    ESGF1_CMIP6_FACADE_PARAMETERS,
+    ESGFNG_CMIP6_FACADE_PARAMETERS,
     AllowedValues,
     CouldNotGetAllowedValuesError,
     FacetFinding,
@@ -22,8 +24,6 @@ from esmporium.search import (
     SearchAPIESGFNGSTAC,
     SearchAPIFacade,
     SelectorOfferedNoAPIFacadeError,
-    SolrCMIP6Parameters,
-    STACCMIP6Parameters,
     allowed_values_from_api,
     check_query_values,
     check_query_values_low,
@@ -169,7 +169,7 @@ def once():
 def solr_api(host="node.example"):
     """A CMIP6/Solr facade that retries once and never sleeps."""
     return SearchAPIFacade(
-        query_style=SolrCMIP6Parameters,
+        parameters=ESGF1_CMIP6_FACADE_PARAMETERS,
         search_api=SearchAPIESGF1Solr(host, once()),
     )
 
@@ -628,7 +628,7 @@ def test_values_set_for_a_facet_the_query_cannot_hold_raises():
         values_set_for(canonical, "sub_experiment_id")
 
 
-def test_a_facet_the_apis_vocabulary_cannot_express_is_not_asked_about():
+def test_a_facet_the_apis_query_style_cannot_express_is_not_asked_about():
     """
     Test that we do not build a request asking about a facet the API has no name for
 
@@ -643,7 +643,7 @@ def test_a_facet_the_apis_vocabulary_cannot_express_is_not_asked_about():
     )
 
     api = SearchAPIFacade(
-        query_style=STACCMIP6Parameters,
+        parameters=ESGFNG_CMIP6_FACADE_PARAMETERS,
         search_api=SearchAPIESGFNGSTAC("stac.example", once()),
     )
     canonical = canonical_cmip6(experiment_id="Historical")
@@ -664,7 +664,7 @@ def test_a_canonically_built_query_reads_back_canonically():
     Test that a query with no source query is named canonically
 
     There is no other name to give it, so the canonical one is the honest answer
-    rather than a guess at which dialect the caller had in mind.
+    rather than a guess at which query style the caller had in mind.
     """
     canonical = canonical_cmip6(experiment_id="Historical").model_copy(
         update={"source_query": None}

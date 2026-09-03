@@ -1,20 +1,22 @@
 """
-Test the ESGF-NG/STAC search API wire format
+Test the ESGF-NG/STAC search API format
 
 STAC answers with CQL2 and describes its facet values in a collection document.
 These pin the request we build from facet values and the reading of a collection,
-both in the API's own vocabulary: the caller (the facade) is assumed to have already
-put each property under its collection prefix, and to have named the collection.
+both under the API's own parameter names: the caller (the facade) is assumed to have
+already put each property under its collection prefix, and named the collection.
 """
 
 from __future__ import annotations
+
+import re
 
 import pytest
 
 from esmporium.search.apis import (
     LimitOutOfRangeError,
-    NoFacetValuesReturned,
-    NoSearchResultNumberOfMatchesReturned,
+    NoFacetValuesReturnedError,
+    NoSearchResultNumberOfMatchesReturnedError,
     SearchAPIESGFNGSTAC,
     UncompilableFacetPatternError,
 )
@@ -78,16 +80,79 @@ def test_get_search_result_n_matches_reads_whichever_spelling_is_present(raw, ex
     assert api().get_search_result_n_matches(raw) == exp
 
 
+# The count lives in one of three places on the two deployments,
+# so the error reports on all three: any of them could have answered us.
+WHERE_WE_LOOKED_FOR_THE_COUNT = (
+    "This response does not report how many records matched the search. "
+    "We expected to read the count from "
+    "one of 'numberMatched', 'numMatched' or 'context.matched', "
+)
+
+
 @pytest.mark.parametrize(
-    "raw",
+    "raw, exp",
     (
-        pytest.param({}, id="nothing-we-recognise"),
-        pytest.param({"features": [{"id": "a"}]}, id="records-but-no-count"),
+        pytest.param(
+            {},
+            pytest.raises(
+                NoSearchResultNumberOfMatchesReturnedError,
+                match=re.escape(
+                    f"{WHERE_WE_LOOKED_FOR_THE_COUNT}but the response is empty."
+                ),
+            ),
+            id="nothing-we-recognise",
+        ),
+        pytest.param(
+            {"features": [{"id": "a"}]},
+            pytest.raises(
+                NoSearchResultNumberOfMatchesReturnedError,
+                match=re.escape(
+                    f"{WHERE_WE_LOOKED_FOR_THE_COUNT}but: "
+                    "'numberMatched' is not in the response's top level, "
+                    "there is only: 'features'; "
+                    "'numMatched' is not in the response's top level, "
+                    "there is only: 'features'; "
+                    "'context' is not in the response's top level, "
+                    "there is only: 'features'."
+                ),
+            ),
+            id="records-but-no-count",
+        ),
+        pytest.param(
+            {"numMatched": None, "context": {"total": 4}},
+            # Each place we looked is explained as far as we got in it,
+            # so the one which came closest says so.
+            pytest.raises(
+                NoSearchResultNumberOfMatchesReturnedError,
+                match=re.escape(
+                    f"{WHERE_WE_LOOKED_FOR_THE_COUNT}but: "
+                    "'numberMatched' is not in the response's top level, "
+                    "there is only: 'context', 'numMatched'; "
+                    "we found None at 'numMatched'; "
+                    "'matched' is not in 'context', there is only: 'total'."
+                ),
+            ),
+            id="a-context-which-does-not-carry-the-count",
+        ),
     ),
 )
-def test_get_search_result_n_matches_with_no_count_raises(raw):
-    with pytest.raises(NoSearchResultNumberOfMatchesReturned):
+def test_get_search_result_n_matches_with_no_count_raises(raw, exp):
+    with exp:
         api().get_search_result_n_matches(raw)
+
+
+def test_no_search_result_n_matches_returned_error_when_there_is_a_match_raises():
+    """The error is for responses we could not read; a readable one is a bug"""
+    with pytest.raises(
+        AssertionError,
+        match=re.escape(
+            "context.matched is in {'context': {'matched': 4}}, raw[context][matched]=4"
+        ),
+    ):
+        NoSearchResultNumberOfMatchesReturnedError(
+            {"context": {"matched": 4}},
+            expected_at=("numberMatched", "context.matched"),
+        )
 
 
 def test_build_get_facet_values_request_asks_for_the_collection():
@@ -121,8 +186,70 @@ def test_parse_facet_values_reads_only_enumerated_lists():
 
 
 def test_parse_facet_values_without_summaries_raises():
-    with pytest.raises(NoFacetValuesReturned):
+    with pytest.raises(
+        NoFacetValuesReturnedError,
+        match=re.escape(
+            "This response does not report facet values. "
+            "We expected to read the facet values from 'summaries', "
+            "but the response is empty."
+        ),
+    ):
         api().parse_facet_values({}, {"cmip6:variable_id"})
+
+
+# A summary can be a list whose items are not values but pattern objects.
+# `cmip6:member_id` really is shaped like this on search.east.esgf.io
+# (see the recording in tests/test-data/search/esgf-ng-stac-cmip6-facets.json),
+# so this is a real response shape, not a hypothetical one.
+# A dict is not hashable, so reading these as values would not merely be wrong,
+# it would raise `TypeError` while building the set.
+LIST_OF_PATTERNS_COLLECTION = {
+    "summaries": {
+        "cmip6:member_id": [
+            {"pattern": "^r\\d+i\\d+p\\d+f\\d+$"},
+            {"pattern": "^s1976-r\\d+i\\d+p\\d+f\\d+$"},
+        ],
+        "cmip6:variable_id": ["tas", "pr"],
+    }
+}
+
+
+def test_parse_facet_values_ignores_non_string_items_in_a_list_summary():
+    """A list of pattern objects is not a list of values, so it reports nothing"""
+    res = api().parse_facet_values(
+        LIST_OF_PATTERNS_COLLECTION, {"cmip6:member_id", "cmip6:variable_id"}
+    )
+
+    # Left out entirely rather than reported as an empty set:
+    # "we cannot list this one" must stay distinguishable from
+    # "this one has no values".
+    assert res == {"cmip6:variable_id": {"tas", "pr"}}
+
+
+def test_parse_facet_values_keeps_the_strings_in_a_mixed_list_summary():
+    """A list which mixes values and pattern objects still yields its values"""
+    raw = {"summaries": {"cmip6:variable_id": ["tas", {"pattern": "^v.*$"}, "pr"]}}
+
+    assert api().parse_facet_values(raw, {"cmip6:variable_id"}) == {
+        "cmip6:variable_id": {"tas", "pr"}
+    }
+
+
+def test_parse_facet_patterns_does_not_read_a_list_of_patterns():
+    """
+    Test that a list of pattern objects is left out of the patterns too
+
+    `stac_summary_patterns` only reads a summary which is itself a pattern
+    string, so this shape falls out of both halves of the parsing.
+    That is deliberate for now (nothing we name is summarised this way),
+    but it is worth pinning so the day we do want to read it,
+    a test says what the current behaviour was.
+    """
+    res = api().parse_facet_patterns(
+        LIST_OF_PATTERNS_COLLECTION, {"cmip6:member_id", "cmip6:variable_id"}
+    )
+
+    assert res == {}
 
 
 def test_parse_facet_patterns_reads_only_the_patterns():
@@ -133,6 +260,25 @@ def test_parse_facet_patterns_reads_only_the_patterns():
     assert set(res) == {"cmip6:variant_label"}
     assert res["cmip6:variant_label"].fullmatch("r1i1p1f1")
     assert not res["cmip6:variant_label"].fullmatch("r1i1pf1")
+
+
+def test_parse_facet_patterns_without_summaries_raises():
+    """
+    Test that the patterns half is as loud as the values half
+
+    A collection which describes no facet at all cannot tell us anything about
+    the ones we asked for, whether we asked for values or for patterns,
+    so both halves raise rather than quietly reporting nothing.
+    """
+    with pytest.raises(
+        NoFacetValuesReturnedError,
+        match=re.escape(
+            "This response does not report facet values. "
+            "We expected to read the facet values from 'summaries', "
+            "but the response is empty."
+        ),
+    ):
+        api().parse_facet_patterns({}, {"cmip6:variant_label"})
 
 
 def test_parse_facet_patterns_of_an_uncompilable_pattern_raises():

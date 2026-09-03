@@ -375,7 +375,7 @@
       "type": "application/json"
     }
   ],
-  "numberMatched": 32,
+  "numberMatched": 34,
   "numberReturned": 2,
   "type": "FeatureCollection"
 }

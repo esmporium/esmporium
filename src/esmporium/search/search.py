@@ -15,7 +15,7 @@ import httpx
 
 from esmporium.query import QueryProtocol, to_canonical
 from esmporium.search.apis import (
-    NoSearchResultNumberOfMatchesReturned,
+    NoSearchResultNumberOfMatchesReturnedError,
     Request,
     SearchAPI,
 )
@@ -27,15 +27,6 @@ from esmporium.search.search_api_facade import (
 )
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_LIMIT: int = 10_000
-"""
-The page size we ask each endpoint for if the caller does not choose one
-
-This is the maximum number of records in one response, not the total number of
-matches (which comes back in the response itself). Each search API enforces its
-own accepted range and will refuse a page size outside it.
-"""
 
 
 def get_url(api: SearchAPI, request: Request) -> str:
@@ -58,8 +49,7 @@ def get_url(api: SearchAPI, request: Request) -> str:
     return f"{api.scheme}://{api.host}{request.path}"
 
 
-# TODO: make these public
-def _curl_equivalent(request: httpx.Request) -> str:
+def curl_equivalent(request: httpx.Request) -> str:
     """
     Render an httpx request as a `curl` command which reproduces it
 
@@ -88,11 +78,8 @@ def _curl_equivalent(request: httpx.Request) -> str:
     return " ".join(parts)
 
 
-# TODO: make these public
-def _log_request_as_url_and_curl(
-    api: SearchAPI,
-    request: httpx.Request,
-    # Make the level to log at a parameter, rather than being hard-coded
+def log_request_as_url_and_curl(
+    api: SearchAPI, request: httpx.Request, log_level: int = logging.DEBUG
 ) -> None:
     """
     Log a request we are about to send, at `DEBUG`
@@ -100,18 +87,22 @@ def _log_request_as_url_and_curl(
     Parameters
     ----------
     api
-        The endpoint the request is going to
+        The API the request is going to
 
     request
         The request
+
+    log_level
+        Level at which to log
     """
-    if not logger.isEnabledFor(logging.DEBUG):
+    if not logger.isEnabledFor(log_level):
         # Skip rendering if the logger is not enabled for the given level
         return
 
     url = str(request.url)
-    curl = _curl_equivalent(request)
-    logger.debug(
+    curl = curl_equivalent(request)
+    logger.log(
+        log_level,
         "search request to %s\n%s %s\n%s",
         api.host,
         request.method,
@@ -134,7 +125,7 @@ class SearchAPIRequestError(RuntimeError):
     whether the host never answered (a transport error or timeout)
     or answered with something we could not use (a bad status, unreadable JSON).
 
-    Higher-level callers are expected to translate this into their own vocabulary.
+    Higher-level callers are expected to translate this into their own terms.
     """
 
     def __init__(self, host: str) -> None:
@@ -174,7 +165,7 @@ def _result_count_or_none(api: SearchAPI, raw: dict[str, Any]) -> int | None:
     """
     try:
         return api.get_search_result_n_matches(raw)
-    except NoSearchResultNumberOfMatchesReturned:
+    except NoSearchResultNumberOfMatchesReturnedError:
         return None
 
 
@@ -221,7 +212,7 @@ def fire(
         json=request.json_body,
         timeout=api.timeout,
     )
-    _log_request_as_url_and_curl(api, built)
+    log_request_as_url_and_curl(api, built)
 
     request_body = json.dumps(request.json_body) if request.json_body else None
 
@@ -374,7 +365,8 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
     selector: SearchAPIFacadeSelector = DEFAULT_SELECTOR,
     *,
     stop_at_first_result: bool = True,
-    limit: int = DEFAULT_LIMIT,
+    # Limit handling and pagination will be added in PR2.5
+    limit: int = 10_000,
     client: httpx.Client | None = None,
     observer: SearchAPICallObserver | None = None,
 ) -> SearchOutcome:
@@ -401,8 +393,8 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
 
     limit
         The page size to ask each endpoint for,
-        i.e. the most records in one response, not the total matched.
-        The total comes back in the response itself.
+        i.e. the most records to get in one response, not the total matched.
+        The total matched comes back in the response itself.
 
     client
         The HTTP client to search with.
@@ -455,6 +447,12 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
                 # That is wasteful, because we run the query again,
                 # but it is not wrong: the answers are for the same query
                 # from the same host, so either will do.
+                # Note: this way of handling results is only safe
+                # because we only handle a single query in this function
+                # and our facades only support searching a single project at a time.
+                # If either of those assumptions changed, this would break.
+                # We will have to be more careful
+                # in higher-level functions to do queries over multiple projects (PR3).
                 results[host] = raw
                 if stop_at_first_result:
                     break

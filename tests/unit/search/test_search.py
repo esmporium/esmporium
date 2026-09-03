@@ -19,13 +19,13 @@ from tenacity import Retrying, retry_if_exception, stop_after_attempt
 
 from esmporium.query import QueryCMIP6
 from esmporium.search import (
+    ESGF1_CMIP6_FACADE_PARAMETERS,
+    ESGFNG_CMIP6_FACADE_PARAMETERS,
     NoAPIWouldAnswerError,
     SearchAPIESGF1Solr,
     SearchAPIESGFNGSTAC,
     SearchAPIFacade,
     SelectorOfferedNoAPIFacadeError,
-    SolrCMIP6Parameters,
-    STACCMIP6Parameters,
     build_list_selector,
     search,
 )
@@ -61,19 +61,19 @@ def solr_response(num_found: int) -> httpx.Response:
     return httpx.Response(200, json={"response": {"numFound": num_found, "docs": []}})
 
 
-def make_search_api(
+def make_facade_cmip6_esgf1(
     host: str, attempts: int = 1, timeout: float = 30.0
 ) -> SearchAPIFacade:
-    """Build a CMIP6-Solr facade for `host`"""
+    """Build a CMIP6-ESGF1 facade for `host`"""
     return SearchAPIFacade(
-        query_style=SolrCMIP6Parameters,
+        parameters=ESGF1_CMIP6_FACADE_PARAMETERS,
         search_api=SearchAPIESGF1Solr(host, fast_retrying(attempts), timeout=timeout),
     )
 
 
 def test_search_returns_the_json_on_success():
     """A 200 with a JSON body comes back as that JSON, keyed by host"""
-    selector = build_list_selector([make_search_api("host")])
+    selector = build_list_selector([make_facade_cmip6_esgf1("host")])
 
     outcome = search(
         QUERY_CMIP6, selector, client=client_for(lambda r: solr_response(3))
@@ -91,7 +91,7 @@ def test_search_uses_the_apis_own_timeout():
         seen.append(request.extensions["timeout"])
         return solr_response(1)
 
-    selector = build_list_selector([make_search_api("host", timeout=5.0)])
+    selector = build_list_selector([make_facade_cmip6_esgf1("host", timeout=5.0)])
 
     search(QUERY_CMIP6, selector, client=client_for(handler))
 
@@ -107,7 +107,7 @@ def test_search_raises_on_a_client_error_without_retrying():
         calls += 1
         return httpx.Response(404)
 
-    selector = build_list_selector([make_search_api("host", attempts=3)])
+    selector = build_list_selector([make_facade_cmip6_esgf1("host", attempts=3)])
 
     with pytest.raises(NoAPIWouldAnswerError, match="host"):
         search(QUERY_CMIP6, selector, client=client_for(handler))
@@ -124,7 +124,7 @@ def test_search_retries_a_transient_failure_then_gives_up():
         calls += 1
         return httpx.Response(503)
 
-    selector = build_list_selector([make_search_api("host", attempts=3)])
+    selector = build_list_selector([make_facade_cmip6_esgf1("host", attempts=3)])
 
     with pytest.raises(NoAPIWouldAnswerError, match="host"):
         search(QUERY_CMIP6, selector, client=client_for(handler))
@@ -141,7 +141,7 @@ def test_search_retries_a_transient_failure_then_succeeds():
         calls += 1
         return httpx.Response(500) if calls == 1 else solr_response(9)
 
-    selector = build_list_selector([make_search_api("host", attempts=3)])
+    selector = build_list_selector([make_facade_cmip6_esgf1("host", attempts=3)])
 
     outcome = search(QUERY_CMIP6, selector, client=client_for(handler))
 
@@ -158,7 +158,7 @@ def test_search_raises_when_the_body_is_not_json():
         calls += 1
         return httpx.Response(200, content=b"not json at all")
 
-    selector = build_list_selector([make_search_api("host", attempts=3)])
+    selector = build_list_selector([make_facade_cmip6_esgf1("host", attempts=3)])
 
     with pytest.raises(NoAPIWouldAnswerError, match="host"):
         search(QUERY_CMIP6, selector, client=client_for(handler))
@@ -175,7 +175,7 @@ def by_host(request: httpx.Request) -> httpx.Response:
 def test_search_stops_at_the_first_answer_by_default():
     """One good answer is enough, so the second node is never asked"""
     selector = build_list_selector(
-        [make_search_api("host-a"), make_search_api("host-b")]
+        [make_facade_cmip6_esgf1("host-a"), make_facade_cmip6_esgf1("host-b")]
     )
 
     outcome = search(QUERY_CMIP6, selector, client=client_for(by_host))
@@ -189,7 +189,7 @@ def test_search_stops_at_the_first_answer_by_default():
 def test_search_aggregates_every_node_when_asked_to():
     """With stop turned off, every node's answer is kept, keyed by host"""
     selector = build_list_selector(
-        [make_search_api("host-a"), make_search_api("host-b")]
+        [make_facade_cmip6_esgf1("host-a"), make_facade_cmip6_esgf1("host-b")]
     )
 
     outcome = search(
@@ -210,7 +210,7 @@ def test_search_skips_a_node_that_does_not_answer():
         return solr_response(4)
 
     selector = build_list_selector(
-        [make_search_api("host-a"), make_search_api("host-b")]
+        [make_facade_cmip6_esgf1("host-a"), make_facade_cmip6_esgf1("host-b")]
     )
 
     outcome = search(QUERY_CMIP6, selector, client=client_for(handler))
@@ -236,7 +236,7 @@ def test_search_with_no_endpoint_to_try_raises():
 
 def test_search_keeps_an_empty_but_valid_answer():
     """'Nothing matched' is an answer, so it is kept"""
-    selector = build_list_selector([make_search_api("host-a")])
+    selector = build_list_selector([make_facade_cmip6_esgf1("host-a")])
 
     outcome = search(
         QUERY_CMIP6, selector, client=client_for(lambda request: solr_response(0))
@@ -250,7 +250,7 @@ def test_search_builds_and_closes_its_own_client(monkeypatch):
     built = client_for(lambda request: solr_response(2))
     monkeypatch.setattr(httpx, "Client", lambda **kwargs: built)
 
-    selector = build_list_selector([make_search_api("host-a")])
+    selector = build_list_selector([make_facade_cmip6_esgf1("host-a")])
     outcome = search(QUERY_CMIP6, selector)
 
     assert outcome.results["host-a"]["response"]["numFound"] == 2
@@ -259,7 +259,7 @@ def test_search_builds_and_closes_its_own_client(monkeypatch):
 
 def test_search_logs_the_request_at_debug(caplog):
     """At DEBUG, the request is logged as URL, curl, and structured fields"""
-    selector = build_list_selector([make_search_api("esgf.example.org")])
+    selector = build_list_selector([make_facade_cmip6_esgf1("esgf.example.org")])
 
     with caplog.at_level(logging.DEBUG, logger=LOGGER_NAME):
         search(
@@ -289,9 +289,9 @@ def test_search_logs_the_request_at_debug(caplog):
 
 def test_search_curl_reproduces_a_post_body(caplog):
     """The curl-equivalent of a POST carries its method and body"""
-    # STAC is our POST wire format, so search it to exercise the POST path.
+    # STAC is our POST-based API format, so search it to exercise the POST path.
     stac_api = SearchAPIFacade(
-        query_style=STACCMIP6Parameters,
+        parameters=ESGFNG_CMIP6_FACADE_PARAMETERS,
         search_api=SearchAPIESGFNGSTAC("search.example.io", fast_retrying(1)),
     )
     selector = build_list_selector([stac_api])
@@ -312,7 +312,7 @@ def test_search_curl_reproduces_a_post_body(caplog):
 
 def test_search_does_not_log_below_debug(caplog):
     """Below DEBUG nothing is logged"""
-    selector = build_list_selector([make_search_api("host")])
+    selector = build_list_selector([make_facade_cmip6_esgf1("host")])
 
     with caplog.at_level(logging.INFO, logger=LOGGER_NAME):
         search(QUERY_CMIP6, selector, client=client_for(lambda r: solr_response(1)))

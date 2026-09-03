@@ -18,7 +18,7 @@ from esmporium.search import (
 )
 
 
-def make_api(host: str) -> SearchAPI:
+def make_api_esgf1_solr(host: str) -> SearchAPI:
     """Build a SearchAPI whose only interesting field, for these tests, is its host"""
     return SearchAPIESGF1Solr(host, retrying=build_transient_retrying(1))
 
@@ -29,7 +29,7 @@ def canonical(*projects: str) -> QueryCanonical:
 
 
 def test_url_building():
-    api = make_api("esgf.example.org")
+    api = make_api_esgf1_solr("esgf.example.org")
     request = Request("GET", "/esg-search/search")
 
     assert get_url(api, request) == "https://esgf.example.org/esg-search/search"
@@ -47,7 +47,7 @@ def test_url_can_use_http():
 
 def test_list_selector_yields_in_order_then_stops():
     """A list selector walks its list and then says stop"""
-    apis = [make_api("a"), make_api("b")]
+    apis = [make_api_esgf1_solr("a"), make_api_esgf1_solr("b")]
     select = build_list_selector(apis)
     query = canonical("CMIP6")
 
@@ -58,7 +58,7 @@ def test_list_selector_yields_in_order_then_stops():
 
 def test_list_selector_ignores_the_project():
     """Every query gets the same list, whatever its project"""
-    apis = [make_api("a")]
+    apis = [make_api_esgf1_solr("a")]
     select = build_list_selector(apis)
 
     assert select(canonical("CMIP5"), 0) is apis[0]
@@ -67,8 +67,8 @@ def test_list_selector_ignores_the_project():
 
 def test_project_list_selector_picks_by_project():
     """The project decides which list is walked"""
-    fives = [make_api("five")]
-    sixes = [make_api("six")]
+    fives = [make_api_esgf1_solr("five")]
+    sixes = [make_api_esgf1_solr("six")]
     select = build_project_list_selector({"CMIP5": fives, "CMIP6": sixes})
 
     assert select(canonical("CMIP5"), 0) is fives[0]
@@ -77,7 +77,7 @@ def test_project_list_selector_picks_by_project():
 
 def test_project_list_selector_stops_at_the_end_of_the_list():
     """Once the list is exhausted, the selector says stop"""
-    select = build_project_list_selector({"CMIP6": [make_api("only")]})
+    select = build_project_list_selector({"CMIP6": [make_api_esgf1_solr("only")]})
 
     assert select(canonical("CMIP6"), 1) is None
     # If requested later, still gives None
@@ -86,7 +86,7 @@ def test_project_list_selector_stops_at_the_end_of_the_list():
 
 def test_project_list_selector_needs_exactly_one_project():
     """A search that is not scoped to one project cannot be ranked"""
-    select = build_project_list_selector({"CMIP6": [make_api("only")]})
+    select = build_project_list_selector({"CMIP6": [make_api_esgf1_solr("only")]})
 
     with pytest.raises(ValueError, match="exactly one project"):
         select(canonical(), 0)
@@ -97,7 +97,7 @@ def test_project_list_selector_needs_exactly_one_project():
 
 def test_project_list_selector_raises_for_an_unknown_project():
     """A project we have no plan for is a loud miss, not a quiet stop"""
-    select = build_project_list_selector({"CMIP6": [make_api("only")]})
+    select = build_project_list_selector({"CMIP6": [make_api_esgf1_solr("only")]})
 
     with pytest.raises(KeyError):
         select(canonical("CMIP5"), 0)

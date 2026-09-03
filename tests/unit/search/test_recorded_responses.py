@@ -20,9 +20,9 @@ but this will expand when we start parsing results to Datasets)
 and which values a facet has (`parse_facet_values`).
 
 The count is read off the wire-format layer (`facade.search_api`) directly,
-because it is keyed the same way whatever vocabulary asked for it.
+because it is keyed the same way whatever query style asked for it.
 The facet values are read through the facade, because reading them back into the
-canonical vocabulary is the facade's job.
+canonical names is the facade's job.
 The wiring is covered on its own, with mocked responses we wrote, in
 `test_search.py` and `test_check_query_values.py`.
 """
@@ -37,16 +37,16 @@ import pytest
 
 from esmporium.query import facet_spec
 from esmporium.search import (
+    ESGF1_CMIP5_FACADE_PARAMETERS,
+    ESGF1_CMIP6_FACADE_PARAMETERS,
+    ESGFNG_CMIP6_FACADE_PARAMETERS,
+    ESGFNG_CMIP7_FACADE_PARAMETERS,
     SearchAPIESGF1Solr,
     SearchAPIESGF15BridgeSolr,
     SearchAPIESGFNGSTAC,
     SearchAPIFacade,
-    SolrCMIP5Parameters,
-    SolrCMIP6Parameters,
-    STACCMIP6Parameters,
-    STACCMIP7Parameters,
     build_transient_retrying,
-    get_mapping_to_native_facet_names,
+    get_mapping_to_query_style_facet_names,
 )
 
 RECORDED_DIR = Path(__file__).parents[2] / "test-data" / "search"
@@ -61,7 +61,7 @@ and it is what the recorded query asked for.
 """
 
 
-def facade(query_style, search_api_cls, host="recorded.example") -> SearchAPIFacade:
+def facade(parameters, search_api_cls, host="recorded.example") -> SearchAPIFacade:
     """
     Build a facade for parsing a recording
 
@@ -69,14 +69,14 @@ def facade(query_style, search_api_cls, host="recorded.example") -> SearchAPIFac
     so any values will do.
     """
     return SearchAPIFacade(
-        query_style=query_style,
+        parameters=parameters,
         search_api=search_api_cls(host, build_transient_retrying(1)),
     )
 
 
 def every_facet(facade: SearchAPIFacade) -> set[str]:
     """
-    Get every facet a facade's vocabulary can express
+    Get every facet a facade's query style can express
 
     This has to match `facets_to_list` in `scripts/record_search_responses.py`:
     asking here for something the recording never asked the API about
@@ -85,41 +85,46 @@ def every_facet(facade: SearchAPIFacade) -> set[str]:
     Parameters
     ----------
     facade
-        The facade whose vocabulary to read
+        The facade whose query style to read
 
     Returns
     -------
     :
         The facets it can express, named the way they are asked for
     """
-    return set(facet_spec(facade.query_style).expressible_facets)
+    return set(facet_spec(facade.parameters.base_query_style).expressible_facets)
 
 
 RECORDED_CASES = (
     pytest.param(
         "esgf1-solr-cmip5",
-        facade(SolrCMIP5Parameters, SearchAPIESGF1Solr),
+        facade(ESGF1_CMIP5_FACADE_PARAMETERS, SearchAPIESGF1Solr),
         id="esgf1-solr-cmip5",
     ),
     pytest.param(
         "esgf1-solr-cmip6",
-        facade(SolrCMIP6Parameters, SearchAPIESGF1Solr),
+        facade(ESGF1_CMIP6_FACADE_PARAMETERS, SearchAPIESGF1Solr),
         id="esgf1-solr-cmip6",
     ),
     pytest.param(
         "esgf15-bridge-cmip6",
-        facade(SolrCMIP6Parameters, SearchAPIESGF15BridgeSolr),
+        facade(ESGF1_CMIP6_FACADE_PARAMETERS, SearchAPIESGF15BridgeSolr),
         id="esgf15-bridge-cmip6",
     ),
     pytest.param(
-        "esgf-ng-stac-cmip6",
-        facade(STACCMIP6Parameters, SearchAPIESGFNGSTAC),
-        id="esgf-ng-stac-cmip6",
+        "esgf-ng-stac-cmip6-east",
+        facade(ESGFNG_CMIP6_FACADE_PARAMETERS, SearchAPIESGFNGSTAC),
+        id="esgf-ng-stac-cmip6-east",
     ),
     pytest.param(
-        "esgf-ng-stac-cmip7",
-        facade(STACCMIP7Parameters, SearchAPIESGFNGSTAC),
-        id="esgf-ng-stac-cmip7",
+        "esgf-ng-stac-cmip7-east",
+        facade(ESGFNG_CMIP7_FACADE_PARAMETERS, SearchAPIESGFNGSTAC),
+        id="esgf-ng-stac-cmip7-east",
+    ),
+    pytest.param(
+        "esgf-ng-stac-cmip7-west",
+        facade(ESGFNG_CMIP7_FACADE_PARAMETERS, SearchAPIESGFNGSTAC),
+        id="esgf-ng-stac-cmip7-west",
     ),
 )
 """Each recording, with the facade which asked for it"""
@@ -174,9 +179,9 @@ def test_recorded_facet_values_are_well_formed(name, facade):
     """
     Test the shape of what we hand back, on real data
 
-    Every facet the vocabulary can express is asked about, so this covers the
+    Every facet the query style can express is asked about, so this covers the
     facets which the APIs describe in ways that are not a list of values,
-    as well as those they do. It also covers the dialect-specific names
+    as well as those they do. It also covers the query-style-specific names
     (`product` on CMIP5, and so on), which are the ones we guessed at.
 
     A facet we report has to have at least one value:
@@ -219,11 +224,12 @@ def test_recorded_facets_which_are_not_enumerated_are_left_out(name, facade):
 
     res = facade.parse_facet_values(raw, facets)
 
-    prefix = f"{facade.query_style.prefix}:"
+    prefix = f"{facade.parameters.prefix}:"
+
     asked_for = {
         native: asked
-        for asked, native in get_mapping_to_native_facet_names(
-            facade.query_style, facets
+        for asked, native in get_mapping_to_query_style_facet_names(
+            facade.parameters.base_query_style, facets
         ).items()
     }
     not_enumerated = {
@@ -258,12 +264,52 @@ def test_recorded_variant_label_is_summarised_as_a_pattern(name, facade):
     """
     raw = load(f"{name}-facets")
 
-    (native,) = get_mapping_to_native_facet_names(
-        facade.query_style, {"variant_label"}
+    (native,) = get_mapping_to_query_style_facet_names(
+        facade.parameters.base_query_style, {"variant_label"}
     ).values()
-    summary = raw["summaries"][f"{facade.query_style.prefix}:{native}"]
+    summary = raw["summaries"][f"{facade.parameters.prefix}:{native}"]
 
     assert isinstance(summary, str), (
         f"{native} was summarised as a {type(summary).__name__}, not a pattern"
     )
     re.compile(summary)
+
+
+@pytest.mark.parametrize("name, facade", STAC_RECORDED_CASES)
+def test_summary_facet_keys_have_not_drifted_in_case(name, facade):
+    """
+    Test that no summary key differs from ours only by case
+
+    We match summary keys exactly (see `stac_summary_values`): we build
+    lowercase-prefixed names like `cmip7:variable_id` and look for that string.
+    If a deployment renamed a key only by case (say `CMIP7:variable_id`), the
+    exact match would miss it and the facet would be dropped silently, read
+    downstream as "this facet has no enumerable values" rather than as an error.
+
+    This catches that drift by finding a summary key that matches one of our
+    facet names when case is ignored but not when it is respected, and only when
+    the correctly-cased key is absent (so the facet really would be lost). It is
+    the loud counterpart to the exact match the parser deliberately keeps.
+    """
+    raw = load(f"{name}-facets")
+    facets = every_facet(facade)
+    api_names = set(facade.parameters.get_mapping_to_api_facet_names(facets).values())
+
+    summary_keys = set(raw["summaries"])
+    summary_keys_by_lower = {key.lower(): key for key in summary_keys}
+
+    drifted = {
+        api_name: summary_keys_by_lower[api_name.lower()]
+        for api_name in api_names
+        # The exact key we look for is gone,
+        if api_name not in summary_keys
+        # but a differently-cased one is there, so its values would vanish.
+        and api_name.lower() in summary_keys_by_lower
+    }
+
+    assert not drifted, (
+        "these facet keys are present only under a different case, so the "
+        f"parser's exact match would drop them silently: {drifted}. "
+        "A deployment changed the case of a facet key; update the prefix or "
+        "name mapping to match, or the facet's values disappear without an error."
+    )

@@ -30,14 +30,14 @@ from esmporium.query import (
     to_canonical,
 )
 from esmporium.search import (
+    ESGF1_CMIP5_FACADE_PARAMETERS,
+    ESGF1_CMIP6_FACADE_PARAMETERS,
+    ESGFNG_CMIP6_FACADE_PARAMETERS,
+    ESGFNG_CMIP7_FACADE_PARAMETERS,
     SearchAPIESGF1Solr,
     SearchAPIESGF15BridgeSolr,
     SearchAPIESGFNGSTAC,
     SearchAPIFacade,
-    SolrCMIP5Parameters,
-    SolrCMIP6Parameters,
-    STACCMIP6Parameters,
-    STACCMIP7Parameters,
     build_transient_retrying,
     fire,
 )
@@ -60,7 +60,7 @@ CASES = (
     (
         "esgf1-solr-cmip5",
         SearchAPIFacade(
-            SolrCMIP5Parameters,
+            ESGF1_CMIP5_FACADE_PARAMETERS,
             SearchAPIESGF1Solr("esgf.nci.org.au", build_transient_retrying(2)),
         ),
         QueryCMIP5(experiment="historical", variable="tas", time_frequency="mon"),
@@ -68,7 +68,7 @@ CASES = (
     (
         "esgf1-solr-cmip6",
         SearchAPIFacade(
-            SolrCMIP6Parameters,
+            ESGF1_CMIP6_FACADE_PARAMETERS,
             SearchAPIESGF1Solr("esgf.nci.org.au", build_transient_retrying(2)),
         ),
         QueryCMIP6(experiment_id="historical", variable_id="tas", frequency="mon"),
@@ -76,7 +76,7 @@ CASES = (
     (
         "esgf15-bridge-cmip6",
         SearchAPIFacade(
-            SolrCMIP6Parameters,
+            ESGF1_CMIP6_FACADE_PARAMETERS,
             SearchAPIESGF15BridgeSolr(
                 "esgf-node.ornl.gov", build_transient_retrying(2)
             ),
@@ -84,23 +84,33 @@ CASES = (
         QueryCMIP6(experiment_id="historical", variable_id="tas", frequency="mon"),
     ),
     (
-        "esgf-ng-stac-cmip6",
+        "esgf-ng-stac-cmip6-east",
         SearchAPIFacade(
-            STACCMIP6Parameters,
+            ESGFNG_CMIP6_FACADE_PARAMETERS,
             SearchAPIESGFNGSTAC("search.east.esgf.io", build_transient_retrying(2)),
         ),
         QueryCMIP6(experiment_id="historical", variable_id="tas", frequency="mon"),
     ),
     (
-        "esgf-ng-stac-cmip7",
+        "esgf-ng-stac-cmip7-east",
         SearchAPIFacade(
-            STACCMIP7Parameters,
+            ESGFNG_CMIP7_FACADE_PARAMETERS,
             SearchAPIESGFNGSTAC("search.east.esgf.io", build_transient_retrying(2)),
         ),
         QueryCMIP7(variable_id="tas"),
     ),
-    # TODO: should we add in west queries too here, at least for CMIP7,
-    # given that west and east aren't actually identical?
+    # West is recorded alongside east because the two are not identical:
+    # they disagree on where the match count lives
+    # (see `get_search_result_n_matches` in `esmporium.search.apis.esgfng`),
+    # so a real west response is worth parsing against.
+    (
+        "esgf-ng-stac-cmip7-west",
+        SearchAPIFacade(
+            ESGFNG_CMIP7_FACADE_PARAMETERS,
+            SearchAPIESGFNGSTAC("search.west.esgf.io", build_transient_retrying(2)),
+        ),
+        QueryCMIP7(variable_id="tas"),
+    ),
 )
 """What to record: a name, the facade to ask with, and the query"""
 
@@ -146,7 +156,11 @@ def main() -> None:
                     facade.search_api,
                     facade.build_get_facet_values_request(
                         canonical,
-                        set(facet_spec(facade.query_style).expressible_facets),
+                        set(
+                            facet_spec(
+                                facade.parameters.base_query_style
+                            ).expressible_facets
+                        ),
                     ),
                 ),
             )

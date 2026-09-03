@@ -13,8 +13,8 @@ from tenacity import Retrying
 
 from esmporium.search.apis.protocol import (
     LimitOutOfRangeError,
-    NoFacetValuesReturned,
-    NoSearchResultNumberOfMatchesReturned,
+    NoFacetValuesReturnedError,
+    NoSearchResultNumberOfMatchesReturnedError,
 )
 from esmporium.search.apis.request import Request
 
@@ -63,14 +63,20 @@ def get_solr_search_result_n_matches(raw: dict[str, Any]) -> int:
 
     Raises
     ------
-    NoSearchResultNumberOfMatchesReturned
+    NoSearchResultNumberOfMatchesReturnedError
         `raw` does not report the number of records that matched the search
     """
     num_found = raw.get("response", {}).get("numFound")
     if isinstance(num_found, int):
         return num_found
+    elif num_found is not None:
+        msg = (
+            "We expected to get an integer at 'response.numFound', "
+            f"but instead got {num_found!r}"
+        )
+        raise TypeError(msg)
 
-    raise NoSearchResultNumberOfMatchesReturned(raw, "response.numFound")
+    raise NoSearchResultNumberOfMatchesReturnedError(raw, "response.numFound")
 
 
 def solr_facet_values(raw: dict[str, Any], facets: set[str]) -> dict[str, set[str]]:
@@ -94,12 +100,12 @@ def solr_facet_values(raw: dict[str, Any], facets: set[str]) -> dict[str, set[st
 
     Raises
     ------
-    NoFacetValuesReturned
+    NoFacetValuesReturnedError
         `raw` enumerates nothing at all
     """
     fields = raw.get("facet_counts", {}).get("facet_fields", {})
     if not fields:
-        raise NoFacetValuesReturned(raw, "facet_counts.facet_fields")
+        raise NoFacetValuesReturnedError(raw, "facet_counts.facet_fields")
 
     res: dict[str, set[str]] = {}
     for api_name, flat in fields.items():
@@ -191,7 +197,7 @@ class SearchAPIESGF1Solr:
             "format": "application/solr+json",
             # Sorted so the request we build is deterministic.
             "facets": ",".join(sorted(facets)),
-            # We want the vocabulary, not the records,
+            # We want the facet values, not the records,
             # so we ask for the smallest page we are allowed to ask for.
             "limit": self.min_limit,
             "distrib": solr_bool(self.distrib),

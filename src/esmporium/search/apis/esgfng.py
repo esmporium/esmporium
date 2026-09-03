@@ -13,13 +13,16 @@ from tenacity import Retrying
 
 from esmporium.search.apis.protocol import (
     LimitOutOfRangeError,
-    NoFacetValuesReturned,
-    NoSearchResultNumberOfMatchesReturned,
+    NoFacetValuesReturnedError,
+    NoSearchResultNumberOfMatchesReturnedError,
     UncompilableFacetPatternError,
 )
 from esmporium.search.apis.request import Request
 
 
+# In future, `aggregations` could be used to return value counts per facet value.
+# Currently, only esgf-ng-east handles aggregation, not west.
+# Sticking to summary for now as this is handled by east and west.
 def stac_summary_values(raw: dict[str, Any], facets: set[str]) -> dict[str, set[str]]:
     """
     Read the available facet values out of a STAC-shaped facet values response
@@ -45,17 +48,28 @@ def stac_summary_values(raw: dict[str, Any], facets: set[str]) -> dict[str, set[
 
     Raises
     ------
-    NoFacetValuesReturned
+    NoFacetValuesReturnedError
         `raw` summarises nothing at all,
         so this deployment cannot tell us anything about any facet.
     """
     # An empty block is as useless to us as a missing one:
     # either way this deployment has told us nothing it knows.
     if not raw.get("summaries"):
-        raise NoFacetValuesReturned(raw, "summaries")
+        raise NoFacetValuesReturnedError(raw, "summaries")
 
     res: dict[str, set[str]] = {}
     for api_name, summary in raw["summaries"].items():
+        # This match is deliberately exact (case-sensitive). We only ever build
+        # lowercase-prefixed names (`cmip7:variable_id`), and both ESGF-NG
+        # deployments key their summaries the same way today, so exact matching
+        # works. Do not "fix" this by case-folding the keys: these collections
+        # really do treat case as significant -- east's CMIP6Plus, for one,
+        # carries both `cmip6plus:Conventions` and `cmip6plus:conventions` as
+        # separate keys, so lowering every key would collapse the two and
+        # silently clobber one. The cost of exactness is that a node changing a
+        # key's case would drop that facet silently (it reads as "no enumerable
+        # values"); `test_summary_facet_keys_have_not_drifted_in_case` is what
+        # turns that drift into a loud failure.
         if api_name in facets:
             if not isinstance(summary, list):
                 # A range or a pattern, i.e. not a list of values.
@@ -65,7 +79,16 @@ def stac_summary_values(raw: dict[str, Any], facets: set[str]) -> dict[str, set[
             values = {
                 value
                 for value in summary
-                # TODO Claude: Why is this isinstance check needed?
+                # The `isinstance` check ensures that we don't pick up dicts.
+                # The dicts probably shouldn't be there.
+                # Where they are there (e.g. CMIP6 member_id),
+                # that looks like a bug in the CMIP6 CVs
+                # because CMIP6 uses variant_label, not member_id.
+                # Hence leave this for now,
+                # but we should raise an error in CMIP6 CVs at some point
+                # and we should be aware that this means
+                # that member_id is silently dropped from CMIP6 pattern parsing
+                # at the moment, rather than loudly dropped.
                 if isinstance(value, str)
             }
             if values:
@@ -101,7 +124,7 @@ def stac_summary_patterns(
 
     Raises
     ------
-    NoFacetValuesReturned
+    NoFacetValuesReturnedError
         `raw` summarises nothing at all,
         so this deployment cannot tell us anything about any facet.
 
@@ -112,10 +135,11 @@ def stac_summary_patterns(
     # An empty block is as useless to us as a missing one:
     # either way this deployment has told us nothing it knows.
     if not raw.get("summaries"):
-        raise NoFacetValuesReturned(raw, "summaries")
+        raise NoFacetValuesReturnedError(raw, "summaries")
 
     res: dict[str, re.Pattern[str]] = {}
     for api_name, summary in raw["summaries"].items():
+        # Exact, case-sensitive match, for the reasons in `stac_summary_values`.
         if api_name in facets:
             if not isinstance(summary, str):
                 # Enumerated values or something else.
@@ -183,7 +207,7 @@ class SearchAPIESGFNGSTAC:
                 "op": "in",
                 "args": [
                     # Assume that the caller puts the prefix on
-                    {"property": f"{facet}"},
+                    {"property": facet},
                     list(values),
                 ],
             }
@@ -203,16 +227,26 @@ class SearchAPIESGFNGSTAC:
         # west reports `numMatched` and `context.matched`.
         # We try everything, starting with the correct (STAC) spelling.
         context = raw.get("context")
-        for total in (
-            raw.get("numberMatched"),
-            raw.get("numMatched"),
-            context.get("matched") if isinstance(context, dict) else None,
-        ):
+        candidates = (
+            ("numberMatched", raw.get("numberMatched")),
+            ("numMatched", raw.get("numMatched")),
+            (
+                "context.matched",
+                context.get("matched") if isinstance(context, dict) else None,
+            ),
+        )
+        for loc, total in candidates:
             if isinstance(total, int):
                 return total
 
-        raise NoSearchResultNumberOfMatchesReturned(
-            raw, "numberMatched / numMatched / context.matched"
+            elif total is not None:
+                msg = (
+                    f"We expected to get an integer at {loc}, but instead got {total!r}"
+                )
+                raise TypeError(msg)
+
+        raise NoSearchResultNumberOfMatchesReturnedError(
+            raw, tuple(loc for loc, _ in candidates)
         )
 
     def build_get_facet_values_for_project_request(
@@ -222,6 +256,13 @@ class SearchAPIESGFNGSTAC:
         See [SearchAPI.build_get_facet_values_for_project_request][esmporium.search.apis.SearchAPI.build_get_facet_values_for_project_request].
         """  # noqa: E501
         # Assumes project has been mapped to the intended collection style.
+        #
+        # The collection name is case-sensitive on east: it must be the exact
+        # ESGF spelling (e.g. `CMIP6Plus`, not `CMIP6PLUS` or `cmip6plus`) or
+        # east returns 404. West is case-insensitive. The response echoes the
+        # name back in its `id` field, and the two deployments disagree on its
+        # case (east keeps `CMIP7`, west lowercases it to `cmip7`), but we never
+        # read `id`, so that difference is nothing we have to handle.
         return Request("GET", f"/collections/{project}")
 
     def parse_facet_values(
