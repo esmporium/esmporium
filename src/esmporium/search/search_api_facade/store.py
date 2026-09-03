@@ -205,7 +205,7 @@ class SearchAPIFacadeStore:
         cls, create_retrying: RetryingBuilder = build_default_retrying
     ) -> SearchAPIFacadeStore:
         """
-        Initialise with our default API facade set
+        Initialise with our default API facade set and ordering
 
         Parameters
         ----------
