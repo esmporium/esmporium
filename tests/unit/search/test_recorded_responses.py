@@ -112,14 +112,19 @@ RECORDED_CASES = (
         id="esgf15-bridge-cmip6",
     ),
     pytest.param(
-        "esgf-ng-stac-cmip6",
+        "esgf-ng-stac-cmip6-east",
         facade(ESGFNG_CMIP6_FACADE_PARAMETERS, SearchAPIESGFNGSTAC),
-        id="esgf-ng-stac-cmip6",
+        id="esgf-ng-stac-cmip6-east",
     ),
     pytest.param(
-        "esgf-ng-stac-cmip7",
+        "esgf-ng-stac-cmip7-east",
         facade(ESGFNG_CMIP7_FACADE_PARAMETERS, SearchAPIESGFNGSTAC),
-        id="esgf-ng-stac-cmip7",
+        id="esgf-ng-stac-cmip7-east",
+    ),
+    pytest.param(
+        "esgf-ng-stac-cmip7-west",
+        facade(ESGFNG_CMIP7_FACADE_PARAMETERS, SearchAPIESGFNGSTAC),
+        id="esgf-ng-stac-cmip7-west",
     ),
 )
 """Each recording, with the facade which asked for it"""
