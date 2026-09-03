@@ -301,16 +301,6 @@ class SearchAPIFacadeStore:
 
         cmip7_facades = (
             (
-                ESGF1_CMIP7_FACADE_PARAMETERS,
-                SearchAPIESGF1Solr,
-                "esgf.nci.org.au",
-            ),
-            (
-                ESGF1_CMIP7_FACADE_PARAMETERS,
-                SearchAPIESGF1Solr,
-                "esgf-data.dkrz.de",
-            ),
-            (
                 ESGFNG_CMIP7_FACADE_PARAMETERS,
                 SearchAPIESGFNGSTAC,
                 "search.east.esgf.io",
@@ -319,6 +309,16 @@ class SearchAPIFacadeStore:
                 ESGFNG_CMIP7_FACADE_PARAMETERS,
                 SearchAPIESGFNGSTAC,
                 "search.west.esgf.io",
+            ),
+            (
+                ESGF1_CMIP7_FACADE_PARAMETERS,
+                SearchAPIESGF1Solr,
+                "esgf.nci.org.au",
+            ),
+            (
+                ESGF1_CMIP7_FACADE_PARAMETERS,
+                SearchAPIESGF1Solr,
+                "esgf-data.dkrz.de",
             ),
         )
 
