@@ -9,8 +9,13 @@ none of it touches `src/esmporium/search/`, which is being reworked on another b
 
 - `Dataset.id` — primary key, built from the facet columns (includes the variable),
   so it is unique per row even for CMIP5.
+  # TODO: does it need to be built from facet columns? Or can just be integer primariy keys ->
 - `Dataset.id_project_specific` — **indexed, not unique**: a grouping key = "which ESGF
   dataset this row belongs to" (shared across a CMIP5 dataset's variables).
+  # TODO: point of keeping this is to quickly check if we've seen a dataset in a search result
+  # IMportant for knowing if 're-process'
+  # does keeping this make sense?
+  # Will be reprocessing results anyway even if have seen data to check if have been changes since last time
 - `Dataset.grid_label` — nullable (NULL for CMIP5).
 - `DatasetVersionSpecific` — one row per edition; PK `version_id = f"{dataset.id}.v{version}"`.
 - `DatasetAccessInformation` — one row per (version, data node); unique `(version_id, data_node)`.
@@ -21,6 +26,8 @@ none of it touches `src/esmporium/search/`, which is being reworked on another b
 DATASET ─1:*─ DATASET_VERSION ─┬─1:*─ DATASET_NODE   (DatasetAccessInformation)
                                └─1:*─ RAW_RECORD     (DatasetRawDoc)
 ```
+# TODO: check if CMIP5 many to many for variables!!
+# Above diagram only shows use case for cmip5 single variable
 
 ## Downstream changes (roughly in order)
 
@@ -47,9 +54,11 @@ Hand-run and visual, in the style of `scripts/cmip5_results_to_dataset.py`.
 
 - **Detect shape from the response, not the project:** `response.docs[]` ⇒ Solr,
   `features[]` ⇒ STAC. (CMIP6 can come back either way.)
+  # TODO: facade should expect a certain shape. assert that we get the certain shape that we expect
 - **Per doc → rows:**
   - `Dataset`: build `id` with the constants already in
     `scripts/cmip5_results_to_dataset.py` (`ID_COLUMN_ORDER`, `GRID_LABEL_PLACEHOLDER="0"`,
+    # TODO : grid label as integer not relevant if dataset.id is an integer rather than built on column facets
     `DRS_MODEL_INDEX=3`). For CMIP5, confirm the searched variable is in the doc's
     `variable` list and take **only** that variable.
   - `DatasetVersionSpecific`: upsert on `version_id`; **refresh** `is_latest`/`retracted`
@@ -65,17 +74,18 @@ Field mapping (source → column):
 | `institution` | `institute` | `institution_id` | `cmip6:institution_id` | `cmip7:institution_id` |
 | `experiment` | `experiment` | `experiment_id` | `cmip6:experiment_id` | `cmip7:experiment_id` |
 | `variant_label` | `ensemble` | `variant_label` | `cmip6:variant_label` | `cmip7:variant_label` |
-| `variable` | searched var ∈ `variable` list | `variable_id` | `cmip6:variable_id` | `cmip7:variable_id` |
+| `variable` | searched var ∈ `variable` list | `variable_id` | `cmip6:variable_id` | `cmip7:variable_id` | # TODO: for cmip5 just return all variables from list
 | `reporting_interval` | `time_frequency` | `frequency` | `cmip6:frequency` | `cmip7:frequency` |
-| `grid_label` | `None` (id slot `"0"`) | `grid_label` | `cmip6:grid_label` | `cmip7:grid_label` |
+| `grid_label` | `None` (id slot `"0"`) | `grid_label` | `cmip6:grid_label` | `cmip7:grid_label` | # TODO id slot will change cmIp5 eg dataset.id
 | `processing_id` | `cmor_table` | `table_id` | `cmip6:table_id` | `cmip7:variable_branding_suffix` |
 | `id_project_specific` | `master_id` | `master_id` | node-free `id`/`title` | node-free `id`/`title` |
-| `version` | `.vYYYYMMDD` from `instance_id` | `version` | `properties.version` | `properties.version` |
+| `version` | `.vYYYYMMDD` from `instance_id` | `version` | `properties.version` | `properties.version` | # TODO need to make sure this handles .v1 as well as the consistent format as above - just get everything after v
 | `is_latest`/`retracted` | `latest`/`retracted` | `latest`/`retracted` | `properties.latest`/`retracted` | same |
 | `DatasetAccessInformation.data_node` | `data_node` | `data_node` | asset host(s) | asset host(s) |
 | `DatasetRawDoc.esgf_doc_id` | `id` (`instance_id\|data_node`) | `id` | feature `id` | feature `id` |
 
 ### 4. Search-facade contract (do NOT edit `src/esmporium/search/`)
+# TODO: merge pull request first
 The ingestion consumes the search layer owned by the colleague's branch. Assumed interface:
 - `esmporium.search.search(...)` returns a `SearchOutcome` whose `results` dict is keyed by
   host, each value the raw JSON that host returned.
@@ -83,6 +93,16 @@ The ingestion consumes the search layer owned by the colleague's branch. Assumed
   host); ingestion records it on `DatasetRawDoc.source_api` + `search_host`.
 - Raw JSON is passed through untouched (no canonical translation) for `raw_json`.
 Confirm/adjust once that branch merges.
+# TODO: where to do conversion from raw json to datasets.
+# line 44 in search.py ?
+# potentially inject another observer?
+# observer result processor?
+# ask claude?
+# but preference likely to convert to dataset objects here (therefore edit in src)
+# but saving to db optional here -> touching db could be handled elsewhere
+# see above cmip5 save all variables at all times
+# Search for all, have all, but only need to return what user asked for
+# to do: ask claude could this blow out the dataset records with rows
 
 ### 5. Deferred: `RAW_LINK` (CMIP5 multi-variable only)
 Needed only when >1 variable is ingested from one CMIP5 dataset, where one raw doc
@@ -90,6 +110,8 @@ describes several per-variable versions (many-to-many). Then:
 - add a `(raw_id, version_id)` junction table (unique on the pair);
 - move the link off `DatasetRawDoc.version_id` into it.
 Additive — does not disturb `DATASET`/`VERSION`/`NODE`. Not needed for the tas-only search.
+# TODO: add use case for tas + rsdt for CMIP5 and make sure can handle it
+# see comments above - one or multiple variables should return same thing at all times
 
 ### 6. Tests to update / add — `tests/unit/test_schema.py`
 - **Replace `test_id_project_specific_is_unique`** — it asserts the OLD unique contract and
@@ -104,6 +126,7 @@ Additive — does not disturb `DATASET`/`VERSION`/`NODE`. Not needed for the tas
 - Parsing: drive per-generation parsers from the recorded fixtures in
   `tests/test-data/search/` (Solr CMIP5/CMIP6, bridge CMIP6, STAC CMIP6/CMIP7).
 
+
 ### 7. Small helper
 A function to recover the data node from a Solr `esgf_doc_id`
 (`esgf_doc_id.rsplit("|", 1)[-1]`; STAC ids have no `|`).
@@ -112,3 +135,26 @@ A function to recover the data node from a Solr `esgf_doc_id`
 The full reasoning (why version is the anchor, why CMIP5 is the only multi-variable case,
 why `id_project_specific` is non-unique) is in the planning discussion; the short version
 lives in the docstrings on the new classes in `schema.py`.
+
+# TODO :
+testing + use case for project-specific native
+just keep in json raw format -> link to raw docs
+Can always get back to project specific names
+Keep cost of json.
+Will this scale to 1million dataset entries?
+Different product -> same version -> need to distinguish
+product in id_project_specific?
+CMIP5 retains project_specific_id
+test: ingest cmip5 output from search that gives datasets that only differ by product
+note that how to get back out is deferred to getting data loading
+check with claude - if need to change schema to get data back out then should do that now
+plus maybe tests of loading stuff back out
+General test:
+- CMIP5/6/7 if we parse search results into db, can we load back out using same query? do we handle edge cases where get clashes, because two datasets match the same query, our view of datasets are the same and only distinguished by project specific facets
+- Claude can check for cmip6/7, only vary by columns in dataset?
+
+"can you merge origin/main onto this branch"
+
+make sure there is a commit just adding that test
+- then talk to zeb, get comments
+- then we can role from there
