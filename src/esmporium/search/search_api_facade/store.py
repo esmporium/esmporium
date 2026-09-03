@@ -236,6 +236,8 @@ class SearchAPIFacadeStore:
             ),
             (
                 ESGF1_CMIP5_FACADE_PARAMETERS,
+                # Currently assuming that ESGF1.5 bridge
+                # can use ESGF1 parameters.
                 SearchAPIESGF15BridgeSolr,
                 "esgf-node.ornl.gov",
             ),
@@ -274,6 +276,8 @@ class SearchAPIFacadeStore:
             ),
             (
                 ESGF1_CMIP6_FACADE_PARAMETERS,
+                # Currently assuming that ESGF1.5 bridge
+                # can use ESGF1 parameters.
                 SearchAPIESGF15BridgeSolr,
                 "esgf-node.ornl.gov",
             ),

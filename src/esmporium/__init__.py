@@ -30,7 +30,7 @@ so we use a specific term for each:
   [ESGF1_CMIP6_FACADE_PARAMETERS][esmporium.search.ESGF1_CMIP6_FACADE_PARAMETERS].
 
 The last two are the ones worth keeping apart.
-For ESGF1 they happen to be identical.
+For ESGF1 and the ESGF1.5 bridge they happen to be identical.
 For ESGF-NG they are not, and treating them as one thing is how you end up
 building a request which cannot match anything.
 
