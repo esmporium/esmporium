@@ -3,8 +3,9 @@ Observing the health of the search APIs
 
 Every live request to a search API goes through
 [fire][esmporium.search.search.fire], whatever it was driven by.
-That is the one place where the request, the response code, any error, the number
-of results and the time taken all exist together, so it is where we observe a call.
+That is the one place where the request, the response code, any error,
+the number of results and the time taken all exist together,
+so it is where we observe a call.
 
 Observing is opt-in and deliberately use case agnostic.
 `fire` builds a plain [SearchAPICall][(m).] describing what happened
@@ -15,9 +16,9 @@ the database layer provides an observer which records it
 but an observer is just a function, so a caller can print it, collect it,
 or send it somewhere else instead.
 
-Note that we define a `request` as the search we send, and a `call`
-as the request sent to a single host. A single request can result in several
-calls to a host (retrying policy).
+Note that we define a `request` as the search we send,
+and a `call` as the request sent to a single host.
+A single request can result in several calls to a host (retrying policy).
 """
 
 from __future__ import annotations

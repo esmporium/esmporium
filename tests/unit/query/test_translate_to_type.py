@@ -17,7 +17,6 @@ from esmporium.query import (
     QueryCMIP7,
     QueryFacet,
     SourceQuery,
-    facet_values_from_attributes,
     translate_to_type,
 )
 
@@ -264,17 +263,13 @@ def test_a_query_we_did_not_write_can_be_translated():
 
     @dataclass
     class QueryMIP1:
-        """A query in MIP1's vocabulary"""
+        """A query under MIP1's own parameter names"""
 
         mip: Annotated[tuple[str, ...], QueryFacet("project")] = ()
         esm: Annotated[tuple[str, ...], QueryFacet("model")] = ()
         vintage: Annotated[tuple[str, ...], QueryFacet(None)] = ()
         other_terms: dict[str, tuple[str, ...]] = field(default_factory=dict)
         source_query: SourceQuery = None
-
-        def facet_values(self) -> dict[str, tuple[str, ...]]:
-            """See `QueryProtocol.facet_values`"""
-            return facet_values_from_attributes(self)
 
     # Out of our query class into theirs, query-specific facet and all
     start = QueryMIP1(esm=("ACCESS-CM2",), vintage=("2026",))
@@ -297,15 +292,11 @@ def test_a_query_we_did_not_write_fails_loud_on_a_facet_it_cannot_express():
 
     @dataclass
     class QueryMIP1:
-        """A query in MIP1's vocabulary, which has no concept of a variable"""
+        """A query under MIP1's own names, which has no concept of a variable"""
 
         esm: Annotated[tuple[str, ...], QueryFacet("model")] = ()
         other_terms: dict[str, tuple[str, ...]] = field(default_factory=dict)
         source_query: SourceQuery = None
-
-        def facet_values(self) -> dict[str, tuple[str, ...]]:
-            """See `QueryProtocol.facet_values`"""
-            return facet_values_from_attributes(self)
 
     query = Query(model="ACCESS-CM2", variable="tas")
 

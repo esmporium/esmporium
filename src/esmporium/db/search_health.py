@@ -16,11 +16,11 @@ from typing import TYPE_CHECKING, Any
 from sqlmodel import Session, col, select
 
 from esmporium.db.schema import SearchAPICallRecord
-from esmporium.search.search_api import (
-    DEFAULT_SEARCH_APIS_BY_PROJECT,
+from esmporium.search.search_api_facade import (
+    DEFAULT_SEARCH_API_FACADES_BY_PROJECT,
     DEFAULT_SELECTOR,
-    SearchAPI,
-    SearchAPISelector,
+    SearchAPIFacade,
+    SearchAPIFacadeSelector,
 )
 
 if TYPE_CHECKING:
@@ -205,10 +205,10 @@ def _single_project(canonical: QueryCanonical) -> str:
 
 
 def _rank_pool(
-    pool: Sequence[SearchAPI],
+    pool: Sequence[SearchAPIFacade],
     health: Mapping[str, HostHealth],
     ranker: HostRanker,
-) -> list[SearchAPI] | None:
+) -> list[SearchAPIFacade] | None:
     """
     Reorder a search API pool by health, or report that there is no health information
 
@@ -220,23 +220,23 @@ def _rank_pool(
     signal to fall back to the default order rather than invent a ranking from
     nothing.
     """
-    have_data = [api for api in pool if api.host in health]
+    have_data = [api for api in pool if api.search_api.host in health]
     if not have_data:
         return None
 
-    no_data = [api for api in pool if api.host not in health]
+    no_data = [api for api in pool if api.search_api.host not in health]
     # `sorted` is stable, so hosts that tie on the key keep their pool order.
-    ranked = sorted(have_data, key=lambda api: ranker(health[api.host]))
+    ranked = sorted(have_data, key=lambda api: ranker(health[api.search_api.host]))
     return ranked + no_data
 
 
 def build_health_selector(
     engine: Engine,
-    candidates: Mapping[str, Sequence[SearchAPI]] | None = None,
+    candidates: Mapping[str, Sequence[SearchAPIFacade]] | None = None,
     *,
     ranker: HostRanker = get_median_response_time_for_ranking,
-    fallback: SearchAPISelector = DEFAULT_SELECTOR,
-) -> SearchAPISelector:
+    fallback: SearchAPIFacadeSelector = DEFAULT_SELECTOR,
+) -> SearchAPIFacadeSelector:
     """
     Build a selector that orders each project's search APIs by their health
 
@@ -263,13 +263,15 @@ def build_health_selector(
     :
         Health-based selector (falling back to a default where there is no information)
     """
-    pools = candidates if candidates is not None else DEFAULT_SEARCH_APIS_BY_PROJECT
+    pools = (
+        candidates if candidates is not None else DEFAULT_SEARCH_API_FACADES_BY_PROJECT
+    )
 
     # Aggregate only the hosts we could actually pick, once, up front.
-    all_hosts = {api.host for pool in pools.values() for api in pool}
+    all_hosts = {api.search_api.host for pool in pools.values() for api in pool}
     health = aggregate_host_health(engine, all_hosts)
 
-    def select(canonical: QueryCanonical, attempt: int) -> SearchAPI | None:
+    def select(canonical: QueryCanonical, attempt: int) -> SearchAPIFacade | None:
         project = _single_project(canonical)
         pool = pools[project]
 

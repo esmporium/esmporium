@@ -12,24 +12,24 @@ from tenacity import Retrying, stop_after_attempt
 
 from esmporium.query import QueryCMIP5, QueryCMIP6, to_canonical
 from esmporium.search import (
+    ESGF1_CMIP6_FACADE_PARAMETERS,
+    ESGFNG_CMIP6_FACADE_PARAMETERS,
     AllowedValues,
     CouldNotGetAllowedValuesError,
     FacetFinding,
     FindingKind,
     NoSourceWouldAnswerError,
     NotAFacetOfTheQueryError,
+    SearchAPIESGF1Solr,
+    SearchAPIESGFNGSTAC,
+    SearchAPIFacade,
+    SelectorOfferedNoAPIFacadeError,
     allowed_values_from_api,
     check_query_values,
     check_query_values_low,
     compare_values,
     facets_the_user_set,
     values_set_for,
-)
-from esmporium.search.search_api import (
-    SOLR_CMIP6,
-    STAC_CMIP6,
-    SearchAPI,
-    SelectorOfferedNoAPIError,
 )
 
 
@@ -167,8 +167,11 @@ def once():
 
 
 def solr_api(host="node.example"):
-    """A CMIP6/Solr SearchAPI that retries once and never sleeps."""
-    return SearchAPI(host, SOLR_CMIP6, once())
+    """A CMIP6/Solr facade that retries once and never sleeps."""
+    return SearchAPIFacade(
+        parameters=ESGF1_CMIP6_FACADE_PARAMETERS,
+        search_api=SearchAPIESGF1Solr(host, once()),
+    )
 
 
 def test_solr_source_lists_values_keyed_by_canonical_facet():
@@ -315,7 +318,7 @@ def test_high_with_no_api_to_ask_raises():
     and it reads far too much like "nothing to report",
     so it is said out loud instead.
     """
-    with pytest.raises(SelectorOfferedNoAPIError, match="CMIP5"):
+    with pytest.raises(SelectorOfferedNoAPIFacadeError, match="CMIP5"):
         check_query_values(
             QueryCMIP5(experiment="abrupt-4xco2", variable="tas"),
             selector=lambda canonical, attempt: None,
@@ -625,7 +628,7 @@ def test_values_set_for_a_facet_the_query_cannot_hold_raises():
         values_set_for(canonical, "sub_experiment_id")
 
 
-def test_a_facet_the_apis_vocabulary_cannot_express_is_not_asked_about():
+def test_a_facet_the_apis_query_style_cannot_express_is_not_asked_about():
     """
     Test that we do not build a request asking about a facet the API has no name for
 
@@ -639,13 +642,16 @@ def test_a_facet_the_apis_vocabulary_cannot_express_is_not_asked_about():
         )
     )
 
-    api = SearchAPI("stac.example", STAC_CMIP6, once())
+    api = SearchAPIFacade(
+        parameters=ESGFNG_CMIP6_FACADE_PARAMETERS,
+        search_api=SearchAPIESGFNGSTAC("stac.example", once()),
+    )
     canonical = canonical_cmip6(experiment_id="Historical")
     facets = facets_the_user_set(canonical)
 
     allowed = allowed_values_from_api(api, client, canonical, facets)
 
-    report = check_query_values_low(canonical, allowed, api.host)
+    report = check_query_values_low(canonical, allowed, api.search_api.host)
 
     assert report.findings == (
         FacetFinding("experiment", "Historical", "case", ("historical",)),
@@ -658,7 +664,7 @@ def test_a_canonically_built_query_reads_back_canonically():
     Test that a query with no source query is named canonically
 
     There is no other name to give it, so the canonical one is the honest answer
-    rather than a guess at which dialect the caller had in mind.
+    rather than a guess at which query style the caller had in mind.
     """
     canonical = canonical_cmip6(experiment_id="Historical").model_copy(
         update={"source_query": None}

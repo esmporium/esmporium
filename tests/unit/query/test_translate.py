@@ -11,6 +11,7 @@ from esmporium.query import (
     QueryCanonical,
     QueryCMIP5,
     QueryCMIP6,
+    facet_values_from_attributes,
     from_canonical,
     to_canonical,
 )
@@ -44,7 +45,7 @@ def test_a_facet_is_renamed_values_are_unchanged():
 
 def test_a_query_specific_facet_stays_put():
     """
-    A facet with no canonical equivalent is held under its native name.
+    A facet with no canonical equivalent keeps the query style's parameter name.
 
     There is nothing to translate it to, so it is kept as the user wrote it.
     """
@@ -90,7 +91,7 @@ def test_an_empty_canonical_facet_leaves_the_targets_default_alone():
     """
     result = from_canonical(canonical=QueryCanonical(model="ACCESS-CM2"), to=QueryCMIP6)
 
-    assert result.facet_values() == {
+    assert facet_values_from_attributes(result) == {
         "project": ("CMIP6",),
         "source_id": ("ACCESS-CM2",),
     }

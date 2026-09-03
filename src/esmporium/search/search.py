@@ -14,23 +14,42 @@ from typing import Any
 import httpx
 
 from esmporium.query import QueryProtocol, to_canonical
-from esmporium.search.esgf_generations import (
-    DEFAULT_LIMIT,
-    NoResultCountReturned,
+from esmporium.search.apis import (
+    NoSearchResultNumberOfMatchesReturnedError,
     Request,
+    SearchAPI,
 )
 from esmporium.search.health import SearchAPICall, SearchAPICallObserver
-from esmporium.search.search_api import (
+from esmporium.search.search_api_facade import (
     DEFAULT_SELECTOR,
-    SearchAPI,
-    SearchAPISelector,
-    SelectorOfferedNoAPIError,
+    SearchAPIFacadeSelector,
+    SelectorOfferedNoAPIFacadeError,
 )
 
 logger = logging.getLogger(__name__)
 
 
-def _curl_equivalent(request: httpx.Request) -> str:
+def get_url(api: SearchAPI, request: Request) -> str:
+    """
+    Build the full URL for a request to a given API
+
+    Parameters
+    ----------
+    api
+        The API we want to ask
+
+    request
+        The request to make
+
+    Returns
+    -------
+    :
+        The URL to send `request` to
+    """
+    return f"{api.scheme}://{api.host}{request.path}"
+
+
+def curl_equivalent(request: httpx.Request) -> str:
     """
     Render an httpx request as a `curl` command which reproduces it
 
@@ -59,10 +78,8 @@ def _curl_equivalent(request: httpx.Request) -> str:
     return " ".join(parts)
 
 
-def _log_request_as_url_and_curl(
-    api: SearchAPI,
-    request: httpx.Request,
-    # Make the level to log at a parameter, rather than being hard-coded
+def log_request_as_url_and_curl(
+    api: SearchAPI, request: httpx.Request, log_level: int = logging.DEBUG
 ) -> None:
     """
     Log a request we are about to send, at `DEBUG`
@@ -70,18 +87,22 @@ def _log_request_as_url_and_curl(
     Parameters
     ----------
     api
-        The endpoint the request is going to
+        The API the request is going to
 
     request
         The request
+
+    log_level
+        Level at which to log
     """
-    if not logger.isEnabledFor(logging.DEBUG):
+    if not logger.isEnabledFor(log_level):
         # Skip rendering if the logger is not enabled for the given level
         return
 
     url = str(request.url)
-    curl = _curl_equivalent(request)
-    logger.debug(
+    curl = curl_equivalent(request)
+    logger.log(
+        log_level,
         "search request to %s\n%s %s\n%s",
         api.host,
         request.method,
@@ -104,7 +125,7 @@ class SearchAPIRequestError(RuntimeError):
     whether the host never answered (a transport error or timeout)
     or answered with something we could not use (a bad status, unreadable JSON).
 
-    Higher-level callers are expected to translate this into their own vocabulary.
+    Higher-level callers are expected to translate this into their own terms.
     """
 
     def __init__(self, host: str) -> None:
@@ -143,8 +164,8 @@ def _result_count_or_none(api: SearchAPI, raw: dict[str, Any]) -> int | None:
         The number of records reported, or `None` if the response carries no count
     """
     try:
-        return api.generation.result_count(raw)
-    except NoResultCountReturned:
+        return api.get_search_result_n_matches(raw)
+    except NoSearchResultNumberOfMatchesReturnedError:
         return None
 
 
@@ -186,12 +207,12 @@ def fire(
     """
     built = client.build_request(
         request.method,
-        api.url(request),
+        get_url(api, request),
         params=request.params,
         json=request.json_body,
         timeout=api.timeout,
     )
-    _log_request_as_url_and_curl(api, built)
+    log_request_as_url_and_curl(api, built)
 
     request_body = json.dumps(request.json_body) if request.json_body else None
 
@@ -340,15 +361,16 @@ class SearchOutcome:
 
 def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection seams
     query: QueryProtocol,
-    selector: SearchAPISelector = DEFAULT_SELECTOR,
+    selector: SearchAPIFacadeSelector = DEFAULT_SELECTOR,
     *,
     stop_at_first_result: bool = True,
-    limit: int = DEFAULT_LIMIT,
+    # Limit handling and pagination will be added in PR2.5
+    limit: int = 10_000,
     client: httpx.Client | None = None,
     observer: SearchAPICallObserver | None = None,
 ) -> SearchOutcome:
     """
-    Search the endpoints the selector yields, and collect their raw JSON
+    Search the facades the selector yields, and collect their raw JSON
 
     Parameters
     ----------
@@ -356,7 +378,7 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
         The query to use for the search
 
     selector
-        Chooses which endpoint to try at each attempt, and when to stop.
+        Chooses which facade to try at each attempt, and when to stop.
 
     stop_at_first_result
         If `True` (the default), return as soon as one endpoint answers.
@@ -370,15 +392,16 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
 
     limit
         The page size to ask each endpoint for,
-        i.e. the most records in one response, not the total matched.
-        The total comes back in the response itself.
+        i.e. the most records to get in one response, not the total matched.
+        The total matched comes back in the response itself.
 
     client
         The HTTP client to search with.
         If `None`, one is built for the call and closed at the end.
 
     observer
-        Told about each request to each endpoint, so its health can be recorded.
+        Told about each request to each API.
+
         If `None` (the default), nothing is recorded.
         See [esmporium.search.health][] for how to build one.
 
@@ -391,9 +414,8 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
 
     Raises
     ------
-    SelectorOfferedNoAPIError
-        `selector` had no endpoint to offer for this query,
-        so there was nobody to search
+    SelectorOfferedNoAPIFacadeError
+        `selector` had no facade to offer for this query at all
 
     NoAPIWouldAnswerError
         The selector offered at least one endpoint and none of them answered
@@ -410,20 +432,27 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
 
     try:
         attempt = 0
-        while (api := selector(canonical, attempt)) is not None:
+        while (facade := selector(canonical, attempt)) is not None:
             asked_someone = True
-            request = api.generation.build_search_request(canonical, limit)
+            request = facade.build_search_request(canonical, limit)
+            host = facade.search_api.host
             try:
-                raw = fire(client, api, request, observer)
+                raw = fire(client, facade.search_api, request, observer)
             except SearchAPIRequestError as exc:
-                refusals[api.host] = CouldNotSearchError(api.host, cause=exc)
+                refusals[host] = CouldNotSearchError(host, cause=exc)
             else:
                 # Note: if the selector offers the same host twice,
                 # the second answer simply replaces the first here.
                 # That is wasteful, because we run the query again,
                 # but it is not wrong: the answers are for the same query
                 # from the same host, so either will do.
-                results[api.host] = raw
+                # Note: this way of handling results is only safe
+                # because we only handle a single query in this function
+                # and our facades only support searching a single project at a time.
+                # If either of those assumptions changed, this would break.
+                # We will have to be more careful
+                # in higher-level functions to do queries over multiple projects (PR3).
+                results[host] = raw
                 if stop_at_first_result:
                     break
 
@@ -434,7 +463,7 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
             client.close()
 
     if not asked_someone:
-        raise SelectorOfferedNoAPIError(canonical, selector)
+        raise SelectorOfferedNoAPIFacadeError(canonical, selector)
 
     if not results and refusals:
         raise NoAPIWouldAnswerError(tuple(refusals.values()))

@@ -6868,143 +6868,13 @@
     "facet_ranges": {}
   },
   "response": {
-    "docs": [
-      {
-        "_timestamp": "2023-11-04T22:38:26.745Z",
-        "_version_": 1781674810272645120,
-        "access": [
-          "HTTPServer",
-          "Globus"
-        ],
-        "activity_drs": [
-          "CMIP"
-        ],
-        "activity_id": [
-          "CMIP"
-        ],
-        "cf_standard_name": [
-          "toa_incoming_shortwave_flux"
-        ],
-        "citation_url": [
-          "http://cera-www.dkrz.de/WDCC/meta/CMIP6/CMIP6.CMIP.EC-Earth-Consortium.EC-Earth3.historical.r120i1p1f1.Amon.rsdt.gr.v20200412.json"
-        ],
-        "creation_date": "2019-07-01T06:39:50Z",
-        "data_node": "eagle.alcf.anl.gov",
-        "data_specs_version": [
-          "01.00.30"
-        ],
-        "dataset_id_template_": [
-          "%(mip_era)s.%(activity_drs)s.%(institution_id)s.%(source_id)s.%(experiment_id)s.%(member_id)s.%(table_id)s.%(variable_id)s.%(grid_label)s"
-        ],
-        "datetime_end": "2014-12-16T00:00:00Z",
-        "datetime_start": "1970-01-16T00:00:00Z",
-        "directory_format_template_": [
-          "%(root)s/%(mip_era)s/%(activity_drs)s/%(institution_id)s/%(source_id)s/%(experiment_id)s/%(member_id)s/%(table_id)s/%(variable_id)s/%(grid_label)s/%(version)s"
-        ],
-        "east_degrees": 359.29688,
-        "experiment_id": [
-          "historical"
-        ],
-        "experiment_title": [
-          "all-forcing simulation of the recent past"
-        ],
-        "frequency": [
-          "mon"
-        ],
-        "further_info_url": [
-          "https://furtherinfo.es-doc.org/CMIP6.EC-Earth-Consortium.EC-Earth3.historical.none.r120i1p1f1"
-        ],
-        "grid": [
-          "T255L91-ORCA1L75"
-        ],
-        "grid_label": [
-          "gr"
-        ],
-        "id": "CMIP6.CMIP.EC-Earth-Consortium.EC-Earth3.historical.r120i1p1f1.Amon.rsdt.gr.v20200412|eagle.alcf.anl.gov",
-        "index_node": "us-index",
-        "instance_id": "CMIP6.CMIP.EC-Earth-Consortium.EC-Earth3.historical.r120i1p1f1.Amon.rsdt.gr.v20200412",
-        "institution_id": [
-          "EC-Earth-Consortium"
-        ],
-        "latest": true,
-        "master_id": "CMIP6.CMIP.EC-Earth-Consortium.EC-Earth3.historical.r120i1p1f1.Amon.rsdt.gr",
-        "member_id": [
-          "r120i1p1f1"
-        ],
-        "mip_era": [
-          "CMIP6"
-        ],
-        "model_cohort": [
-          "Registered"
-        ],
-        "nominal_resolution": [
-          "100 km"
-        ],
-        "north_degrees": 89.46282,
-        "number_of_files": 45,
-        "pid": [
-          "hdl:21.14100/a31d6f22-4066-3e30-913f-501509086357"
-        ],
-        "product": [
-          "model-output"
-        ],
-        "project": [
-          "CMIP6"
-        ],
-        "realm": [
-          "atmos"
-        ],
-        "replica": true,
-        "retracted": false,
-        "score": 0.5,
-        "short_description": [
-          "EC-Earth3 output prepared for CMIP6"
-        ],
-        "size": 180938310,
-        "source_id": [
-          "EC-Earth3"
-        ],
-        "source_type": [
-          "AOGCM"
-        ],
-        "south_degrees": -89.46282,
-        "sub_experiment_id": [
-          "none"
-        ],
-        "table_id": [
-          "Amon"
-        ],
-        "title": "CMIP6.CMIP.EC-Earth-Consortium.EC-Earth3.historical.r120i1p1f1.Amon.rsdt.gr",
-        "type": "Dataset",
-        "variable": [
-          "rsdt"
-        ],
-        "variable_id": [
-          "rsdt"
-        ],
-        "variable_long_name": [
-          "TOA Incident Shortwave Radiation"
-        ],
-        "variable_units": [
-          "W m-2"
-        ],
-        "variant_label": [
-          "r120i1p1f1"
-        ],
-        "version": 20200412,
-        "west_degrees": 0.0,
-        "xlink": [
-          "http://cera-www.dkrz.de/WDCC/meta/CMIP6/CMIP6.CMIP.EC-Earth-Consortium.EC-Earth3.historical.r120i1p1f1.Amon.rsdt.gr.v20200412.json|Citation|citation",
-          "http://hdl.handle.net/hdl:21.14100/a31d6f22-4066-3e30-913f-501509086357|PID|pid"
-        ]
-      }
-    ],
-    "maxScore": 0.5,
+    "docs": [],
+    "maxScore": null,
     "numFound": 14769319,
     "start": 0
   },
   "responseHeader": {
-    "QTime": 202590,
+    "QTime": 103940,
     "params": {
       "df": "text",
       "echoParams": "all",
@@ -7022,7 +6892,7 @@
       "q": "*:*",
       "q.alt": "*:*",
       "qf": "text",
-      "rows": "1",
+      "rows": "0",
       "shards": "esgf-data-node-solr-query:8983/solr/datasets",
       "start": "0",
       "tie": "0.01",

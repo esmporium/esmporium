@@ -20,8 +20,12 @@ from tenacity import Retrying, retry_if_exception, stop_after_attempt
 
 from esmporium.query import QueryCMIP6, to_canonical
 from esmporium.search import (
+    ESGF1_CMIP6_FACADE_PARAMETERS,
+    ESGFNG_CMIP6_FACADE_PARAMETERS,
     NoAPIWouldAnswerError,
-    SearchAPI,
+    SearchAPIESGF1Solr,
+    SearchAPIESGFNGSTAC,
+    SearchAPIFacade,
     SearchAPIRequestError,
     build_list_selector,
     check_query_values,
@@ -31,7 +35,6 @@ from esmporium.search import (
 )
 from esmporium.search.health import SearchAPICall
 from esmporium.search.retry import _is_transient
-from esmporium.search.search_api import SOLR_CMIP6, STAC_CMIP6
 
 # NOTE: the mock helpers below are duplicated from
 # `tests/unit/search/test_search.py` and `test_check_query_values.py`. They are
@@ -69,9 +72,18 @@ def solr_response(num_found: int) -> httpx.Response:
     return httpx.Response(200, json={"response": {"numFound": num_found, "docs": []}})
 
 
-def make_api(host, generation=SOLR_CMIP6, attempts=1) -> SearchAPI:
-    """Build a SearchAPI for `host` with a no-sleep retry policy."""
-    return SearchAPI(host, generation, fast_retrying(attempts))
+def make_cmip6_facade(host, *, stac=False, attempts=1) -> SearchAPIFacade:
+    """Build a CMIP6 facade for `host` with a no-sleep retry policy."""
+    if stac:
+        return SearchAPIFacade(
+            parameters=ESGFNG_CMIP6_FACADE_PARAMETERS,
+            search_api=SearchAPIESGFNGSTAC(host, fast_retrying(attempts)),
+        )
+
+    return SearchAPIFacade(
+        parameters=ESGF1_CMIP6_FACADE_PARAMETERS,
+        search_api=SearchAPIESGF1Solr(host, fast_retrying(attempts)),
+    )
 
 
 def record(handler, apis) -> list[SearchAPICall]:
@@ -105,7 +117,9 @@ def a_call() -> SearchAPICall:
 
 
 def test_success_with_results_records_one_call():
-    (call,) = record(lambda r: solr_response(812), [make_api("esgf.example.org")])
+    (call,) = record(
+        lambda r: solr_response(812), [make_cmip6_facade("esgf.example.org")]
+    )
 
     assert call.host == "esgf.example.org"
     assert call.http_method == "GET"
@@ -121,7 +135,7 @@ def test_success_with_results_records_one_call():
 
 
 def test_zero_results_still_records_a_success():
-    (call,) = record(lambda r: solr_response(0), [make_api("host")])
+    (call,) = record(lambda r: solr_response(0), [make_cmip6_facade("host")])
 
     assert call.success is True
     assert call.num_results == 0
@@ -131,7 +145,7 @@ def test_success_with_an_uncountable_body_records_none_results():
     # A 200 we can parse as JSON but which reports no count.
     (call,) = record(
         lambda r: httpx.Response(200, json={"response": {"docs": []}}),
-        [make_api("host")],
+        [make_cmip6_facade("host")],
     )
 
     assert call.success is True
@@ -139,7 +153,7 @@ def test_success_with_an_uncountable_body_records_none_results():
 
 
 def test_stac_post_records_its_method_and_body():
-    api = make_api("search.example.io", generation=STAC_CMIP6)
+    api = make_cmip6_facade("search.example.io", stac=True)
 
     (call,) = record(lambda r: httpx.Response(200, json={"numberMatched": 3}), [api])
 
@@ -152,14 +166,16 @@ def test_stac_post_records_its_method_and_body():
 def test_a_client_error_is_not_retried():
     # attempts=3 would allow three tries, but a 4xx is a definite "no": the policy
     # does not retry it, so exactly one attempt is made and one call recorded.
-    calls = record(lambda r: httpx.Response(404), [make_api("host", attempts=3)])
+    calls = record(
+        lambda r: httpx.Response(404), [make_cmip6_facade("host", attempts=3)]
+    )
 
     assert len(calls) == 1
     assert calls[0].attempt_number == 1
 
 
 def test_a_failed_call_records_the_status_and_error():
-    (call,) = record(lambda r: httpx.Response(404), [make_api("host")])
+    (call,) = record(lambda r: httpx.Response(404), [make_cmip6_facade("host")])
 
     assert call.success is False
     assert call.response_code == 404
@@ -168,7 +184,9 @@ def test_a_failed_call_records_the_status_and_error():
 
 
 def test_a_transient_failure_records_every_attempt():
-    calls = record(lambda r: httpx.Response(503), [make_api("host", attempts=3)])
+    calls = record(
+        lambda r: httpx.Response(503), [make_cmip6_facade("host", attempts=3)]
+    )
 
     assert [c.attempt_number for c in calls] == [1, 2, 3]
     assert all(c.success is False for c in calls)
@@ -178,7 +196,9 @@ def test_a_transient_failure_records_every_attempt():
 def test_a_retry_that_succeeds_records_the_failure_then_the_success():
     responses = iter([httpx.Response(503), solr_response(5)])
 
-    fail, ok = record(lambda r: next(responses), [make_api("host", attempts=3)])
+    fail, ok = record(
+        lambda r: next(responses), [make_cmip6_facade("host", attempts=3)]
+    )
 
     assert (fail.attempt_number, fail.success) == (1, False)
     assert (ok.attempt_number, ok.success, ok.num_results) == (2, True, 5)
@@ -188,7 +208,7 @@ def test_a_transport_error_records_no_status_code():
     def boom(request):
         raise httpx.ConnectError("nope", request=request)
 
-    (call,) = record(boom, [make_api("host", attempts=1)])
+    (call,) = record(boom, [make_cmip6_facade("host", attempts=1)])
 
     assert call.success is False
     assert call.response_code is None  # nothing answered, so there is no code
@@ -200,7 +220,7 @@ def test_an_unparseable_body_is_not_retried():
     # retry it: exactly one attempt is made and one call recorded, despite attempts=3.
     calls = record(
         lambda r: httpx.Response(200, content=b"not json"),
-        [make_api("host", attempts=3)],
+        [make_cmip6_facade("host", attempts=3)],
     )
 
     assert len(calls) == 1
@@ -210,7 +230,7 @@ def test_an_unparseable_body_is_not_retried():
 def test_an_unparseable_body_records_a_failure_with_the_status():
     (call,) = record(
         lambda r: httpx.Response(200, content=b"not json"),
-        [make_api("host")],
+        [make_cmip6_facade("host")],
     )
 
     assert call.success is False
@@ -219,7 +239,7 @@ def test_an_unparseable_body_records_a_failure_with_the_status():
 
 
 def test_no_observer_records_nothing_but_still_works():
-    selector = build_list_selector([make_api("host")])
+    selector = build_list_selector([make_cmip6_facade("host")])
 
     # Success still returns the JSON.
     outcome = search(QUERY, selector, client=client_for(lambda r: solr_response(1)))
@@ -231,11 +251,11 @@ def test_no_observer_records_nothing_but_still_works():
 
 
 def test_fire_fails_loudly_carrying_the_cause():
-    api = make_api("host")
-    request = api.generation.build_search_request(to_canonical(QUERY), 10)
+    facade = make_cmip6_facade("host")
+    request = facade.build_search_request(to_canonical(QUERY), 10)
 
     with pytest.raises(SearchAPIRequestError) as excinfo:
-        fire(client_for(lambda r: httpx.Response(500)), api, request)
+        fire(client_for(lambda r: httpx.Response(500)), facade.search_api, request)
 
     assert excinfo.value.host == "host"
     assert isinstance(excinfo.value.__cause__, httpx.HTTPStatusError)
@@ -247,7 +267,7 @@ def test_search_records_one_row_per_host_tried():
             return httpx.Response(404)
         return solr_response(3)
 
-    calls = record(by_host, [make_api("host-a"), make_api("host-b")])
+    calls = record(by_host, [make_cmip6_facade("host-a"), make_cmip6_facade("host-b")])
 
     assert [c.host for c in calls] == ["host-a", "host-b"]
     assert [c.success for c in calls] == [False, True]
@@ -266,7 +286,7 @@ def test_check_query_values_records_its_call():
     calls: list[SearchAPICall] = []
     check_query_values(
         QueryCMIP6(experiment_id="historical"),
-        build_list_selector([make_api("node")]),
+        build_list_selector([make_cmip6_facade("node")]),
         client=client_for(handler),
         observer=calls.append,
     )

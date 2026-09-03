@@ -30,14 +30,13 @@ from esmporium.query import (
     facet_spec,
     to_canonical,
 )
-from esmporium.search.esgf_generations import native_facet_names
 from esmporium.search.health import SearchAPICallObserver
 from esmporium.search.search import SearchAPIRequestError, fire
-from esmporium.search.search_api import (
+from esmporium.search.search_api_facade import (
     DEFAULT_SELECTOR,
-    SearchAPI,
-    SearchAPISelector,
-    SelectorOfferedNoAPIError,
+    SearchAPIFacade,
+    SearchAPIFacadeSelector,
+    SelectorOfferedNoAPIFacadeError,
 )
 
 CloseMatcher = Callable[[str, set[str]], tuple[str, ...]]
@@ -371,19 +370,19 @@ class CouldNotGetAllowedValuesError(RuntimeError):
 
 
 def allowed_values_from_api(
-    api: SearchAPI,
+    facade: SearchAPIFacade,
     client: httpx.Client,
     canonical: QueryCanonical,
     facets: set[str],
     observer: SearchAPICallObserver | None = None,
 ) -> AllowedValues:
     """
-    Get what a search API can tell us about the allowed values of some facets
+    Get what a search API facade can tell us about the allowed values of some facets
 
     Parameters
     ----------
-    api
-        The API to ask
+    facade
+        The API facade to ask
 
     client
         The HTTP client to ask with
@@ -395,34 +394,35 @@ def allowed_values_from_api(
         Facets for which to get the allowed values
 
     observer
-        Told about the request to `api`, so its health can be recorded.
+        Told about the request to `facade.search_api`.
+
         If `None` (the default), nothing is recorded.
 
     Returns
     -------
     :
-        What `api` can say about each facet
+        What `facade` can say about each facet
 
-        Facets `api` has no name for are simply absent:
-        we cannot ask about what it cannot express.
+        Facets `facade` has no name for are simply absent:
+        as the caller you need to decide what to do about these absences.
 
     Raises
     ------
     CouldNotGetAllowedValuesError
-        `api` could not be reached, or would not answer
+        Allowed value information could not be retrieved from `facade.search_api`
     """
-    askable = set(native_facet_names(api.generation.params, facets))
+    askable = facade.askable_facets(facets)
 
-    request = api.generation.build_get_facet_values_request(canonical, askable)
+    request = facade.build_get_facet_values_request(canonical, askable)
 
     try:
-        raw = fire(client, api, request, observer)
+        raw = fire(client, facade.search_api, request, observer)
     except SearchAPIRequestError as exc:
-        raise CouldNotGetAllowedValuesError(api.host) from exc
+        raise CouldNotGetAllowedValuesError(facade.search_api.host) from exc
 
     return AllowedValues(
-        values=api.generation.parse_facet_values(raw, askable),
-        patterns=api.generation.parse_facet_patterns(raw, askable),
+        values=facade.parse_facet_values(raw, askable),
+        patterns=facade.parse_facet_patterns(raw, askable),
     )
 
 
@@ -469,7 +469,7 @@ class ValueCheckOutcome:
 
 def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberate injection seams
     query: QueryProtocol,
-    selector: SearchAPISelector = DEFAULT_SELECTOR,
+    selector: SearchAPIFacadeSelector = DEFAULT_SELECTOR,
     *,
     stop_at_first_result: bool = True,
     close_matches: CloseMatcher = close_matches_difflib,
@@ -491,7 +491,7 @@ def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberat
         Query to check
 
     selector
-        How to pick the API to ask about allowed values at each attempt
+        Chooses which facade to try at each attempt, and when to stop.
 
     stop_at_first_result
         If `True` (the default), report on the first endpoint which answers.
@@ -512,7 +512,8 @@ def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberat
         If `None`, one is built for the call and closed at the end.
 
     observer
-        Told about each request to each API, so its health can be recorded.
+        Told about each request to each API.
+
         If `None` (the default), nothing is recorded.
         See [esmporium.search.health][] for how to build one.
 
@@ -525,8 +526,8 @@ def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberat
 
     Raises
     ------
-    SelectorOfferedNoAPIError
-        `selector` had no API to offer for this query,
+    SelectorOfferedNoAPIFacadeError
+        `selector` had no API facade to offer for this query,
         so there was nobody to ask
 
     NoSourceWouldAnswerError
@@ -545,21 +546,22 @@ def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberat
 
     try:
         attempt = 0
-        while (api := selector(canonical, attempt)) is not None:
+        while (facade := selector(canonical, attempt)) is not None:
             asked_someone = True
+            host = facade.search_api.host
             try:
                 allowed = allowed_values_from_api(
-                    api, client, canonical, facets, observer
+                    facade, client, canonical, facets, observer
                 )
             except CouldNotGetAllowedValuesError as exc:
-                refusals[api.host] = exc
+                refusals[host] = exc
             else:
                 # Note: if the selector offers the same host twice,
                 # the second report simply replaces the first here.
                 # That is wasteful, because we ask the same host again,
                 # but it is not wrong: both reports say the same thing.
-                reports[api.host] = check_query_values_low(
-                    canonical, allowed, api.host, close_matches
+                reports[host] = check_query_values_low(
+                    canonical, allowed, host, close_matches
                 )
                 if stop_at_first_result:
                     break
@@ -571,7 +573,7 @@ def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberat
             client.close()
 
     if not asked_someone:
-        raise SelectorOfferedNoAPIError(canonical, selector)
+        raise SelectorOfferedNoAPIFacadeError(canonical, selector)
 
     if not reports and refusals:
         raise NoSourceWouldAnswerError(tuple(refusals.values()))

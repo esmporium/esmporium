@@ -30,14 +30,16 @@ from esmporium.query import (
     to_canonical,
 )
 from esmporium.search import (
-    ESGF1Solr,
-    ESGF15Bridge,
-    ESGFNGStac,
-    Request,
-    SolrCMIP5Parameters,
-    SolrCMIP6Parameters,
-    StacCMIP6Parameters,
-    StacCMIP7Parameters,
+    ESGF1_CMIP5_FACADE_PARAMETERS,
+    ESGF1_CMIP6_FACADE_PARAMETERS,
+    ESGFNG_CMIP6_FACADE_PARAMETERS,
+    ESGFNG_CMIP7_FACADE_PARAMETERS,
+    SearchAPIESGF1Solr,
+    SearchAPIESGF15BridgeSolr,
+    SearchAPIESGFNGSTAC,
+    SearchAPIFacade,
+    build_transient_retrying,
+    fire,
 )
 
 OUT_DIR = Path(__file__).parents[1] / "tests" / "test-data" / "search"
@@ -54,91 +56,53 @@ Enough to see the shape of a record, few enough to keep the files reviewable.
 """
 
 
-def facets_to_list(generation: Any) -> set[str]:
-    """
-    Work out which facets to record the values of, for one generation
-
-    Everything the generation's vocabulary can express, rather than a fixed few.
-
-    Parameters
-    ----------
-    generation
-        The generation whose vocabulary to read
-
-    Returns
-    -------
-    :
-        The facets to ask about, named the way they are asked for
-    """
-    return set(facet_spec(generation.params).expressible_facets)
-
-
 CASES = (
     (
         "esgf1-solr-cmip5",
-        "esgf.nci.org.au",
-        ESGF1Solr(params=SolrCMIP5Parameters),
+        SearchAPIFacade(
+            ESGF1_CMIP5_FACADE_PARAMETERS,
+            SearchAPIESGF1Solr("esgf.nci.org.au", build_transient_retrying(2)),
+        ),
         QueryCMIP5(experiment="historical", variable="tas", time_frequency="mon"),
     ),
     (
         "esgf1-solr-cmip6",
-        "esgf.nci.org.au",
-        ESGF1Solr(params=SolrCMIP6Parameters),
+        SearchAPIFacade(
+            ESGF1_CMIP6_FACADE_PARAMETERS,
+            SearchAPIESGF1Solr("esgf.nci.org.au", build_transient_retrying(2)),
+        ),
         QueryCMIP6(experiment_id="historical", variable_id="tas", frequency="mon"),
     ),
     (
         "esgf15-bridge-cmip6",
-        "esgf-node.ornl.gov",
-        ESGF15Bridge(params=SolrCMIP6Parameters),
+        SearchAPIFacade(
+            ESGF1_CMIP6_FACADE_PARAMETERS,
+            SearchAPIESGF15BridgeSolr(
+                "esgf-node.ornl.gov", build_transient_retrying(2)
+            ),
+        ),
         QueryCMIP6(experiment_id="historical", variable_id="tas", frequency="mon"),
     ),
     (
         "esgf-ng-stac-cmip6",
-        "search.east.esgf.io",
-        ESGFNGStac(params=StacCMIP6Parameters),
+        SearchAPIFacade(
+            ESGFNG_CMIP6_FACADE_PARAMETERS,
+            SearchAPIESGFNGSTAC("search.east.esgf.io", build_transient_retrying(2)),
+        ),
         QueryCMIP6(experiment_id="historical", variable_id="tas", frequency="mon"),
     ),
     (
         "esgf-ng-stac-cmip7",
-        "search.east.esgf.io",
-        ESGFNGStac(params=StacCMIP7Parameters),
+        SearchAPIFacade(
+            ESGFNG_CMIP7_FACADE_PARAMETERS,
+            SearchAPIESGFNGSTAC("search.east.esgf.io", build_transient_retrying(2)),
+        ),
         QueryCMIP7(variable_id="tas"),
     ),
+    # TODO: should we add in west queries too here, at least for CMIP7,
+    # given that west and east aren't actually identical?
 )
-"""What to record: a name, the host to ask, the generation, and the query"""
-
-
-def fetch(client: httpx.Client, host: str, request: Request) -> dict[str, Any]:
-    """
-    Send a request to a host and hand back the JSON it answered with
-
-    Parameters
-    ----------
-    client
-        The client to send with
-
-    host
-        The host to send to
-
-    request
-        The request to send, as built by a generation
-
-    Returns
-    -------
-    :
-        The raw JSON the host answered with
-    """
-    response = client.request(
-        request.method,
-        f"https://{host}{request.path}",
-        params=request.params,
-        json=request.json_body,
-    )
-    response.raise_for_status()
-
-    res: dict[str, Any] = response.json()
-
-    return res
+"""What to record: a name, the facade to ask with, and the query"""
 
 
 def write(name: str, raw: dict[str, Any]) -> None:
@@ -164,20 +128,29 @@ def main() -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
     with httpx.Client(follow_redirects=True, timeout=TIMEOUT) as client:
-        for name, host, generation, query in CASES:
+        for name, facade, query in CASES:
             canonical = to_canonical(query)
 
             write(
                 f"{name}-search",
-                fetch(client, host, generation.build_search_request(canonical, LIMIT)),
+                fire(
+                    client,
+                    facade.search_api,
+                    facade.build_search_request(canonical, LIMIT),
+                ),
             )
             write(
                 f"{name}-facets",
-                fetch(
+                fire(
                     client,
-                    host,
-                    generation.build_get_facet_values_request(
-                        canonical, facets_to_list(generation)
+                    facade.search_api,
+                    facade.build_get_facet_values_request(
+                        canonical,
+                        set(
+                            facet_spec(
+                                facade.parameters.base_query_style
+                            ).expressible_facets
+                        ),
                     ),
                 ),
             )

@@ -6406,150 +6406,13 @@
     "facet_ranges": {}
   },
   "response": {
-    "docs": [
-      {
-        "_timestamp": "2020-01-16T16:27:10.207Z",
-        "_version_": 1803475714370961408,
-        "access": [
-          "HTTPServer",
-          "OPENDAP"
-        ],
-        "activity_drs": [
-          "C4MIP"
-        ],
-        "activity_id": [
-          "C4MIP"
-        ],
-        "cf_standard_name": [
-          "surface_air_pressure"
-        ],
-        "citation_url": [
-          "http://cera-www.dkrz.de/WDCC/meta/CMIP6/CMIP6.C4MIP.NOAA-GFDL.GFDL-ESM4.1pctCO2-bgc.r1i1p1f1.Amon.ps.gr1.v20180701.json"
-        ],
-        "data_node": "esgf.ceda.ac.uk",
-        "data_specs_version": [
-          "01.00.27"
-        ],
-        "dataset_id_template_": [
-          "%(mip_era)s.%(activity_drs)s.%(institution_id)s.%(source_id)s.%(experiment_id)s.%(member_id)s.%(table_id)s.%(variable_id)s.%(grid_label)s"
-        ],
-        "datetime_start": "0001-01-16T12:00:00Z",
-        "datetime_stop": "0150-12-16T12:00:00Z",
-        "directory_format_template_": [
-          "%(root)s/%(mip_era)s/%(activity_drs)s/%(institution_id)s/%(source_id)s/%(experiment_id)s/%(member_id)s/%(table_id)s/%(variable_id)s/%(grid_label)s/%(version)s"
-        ],
-        "east_degrees": 359.375,
-        "experiment_id": [
-          "1pctCO2-bgc"
-        ],
-        "experiment_title": [
-          "biogeochemically-coupled version of 1 percent per year increasing CO2 experiment"
-        ],
-        "frequency": [
-          "mon"
-        ],
-        "further_info_url": [
-          "https://furtherinfo.es-doc.org/CMIP6.NOAA-GFDL.GFDL-ESM4.1pctCO2-bgc.none.r1i1p1f1"
-        ],
-        "geo": [
-          "ENVELOPE(-180.0, -0.625, 89.5, -89.5)",
-          "ENVELOPE(0.625, 180.0, 89.5, -89.5)"
-        ],
-        "geo_units": [
-          "degrees_east"
-        ],
-        "grid": [
-          "atmos data regridded from Cubed-sphere (c96) to 180,288; interpolation method: conserve_order2"
-        ],
-        "grid_label": [
-          "gr1"
-        ],
-        "id": "CMIP6.C4MIP.NOAA-GFDL.GFDL-ESM4.1pctCO2-bgc.r1i1p1f1.Amon.ps.gr1.v20180701|esgf.ceda.ac.uk",
-        "index_node": "esgf.ceda.ac.uk",
-        "instance_id": "CMIP6.C4MIP.NOAA-GFDL.GFDL-ESM4.1pctCO2-bgc.r1i1p1f1.Amon.ps.gr1.v20180701",
-        "institution_id": [
-          "NOAA-GFDL"
-        ],
-        "latest": true,
-        "master_id": "CMIP6.C4MIP.NOAA-GFDL.GFDL-ESM4.1pctCO2-bgc.r1i1p1f1.Amon.ps.gr1",
-        "member_id": [
-          "r1i1p1f1"
-        ],
-        "metadata_format": "THREDDS",
-        "mip_era": [
-          "CMIP6"
-        ],
-        "model_cohort": [
-          "Registered"
-        ],
-        "nominal_resolution": [
-          "100 km"
-        ],
-        "north_degrees": 89.5,
-        "number_of_files": 2,
-        "pid": [
-          "hdl:21.14100/3c2cf1eb-921d-3f48-b0c2-982ef55d93d4"
-        ],
-        "product": [
-          "model-output"
-        ],
-        "project": [
-          "CMIP6"
-        ],
-        "realm": [
-          "atmos"
-        ],
-        "replica": true,
-        "retracted": false,
-        "score": 1.0,
-        "size": 213438875,
-        "source_id": [
-          "GFDL-ESM4"
-        ],
-        "source_type": [
-          "AOGCM",
-          "AER",
-          "CHEM",
-          "BGC"
-        ],
-        "south_degrees": -89.5,
-        "sub_experiment_id": [
-          "none"
-        ],
-        "table_id": [
-          "Amon"
-        ],
-        "title": "CMIP6.C4MIP.NOAA-GFDL.GFDL-ESM4.1pctCO2-bgc.r1i1p1f1.Amon.ps.gr1",
-        "type": "Dataset",
-        "variable": [
-          "ps"
-        ],
-        "variable_id": [
-          "ps"
-        ],
-        "variable_long_name": [
-          "Surface Air Pressure"
-        ],
-        "variable_units": [
-          "Pa"
-        ],
-        "variant_label": [
-          "r1i1p1f1"
-        ],
-        "version": "20180701",
-        "west_degrees": 0.625,
-        "xlink": [
-          "http://cera-www.dkrz.de/WDCC/meta/CMIP6/CMIP6.C4MIP.NOAA-GFDL.GFDL-ESM4.1pctCO2-bgc.r1i1p1f1.Amon.ps.gr1.v20180701.json|Citation|citation",
-          "http://hdl.handle.net/hdl:21.14100/3c2cf1eb-921d-3f48-b0c2-982ef55d93d4|PID|pid"
-        ]
-      }
-    ],
+    "docs": [],
     "maxScore": 1.0,
     "numFound": 5920918,
     "start": 0
   },
   "responseHeader": {
-    "QTime": 364,
+    "QTime": 217,
     "params": {
       "df": "text",
       "echoParams": "all",
@@ -6582,7 +6445,7 @@
       "q": "*:*",
       "q.alt": "*:*",
       "qf": "text",
-      "rows": "1",
+      "rows": "0",
       "shards": "solr-slave:8983/solr/datasets,solr-replica-ceda:8983/solr/datasets,solr-replica-dkrz:8983/solr/datasets,solr-replica-ipsl:8983/solr/datasets,solr-replica-liu:8983/solr/datasets,solr-replica-noaa:8983/solr/datasets",
       "start": "0",
       "tie": "0.01",

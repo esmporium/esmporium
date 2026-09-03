@@ -12,6 +12,7 @@ from esmporium.query.known_queries import (
     QueryCMIP7,
     UnknownProjectError,
     facet_spec,
+    facet_values_from_attributes,
 )
 from esmporium.query.protocol import QueryProtocol
 
@@ -33,12 +34,7 @@ class FacetNotExpressibleError(ValueError):
         Parameters
         ----------
         facets
-            The facet(s) under consideration
-
-            A single facet may be passed on its own.
-            Pass all of them when they are all known at once:
-            being told about one facet at a time
-            means fixing them one at a time.
+            The facet(s) that cannot be expressed
 
         query_class
             The name of the query class in which `facets` cannot be expressed
@@ -86,13 +82,13 @@ def to_canonical(query: QueryProtocol) -> QueryCanonical:
     Returns
     -------
     :
-        `query`, expressed in the canonical vocabulary
+        `query`, expressed under the canonical facet names
     """
     spec = facet_spec(type(query))
 
     canonical_fields: dict[str, tuple[str, ...]] = {}
     query_specific: dict[str, tuple[str, ...]] = {}
-    for native, values in query.facet_values().items():
+    for native, values in facet_values_from_attributes(query).items():
         canonical = spec.native_to_canonical.get(native)
         if canonical is None:
             query_specific[native] = values
@@ -126,7 +122,8 @@ def from_canonical(
     Returns
     -------
     :
-        `canonical`, as type `to` (and therefore written in `to`'s vocabulary)
+        `canonical`, as type `to`
+        (and therefore written under `to`'s parameter names)
 
     Raises
     ------
@@ -310,7 +307,7 @@ def translate_to_projects(
     >>> # and projects we don't know about.
     >>> # A query of your own needs no registration
     >>> # and only needs to match `QueryProtocol`:
-    >>> # annotate each facet to say what it is called in the canonical vocabulary,
+    >>> # annotate each facet to say what it is called canonically,
     >>> # and it can be translated like our queries.
     >>>
     >>> from dataclasses import dataclass, field
@@ -324,7 +321,7 @@ def translate_to_projects(
     >>>
     >>> @dataclass
     ... class QueryMIP1:
-    ...     # map to a different name in the canonical vocabulary
+    ...     # map to a different name canonically
     ...     mip: Annotated[tuple[str, ...], QueryFacet("project")] = ()
     ...     esm: Annotated[tuple[str, ...], QueryFacet("model")] = ()
     ...
@@ -366,7 +363,7 @@ def translate_to_projects(
     else:
         # Check on canonical so we know the name is always project
         if not canonical.project:
-            # Name the facet in the query's own vocabulary,
+            # Name the facet under the query style's own parameter name,
             # so the fix names something the user can actually type.
             spec = facet_spec(type(query))
             project_facet = spec.canonical_to_native.get("project")

@@ -347,9 +347,11 @@
                 {
                   "property": "collection"
                 },
-                "CMIP6"
+                [
+                  "CMIP6"
+                ]
               ],
-              "op": "="
+              "op": "in"
             },
             {
               "args": [

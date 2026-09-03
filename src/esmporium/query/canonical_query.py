@@ -39,7 +39,7 @@ CANONICAL_FACETS: frozenset[str] = frozenset(
     }
 )
 """
-The canonical facet vocabulary
+The canonical facet names
 
 Aligns as far as possible with [Dataset][esmporium.db.schema.Dataset].
 
@@ -90,10 +90,10 @@ class QueryFacet:
 
     ```python
     class QueryExample(BaseModel):
-        # Same name in the canonical vocabulary
+        # Same name canonically
         model: Annotated[FacetValues, QueryFacet("model")] = ()
 
-        # A different name in the canonical vocabulary
+        # A different name canonically
         ensemble: Annotated[FacetValues, QueryFacet("variant_label")] = ()
 
         # No canonical equivalent: i.e. this facet is specific to this query class
@@ -103,7 +103,7 @@ class QueryFacet:
 
     canonical_equivalent: str | None
     """
-    This facet's name in the canonical vocabulary
+    This facet's canonical name
 
     Must be one of
     [CANONICAL_FACETS][esmporium.query.canonical_query.CANONICAL_FACETS],
@@ -284,7 +284,7 @@ Used for the facet buckets we hold by name rather than as declared fields.
 
 class QueryCanonical(BaseModel):
     """
-    An immutable query expressed in the canonical facet vocabulary
+    An immutable query expressed under the canonical facet names
     """
 
     # Immutable to provide stability.
@@ -346,9 +346,9 @@ class QueryCanonical(BaseModel):
 
     query_specific_facets: FacetValuesByName = {}
     """
-    Facets which this query names but the canonical vocabulary does not.
+    Facets which this query names but which have no canonical name.
 
-    These are held under their native names,
+    These are held under the query style's own parameter names,
     untranslated, because there is nothing to translate them to.
     For example, CMIP5's `product`.
     """
