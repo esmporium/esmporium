@@ -14,7 +14,8 @@ from sqlmodel import Session, create_engine, select
 from esmporium.db import DATASET_FACET_COLUMNS, METADATA, Dataset
 
 VALID_DATASET_KWARGS = {
-    "id": "CMIP5.CMIP.BCC.bcc-csm1-1.rcp45.r1i1p1.Amon.tas.bcc-csm-1_rcp45_atmos",
+    # No `id`: it is a surrogate integer the database assigns. The row's real identity
+    # is `(id_project_specific, variable)`.
     "id_project_specific": (
         "cmip5.output1.BCC.bcc-csm1-1.rcp45.mon.atmos.Amon.r1i1p1_tas"
     ),
@@ -87,70 +88,82 @@ def test_round_trip(engine):
     is quietly not the value that went in.
     """
     with Session(engine) as session:
-        session.add(Dataset(**VALID_DATASET_KWARGS))
+        dataset = Dataset(**VALID_DATASET_KWARGS)
+        session.add(dataset)
         session.commit()
+        dataset_id = dataset.id
 
     with Session(engine) as session:
-        retrieved = session.get(Dataset, VALID_DATASET_KWARGS["id"])
+        retrieved = session.get(Dataset, dataset_id)
 
     assert retrieved is not None
-    assert retrieved.model_dump() == VALID_DATASET_KWARGS
+    # The surrogate id is assigned by the database; everything we put in comes back.
+    assert isinstance(retrieved.id, int)
+    for column, value in VALID_DATASET_KWARGS.items():
+        assert getattr(retrieved, column) == value
 
     for column in VALID_DATASET_KWARGS:
         column_type = Dataset.model_fields[column].annotation
         assert isinstance(getattr(retrieved, column), column_type)
 
 
-def test_id_is_unique(engine):
+def test_natural_key_is_unique(engine):
     """
-    Test that two datasets can't share an ID
-    """
-    with Session(engine) as session:
-        session.add(Dataset(**VALID_DATASET_KWARGS))
-        session.commit()
+    Test that two datasets can't share `(id_project_specific, variable)`
 
-        # Same ID, but a different dataset: exactly the contradiction we want caught.
-        session.add(Dataset(**{**VALID_DATASET_KWARGS, "variable": "tos"}))
-
-        with pytest.raises(
-            IntegrityError, match=re.escape("UNIQUE constraint failed: dataset.id")
-        ):
-            session.commit()
-
-
-def test_id_project_specific_is_unique(engine):
-    """
-    Test that two datasets can't share a project-specific ID
+    This is the row's real identity. Same native id AND same variable means the same
+    dataset, so storing it twice is the contradiction we want caught. This is also
+    what keeps two CMIP5 products (which differ in `id_project_specific`) apart.
     """
     with Session(engine) as session:
         session.add(Dataset(**VALID_DATASET_KWARGS))
         session.commit()
 
-        # A different dataset by our ID, but the same one in the project's language:
-        # one of these two is wrong and we can't tell which.
-        session.add(Dataset(**{**VALID_DATASET_KWARGS, "id": "a-different-id"}))
+        # Same native id and same variable: the same dataset a second time.
+        session.add(Dataset(**VALID_DATASET_KWARGS))
 
         with pytest.raises(
             IntegrityError,
-            match=re.escape("UNIQUE constraint failed: dataset.id_project_specific"),
+            match=re.escape(
+                "UNIQUE constraint failed: "
+                "dataset.id_project_specific, dataset.variable"
+            ),
         ):
             session.commit()
+
+
+def test_same_id_project_specific_different_variable_is_allowed(engine):
+    """
+    Test that one CMIP5 ESGF dataset's variables can coexist
+
+    A CMIP5 `master_id` bundles many variables, so every per-variable row we derive
+    from it shares one `id_project_specific`. Those rows differ only in `variable`,
+    and the database must accept them all.
+    """
+    with Session(engine) as session:
+        session.add(Dataset(**VALID_DATASET_KWARGS))
+        session.add(Dataset(**{**VALID_DATASET_KWARGS, "variable": "pr"}))
+        session.commit()
+
+        assert len(session.exec(select(Dataset)).all()) == 2
 
 
 def test_facets_are_not_unique(engine):
     """
     Test that two datasets are allowed to describe the same combination of facets
+
+    The same facets under a different native id (a different ESGF dataset) is allowed:
+    the natural key is `(id_project_specific, variable)`, not the facets.
     """
     with Session(engine) as session:
         session.add(Dataset(**VALID_DATASET_KWARGS))
         session.commit()
 
-        same_facets_different_id = {
+        same_facets_different_native_id = {
             **VALID_DATASET_KWARGS,
-            "id": "a-different-id",
             "id_project_specific": "a-different-id-project-specific",
         }
-        session.add(Dataset(**same_facets_different_id))
+        session.add(Dataset(**same_facets_different_native_id))
         session.commit()
 
         assert len(session.exec(select(Dataset)).all()) == 2
@@ -226,12 +239,18 @@ def test_omitted_fields_are_not_validated_on_construction():
     for closing this properly once we parse ESGF records.
     """
     # No exception, despite every facet being required.
-    dataset = Dataset(id="only-an-id")
+    dataset = Dataset(id_project_specific="only-a-native-id")
 
     assert dataset.variable is None
 
 
-@pytest.mark.parametrize("column", FACET_COLUMNS)
+# Every facet is required EXCEPT `grid_label`, which is nullable on purpose
+# (CMIP5 has no grid label; see `Dataset.grid_label`). Omitting it is allowed, so it
+# is not part of this NOT NULL test.
+NOT_NULL_FACET_COLUMNS = [column for column in FACET_COLUMNS if column != "grid_label"]
+
+
+@pytest.mark.parametrize("column", NOT_NULL_FACET_COLUMNS)
 def test_facet_columns_are_not_nullable(engine, column):
     """
     Test that a dataset can't be stored with a missing facet

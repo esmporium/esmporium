@@ -7,7 +7,7 @@ they have to also write the migration.
 
 from __future__ import annotations
 
-from sqlmodel import Session, text
+from sqlmodel import Session, select, text
 
 from esmporium.db import Dataset, migrate
 
@@ -103,4 +103,7 @@ def test_upgrade_is_idempotent(engine, get_dataset_kwargs, get_pending_changes):
     # wasn't wiped by the upgrade call,
     # which it would be if the migrations were actually run.
     with Session(engine) as session:
-        assert session.get(Dataset, "id-one") is not None
+        surviving = session.exec(
+            select(Dataset).where(Dataset.id_project_specific == "id-one_ps")
+        ).all()
+        assert len(surviving) == 1
