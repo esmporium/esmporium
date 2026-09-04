@@ -4,14 +4,18 @@ Tests of our database schema
 
 from __future__ import annotations
 
-import re
-
 import pytest
 from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, create_engine, select
 
-from esmporium.db import DATASET_FACET_COLUMNS, METADATA, Dataset
+from esmporium.db import (
+    DATASET_FACET_COLUMNS,
+    METADATA,
+    Dataset,
+    UnhandledDatasetClashError,
+    save_dataset,
+)
 
 VALID_DATASET_KWARGS = {
     # No `id`: it is a surrogate integer the database assigns. The row's real identity
@@ -107,66 +111,82 @@ def test_round_trip(engine):
         assert isinstance(getattr(retrieved, column), column_type)
 
 
-def test_natural_key_is_unique(engine):
-    """
-    Test that two datasets can't share `(id_project_specific, variable)`
+# A dataset's identity is every column except the surrogate `id`: the ESGF-side
+# `id_project_specific` plus all of "our columns" (the nine facets). The three tests
+# below cover the three ways two datasets can relate on that identity, splitting our
+# columns from the ESGF column.
 
-    This is the row's real identity. Same native id AND same variable means the same
-    dataset, so storing it twice is the contradiction we want caught. This is also
-    what keeps two CMIP5 products (which differ in `id_project_specific`) apart.
+
+def test_case1_same_native_id_differ_on_our_column_is_allowed(engine):
+    """
+    Two datasets sharing `id_project_specific` but differing on one of our columns
+
+    This is allowed: they are genuinely different datasets. Here the differing column
+    is `grid_label` (chosen so the case is not just the `variable` one below). A real
+    instance is CMIP5, where one `master_id` bundles many variables.
     """
     with Session(engine) as session:
-        session.add(Dataset(**VALID_DATASET_KWARGS))
+        save_dataset(session, Dataset(**{**VALID_DATASET_KWARGS, "grid_label": "gn"}))
+        save_dataset(session, Dataset(**{**VALID_DATASET_KWARGS, "grid_label": "gr"}))
         session.commit()
 
-        # Same native id and same variable: the same dataset a second time.
-        session.add(Dataset(**VALID_DATASET_KWARGS))
-
-        with pytest.raises(
-            IntegrityError,
-            match=re.escape(
-                "UNIQUE constraint failed: "
-                "dataset.id_project_specific, dataset.variable"
-            ),
-        ):
-            session.commit()
+        assert len(session.exec(select(Dataset)).all()) == 2
 
 
 def test_same_id_project_specific_different_variable_is_allowed(engine):
     """
-    Test that one CMIP5 ESGF dataset's variables can coexist
+    Test that one CMIP5 ESGF dataset's variables can coexist (a case-1 instance)
 
     A CMIP5 `master_id` bundles many variables, so every per-variable row we derive
     from it shares one `id_project_specific`. Those rows differ only in `variable`,
     and the database must accept them all.
     """
     with Session(engine) as session:
-        session.add(Dataset(**VALID_DATASET_KWARGS))
-        session.add(Dataset(**{**VALID_DATASET_KWARGS, "variable": "pr"}))
+        save_dataset(session, Dataset(**VALID_DATASET_KWARGS))
+        save_dataset(session, Dataset(**{**VALID_DATASET_KWARGS, "variable": "pr"}))
         session.commit()
 
         assert len(session.exec(select(Dataset)).all()) == 2
 
 
-def test_facets_are_not_unique(engine):
+def test_case2_same_our_columns_differ_on_native_id_is_allowed(engine):
     """
-    Test that two datasets are allowed to describe the same combination of facets
+    Two datasets identical across all our columns but with different native ids
 
-    The same facets under a different native id (a different ESGF dataset) is allowed:
-    the natural key is `(id_project_specific, variable)`, not the facets.
+    This is allowed: the difference lives in a project-specific facet we do not model
+    as a column, so it survives only in `id_project_specific` (and the raw JSON). Real
+    instances: CMIP5 `product` (`output1` vs `output2`) and CMIP6 `activity_id`
+    (`CMIP` vs `CFMIP`), both of which leave every one of our columns identical.
     """
     with Session(engine) as session:
-        session.add(Dataset(**VALID_DATASET_KWARGS))
-        session.commit()
-
-        same_facets_different_native_id = {
+        save_dataset(session, Dataset(**VALID_DATASET_KWARGS))
+        same_our_columns_different_native_id = {
             **VALID_DATASET_KWARGS,
             "id_project_specific": "a-different-id-project-specific",
         }
-        session.add(Dataset(**same_facets_different_native_id))
+        save_dataset(session, Dataset(**same_our_columns_different_native_id))
         session.commit()
 
         assert len(session.exec(select(Dataset)).all()) == 2
+
+
+def test_case3_identical_everything_raises_clash(engine):
+    """
+    Two datasets identical across our columns AND `id_project_specific` clash
+
+    Nothing our model records tells them apart, so this is not a benign duplicate: it
+    means the data differs in a facet we do not model, and we refuse it loudly rather
+    than silently keep one. This uses the CMIP5 shape (`grid_label=None`) on purpose:
+    a plain UNIQUE would let it through because SQLite treats NULLs as distinct, so it
+    is exactly the case the `coalesce(grid_label, '')` identity index exists to catch.
+    """
+    cmip5_shape = {**VALID_DATASET_KWARGS, "grid_label": None}
+    with Session(engine) as session:
+        save_dataset(session, Dataset(**cmip5_shape))
+        session.commit()
+
+        with pytest.raises(UnhandledDatasetClashError):
+            save_dataset(session, Dataset(**cmip5_shape))
 
 
 def test_facet_columns_are_the_declared_facets():
