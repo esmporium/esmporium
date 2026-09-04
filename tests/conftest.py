@@ -4,6 +4,9 @@ Re-useable fixtures etc. for tests
 See https://docs.pytest.org/en/7.1.x/reference/fixtures.html#conftest-py-sharing-fixtures-across-multiple-files
 """
 
+import types
+import typing
+
 import pandas as pd
 import pytest
 
@@ -109,6 +112,15 @@ def get_facet_value(column):
     """
     facet_type = Dataset.model_fields[column].annotation
 
+    # Unwrap an optional annotation (e.g. `grid_label` is `str | None`) down to its
+    # underlying type, so a nullable facet is treated like its non-null counterpart.
+    if isinstance(facet_type, types.UnionType) or (
+        typing.get_origin(facet_type) is typing.Union
+    ):
+        non_none = [arg for arg in typing.get_args(facet_type) if arg is not type(None)]
+        if len(non_none) == 1:
+            facet_type = non_none[0]
+
     if facet_type is str:
         return f"{column}-value"
 
@@ -133,10 +145,12 @@ def get_dataset_kwargs():
     Tests that care about a particular value pass it by name.
     """
 
-    def factory(dataset_id, **facets):
+    def factory(label, **facets):
+        # `id` is a surrogate the database assigns, so it is not set here. The
+        # `label` seeds `id_project_specific`, which (with `variable`) is the row's
+        # natural identity, so distinct labels give distinct datasets.
         return {
-            "id": dataset_id,
-            "id_project_specific": f"{dataset_id}_ps",
+            "id_project_specific": f"{label}_ps",
             **{column: get_facet_value(column) for column in DATASET_FACET_COLUMNS},
             **facets,
         }
