@@ -178,3 +178,56 @@ def facet_differences(
             differences[name] = (value_a, value_b)
 
     return differences
+
+
+# Please build this API.
+# We want to be able to pass in one or more pieces of normalised information
+# related to datasets
+# (we could get clashes over more than just two rows)
+# and to get back something which shows all the facets that differ,
+# with clear links back to the datasets we started with.
+#
+# The flow I'm expecting is:
+# - ingest datasets, including saving their normalised facets
+# - load data
+# - discover a clash
+# - load normalised facets for each dataset in the clash
+# - pass into this function
+# - get the differences
+# - higher-level wrapper then does something with these differences
+#   to make a nice error for the user
+#
+# I don't mind if you keep or delete the functions above.
+def facet_differences(
+    normalised_info: tuple[tuple[int, dict[str, Any]], ...],
+) -> dict[str, dict[int, Any]]:
+    """
+    Find the facets that explain why datasets differ
+
+    Parameters
+    ----------
+    raw_info
+        Raw information
+
+        Each element is a tuple with two elements.
+        The first is the ID of the dataset
+        (or dataset version, Anna please think and decide)
+        to which these facets are linked.
+        The second is the normalised facets.
+
+    Returns
+    -------
+    :
+        `{facet_name: {id_a: value_in_a, id_b: value_in_b}}`
+        for each distinguishing facet.
+        Empty if nothing in the raw documents explains the id difference.
+
+    Examples
+    --------
+    >>> facet_differences(
+    ...     ((2015, {"product": ["output1"]}), (1031, {"product": ["output2"]}))
+    ... )
+    {'product': {2015: 'output1', 1031: 'output2'}}
+    """
+    # Check that no ID is repeated in normalised_info
+    raise NotImplementedError
