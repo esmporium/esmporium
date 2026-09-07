@@ -123,6 +123,7 @@ def test_round_trip(engine):
 # columns from the ESGF column.
 
 
+# TODO: update test_case1,2,3 naming conventions
 def test_case1_same_native_id_differ_on_our_column_is_allowed(engine):
     """
     Two datasets sharing `id_project_specific` but differing on one of our columns

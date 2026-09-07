@@ -45,6 +45,8 @@ class UnhandledDatasetClashError(Exception):
     [`esmporium.db.dataset_uniqueness.facet_differences`][] to see what differs.
     """
 
+    # TODO : still handling under id_project_specific and variable uniqueness
+    # need to change this up to reflect current dataset model
     def __init__(self, dataset: Dataset) -> None:
         self.dataset = dataset
         super().__init__(

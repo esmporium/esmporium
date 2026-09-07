@@ -71,6 +71,7 @@ class EsmporiumBase(SQLModel, registry=REGISTRY):
     """
 
 
+# TODO: autogenerations (e.g. with id) so question hard coding here
 DATASET_IDENTITY_INDEX = "uq_dataset_identity"
 """
 Name of the unique index that enforces [`Dataset`][esmporium.db.schema.Dataset] identity
@@ -212,6 +213,12 @@ class Dataset(EsmporiumBase, table=True):
     """
 
     id_project_specific: str = Field(index=True)
+    # TODO: update doc string - agree that wording should be clarified
+    # I think we're just asserting this rather than knowing it. I feel like we'll end up
+    # with something more robust if we're more careful about this assumption and instead
+    # build on the assumption that the project specific IDs we get from ESGF will be
+    # unique, but that there is no way to parse useful information out of them (we
+    # need to go back to the raw docs or something more informative to get that)
     """
     Identifier of the dataset in the project's language (its native id)
 
@@ -295,6 +302,7 @@ class Dataset(EsmporiumBase, table=True):
     For example, `mon`, `yr`, `3hr`, `monC`
     """
 
+    # TODO: make sure test that pokes at this null handling and coalesce
     grid_label: str | None = None
     """
     The label of the grid on which the dataset is reported
@@ -513,9 +521,10 @@ class SearchAPICallRecord(EsmporiumBase, table=True):
         )
 
 
+# TODO: rename to DatasetVersion
 class DatasetVersionSpecific(EsmporiumBase, table=True):
     """
-    One published edition of a [`Dataset`][esmporium.db.schema.Dataset]
+    One version of a [`Dataset`][esmporium.db.schema.Dataset]
 
     A dataset can be published more than once over time
     (a rerun, a fix, or more variables added).

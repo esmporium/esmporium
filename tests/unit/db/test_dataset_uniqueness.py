@@ -6,6 +6,9 @@ CMIP5 Solr distinguishes on `product`, CMIP6 Solr on `activity_id`, and CMIP7 ST
 carries its facets in a `properties` dict under `cmipN:`-prefixed keys.
 """
 
+# TODO: make sure this reflects dataset_uniqueness.py file
+# so that clashes are identified in the raw docs
+# see test_cmip7_icesheet_versions_are_distinguished_by_region()
 from __future__ import annotations
 
 from esmporium.db import MISSING, all_facet_differences, facet_differences

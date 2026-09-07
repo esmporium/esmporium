@@ -21,6 +21,9 @@ different search generations. A generic, shape-based flattener is the right tool
 load/clash-resolution flow ("which product did you mean?") is built on.
 """
 
+# TODO: for facet differences also list id_project_specific?
+# Or just leave this to future higher level function which identifies to the user
+# where the clashes are
 from __future__ import annotations
 
 from typing import Any
