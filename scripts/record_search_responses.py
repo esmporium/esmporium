@@ -156,6 +156,13 @@ def main() -> None:
         .sort_values(by=["model", "experiment", "variant_label"])
         .set_index(["model", "experiment"])
     )
+    print(
+        summary_df[
+            (summary_df["variable"] == "hfds") & (summary_df["frequency"] == "mon")
+        ]
+        .sort_values(by=["model", "experiment", "variant_label"])
+        .set_index(["model", "experiment"])
+    )
 
 
 if __name__ == "__main__":
