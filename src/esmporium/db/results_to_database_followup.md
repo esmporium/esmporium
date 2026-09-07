@@ -9,24 +9,28 @@ the schema is already proven loadable by the round-trip test.
 
 ---
 
-## Where we are (2026-09-04)
+## Where we are (2026-09-07)
 
-Done and green (`pytest`: 385 passed / 27 skipped; ruff + mypy clean):
+Done and green (`pytest -m "not slow"`: all pass, 27 skipped; ruff clean):
 
-- **Schema** — six tables (below), with the `Dataset` identity index and per-bundle
-  editions.
-- **Migration** — `20260904_2ecbccb2bbc1` (single revision on committed `f12406`; the
-  `uq_dataset_identity` expression index is hand-written because Alembic can't
-  autogenerate expression indexes on SQLite). DDL regression fixture regenerated.
-- **Ingestion** — `parse.py` + `results_to_database.py`: raw search JSON → rows.
-  Verified live (CMIP5 3 docs → 51 variables sharing one bundle edition; re-ingest is
-  idempotent; CMIP6 Solr and CMIP7 STAC parse correctly).
-- **Disambiguation** — `dataset_uniqueness.facet_differences`.
-- **Existing unit tests updated** to the new shape (`test_results_round_trip.py`,
-  `test_dataset_uniqueness.py`, `test_schema.py`).
-
-`src/esmporium/search/` was **not** touched — ingestion consumes what `search()` already
-returns (`SearchOutcome.results`, host → raw JSON).
+- **Schema** — five result tables (below), with the `Dataset` identity index, a real
+  one-to-many from `Dataset` to its editions, and deduplicated data nodes. Version is now
+  decoupled from the bundle (migration `20260907_b35e5c5503c9`).
+- **Migrations** — the result tables land across `20260903_f12406`,
+  `20260904_2ecbccb2bbc1` (identity index, per-bundle rename) and `20260907_b35e5c5503c9`
+  (decouple version, dedup nodes). The `uq_dataset_identity` expression index is
+  hand-written because Alembic can't autogenerate expression indexes on SQLite. Covered by
+  `tests/integration/test_migrations.py`.
+- **Parsing lives in the search layer now.** `results_to_database.py` no longer parses raw
+  JSON; the facade turns Solr/STAC responses into `ParsedDocument`s (see
+  `search/result_parsing.py`, `search/result_readers.py`, `search/search_api_facade/`), and
+  this module only writes rows.
+- **Ingestion** — `results_to_database.py`: `ParsedDocument` → rows. Verified live (a CMIP5
+  bundle → one edition per per-variable dataset, all sharing one raw doc; re-ingest is
+  idempotent; CMIP6 Solr and CMIP7 STAC ingest correctly).
+- **Disambiguation** — `dataset_uniqueness`: `all_facet_differences` (every differing
+  facet, the bottom layer) and `facet_differences` (the higher layer, only the id-linked
+  facet).
 
 ---
 

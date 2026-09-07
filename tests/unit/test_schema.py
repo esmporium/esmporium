@@ -13,13 +13,19 @@ from esmporium.db import (
     DATASET_FACET_COLUMNS,
     METADATA,
     Dataset,
+    DatasetNodeInformation,
+    DatasetRawDoc,
+    DatasetVersionNodeLink,
+    DatasetVersionSpecific,
+    RawDocVersionLink,
     UnhandledDatasetClashError,
     save_dataset,
 )
 
 VALID_DATASET_KWARGS = {
     # No `id`: it is a surrogate integer the database assigns. The row's real identity
-    # is `(id_project_specific, variable)`.
+    # is *every descriptive column* — `id_project_specific` plus all nine facets —
+    # enforced by the `uq_dataset_identity` index (see `Dataset.__table_args__`).
     "id_project_specific": (
         "cmip5.output1.BCC.bcc-csm1-1.rcp45.mon.atmos.Amon.r1i1p1_tas"
     ),
@@ -290,3 +296,123 @@ def test_facet_columns_are_not_nullable(engine, column):
 
         with pytest.raises(IntegrityError, match="NOT NULL constraint failed"):
             session.commit()
+
+
+# --- The version / node / raw-doc tables ---------------------------------------
+#
+# These pin the UNIQUE constraints the ingestion path relies on: its get-or-create
+# helpers stay idempotent (re-ingesting a search reuses rows) only because these pairs
+# cannot be duplicated. Foreign keys are NOT exercised here: SQLite does not enforce
+# them without `PRAGMA foreign_keys=ON`, which we do not set, so these tests use plain
+# integer ids and assert only the uniqueness rules. The end-to-end behaviour over real
+# rows is covered in `tests/unit/db/test_results_round_trip.py`.
+
+
+def _version(dataset_id: int, version: str) -> DatasetVersionSpecific:
+    """A version row with the required snapshot flags filled in."""
+    return DatasetVersionSpecific(
+        dataset_id=dataset_id,
+        version=version,
+        is_latest=True,
+        retracted=False,
+    )
+
+
+def test_edition_is_unique_per_dataset_and_version(engine):
+    """One edition per `(dataset_id, version)`; a second identical pair is refused."""
+    with Session(engine) as session:
+        dataset = Dataset(**VALID_DATASET_KWARGS)
+        session.add(dataset)
+        session.commit()
+
+        session.add(_version(dataset.id, "20200101"))
+        session.commit()
+
+        session.add(_version(dataset.id, "20200101"))
+        with pytest.raises(IntegrityError):
+            session.commit()
+
+
+def test_same_version_string_under_two_datasets_is_allowed(engine):
+    """`version` is unique only *within* a dataset — it is decoupled from the bundle.
+
+    This is the point of the decoupling: two per-variable CMIP5 datasets share one
+    bundle version (`20200101`), and both must be storable.
+    """
+    with Session(engine) as session:
+        tas = Dataset(**VALID_DATASET_KWARGS)
+        pr = Dataset(**{**VALID_DATASET_KWARGS, "variable": "pr"})
+        session.add(tas)
+        session.add(pr)
+        session.commit()
+
+        session.add(_version(tas.id, "20200101"))
+        session.add(_version(pr.id, "20200101"))
+        session.commit()  # no clash: the pairs differ on dataset_id
+
+        assert len(session.exec(select(DatasetVersionSpecific)).all()) == 2
+
+
+def test_data_node_is_unique(engine):
+    """One row per distinct data node (there are only a handful across ESGF)."""
+    with Session(engine) as session:
+        session.add(DatasetNodeInformation(data_node="esgf.nci.org.au"))
+        session.commit()
+
+        session.add(DatasetNodeInformation(data_node="esgf.nci.org.au"))
+        with pytest.raises(IntegrityError):
+            session.commit()
+
+
+def test_edition_node_link_pair_is_unique(engine):
+    """The same (edition, node) link twice is refused, so recording it again reuses."""
+    with Session(engine) as session:
+        session.add(DatasetVersionNodeLink(dataset_version_id=1, node_id=1))
+        session.commit()
+
+        session.add(DatasetVersionNodeLink(dataset_version_id=1, node_id=1))
+        with pytest.raises(IntegrityError):
+            session.commit()
+
+
+def test_edition_node_link_is_many_to_many(engine):
+    """A node hosts many editions, an edition many nodes: (1,1) (1,2) (2,1) coexist."""
+    with Session(engine) as session:
+        session.add(DatasetVersionNodeLink(dataset_version_id=1, node_id=1))
+        session.add(DatasetVersionNodeLink(dataset_version_id=1, node_id=2))
+        session.add(DatasetVersionNodeLink(dataset_version_id=2, node_id=1))
+        session.commit()
+
+        assert len(session.exec(select(DatasetVersionNodeLink)).all()) == 3
+
+
+def test_raw_doc_esgf_id_is_unique(engine):
+    """The exact JSON is stored once per source document, keyed by `esgf_doc_id`."""
+    with Session(engine) as session:
+        session.add(DatasetRawDoc(esgf_doc_id="instance_id|node", raw_json="{}"))
+        session.commit()
+
+        session.add(DatasetRawDoc(esgf_doc_id="instance_id|node", raw_json="{}"))
+        with pytest.raises(IntegrityError):
+            session.commit()
+
+
+def test_raw_doc_edition_link_pair_is_unique(engine):
+    """One (document, edition) pair; linking the same document to it twice is a dupe."""
+    with Session(engine) as session:
+        session.add(RawDocVersionLink(raw_id=1, dataset_version_id=1))
+        session.commit()
+
+        session.add(RawDocVersionLink(raw_id=1, dataset_version_id=1))
+        with pytest.raises(IntegrityError):
+            session.commit()
+
+
+def test_one_document_can_describe_many_editions(engine):
+    """A CMIP5 document bundles many per-variable editions: one raw_id, many links."""
+    with Session(engine) as session:
+        session.add(RawDocVersionLink(raw_id=1, dataset_version_id=1))
+        session.add(RawDocVersionLink(raw_id=1, dataset_version_id=2))
+        session.commit()
+
+        assert len(session.exec(select(RawDocVersionLink)).all()) == 2
