@@ -515,20 +515,17 @@ class SearchAPICallRecord(EsmporiumBase, table=True):
 
 class DatasetVersionSpecific(EsmporiumBase, table=True):
     """
-    One published edition of an ESGF dataset (bundle)
+    One published edition of a [`Dataset`][esmporium.db.schema.Dataset]
 
     A dataset can be published more than once over time
     (a rerun, a fix, or more variables added).
     Each such edition is a row here, dated by its `version`.
 
-    Editions are keyed to the ESGF *bundle*
-    ([`id_project_specific`][esmporium.db.schema.Dataset.id_project_specific]),
-    not to a single per-variable [`Dataset`][esmporium.db.schema.Dataset].
-    A CMIP5 `master_id` bundles many variables, and they are all published together
-    as one edition, so those variables share **one** row here rather than one each.
-    For CMIP6 and CMIP7 the bundle is already per-variable, so it is one edition per
-    `Dataset` there anyway. A `Dataset` reaches its editions by matching
-    `id_project_specific`.
+    An edition belongs to a single `Dataset` (a real one-to-many via `dataset_id`),
+    and is unique on `(dataset_id, version)`. For CMIP5, where a `master_id` bundle is
+    split into one `Dataset` per variable, each of those per-variable datasets gets its
+    own edition row here rather than sharing one; for CMIP6 and CMIP7 the bundle is
+    already per-variable, so it is one edition per `Dataset` there anyway.
 
     Version-specific information does not include data-node information. That lives in
     [`DatasetNodeInformation`][esmporium.db.schema.DatasetNodeInformation].
@@ -538,29 +535,23 @@ class DatasetVersionSpecific(EsmporiumBase, table=True):
     # construction rather than at commit time.
     model_config = {"validate_assignment": True}
 
-    # TODO: update so that version_id is taken as the specific version_id
-    # from the raw docs
-    # should be a str or int? CMIP5 can get weird
-    version_id: str = Field(primary_key=True)
-    """
-    Unique identifier of this edition
+    # A version belongs to a single `Dataset` row. Its identity is
+    # `(dataset_id, version)`; the surrogate `id` below is a meaningless integer,
+    # like `Dataset.id`.
+    __table_args__ = (UniqueConstraint("dataset_id", "version"),)
 
-    Built deterministically as `f"{id_project_specific}.v{version}"`,
-    so re-ingesting the same edition upserts the same row
-    rather than creating a duplicate.
-    """
+    id: int | None = Field(default=None, primary_key=True)
+    """Surrogate key; assigned by the database"""
 
-    id_project_specific: str = Field(index=True)
+    dataset_id: int = Field(foreign_key="dataset.id", index=True)
     """
-    The ESGF bundle this is an edition of
+    The [`Dataset`][esmporium.db.schema.Dataset] this is an edition of
 
-    Matches `Dataset.id_project_specific` (the `master_id` / native id). It is a
-    grouping key, not a unique foreign key: a CMIP5 bundle has many per-variable
-    `Dataset` rows that all share this value, and they all share this edition.
+    A real one-to-many: one dataset has many editions, one per `version`. For CMIP5,
+    where a bundle is split into one `Dataset` per variable, each of those per-variable
+    datasets gets its own edition row here (many rows per bundle, keyed on the dataset).
     """
 
-    # TODO: Remove version
-    # Take version or version_id as above (not taken from master_id)
     version: str
     """
     The version string, as ESGF reports it
@@ -590,14 +581,15 @@ class DatasetVersionSpecific(EsmporiumBase, table=True):
 
 class DatasetNodeInformation(EsmporiumBase, table=True):
     """
-    Which data node holds one edition
+    A data node that hosts data
 
-    A single [edition][esmporium.db.schema.DatasetVersionSpecific]
-    can be hosted on several data nodes (replicas),
-    so there is one row here per (edition, data node).
-    This records only *where* the data lives — which node, and whether it is a
-    replica. Download URLs (file access) are deliberately out of scope for now and
-    will be handled in a later step.
+    There are only a handful of data nodes across ESGF, so this table holds one row per
+    *distinct* node rather than one per (edition, node). Editions reach their nodes
+    through [`DatasetVersionNodeLink`][esmporium.db.schema.DatasetVersionNodeLink]
+    (many-to-many): a node hosts many editions, and an edition can live on many nodes.
+
+    This records only *where* the data lives. Download URLs (file access) are
+    deliberately out of scope for now and will be handled in a later step.
     """
 
     # See the note on `Dataset.model_config`.
@@ -606,26 +598,40 @@ class DatasetNodeInformation(EsmporiumBase, table=True):
     id: int | None = Field(default=None, primary_key=True)
     """Surrogate key; assigned by the database"""
 
-    version_id: str = Field(foreign_key="datasetversionspecific.version_id", index=True)
+    data_node: str = Field(unique=True, index=True)
+    """The data node hosting the data, e.g. `esgf.nci.org.au`. Unique in this table."""
+
+
+class DatasetVersionNodeLink(EsmporiumBase, table=True):
     """
-    The edition this copy is of
+    A many-to-many link between an edition and a data node
+
+    Each row is one (edition, node) pair: this edition is hosted on this node. The pair
+    is unique, so recording the same edition on the same node twice reuses the row.
+    See [`DatasetNodeInformation`][esmporium.db.schema.DatasetNodeInformation].
+    """
+
+    # See the note on `Dataset.model_config`.
+    model_config = {"validate_assignment": True}
+
+    id: int | None = Field(default=None, primary_key=True)
+    """Surrogate key; assigned by the database"""
+
+    dataset_version_id: int = Field(foreign_key="datasetversionspecific.id", index=True)
+    """
+    The edition hosted on the node
 
     See [`DatasetVersionSpecific`][esmporium.db.schema.DatasetVersionSpecific].
     """
-    # TODO: Not null for STAC?
-    # fabricate from attempt? (need to double check)
 
-    data_node: str
-    """The data node hosting this copy, e.g. `esgf.nci.org.au`"""
+    node_id: int = Field(foreign_key="datasetnodeinformation.id", index=True)
+    """
+    The node hosting the edition
 
-    index_node: str | None = None
-    """The index node that reported this copy (Solr), if known"""
+    See [`DatasetNodeInformation`][esmporium.db.schema.DatasetNodeInformation].
+    """
 
-    # Remove replica? Will this ever be important? Unlikely
-    replica: bool
-    """Whether this copy is a replica (a copy of an original published elsewhere)"""
-
-    __table_args__ = (UniqueConstraint("version_id", "data_node"),)
+    __table_args__ = (UniqueConstraint("dataset_version_id", "node_id"),)
 
 
 class DatasetRawDoc(EsmporiumBase, table=True):
@@ -637,11 +643,11 @@ class DatasetRawDoc(EsmporiumBase, table=True):
     One row per distinct source document, deduplicated by `esgf_doc_id`.
 
     The raw document relates to editions through
-    [`RawDocVersionLink`][esmporium.db.schema.RawDocVersionLink]. One *edition* can
-    have several raw documents — Solr returns one per (edition, node), so an edition
-    searched on more than one node yields several. Editions are per bundle, so a single
-    CMIP5 document (which bundles many variables) describes just one edition; the link
-    is kept as a many-to-many for future flexibility rather than out of present need.
+    [`RawDocVersionLink`][esmporium.db.schema.RawDocVersionLink] (many-to-many). One
+    document can describe several editions — a single CMIP5 document bundles many
+    variables, each of which is now its own `Dataset` and so its own edition, and this
+    one document links to all of them. An edition can also be described by several
+    documents (Solr returns one per node).
     """
 
     # See the note on `Dataset.model_config`.
@@ -660,14 +666,10 @@ class DatasetRawDoc(EsmporiumBase, table=True):
     Unique, so re-ingesting the same document reuses this row
     rather than duplicating the JSON.
     """
-    # TODO : remove search_host
-    search_host: str
-    """The endpoint queried, e.g. `esgf.nci.org.au` or `search.east.esgf.io`"""
 
     raw_json: str
     """The document exactly as returned, JSON-encoded"""
 
-    # TODO: keep retrieved_at?
     retrieved_at: datetime.datetime = Field(default_factory=_utcnow)
     """When we stored this document (UTC)"""
 
@@ -677,9 +679,8 @@ class RawDocVersionLink(EsmporiumBase, table=True):
     A many-to-many link between a raw document and an edition
 
     See [`DatasetRawDoc`][esmporium.db.schema.DatasetRawDoc]: an edition can be
-    described by several documents (one per node). Editions are per bundle, so today a
-    document maps to one edition; the link is kept as a many-to-many for future
-    flexibility.
+    described by several documents (one per node), and one document can describe several
+    editions (a CMIP5 document bundles many per-variable editions).
 
     Each row is one (document, edition) pair. The pair is unique, so linking the same
     document to the same edition twice reuses the row rather than duplicating it.
@@ -698,11 +699,11 @@ class RawDocVersionLink(EsmporiumBase, table=True):
     See [`DatasetRawDoc`][esmporium.db.schema.DatasetRawDoc].
     """
 
-    version_id: str = Field(foreign_key="datasetversionspecific.version_id", index=True)
+    dataset_version_id: int = Field(foreign_key="datasetversionspecific.id", index=True)
     """
-    The version the document describes
+    The edition the document describes
 
     See [`DatasetVersionSpecific`][esmporium.db.schema.DatasetVersionSpecific].
     """
 
-    __table_args__ = (UniqueConstraint("raw_id", "version_id"),)
+    __table_args__ = (UniqueConstraint("raw_id", "dataset_version_id"),)

@@ -24,6 +24,7 @@ from esmporium.db.schema import (
     Dataset,
     DatasetNodeInformation,
     DatasetRawDoc,
+    DatasetVersionNodeLink,
     DatasetVersionSpecific,
     RawDocVersionLink,
 )
@@ -31,8 +32,6 @@ from esmporium.search.result_parsing import ParsedDocument, ResultProcessor
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
-
-    from esmporium.search.result_parsing import NodeInfo
 
 
 class UnhandledDatasetClashError(Exception):
@@ -107,11 +106,10 @@ def save_dataset(session: Session, dataset: Dataset) -> Dataset:
 
 def ingest_parsed_documents(
     session: Session,
-    search_host: str,
     parsed_documents: Iterable[ParsedDocument],
 ) -> None:
     """
-    Write already-parsed documents from one host into the database
+    Write already-parsed documents into the database
 
     Parameters
     ----------
@@ -120,15 +118,12 @@ def ingest_parsed_documents(
         transaction boundary (the processor from
         [build_result_processor][(m).build_result_processor] commits once per host).
 
-    search_host
-        The endpoint the documents came from, recorded on each raw document.
-
     parsed_documents
-        The documents that host answered with, already parsed by the facade's
+        The documents a host answered with, already parsed by the facade's
         `parse_search_results`.
     """
     for parsed in parsed_documents:
-        _ingest_document(session, parsed, search_host)
+        _ingest_document(session, parsed)
 
 
 def build_result_processor(session: Session) -> ResultProcessor:
@@ -155,25 +150,34 @@ def build_result_processor(session: Session) -> ResultProcessor:
     def processor(
         search_host: str, parsed_documents: tuple[ParsedDocument, ...]
     ) -> None:
-        ingest_parsed_documents(session, search_host, parsed_documents)
+        # `search_host` is part of the ResultProcessor callback contract but is no
+        # longer persisted, so it is deliberately unused here.
+        ingest_parsed_documents(session, parsed_documents)
         session.commit()
 
     return processor
 
 
-def _ingest_document(
-    session: Session, parsed: ParsedDocument, search_host: str
-) -> None:
-    """Write one parsed document: its datasets, edition, nodes, raw doc and link."""
-    for facets in parsed.dataset_facets():
-        _get_or_create_dataset(session, facets)
+def _ingest_document(session: Session, parsed: ParsedDocument) -> None:
+    """Write one parsed document: its datasets, editions, nodes, raw doc and links.
 
-    version = _upsert_version(session, parsed)
-    for node in parsed.nodes:
-        _upsert_node(session, version.version_id, node)
+    A version now belongs to a single `Dataset`, so we create one edition per dataset
+    (for CMIP5 that is one per variable) and fan the node links and raw-doc link out
+    over all of them.
+    """
+    datasets = [
+        _get_or_create_dataset(session, facets) for facets in parsed.dataset_facets()
+    ]
+    versions = [_upsert_version(session, dataset.id, parsed) for dataset in datasets]
 
-    raw_doc = _get_or_create_raw_doc(session, parsed, search_host)
-    _get_or_create_link(session, raw_doc.id, version.version_id)
+    nodes = [_get_or_create_node(session, node.data_node) for node in parsed.nodes]
+    for version in versions:
+        for node in nodes:
+            _get_or_create_version_node_link(session, version.id, node.id)
+
+    raw_doc = _get_or_create_raw_doc(session, parsed)
+    for version in versions:
+        _get_or_create_link(session, raw_doc.id, version.id)
 
 
 def _get_or_create_dataset(session: Session, facets: dict[str, str | None]) -> Dataset:
@@ -189,10 +193,16 @@ def _get_or_create_dataset(session: Session, facets: dict[str, str | None]) -> D
     return save_dataset(session, Dataset(**facets))
 
 
-def _upsert_version(session: Session, parsed: ParsedDocument) -> DatasetVersionSpecific:
-    """Insert the edition, or refresh its snapshot flags if seen before."""
-    version_id = f"{parsed.id_project_specific}.v{parsed.version}"
-    existing = session.get(DatasetVersionSpecific, version_id)
+def _upsert_version(
+    session: Session, dataset_id: int | None, parsed: ParsedDocument
+) -> DatasetVersionSpecific:
+    """Insert this dataset's edition, or refresh its snapshot flags if seen before."""
+    existing = session.exec(
+        select(DatasetVersionSpecific).where(
+            DatasetVersionSpecific.dataset_id == dataset_id,
+            DatasetVersionSpecific.version == parsed.version,
+        )
+    ).first()
     if existing is not None:
         existing.is_latest = parsed.is_latest
         existing.retracted = parsed.retracted
@@ -201,8 +211,7 @@ def _upsert_version(session: Session, parsed: ParsedDocument) -> DatasetVersionS
         return existing
 
     version = DatasetVersionSpecific(
-        version_id=version_id,
-        id_project_specific=parsed.id_project_specific,
+        dataset_id=dataset_id,
         version=parsed.version,
         is_latest=parsed.is_latest,
         retracted=parsed.retracted,
@@ -212,37 +221,44 @@ def _upsert_version(session: Session, parsed: ParsedDocument) -> DatasetVersionS
     return version
 
 
-def _upsert_node(
-    session: Session, version_id: str, node: NodeInfo
-) -> DatasetNodeInformation:
-    """Insert an (edition, data node) row, or refresh it if seen before."""
+def _get_or_create_node(session: Session, data_node: str) -> DatasetNodeInformation:
+    """Reuse the row for this data node if we have one, else create it."""
     existing = session.exec(
         select(DatasetNodeInformation).where(
-            DatasetNodeInformation.version_id == version_id,
-            DatasetNodeInformation.data_node == node.data_node,
+            DatasetNodeInformation.data_node == data_node
         )
     ).first()
     if existing is not None:
-        existing.index_node = node.index_node
-        existing.replica = node.replica
-        session.add(existing)
-        session.flush()
         return existing
 
-    row = DatasetNodeInformation(
-        version_id=version_id,
-        data_node=node.data_node,
-        index_node=node.index_node,
-        replica=node.replica,
-    )
-    session.add(row)
+    node = DatasetNodeInformation(data_node=data_node)
+    session.add(node)
     session.flush()
-    return row
+    return node
 
 
-def _get_or_create_raw_doc(
-    session: Session, parsed: ParsedDocument, search_host: str
-) -> DatasetRawDoc:
+def _get_or_create_version_node_link(
+    session: Session, dataset_version_id: int | None, node_id: int | None
+) -> DatasetVersionNodeLink:
+    """Link an edition to a data node, once."""
+    existing = session.exec(
+        select(DatasetVersionNodeLink).where(
+            DatasetVersionNodeLink.dataset_version_id == dataset_version_id,
+            DatasetVersionNodeLink.node_id == node_id,
+        )
+    ).first()
+    if existing is not None:
+        return existing
+
+    link = DatasetVersionNodeLink(
+        dataset_version_id=dataset_version_id, node_id=node_id
+    )
+    session.add(link)
+    session.flush()
+    return link
+
+
+def _get_or_create_raw_doc(session: Session, parsed: ParsedDocument) -> DatasetRawDoc:
     """Store the raw JSON once, keyed by `esgf_doc_id`."""
     existing = session.exec(
         select(DatasetRawDoc).where(DatasetRawDoc.esgf_doc_id == parsed.esgf_doc_id)
@@ -252,7 +268,6 @@ def _get_or_create_raw_doc(
 
     raw_doc = DatasetRawDoc(
         esgf_doc_id=parsed.esgf_doc_id,
-        search_host=search_host,
         raw_json=parsed.raw_json,
     )
     session.add(raw_doc)
@@ -261,19 +276,19 @@ def _get_or_create_raw_doc(
 
 
 def _get_or_create_link(
-    session: Session, raw_id: int | None, version_id: str
+    session: Session, raw_id: int | None, dataset_version_id: int | None
 ) -> RawDocVersionLink:
     """Link a raw document to an edition, once."""
     existing = session.exec(
         select(RawDocVersionLink).where(
             RawDocVersionLink.raw_id == raw_id,
-            RawDocVersionLink.version_id == version_id,
+            RawDocVersionLink.dataset_version_id == dataset_version_id,
         )
     ).first()
     if existing is not None:
         return existing
 
-    link = RawDocVersionLink(raw_id=raw_id, version_id=version_id)
+    link = RawDocVersionLink(raw_id=raw_id, dataset_version_id=dataset_version_id)
     session.add(link)
     session.flush()
     return link

@@ -230,17 +230,15 @@ Finally, we have DatasetNodeInformation. Previously, this table has been handled
 
 Please repeat the database changes back to me, so I can verify you understand (and in your plan include the columns you will be deleting/renaming etc). Please also identify any pros/cons to our changes and provide alternatives if you think there are better ways to handle the workflow we want to reproduce.
 
-
-
 erDiagram
-    DATASET ||--o{ DATASET_VERSION : "has editions"
-    DATASET_VERSION ||--o{ DATASET_NODE : "downloadable from"
+    DATASET ||--o{ DATASET_VERSION : "has versions"
+    DATASET_VERSION ||--o{ DATASET_NODE : "downloadable from (probably needs to become a many-to-many link with associated linking table?)"
     DATASET_VERSION ||--o{ RAW_LINK : "described by"
     RAW_RECORD ||--o{ RAW_LINK : "describes"
 
     DATASET {
         int id PK
-        string id_project_specific "index, not unique"
+        string id_project_specific "provided by the project, no assumptions or constraints of uniqueness or anything else"
         string project
         string model
         string institution
@@ -248,14 +246,14 @@ erDiagram
         string variant_label
         string variable
         string reporting_interval
-        string grid_label "NULL for CMIP5"
+        string grid_label "NULLABLE for CMIP5"
         string processing_id
     }
     DATASET_VERSION {
-        string id PK
+        int id PK "Maybe unnecssary given version and dataset_id is already unique and can act as the primary key?"
         string version
-        string dataset_version "UNIQUE(dataset.id & version)"
-        bool is_latest
+        int dataset_id FK "Combination of dataset_id and version must be unique"
+        bool is_latest "Could rename to just 'latest' ?"
         bool retracted
     }
     DATASET_NODE {
@@ -265,12 +263,12 @@ erDiagram
     }
     RAW_RECORD {
         int id PK
-        string esgf_doc_id "UNIQUE (no version_id now)"
+        string esgf_doc_id "UNIQUE (use whatever ID that you get from ESGF that should mean these docs are unique)"
         json raw_json
         datetime retrieved_at
     }
     RAW_LINK {
         int id PK
         int raw_id FK
-        string dataset_version FK
+        int dataset_version_id FK
     }

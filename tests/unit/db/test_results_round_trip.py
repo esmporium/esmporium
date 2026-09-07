@@ -25,9 +25,10 @@ BOTH products. Two things have to hold:
    products match, offer them as a choice ("which product?"), and resolve to exactly
    one dataset per variable once a product is chosen.
 
-Because CMIP5 bundles many variables into one edition, `tas` and `rlut` of one product
-share a single edition (`DatasetVersionSpecific`, keyed on the bundle) and a single raw
-document, so neither the edition nor the JSON is duplicated per variable.
+A version now belongs to a single `Dataset`, so `tas` and `rlut` of one product each
+get their own edition (`DatasetVersionSpecific`, keyed on `dataset_id`). The CMIP5
+bundle's single raw document is still stored once and linked to *both* of those
+per-variable editions, so the JSON is not duplicated per variable.
 """
 
 from __future__ import annotations
@@ -93,42 +94,35 @@ def _generic_facets(variable: str) -> dict[str, object]:
 def _save_scenario(engine) -> None:
     """Save the four (variable x product) datasets, their editions and raw docs.
 
-    Mirrors what ingestion would do. Versions are per *bundle* (per product edition),
-    not per variable: `tas` and `rlut` of one product share ONE version row, keyed on
-    the bundle's `id_project_specific`. Each product's single raw document is linked to
-    that one shared version.
+    Mirrors what ingestion would do. A version belongs to a single dataset, so each
+    (product, variable) dataset gets its OWN edition. Each product's single raw document
+    (the CMIP5 bundle lists every variable) is linked to every one of that product's
+    per-variable editions.
     """
     with Session(engine) as session:
-        # Datasets first (four: two products x two variables).
+        # Datasets and their per-variable editions (four of each: 2 products x 2 vars).
+        versions: dict[tuple[str, str], DatasetVersionSpecific] = {}
         for product, master in MASTER.items():
             for variable in VARIABLES:
-                save_dataset(
+                dataset = save_dataset(
                     session,
                     Dataset(id_project_specific=master, **_generic_facets(variable)),
                 )
+                version = DatasetVersionSpecific(
+                    dataset_id=dataset.id,
+                    version=VERSION[product],
+                    is_latest=True,
+                    retracted=False,
+                )
+                session.add(version)
+                versions[(product, variable)] = version
         session.commit()
 
-        # One version per product bundle, shared across its variables.
-        versions: dict[str, DatasetVersionSpecific] = {}
-        for product, master in MASTER.items():
-            version = DatasetVersionSpecific(
-                version_id=f"{master}.v{VERSION[product]}",
-                id_project_specific=master,
-                version=VERSION[product],
-                is_latest=True,
-                retracted=False,
-            )
-            session.add(version)
-            versions[product] = version
-        session.commit()
-
-        # One raw document per product (the CMIP5 bundle lists every variable), linked
-        # to that product's single shared version.
+        # One raw document per product, linked to each of its per-variable editions.
         for product, master in MASTER.items():
             instance_id = f"{master}.v{VERSION[product]}"
             raw = DatasetRawDoc(
                 esgf_doc_id=f"{instance_id}|{DATA_NODE}",
-                search_host="esg-dn1.nsc.liu.se",
                 raw_json=json.dumps(
                     {
                         "instance_id": instance_id,
@@ -142,11 +136,13 @@ def _save_scenario(engine) -> None:
             )
             session.add(raw)
             session.commit()  # assign raw.id
-            session.add(
-                RawDocVersionLink(
-                    raw_id=raw.id, version_id=versions[product].version_id
+            for variable in VARIABLES:
+                session.add(
+                    RawDocVersionLink(
+                        raw_id=raw.id,
+                        dataset_version_id=versions[(product, variable)].id,
+                    )
                 )
-            )
         session.commit()
 
 
@@ -167,20 +163,19 @@ def populated(engine):
 
 
 def _raw_doc_for(session: Session, dataset: Dataset) -> dict:
-    """Return the parsed raw document behind a dataset (via its bundle edition + link).
+    """Return the parsed raw document behind a dataset (via its edition + link).
 
-    A dataset reaches its edition by matching `id_project_specific` (the bundle), since
-    editions are now per bundle rather than per variable.
+    A dataset reaches its edition through `dataset_id`; each dataset has exactly one.
     """
     version = session.exec(
         select(DatasetVersionSpecific).where(
-            DatasetVersionSpecific.id_project_specific == dataset.id_project_specific
+            DatasetVersionSpecific.dataset_id == dataset.id
         )
     ).one()
     raw = session.exec(
         select(DatasetRawDoc)
         .join(RawDocVersionLink, RawDocVersionLink.raw_id == DatasetRawDoc.id)  # type: ignore[arg-type]
-        .where(RawDocVersionLink.version_id == version.version_id)
+        .where(RawDocVersionLink.dataset_version_id == version.id)
     ).one()
     return json.loads(raw.raw_json)
 
@@ -269,8 +264,8 @@ def test_choosing_a_product_resolves_to_one_dataset_per_variable(populated):
             assert resolved[0].id_project_specific == MASTER["output2"]
 
 
-def test_one_edition_and_document_are_shared_by_both_variables(populated):
-    """Per-bundle: output1's tas and rlut share one edition and one raw document."""
+def test_one_document_is_shared_by_both_variables(populated):
+    """output1's tas and rlut have their own editions but share one raw document."""
     with Session(populated) as session:
         # The two output1 datasets (tas, rlut)...
         output1_datasets = session.exec(
@@ -278,26 +273,27 @@ def test_one_edition_and_document_are_shared_by_both_variables(populated):
         ).all()
         assert {d.variable for d in output1_datasets} == set(VARIABLES)
 
-        # ...both reach the SAME edition (keyed on the bundle), stored once.
-        versions = {
+        # ...each now have their OWN edition (keyed on dataset_id).
+        version_ids = {
             session.exec(
                 select(DatasetVersionSpecific).where(
-                    DatasetVersionSpecific.id_project_specific == d.id_project_specific
+                    DatasetVersionSpecific.dataset_id == d.id
                 )
             )
             .one()
-            .version_id
+            .id
             for d in output1_datasets
         }
-        assert len(versions) == 1
+        assert len(version_ids) == len(VARIABLES)
 
-        # ...which is backed by exactly one raw document.
-        (version_id,) = versions
-        raw_ids = session.exec(
-            select(RawDocVersionLink.raw_id).where(
-                RawDocVersionLink.version_id == version_id
-            )
-        ).all()
+        # ...but all those editions are backed by exactly one raw document.
+        raw_ids = set(
+            session.exec(
+                select(RawDocVersionLink.raw_id).where(
+                    RawDocVersionLink.dataset_version_id.in_(version_ids)  # type: ignore[attr-defined]
+                )
+            ).all()
+        )
         assert len(raw_ids) == 1
 
 

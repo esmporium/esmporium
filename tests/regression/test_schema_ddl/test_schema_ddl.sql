@@ -17,27 +17,23 @@ CREATE INDEX ix_dataset_id_project_specific ON dataset (id_project_specific);
 
 CREATE UNIQUE INDEX uq_dataset_identity ON dataset (id_project_specific, project, model, institution, experiment, variant_label, variable, reporting_interval, coalesce(grid_label, ''), processing_id);
 
+CREATE TABLE datasetnodeinformation (
+	id INTEGER NOT NULL,
+	data_node VARCHAR NOT NULL,
+	CONSTRAINT pk_datasetnodeinformation PRIMARY KEY (id)
+);
+
+CREATE UNIQUE INDEX ix_datasetnodeinformation_data_node ON datasetnodeinformation (data_node);
+
 CREATE TABLE datasetrawdoc (
 	id INTEGER NOT NULL,
 	esgf_doc_id VARCHAR NOT NULL,
-	search_host VARCHAR NOT NULL,
 	raw_json VARCHAR NOT NULL,
 	retrieved_at DATETIME NOT NULL,
 	CONSTRAINT pk_datasetrawdoc PRIMARY KEY (id)
 );
 
 CREATE UNIQUE INDEX ix_datasetrawdoc_esgf_doc_id ON datasetrawdoc (esgf_doc_id);
-
-CREATE TABLE datasetversionspecific (
-	version_id VARCHAR NOT NULL,
-	id_project_specific VARCHAR NOT NULL,
-	version VARCHAR NOT NULL,
-	is_latest BOOLEAN NOT NULL,
-	retracted BOOLEAN NOT NULL,
-	CONSTRAINT pk_datasetversionspecific PRIMARY KEY (version_id)
-);
-
-CREATE INDEX ix_datasetversionspecific_id_project_specific ON datasetversionspecific (id_project_specific);
 
 CREATE TABLE searchapicallrecord (
 	id INTEGER NOT NULL,
@@ -59,29 +55,43 @@ CREATE INDEX ix_searchapicallrecord_created_at ON searchapicallrecord (created_a
 
 CREATE INDEX ix_searchapicallrecord_host ON searchapicallrecord (host);
 
-CREATE TABLE datasetnodeinformation (
+CREATE TABLE datasetversionspecific (
 	id INTEGER NOT NULL,
-	version_id VARCHAR NOT NULL,
-	data_node VARCHAR NOT NULL,
-	index_node VARCHAR,
-	replica BOOLEAN NOT NULL,
-	CONSTRAINT pk_datasetnodeinformation PRIMARY KEY (id),
-	CONSTRAINT uq_datasetnodeinformation_version_id_data_node UNIQUE (version_id, data_node),
-	CONSTRAINT fk_datasetnodeinformation_version_id_datasetversionspecific FOREIGN KEY(version_id) REFERENCES datasetversionspecific (version_id)
+	dataset_id INTEGER NOT NULL,
+	version VARCHAR NOT NULL,
+	is_latest BOOLEAN NOT NULL,
+	retracted BOOLEAN NOT NULL,
+	CONSTRAINT pk_datasetversionspecific PRIMARY KEY (id),
+	CONSTRAINT uq_datasetversionspecific_dataset_id_version UNIQUE (dataset_id, version),
+	CONSTRAINT fk_datasetversionspecific_dataset_id_dataset FOREIGN KEY(dataset_id) REFERENCES dataset (id)
 );
 
-CREATE INDEX ix_datasetnodeinformation_version_id ON datasetnodeinformation (version_id);
+CREATE INDEX ix_datasetversionspecific_dataset_id ON datasetversionspecific (dataset_id);
+
+CREATE TABLE datasetversionnodelink (
+	id INTEGER NOT NULL,
+	dataset_version_id INTEGER NOT NULL,
+	node_id INTEGER NOT NULL,
+	CONSTRAINT pk_datasetversionnodelink PRIMARY KEY (id),
+	CONSTRAINT uq_datasetversionnodelink_dataset_version_id_node_id UNIQUE (dataset_version_id, node_id),
+	CONSTRAINT fk_datasetversionnodelink_dataset_version_id_datasetversionspecific FOREIGN KEY(dataset_version_id) REFERENCES datasetversionspecific (id),
+	CONSTRAINT fk_datasetversionnodelink_node_id_datasetnodeinformation FOREIGN KEY(node_id) REFERENCES datasetnodeinformation (id)
+);
+
+CREATE INDEX ix_datasetversionnodelink_dataset_version_id ON datasetversionnodelink (dataset_version_id);
+
+CREATE INDEX ix_datasetversionnodelink_node_id ON datasetversionnodelink (node_id);
 
 CREATE TABLE rawdocversionlink (
 	id INTEGER NOT NULL,
 	raw_id INTEGER NOT NULL,
-	version_id VARCHAR NOT NULL,
+	dataset_version_id INTEGER NOT NULL,
 	CONSTRAINT pk_rawdocversionlink PRIMARY KEY (id),
-	CONSTRAINT uq_rawdocversionlink_raw_id_version_id UNIQUE (raw_id, version_id),
+	CONSTRAINT uq_rawdocversionlink_raw_id_dataset_version_id UNIQUE (raw_id, dataset_version_id),
 	CONSTRAINT fk_rawdocversionlink_raw_id_datasetrawdoc FOREIGN KEY(raw_id) REFERENCES datasetrawdoc (id),
-	CONSTRAINT fk_rawdocversionlink_version_id_datasetversionspecific FOREIGN KEY(version_id) REFERENCES datasetversionspecific (version_id)
+	CONSTRAINT fk_rawdocversionlink_dataset_version_id_datasetversionspecific FOREIGN KEY(dataset_version_id) REFERENCES datasetversionspecific (id)
 );
 
-CREATE INDEX ix_rawdocversionlink_raw_id ON rawdocversionlink (raw_id);
+CREATE INDEX ix_rawdocversionlink_dataset_version_id ON rawdocversionlink (dataset_version_id);
 
-CREATE INDEX ix_rawdocversionlink_version_id ON rawdocversionlink (version_id);
+CREATE INDEX ix_rawdocversionlink_raw_id ON rawdocversionlink (raw_id);

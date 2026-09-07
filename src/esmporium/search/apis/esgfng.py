@@ -9,7 +9,6 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlparse
 
 from tenacity import Retrying
 
@@ -197,8 +196,11 @@ def stac_nodes(feature: dict[str, Any]) -> tuple[NodeInfo, ...]:
     """Return the distinct data nodes a STAC feature's assets are hosted on."""
     hosts: list[str] = []
     for asset in feature.get("assets", {}).values():
-        href = asset.get("href")
-        host = urlparse(href).hostname if href else None
+        # `alternate:name` (STAC alternate-assets extension) is the canonical data-node
+        # identity, matching Solr's `data_node` (e.g. `ceda.ac.uk`). Deliberately do NOT
+        # read `href` here: `href` is the file-download URL (e.g. `dap.ceda.ac.uk`), a
+        # different concept from the data node, reserved for a future file-access step.
+        host = asset.get("alternate:name")
         if host and host not in hosts:
             hosts.append(host)
     return tuple(NodeInfo(host, None, False) for host in hosts)

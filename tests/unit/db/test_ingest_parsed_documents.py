@@ -58,22 +58,24 @@ def _counts(session: Session) -> dict[str, int]:
     }
 
 
-def test_ingest_cmip5_shares_one_edition_per_bundle(engine):
-    """The two CMIP5 bundles each explode into many variables under a single edition."""
+def test_ingest_cmip5_writes_one_edition_per_dataset(engine):
+    """Each CMIP5 bundle explodes into many variables, each its own dataset+edition."""
     facade = _facade(ESGF1_CMIP5_FACADE_PARAMETERS, SearchAPIESGF1Solr)
     documents = facade.parse_search_results(_load("esgf1-solr-cmip5-search"))
     expected_rows = sum(len(doc.datasets) for doc in documents)
 
     with Session(engine) as session:
-        ingest_parsed_documents(session, "esg-dn1.nsc.liu.se", documents)
+        ingest_parsed_documents(session, documents)
         session.commit()
         counts = _counts(session)
 
     assert counts["datasets"] == expected_rows > len(documents)
-    # One edition and one raw document per bundle (per source doc), not per variable.
-    assert counts["versions"] == len(documents)
+    # A version belongs to a single dataset, so there is one edition per variable.
+    assert counts["versions"] == expected_rows
+    # The raw document is per bundle (per source doc), but it links to every one of that
+    # bundle's per-variable editions.
     assert counts["raw_docs"] == len(documents)
-    assert counts["links"] == len(documents)
+    assert counts["links"] == expected_rows
 
 
 def test_reingesting_the_same_documents_is_idempotent(engine):
@@ -82,11 +84,11 @@ def test_reingesting_the_same_documents_is_idempotent(engine):
     documents = facade.parse_search_results(_load("esgf1-solr-cmip5-search"))
 
     with Session(engine) as session:
-        ingest_parsed_documents(session, "esg-dn1.nsc.liu.se", documents)
+        ingest_parsed_documents(session, documents)
         session.commit()
         first = _counts(session)
 
-        ingest_parsed_documents(session, "esg-dn1.nsc.liu.se", documents)
+        ingest_parsed_documents(session, documents)
         session.commit()
         second = _counts(session)
 
