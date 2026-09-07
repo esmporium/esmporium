@@ -149,20 +149,14 @@ def main() -> None:
 
     summary_df = pd.DataFrame(summary)
     print(summary_df["model"].unique())
-    print(
-        summary_df[
-            (summary_df["variable"] == "tas") & (summary_df["frequency"] == "mon")
-        ]
-        .sort_values(by=["model", "experiment", "variant_label"])
-        .set_index(["model", "experiment"])
-    )
-    print(
-        summary_df[
-            (summary_df["variable"] == "hfds") & (summary_df["frequency"] == "mon")
-        ]
-        .sort_values(by=["model", "experiment", "variant_label"])
-        .set_index(["model", "experiment"])
-    )
+    for v in ["tas", "hfds", "rsut", "rlut", "rsdt", "rndt"]:
+        print(
+            summary_df[
+                (summary_df["variable"] == v) & (summary_df["frequency"] == "mon")
+            ]
+            .sort_values(by=["model", "experiment", "variant_label"])
+            .set_index(["model", "experiment"])
+        )
 
 
 if __name__ == "__main__":
