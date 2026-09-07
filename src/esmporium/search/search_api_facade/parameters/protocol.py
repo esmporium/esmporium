@@ -8,12 +8,15 @@ is better expressed as more than just a pure mapping.
 
 from __future__ import annotations
 
-from typing import Annotated, Protocol
+from typing import TYPE_CHECKING, Annotated, Any, Protocol
 
 from pydantic import PlainValidator
 
 from esmporium.query import QueryCanonical, QueryProtocol
 from esmporium.query.protocol import accept_without_validation
+
+if TYPE_CHECKING:
+    from esmporium.search.apis import SearchAPI
 
 
 class FacadeParametersProtocol(Protocol):
@@ -93,5 +96,31 @@ class FacadeParametersProtocol(Protocol):
         -------
         :
             Facet values to use in a search request
+        """
+        ...
+
+    def read_result_facets(
+        self, doc: dict[str, Any], api: SearchAPI
+    ) -> tuple[dict[str, str | None], ...]:
+        """
+        Read the `Dataset` facet rows one search document maps to
+
+        This is the project half of result parsing: it turns one raw document into the
+        facet rows it covers, named as our columns. A CMIP5 document yields one row per
+        variable in its bundle; every other project yields exactly one row.
+
+        Parameters
+        ----------
+        doc
+            One document from the search API's `extract_result_documents`
+
+        api
+            The search API the document came from, used to read its fields
+
+        Returns
+        -------
+        :
+            One full facet dict per dataset row (without `id_project_specific`, which is
+            shared and added later)
         """
         ...

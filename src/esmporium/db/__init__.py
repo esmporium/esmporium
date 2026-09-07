@@ -10,7 +10,8 @@ from __future__ import annotations
 from esmporium.db.dataset_uniqueness import facet_differences
 from esmporium.db.results_to_database import (
     UnhandledDatasetClashError,
-    ingest_results,
+    build_result_processor,
+    ingest_parsed_documents,
     save_dataset,
 )
 from esmporium.db.schema import (
@@ -46,9 +47,10 @@ __all__ = [
     "UnhandledDatasetClashError",
     "aggregate_host_health",
     "build_health_selector",
+    "build_result_processor",
     "facet_differences",
     "get_median_response_time_for_ranking",
-    "ingest_results",
+    "ingest_parsed_documents",
     "record_search_api_calls",
     "save_dataset",
 ]

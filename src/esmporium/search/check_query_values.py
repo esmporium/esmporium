@@ -374,7 +374,7 @@ def allowed_values_from_api(
     client: httpx.Client,
     canonical: QueryCanonical,
     facets: set[str],
-    observer: SearchAPICallObserver | None = None,
+    api_call_observer: SearchAPICallObserver | None = None,
 ) -> AllowedValues:
     """
     Get what a search API facade can tell us about the allowed values of some facets
@@ -393,7 +393,7 @@ def allowed_values_from_api(
     facets
         Facets for which to get the allowed values
 
-    observer
+    api_call_observer
         Told about the request to `facade.search_api`.
 
         If `None` (the default), nothing is recorded.
@@ -416,7 +416,7 @@ def allowed_values_from_api(
     request = facade.build_get_facet_values_request(canonical, askable)
 
     try:
-        raw = fire(client, facade.search_api, request, observer)
+        raw = fire(client, facade.search_api, request, api_call_observer)
     except SearchAPIRequestError as exc:
         raise CouldNotGetAllowedValuesError(facade.search_api.host) from exc
 
@@ -474,7 +474,7 @@ def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberat
     stop_at_first_result: bool = True,
     close_matches: CloseMatcher = close_matches_difflib,
     client: httpx.Client | None = None,
-    observer: SearchAPICallObserver | None = None,
+    api_call_observer: SearchAPICallObserver | None = None,
 ) -> ValueCheckOutcome:
     """
     Check a query's values against the APIs which would have served it
@@ -511,7 +511,7 @@ def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberat
         The HTTP client to ask the APIs with.
         If `None`, one is built for the call and closed at the end.
 
-    observer
+    api_call_observer
         Told about each request to each API.
 
         If `None` (the default), nothing is recorded.
@@ -551,7 +551,7 @@ def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberat
             host = facade.search_api.host
             try:
                 allowed = allowed_values_from_api(
-                    facade, client, canonical, facets, observer
+                    facade, client, canonical, facets, api_call_observer
                 )
             except CouldNotGetAllowedValuesError as exc:
                 refusals[host] = exc

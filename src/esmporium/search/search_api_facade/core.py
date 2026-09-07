@@ -16,6 +16,7 @@ from esmporium.query import (
     facet_spec,
 )
 from esmporium.search.apis import Request, SearchAPI
+from esmporium.search.result_parsing import ParsedDocument
 from esmporium.search.search_api_facade.parameters import (
     FacadeParametersProtocol,
     OneProjectRequiredError,
@@ -399,9 +400,50 @@ class SearchAPIFacade:
         """
         return self._read_back(self.search_api.parse_facet_patterns, raw, facets)
 
-    # TODO: when we add an equivalent for reading search results,
-    # make this method and the search result reading method public,
-    # upgrade docstrings to the standards in the rest of the repository etc.
+    def parse_search_results(self, raw: dict[str, Any]) -> tuple[ParsedDocument, ...]:
+        """
+        Parse a raw search response into the documents it carries
+
+        The facade knows both halves this needs: the [search_api][(c).search_api] knows
+        the response *format* (how to split the envelope and read the format-determined
+        fields), and the [parameters][(c).parameters] know the *project* (which field
+        names carry which facet). Neither has to guess the other's concern.
+
+        Parameters
+        ----------
+        raw
+            The response to read, i.e. the answer to a request built with
+            [build_search_request][(c).build_search_request]
+
+        Returns
+        -------
+        :
+            One [`ParsedDocument`][esmporium.search.result_parsing.ParsedDocument] per
+            source document (a CMIP5 document carries many dataset rows, a CMIP6/CMIP7
+            document one)
+        """
+        return tuple(
+            self._read_result(doc)
+            for doc in self.search_api.extract_result_documents(raw)
+        )
+
+    def _read_result(self, doc: dict[str, Any]) -> ParsedDocument:
+        """Combine the format shell and the project facet rows for one document."""
+        shell = self.search_api.read_document_shell(doc)
+        rows = self.parameters.read_result_facets(doc, self.search_api)
+        return ParsedDocument(
+            id_project_specific=shell.id_project_specific,
+            datasets=rows,
+            version=shell.version,
+            is_latest=shell.is_latest,
+            retracted=shell.retracted,
+            nodes=shell.nodes,
+            esgf_doc_id=shell.esgf_doc_id,
+            raw_json=shell.raw_json,
+        )
+
+    # TODO: upgrade this facet-values reader's docstrings to the repository standards,
+    # and consider making it public alongside `parse_search_results`.
     def _read_back(
         self,
         parse: Callable[[dict[str, Any], set[str]], dict[str, Any]],

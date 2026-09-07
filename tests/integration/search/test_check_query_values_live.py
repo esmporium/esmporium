@@ -34,7 +34,7 @@ def only_report(query: QueryProtocol, observer=None) -> ValueReport:
     caller can assert on the search-API health recorded for the call.
     """
     try:
-        outcome = check_query_values(query, observer=observer)
+        outcome = check_query_values(query, api_call_observer=observer)
     except NoSourceWouldAnswerError:
         pytest.skip("no endpoint answered today, so there is nothing to assert")
 

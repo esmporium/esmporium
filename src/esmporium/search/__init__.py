@@ -39,6 +39,12 @@ from esmporium.search.health import (
     SearchAPICallObserver,
     fan_out,
 )
+from esmporium.search.result_parsing import (
+    NodeInfo,
+    ParsedDocShell,
+    ParsedDocument,
+    ResultProcessor,
+)
 from esmporium.search.retry import build_transient_retrying
 from esmporium.search.search import (
     CouldNotSearchError,
@@ -115,10 +121,14 @@ __all__ = [
     "NoFacetValuesReturnedError",
     "NoSearchResultNumberOfMatchesReturnedError",
     "NoSourceWouldAnswerError",
+    "NodeInfo",
     "NotAFacetOfTheQueryError",
     "OneProjectRequiredError",
+    "ParsedDocShell",
+    "ParsedDocument",
     "ProjectPrefixMismatchError",
     "Request",
+    "ResultProcessor",
     "RetryingBuilder",
     "STACFacadeParameters",
     "SearchAPI",

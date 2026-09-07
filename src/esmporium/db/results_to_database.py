@@ -1,21 +1,24 @@
 """
 Writing search results into the database
 
-This is where raw ESGF search JSON becomes rows. `ingest_results` consumes what the
-search layer returns (its `results` mapping, host -> raw JSON), parses each document
-with [`esmporium.db.parse`][], and writes the `Dataset`, edition, node, raw-document and
-link rows. `save_dataset` is the safe single-row add underneath it, turning the
-database's "these two rows are identical" complaint into a clear error.
+This is where parsed search documents become rows. The parsing -- turning a Solr
+record or STAC feature into a
+[`ParsedDocument`][esmporium.search.result_parsing.ParsedDocument] -- now happens in
+the search/facade layer, so this module is format-agnostic: it only knows how to write
+`Dataset`, edition, node, raw-document and link rows from a `ParsedDocument`.
+`ingest_parsed_documents` is the single write entry point; `build_result_processor`
+wraps it as the callback [`esmporium.search.search`][] invokes as each host answers.
+`save_dataset` is the safe single-row add underneath, turning the database's "these two
+rows are identical" complaint into a clear error.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
-from esmporium.db.parse import ParsedDoc, parse_document
 from esmporium.db.schema import (
     DATASET_IDENTITY_INDEX,
     Dataset,
@@ -24,11 +27,12 @@ from esmporium.db.schema import (
     DatasetVersionSpecific,
     RawDocVersionLink,
 )
+from esmporium.search.result_parsing import ParsedDocument, ResultProcessor
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Iterable
 
-    from esmporium.db.parse import NodeInfo
+    from esmporium.search.result_parsing import NodeInfo
 
 
 class UnhandledDatasetClashError(Exception):
@@ -101,36 +105,65 @@ def save_dataset(session: Session, dataset: Dataset) -> Dataset:
     return dataset
 
 
-def ingest_results(session: Session, results: Mapping[str, Any]) -> None:
+def ingest_parsed_documents(
+    session: Session,
+    search_host: str,
+    parsed_documents: Iterable[ParsedDocument],
+) -> None:
     """
-    Write a search's results into the database
+    Write already-parsed documents from one host into the database
 
     Parameters
     ----------
     session
-        The session to write into. This commits once at the end.
+        The session to write into. This does NOT commit; the caller controls the
+        transaction boundary (the processor from
+        [build_result_processor][(m).build_result_processor] commits once per host).
 
-    results
-        What the search layer returned: a mapping of search host to the raw JSON that
-        host answered with (i.e. `SearchOutcome.results`).
+    search_host
+        The endpoint the documents came from, recorded on each raw document.
+
+    parsed_documents
+        The documents that host answered with, already parsed by the facade's
+        `parse_search_results`.
     """
-    for search_host, raw in results.items():
-        for raw_doc in _documents(raw):
-            _ingest_document(session, parse_document(raw_doc), search_host)
-
-    session.commit()
+    for parsed in parsed_documents:
+        _ingest_document(session, parsed, search_host)
 
 
-def _documents(raw: Mapping[str, Any]) -> list[dict[str, Any]]:
-    """Return the per-dataset documents in one host's raw response (Solr or STAC)."""
-    if "response" in raw:  # Solr
-        docs: list[dict[str, Any]] = raw["response"].get("docs", [])
-        return docs
-    features: list[dict[str, Any]] = raw.get("features", [])
-    return features
+def build_result_processor(session: Session) -> ResultProcessor:
+    """
+    Build a processor that persists one host's parsed results into `session`
+
+    The returned callback is what [`esmporium.search.search`][] calls as each host
+    answers: it ingests that host's documents and commits, so results are durable as
+    soon as they arrive. Inject it as
+    `search(..., processor=build_result_processor(session))`.
+
+    Parameters
+    ----------
+    session
+        The session the processor writes and commits into.
+
+    Returns
+    -------
+    :
+        A callback of the shape
+        [`ResultProcessor`][esmporium.search.result_parsing.ResultProcessor].
+    """
+
+    def processor(
+        search_host: str, parsed_documents: tuple[ParsedDocument, ...]
+    ) -> None:
+        ingest_parsed_documents(session, search_host, parsed_documents)
+        session.commit()
+
+    return processor
 
 
-def _ingest_document(session: Session, parsed: ParsedDoc, search_host: str) -> None:
+def _ingest_document(
+    session: Session, parsed: ParsedDocument, search_host: str
+) -> None:
     """Write one parsed document: its datasets, edition, nodes, raw doc and link."""
     for facets in parsed.dataset_facets():
         _get_or_create_dataset(session, facets)
@@ -156,7 +189,7 @@ def _get_or_create_dataset(session: Session, facets: dict[str, str | None]) -> D
     return save_dataset(session, Dataset(**facets))
 
 
-def _upsert_version(session: Session, parsed: ParsedDoc) -> DatasetVersionSpecific:
+def _upsert_version(session: Session, parsed: ParsedDocument) -> DatasetVersionSpecific:
     """Insert the edition, or refresh its snapshot flags if seen before."""
     version_id = f"{parsed.id_project_specific}.v{parsed.version}"
     existing = session.get(DatasetVersionSpecific, version_id)
@@ -208,7 +241,7 @@ def _upsert_node(
 
 
 def _get_or_create_raw_doc(
-    session: Session, parsed: ParsedDoc, search_host: str
+    session: Session, parsed: ParsedDocument, search_host: str
 ) -> DatasetRawDoc:
     """Store the raw JSON once, keyed by `esgf_doc_id`."""
     existing = session.exec(

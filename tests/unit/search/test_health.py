@@ -95,7 +95,7 @@ def record(handler, apis) -> list[SearchAPICall]:
             QUERY,
             build_list_selector(apis),
             client=client_for(handler),
-            observer=calls.append,
+            api_call_observer=calls.append,
         )
     return calls
 
@@ -288,7 +288,7 @@ def test_check_query_values_records_its_call():
         QueryCMIP6(experiment_id="historical"),
         build_list_selector([make_cmip6_facade("node")]),
         client=client_for(handler),
-        observer=calls.append,
+        api_call_observer=calls.append,
     )
 
     (call,) = calls

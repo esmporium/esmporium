@@ -4,6 +4,7 @@ ESGF1 search API class
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -17,6 +18,7 @@ from esmporium.search.apis.protocol import (
     NoSearchResultNumberOfMatchesReturnedError,
 )
 from esmporium.search.apis.request import Request
+from esmporium.search.result_parsing import NodeInfo, ParsedDocShell
 
 
 def solr_bool(value: bool) -> str:
@@ -114,6 +116,59 @@ def solr_facet_values(raw: dict[str, Any], facets: set[str]) -> dict[str, set[st
             res[api_name] = set(flat[0::2])
 
     return res
+
+
+def extract_one_element_list(value: Any) -> Any:
+    """
+    Unwrap a one-element list, e.g. `['CMIP5']` -> `'CMIP5'`, else leave as-is
+
+    Solr returns most facets as single-element lists. This collapses them so a facet
+    reads back as the scalar it represents.
+    """
+    if isinstance(value, list) and len(value) == 1:
+        return value[0]
+    return value
+
+
+def solr_extract_result_documents(raw: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return the per-dataset records in a Solr-shaped search response."""
+    docs: list[dict[str, Any]] = raw.get("response", {}).get("docs", [])
+    return list(docs)
+
+
+def solr_read_facet(doc: dict[str, Any], api_field: str) -> str | None:
+    """Read one scalar facet out of a Solr record by its API field name."""
+    value = extract_one_element_list(doc.get(api_field))
+    return None if value is None else str(value)
+
+
+def solr_read_facet_list(doc: dict[str, Any], api_field: str) -> tuple[str, ...]:
+    """Read a multi-valued facet (e.g. CMIP5's whole `variable` bundle) as a tuple."""
+    values = doc.get(api_field)
+    if values is None:
+        return ()
+    if not isinstance(values, list):
+        values = [values]
+    return tuple(str(value) for value in values)
+
+
+def solr_read_document_shell(doc: dict[str, Any]) -> ParsedDocShell:
+    """Read the format-determined pieces of a Solr record."""
+    return ParsedDocShell(
+        id_project_specific=extract_one_element_list(doc["master_id"]),
+        version=str(extract_one_element_list(doc["version"])),
+        is_latest=bool(extract_one_element_list(doc.get("latest", False))),
+        retracted=bool(extract_one_element_list(doc.get("retracted", False))),
+        nodes=(
+            NodeInfo(
+                data_node=extract_one_element_list(doc["data_node"]),
+                index_node=extract_one_element_list(doc.get("index_node")),
+                replica=bool(extract_one_element_list(doc.get("replica", False))),
+            ),
+        ),
+        esgf_doc_id=extract_one_element_list(doc["id"]),
+        raw_json=json.dumps(doc),
+    )
 
 
 @dataclass(frozen=True)
@@ -222,3 +277,27 @@ class SearchAPIESGF1Solr:
         """  # noqa: E501
         # ESGF1 always enumerates its facet values; it never describes their form.
         return {}
+
+    def extract_result_documents(self, raw: dict[str, Any]) -> list[dict[str, Any]]:
+        """
+        See [SearchAPI.extract_result_documents][esmporium.search.apis.SearchAPI.extract_result_documents].
+        """  # noqa: E501
+        return solr_extract_result_documents(raw)
+
+    def read_document_shell(self, doc: dict[str, Any]) -> ParsedDocShell:
+        """
+        See [SearchAPI.read_document_shell][esmporium.search.apis.SearchAPI.read_document_shell].
+        """  # noqa: E501
+        return solr_read_document_shell(doc)
+
+    def read_facet(self, doc: dict[str, Any], api_field: str) -> str | None:
+        """
+        See [SearchAPI.read_facet][esmporium.search.apis.SearchAPI.read_facet].
+        """
+        return solr_read_facet(doc, api_field)
+
+    def read_facet_list(self, doc: dict[str, Any], api_field: str) -> tuple[str, ...]:
+        """
+        See [SearchAPI.read_facet_list][esmporium.search.apis.SearchAPI.read_facet_list].
+        """  # noqa: E501
+        return solr_read_facet_list(doc, api_field)

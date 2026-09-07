@@ -6,11 +6,14 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from tenacity import Retrying
 
 from esmporium.search.apis.request import Request
+
+if TYPE_CHECKING:
+    from esmporium.search.result_parsing import ParsedDocShell
 
 
 def _describe_where_we_looked(expected_at: tuple[str, ...]) -> str:
@@ -445,5 +448,94 @@ class SearchAPI(Protocol):
         UncompilableFacetPatternError
             A pattern specified for a given facet name
             is not able to be compiled as a regular expression.
+        """
+        ...
+
+    def extract_result_documents(self, raw: dict[str, Any]) -> list[dict[str, Any]]:
+        """
+        Split a raw search response into its per-dataset documents
+
+        This is the format-level split -- Solr nests its records under `response.docs`,
+        STAC lists its features under `features` -- and knows nothing about which
+        project's facet names those documents carry.
+
+        Parameters
+        ----------
+        raw
+            The response to read, i.e. the answer to a
+            [build_search_request][(c).build_search_request]
+
+        Returns
+        -------
+        :
+            The per-dataset documents, each still in this API's own format
+        """
+        ...
+
+    def read_document_shell(self, doc: dict[str, Any]) -> ParsedDocShell:
+        """
+        Read the pieces of one document that its response *format* determines
+
+        These are the fields that do not depend on the project's facet naming: the
+        bundle id, the edition (version and its snapshot flags), where it is hosted, the
+        source document id and the raw JSON. The project-specific facet rows are read
+        separately (the facade combines the two).
+
+        Parameters
+        ----------
+        doc
+            One document from [extract_result_documents][(c).extract_result_documents]
+
+        Returns
+        -------
+        :
+            The format-determined pieces of `doc`
+        """
+        ...
+
+    def read_facet(self, doc: dict[str, Any], api_field: str) -> str | None:
+        """
+        Read one scalar facet out of a document by its API field name
+
+        The caller supplies the field name in this API's own vocabulary (e.g.
+        `source_id` for Solr CMIP6, `cmip6:source_id` for STAC); this method knows only
+        where in the document such a field lives (a top-level Solr key, a STAC
+        `properties` entry) and how this format stores a scalar.
+
+        Parameters
+        ----------
+        doc
+            One document from [extract_result_documents][(c).extract_result_documents]
+
+        api_field
+            The field name to read, in this API's vocabulary
+
+        Returns
+        -------
+        :
+            The value, or `None` if the document does not carry that field
+        """
+        ...
+
+    def read_facet_list(self, doc: dict[str, Any], api_field: str) -> tuple[str, ...]:
+        """
+        Read a possibly multi-valued facet out of a document as a tuple
+
+        This is how the varying axis of a bundle is read: a CMIP5 Solr record carries
+        its whole `variable` list here, whereas a CMIP6/CMIP7 document carries a single
+        value (returned as a one-element tuple).
+
+        Parameters
+        ----------
+        doc
+            One document from [extract_result_documents][(c).extract_result_documents]
+
+        api_field
+            The field name to read, in this API's vocabulary
+
+        Returns
+        -------
+        :
+            Every value the document carries for that field
         """
         ...

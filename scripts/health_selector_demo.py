@@ -63,7 +63,12 @@ def gather_health(engine) -> None:
             print(f"  run {run}/{REPEATS}: {project} ...", flush=True)
             # `stop_at_first_result=False` so every node in the pool is asked,
             # otherwise only the first node would ever get a health record.
-            search(query, limit=2, stop_at_first_result=False, observer=observer)
+            search(
+                query,
+                limit=2,
+                stop_at_first_result=False,
+                api_call_observer=observer,
+            )
 
 
 def print_health_table(health: dict[str, HostHealth]) -> None:

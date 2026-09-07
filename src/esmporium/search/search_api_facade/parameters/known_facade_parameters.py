@@ -20,7 +20,7 @@ Known facade parameter definitions
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, PlainValidator
 
@@ -36,6 +36,10 @@ from esmporium.query import (
     from_canonical,
 )
 from esmporium.query.protocol import accept_without_validation
+from esmporium.search.result_readers import read_dataset_rows
+
+if TYPE_CHECKING:
+    from esmporium.search.apis import SearchAPI
 
 
 def get_mapping_to_query_style_facet_names(
@@ -116,6 +120,17 @@ class DirectMappingFacadeParameters(BaseModel):
         native = from_canonical(canonical=canonical, to=self.base_query_style)
 
         return facet_values_from_attributes(native)
+
+    def read_result_facets(
+        self, doc: dict[str, Any], api: SearchAPI
+    ) -> tuple[dict[str, str | None], ...]:
+        """See [FacadeParametersProtocol.read_result_facets][esmporium.search.search_api_facade.parameters.protocol.FacadeParametersProtocol.read_result_facets]."""  # noqa: E501
+        return read_dataset_rows(self, doc, api, self._result_project(doc, api))
+
+    def _result_project(self, doc: dict[str, Any], api: SearchAPI) -> str | None:
+        """Read the project from the (Solr) `project` facet."""
+        api_field = self.get_mapping_to_api_facet_names({"project"}).get("project")
+        return api.read_facet(doc, api_field) if api_field is not None else None
 
 
 class ESGF1CMIP5ParametersQueryStyle(BaseModel):
@@ -493,6 +508,16 @@ class STACFacadeParameters(BaseModel):
             facet_values[f"{self.prefix}:{facet_name}"] = values
 
         return facet_values
+
+    def read_result_facets(
+        self, doc: dict[str, Any], api: SearchAPI
+    ) -> tuple[dict[str, str | None], ...]:
+        """See [FacadeParametersProtocol.read_result_facets][esmporium.search.search_api_facade.parameters.protocol.FacadeParametersProtocol.read_result_facets]."""  # noqa: E501
+        return read_dataset_rows(self, doc, api, self._result_project(doc, api))
+
+    def _result_project(self, doc: dict[str, Any], api: SearchAPI) -> str:
+        """STAC drops the project facet; recover it from `mip_era` (else the prefix)."""
+        return api.read_facet(doc, f"{self.prefix}:mip_era") or self.prefix.upper()
 
 
 class ESGFNGCMIP5ParametersQueryStyle(BaseModel):

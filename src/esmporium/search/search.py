@@ -173,7 +173,7 @@ def fire(
     client: httpx.Client,
     api: SearchAPI,
     request: Request,
-    observer: SearchAPICallObserver | None = None,
+    api_call_observer: SearchAPICallObserver | None = None,
 ) -> dict[str, Any]:
     """
     Send one request to one API, using that API's retry policy and timeout
@@ -189,7 +189,7 @@ def fire(
     request
         The request to send
 
-    observer
+    api_call_observer
         Told about this call once it is done, on both the success and failure path.
         If `None` (the default), nothing is recorded.
         See [esmporium.search.health][] for how to build one.
@@ -226,9 +226,9 @@ def fire(
         seconds: float,
     ) -> None:
         """Tell the observer, if any, how one attempt went."""
-        if observer is None:
+        if api_call_observer is None:
             return
-        observer(
+        api_call_observer(
             SearchAPICall(
                 host=api.host,
                 http_method=request.method,
@@ -368,7 +368,7 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
     # Limit handling and pagination will be added in PR2.5
     limit: int = 10_000,
     client: httpx.Client | None = None,
-    observer: SearchAPICallObserver | None = None,
+    api_call_observer: SearchAPICallObserver | None = None,
 ) -> SearchOutcome:
     """
     Search the facades the selector yields, and collect their raw JSON
@@ -400,7 +400,7 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
         The HTTP client to search with.
         If `None`, one is built for the call and closed at the end.
 
-    observer
+    api_call_observer
         Told about each request to each API.
 
         If `None` (the default), nothing is recorded.
@@ -438,7 +438,7 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
             request = facade.build_search_request(canonical, limit)
             host = facade.search_api.host
             try:
-                raw = fire(client, facade.search_api, request, observer)
+                raw = fire(client, facade.search_api, request, api_call_observer)
             except SearchAPIRequestError as exc:
                 refusals[host] = CouldNotSearchError(host, cause=exc)
             else:

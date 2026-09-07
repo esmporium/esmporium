@@ -92,7 +92,7 @@ def main() -> None:
 
             for query in (EXAMPLE_CMIP5, EXAMPLE_CMIP6, EXAMPLE_CMIP7):
                 print(f"\nquery: {query!r}")
-                results = search(query, limit=2, observer=observer).results
+                results = search(query, limit=2, api_call_observer=observer).results
                 for host, raw in results.items():
                     print(f"  {host:22} {node_count_summary(raw)}")
 

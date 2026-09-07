@@ -227,7 +227,7 @@ def search_or_skip(query, api, client, limit, observer=None):
             build_list_selector([api]),
             limit=limit,
             client=client,
-            observer=observer,
+            api_call_observer=observer,
         )
     except NoAPIWouldAnswerError:
         pytest.skip(f"{api.search_api.host} did not answer, so it is down or unwell")

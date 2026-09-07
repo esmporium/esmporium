@@ -4,10 +4,12 @@ ESGF-NG search API class
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlparse
 
 from tenacity import Retrying
 
@@ -18,6 +20,9 @@ from esmporium.search.apis.protocol import (
     UncompilableFacetPatternError,
 )
 from esmporium.search.apis.request import Request
+from esmporium.search.result_parsing import NodeInfo, ParsedDocShell
+
+_VERSION_TOKEN = re.compile(r"^v\d+$")
 
 
 # In future, `aggregations` could be used to return value counts per facet value.
@@ -154,6 +159,66 @@ def stac_summary_patterns(
     return res
 
 
+def stac_extract_result_documents(raw: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return the per-dataset features in a STAC-shaped search response."""
+    features: list[dict[str, Any]] = raw.get("features", [])
+    return list(features)
+
+
+def stac_read_facet(feature: dict[str, Any], api_field: str) -> str | None:
+    """Read one scalar facet from a STAC feature's `properties` by API field name."""
+    value = feature.get("properties", {}).get(api_field)
+    return None if value is None else str(value)
+
+
+def stac_read_facet_list(feature: dict[str, Any], api_field: str) -> tuple[str, ...]:
+    """Read a facet as a tuple. A STAC feature carries one value per facet: 0 or 1."""
+    value = stac_read_facet(feature, api_field)
+    return () if value is None else (value,)
+
+
+def _strip_version(native_id: str) -> str:
+    """Drop a trailing `.vYYYYMMDD` token so different editions share a bundle id."""
+    parts = native_id.split(".")
+    if parts and _VERSION_TOKEN.match(parts[-1]):
+        return ".".join(parts[:-1])
+    return native_id
+
+
+def _version_from_id(native_id: str) -> str:
+    """Read the version out of a `.vYYYYMMDD` token, if present."""
+    parts = native_id.split(".")
+    if parts and _VERSION_TOKEN.match(parts[-1]):
+        return parts[-1][1:]
+    return ""
+
+
+def stac_nodes(feature: dict[str, Any]) -> tuple[NodeInfo, ...]:
+    """Return the distinct data nodes a STAC feature's assets are hosted on."""
+    hosts: list[str] = []
+    for asset in feature.get("assets", {}).values():
+        href = asset.get("href")
+        host = urlparse(href).hostname if href else None
+        if host and host not in hosts:
+            hosts.append(host)
+    return tuple(NodeInfo(host, None, False) for host in hosts)
+
+
+def stac_read_document_shell(feature: dict[str, Any]) -> ParsedDocShell:
+    """Read the format-determined pieces of a STAC feature."""
+    props: dict[str, Any] = feature["properties"]
+    feature_id = feature["id"]
+    return ParsedDocShell(
+        id_project_specific=_strip_version(feature_id),
+        version=str(props.get("version") or _version_from_id(feature_id)),
+        is_latest=bool(props.get("latest", False)),
+        retracted=bool(props.get("retracted", False)),
+        nodes=stac_nodes(feature),
+        esgf_doc_id=feature_id,
+        raw_json=json.dumps(feature),
+    )
+
+
 @dataclass(frozen=True)
 class SearchAPIESGFNGSTAC:
     """
@@ -280,3 +345,27 @@ class SearchAPIESGFNGSTAC:
         See [SearchAPI.parse_facet_patterns][esmporium.search.apis.SearchAPI.parse_facet_patterns].
         """  # noqa: E501
         return stac_summary_patterns(raw, facets)
+
+    def extract_result_documents(self, raw: dict[str, Any]) -> list[dict[str, Any]]:
+        """
+        See [SearchAPI.extract_result_documents][esmporium.search.apis.SearchAPI.extract_result_documents].
+        """  # noqa: E501
+        return stac_extract_result_documents(raw)
+
+    def read_document_shell(self, doc: dict[str, Any]) -> ParsedDocShell:
+        """
+        See [SearchAPI.read_document_shell][esmporium.search.apis.SearchAPI.read_document_shell].
+        """  # noqa: E501
+        return stac_read_document_shell(doc)
+
+    def read_facet(self, doc: dict[str, Any], api_field: str) -> str | None:
+        """
+        See [SearchAPI.read_facet][esmporium.search.apis.SearchAPI.read_facet].
+        """
+        return stac_read_facet(doc, api_field)
+
+    def read_facet_list(self, doc: dict[str, Any], api_field: str) -> tuple[str, ...]:
+        """
+        See [SearchAPI.read_facet_list][esmporium.search.apis.SearchAPI.read_facet_list].
+        """  # noqa: E501
+        return stac_read_facet_list(doc, api_field)

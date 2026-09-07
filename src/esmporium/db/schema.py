@@ -538,6 +538,9 @@ class DatasetVersionSpecific(EsmporiumBase, table=True):
     # construction rather than at commit time.
     model_config = {"validate_assignment": True}
 
+    # TODO: update so that version_id is taken as the specific version_id
+    # from the raw docs
+    # should be a str or int? CMIP5 can get weird
     version_id: str = Field(primary_key=True)
     """
     Unique identifier of this edition
@@ -556,6 +559,8 @@ class DatasetVersionSpecific(EsmporiumBase, table=True):
     `Dataset` rows that all share this value, and they all share this edition.
     """
 
+    # TODO: Remove version
+    # Take version or version_id as above (not taken from master_id)
     version: str
     """
     The version string, as ESGF reports it
@@ -607,6 +612,8 @@ class DatasetNodeInformation(EsmporiumBase, table=True):
 
     See [`DatasetVersionSpecific`][esmporium.db.schema.DatasetVersionSpecific].
     """
+    # TODO: Not null for STAC?
+    # fabricate from attempt? (need to double check)
 
     data_node: str
     """The data node hosting this copy, e.g. `esgf.nci.org.au`"""
@@ -614,6 +621,7 @@ class DatasetNodeInformation(EsmporiumBase, table=True):
     index_node: str | None = None
     """The index node that reported this copy (Solr), if known"""
 
+    # Remove replica? Will this ever be important? Unlikely
     replica: bool
     """Whether this copy is a replica (a copy of an original published elsewhere)"""
 
@@ -652,13 +660,14 @@ class DatasetRawDoc(EsmporiumBase, table=True):
     Unique, so re-ingesting the same document reuses this row
     rather than duplicating the JSON.
     """
-
+    # TODO : remove search_host
     search_host: str
     """The endpoint queried, e.g. `esgf.nci.org.au` or `search.east.esgf.io`"""
 
     raw_json: str
     """The document exactly as returned, JSON-encoded"""
 
+    # TODO: keep retrieved_at?
     retrieved_at: datetime.datetime = Field(default_factory=_utcnow)
     """When we stored this document (UTC)"""
 
