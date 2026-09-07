@@ -8,7 +8,7 @@ carries its facets in a `properties` dict under `cmipN:`-prefixed keys.
 
 from __future__ import annotations
 
-from esmporium.db import facet_differences
+from esmporium.db import MISSING, all_facet_differences, facet_differences
 
 # CMIP5: same dataset published under two products (the real CMCC-CM piControl case).
 CMIP5_MASTER_A = "cmip5.output1.CMCC.CMCC-CM.piControl.mon.atmos.Amon.r1i1p1"
@@ -170,3 +170,56 @@ def test_cmip7_realm_only_difference_is_invisible():
     )
 
     assert result == {}
+
+
+# --- all_facet_differences: the unfiltered bottom layer -------------------------
+
+
+def test_all_facet_differences_reports_every_real_difference():
+    """Unlike facet_differences, the bottom layer keeps id-noise (version, master)."""
+    result = all_facet_differences(
+        _cmip5_doc("output1", "20121008"),
+        _cmip5_doc("output2", "20170725"),
+    )
+
+    # Every facet that genuinely differs, flattened (product compared scalar-to-scalar).
+    assert result == {
+        "master_id": (
+            "cmip5.output1.CMCC.CMCC-CM.piControl.mon.atmos.Amon.r1i1p1",
+            "cmip5.output2.CMCC.CMCC-CM.piControl.mon.atmos.Amon.r1i1p1",
+        ),
+        "product": ("output1", "output2"),
+        "version": ("20121008", "20170725"),
+    }
+    # Facets that are identical (institute, model, variable, data_node) are absent.
+    assert "data_node" not in result
+
+    # The higher layer over the same pair keeps only the id-linked facet.
+    assert facet_differences(
+        _cmip5_doc("output1", "20121008"),
+        _cmip5_doc("output2", "20170725"),
+        CMIP5_MASTER_A,
+        CMIP5_MASTER_B,
+    ) == {"product": ("output1", "output2")}
+
+
+def test_all_facet_differences_marks_a_facet_present_in_only_one_document():
+    """A key in one doc but not the other is reported with MISSING on the empty side."""
+    doc_a = _cmip5_doc("output1", "20121008")
+    doc_b = _cmip5_doc("output1", "20121008")
+    doc_b["replica"] = [True]  # present only in B
+
+    result = all_facet_differences(doc_a, doc_b)
+
+    assert result == {"replica": (MISSING, True)}
+
+
+def test_all_facet_differences_normalises_before_comparing():
+    """List-wrapping and cmipN: prefixes are not spurious differences."""
+    solr = {"product": ["output1"]}
+    solr_unwrapped = {"product": "output1"}
+    assert all_facet_differences(solr, solr_unwrapped) == {}
+
+    stac_prefixed = {"properties": {"cmip7:activity_id": "CMIP"}}
+    stac_plain = {"activity_id": "CMIP"}
+    assert all_facet_differences(stac_prefixed, stac_plain) == {}
