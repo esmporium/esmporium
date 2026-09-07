@@ -20,6 +20,7 @@ from esmporium.search.apis import (
     SearchAPI,
 )
 from esmporium.search.health import SearchAPICall, SearchAPICallObserver
+from esmporium.search.result_parsing import ParsedDocument, ResultProcessor
 from esmporium.search.search_api_facade import (
     DEFAULT_SELECTOR,
     SearchAPIFacadeSelector,
@@ -349,12 +350,25 @@ class NoAPIWouldAnswerError(RuntimeError):
 @dataclass(frozen=True)
 class SearchOutcome:
     """
-    What came of a search: the endpoints which answered, and those which did not
+    What came of a search: the datasets found, how many matched, and who refused
+
+    We deliberately do not carry the raw JSON here. Each host's raw documents are kept
+    on the parsed `ParsedDocument.raw_json` (and persisted verbatim by the `db` layer),
+    so re-exposing the whole response envelope would be redundant. The one envelope
+    value worth keeping, the total number of records that matched, is surfaced
+    explicitly as `n_matches`.
     """
 
-    # list of datasets / tuple
-    results: dict[str, Any]
-    """The raw JSON each endpoint answered with, keyed by host"""
+    datasets: dict[str, tuple[ParsedDocument, ...]]
+    """The parsed documents each endpoint answered with, keyed by host"""
+
+    n_matches: dict[str, int | None]
+    """
+    How many records each endpoint reported matched the search, keyed by host
+
+    This is the total matched, which can exceed the number of documents returned in one
+    page. `None` for an endpoint whose response carried no count we could read.
+    """
 
     refusals: dict[str, CouldNotSearchError]
     """What each endpoint which did not answer said, keyed by host"""
@@ -369,9 +383,10 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
     limit: int = 10_000,
     client: httpx.Client | None = None,
     api_call_observer: SearchAPICallObserver | None = None,
+    processor: ResultProcessor | None = None,
 ) -> SearchOutcome:
     """
-    Search the facades the selector yields, and collect their raw JSON
+    Search the facades the selector yields, and parse their answers into datasets
 
     Parameters
     ----------
@@ -406,12 +421,18 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
         If `None` (the default), nothing is recorded.
         See [esmporium.search.health][] for how to build one.
 
+    processor
+        Called with `(host, parsed_documents)` as soon as each endpoint answers, so its
+        results can be acted on (e.g. saved) the moment they arrive rather than at the
+        end. If `None` (the default), the parsed documents are still collected into the
+        returned outcome, just not handed anywhere. See
+        [`esmporium.db.build_result_processor`][] for the database-saving one.
+
     Returns
     -------
     :
-        What each endpoint answered with,
-        and what each endpoint which did not answer said,
-        both keyed by host
+        The datasets each endpoint answered with, how many each reported matched,
+        and what each endpoint which did not answer said, all keyed by host
 
     Raises
     ------
@@ -423,7 +444,8 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
     """
     canonical = to_canonical(query)
 
-    results: dict[str, Any] = {}
+    datasets: dict[str, tuple[ParsedDocument, ...]] = {}
+    n_matches: dict[str, int | None] = {}
     refusals: dict[str, CouldNotSearchError] = {}
 
     owns_client = client is None
@@ -442,18 +464,21 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
             except SearchAPIRequestError as exc:
                 refusals[host] = CouldNotSearchError(host, cause=exc)
             else:
-                # Note: if the selector offers the same host twice,
-                # the second answer simply replaces the first here.
-                # That is wasteful, because we run the query again,
-                # but it is not wrong: the answers are for the same query
-                # from the same host, so either will do.
-                # Note: this way of handling results is only safe
-                # because we only handle a single query in this function
-                # and our facades only support searching a single project at a time.
-                # If either of those assumptions changed, this would break.
-                # We will have to be more careful
+                # The facade knows this host's format and project, so it turns the raw
+                # answer into datasets here, the moment it arrives. Note: if the
+                # selector offers the same host twice, the second answer simply replaces
+                # the first here. That is wasteful, because we run the query again, but
+                # it is not wrong: the answers are for the same query from the same
+                # host, so either will do. This way of handling results is only safe
+                # because we only handle a single query in this function and our facades
+                # only support searching a single project at a time. If either of those
+                # assumptions changed, this would break. We will have to be more careful
                 # in higher-level functions to do queries over multiple projects (PR3).
-                results[host] = raw
+                parsed = facade.parse_search_results(raw)
+                datasets[host] = parsed
+                n_matches[host] = _result_count_or_none(facade.search_api, raw)
+                if processor is not None:
+                    processor(host, parsed)
                 if stop_at_first_result:
                     break
 
@@ -466,7 +491,7 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
     if not asked_someone:
         raise SelectorOfferedNoAPIFacadeError(canonical, selector)
 
-    if not results and refusals:
+    if not datasets and refusals:
         raise NoAPIWouldAnswerError(tuple(refusals.values()))
 
-    return SearchOutcome(results, refusals)
+    return SearchOutcome(datasets, n_matches, refusals)

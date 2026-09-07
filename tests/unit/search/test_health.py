@@ -241,9 +241,9 @@ def test_an_unparseable_body_records_a_failure_with_the_status():
 def test_no_observer_records_nothing_but_still_works():
     selector = build_list_selector([make_cmip6_facade("host")])
 
-    # Success still returns the JSON.
+    # Success still parses an answer.
     outcome = search(QUERY, selector, client=client_for(lambda r: solr_response(1)))
-    assert outcome.results["host"]["response"]["numFound"] == 1
+    assert outcome.n_matches["host"] == 1
 
     # Failure still raises.
     with pytest.raises(NoAPIWouldAnswerError):

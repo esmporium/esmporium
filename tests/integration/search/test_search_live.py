@@ -17,6 +17,7 @@ from esmporium.search import (
     ESGF1_CMIP6_FACADE_PARAMETERS,
     INBUILT_SEARCH_API_FACADE_STORE,
     NoAPIWouldAnswerError,
+    ParsedDocument,
     SearchAPIESGF1Solr,
     SearchAPIFacade,
     build_list_selector,
@@ -222,7 +223,7 @@ def search_or_skip(query, api, client, limit, observer=None):
     assert on the search-API health recorded for the call.
     """
     try:
-        outcome = search(
+        return search(
             query,
             build_list_selector([api]),
             limit=limit,
@@ -231,10 +232,6 @@ def search_or_skip(query, api, client, limit, observer=None):
         )
     except NoAPIWouldAnswerError:
         pytest.skip(f"{api.search_api.host} did not answer, so it is down or unwell")
-
-    raw: dict = outcome.results[api.search_api.host]
-
-    return raw
 
 
 @pytest.mark.parametrize("api, query", LIVE_CASES)
@@ -247,9 +244,9 @@ def test_search_returns_results(client, api, query, recorded):
     """
     observer, read_calls = recorded
 
-    raw = search_or_skip(query, api, client, limit=5, observer=observer)
+    outcome = search_or_skip(query, api, client, limit=5, observer=observer)
 
-    assert api.search_api.get_search_result_n_matches(raw) > 0
+    assert outcome.n_matches[api.search_api.host] > 0
 
     # One row per attempt, all for this host, timed; the last is the success.
     calls = read_calls()
@@ -260,7 +257,7 @@ def test_search_returns_results(client, api, query, recorded):
     success = calls[-1]
     assert success.success is True
     assert success.response_code == 200
-    assert success.num_results == api.search_api.get_search_result_n_matches(raw)
+    assert success.num_results == outcome.n_matches[api.search_api.host]
 
 
 @pytest.mark.parametrize("api, query, poison_field", FACET_NAME_CASES)
@@ -281,9 +278,9 @@ def test_search_applies_the_facets_we_send(client, api, query, poison_field, rec
     observer, read_calls = recorded
 
     nonsense = query.model_copy(update={poison_field: (NOT_A_REAL_VALUE,)})
-    raw = search_or_skip(nonsense, api, client, limit=5, observer=observer)
+    outcome = search_or_skip(nonsense, api, client, limit=5, observer=observer)
 
-    assert api.search_api.get_search_result_n_matches(raw) == 0
+    assert outcome.n_matches[api.search_api.host] == 0
 
     # A response that matched nothing is still a successful call, and recorded.
     # One row per attempt; the final, successful one carries the zero count.
@@ -296,25 +293,25 @@ def test_search_applies_the_facets_we_send(client, api, query, poison_field, rec
     assert success.num_results == 0
 
 
-def master_ids(raw: dict) -> set[str]:
+def master_ids(documents: tuple[ParsedDocument, ...]) -> set[str]:
     """
-    Read the unique dataset identifiers out of a Solr-shaped response
+    Read the unique dataset identifiers out of a host's parsed documents
 
-    `master_id` is the identity of a dataset across the nodes that hold it and
-    the versions it has had, so it is what "the same dataset" means here.
+    `id_project_specific` (the Solr `master_id`) is the identity of a dataset across
+    the nodes that hold it and the versions it has had, so it is what "the same
+    dataset" means here.
 
     Parameters
     ----------
-    raw
-        The response to read
+    documents
+        The parsed documents one host answered with
 
     Returns
     -------
     :
-        The master ids of the datasets in `raw`
+        The native ids of the datasets in `documents`
     """
-    docs = raw.get("response", {}).get("docs", [])
-    return {doc["master_id"] for doc in docs if "master_id" in doc}
+    return {document.id_project_specific for document in documents}
 
 
 def test_aggregating_over_nodes_finds_more_than_one_node(client):
@@ -354,7 +351,9 @@ def test_aggregating_over_nodes_finds_more_than_one_node(client):
     except NoAPIWouldAnswerError:
         pytest.skip("no node answered, so there is nothing to aggregate")
 
-    per_host = {host: master_ids(raw) for host, raw in outcome.results.items()}
+    per_host = {
+        host: master_ids(documents) for host, documents in outcome.datasets.items()
+    }
     answered = {host: ids for host, ids in per_host.items() if ids}
     if len(answered) < 2:
         pytest.skip(
@@ -391,8 +390,8 @@ def test_search_ands_across_facets(client, api, make_query):
 
     def count(variables, experiments):
         query = make_query(variables, experiments)
-        raw = search_or_skip(query, api, client, limit=1)
-        return api.search_api.get_search_result_n_matches(raw)
+        outcome = search_or_skip(query, api, client, limit=1)
+        return outcome.n_matches[api.search_api.host]
 
     for variable in AND_OR_VARIABLES:
         for experiment in AND_OR_EXPERIMENTS:
@@ -423,8 +422,8 @@ def test_search_ors_within_a_facet(client, api, make_query):
 
     def count(variables, experiments):
         query = make_query(variables, experiments)
-        raw = search_or_skip(query, api, client, limit=1)
-        return api.search_api.get_search_result_n_matches(raw)
+        outcome = search_or_skip(query, api, client, limit=1)
+        return outcome.n_matches[api.search_api.host]
 
     experiment = AND_OR_EXPERIMENTS[:1]
     separately = [count((variable,), experiment) for variable in AND_OR_VARIABLES]

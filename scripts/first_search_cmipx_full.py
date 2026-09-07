@@ -1,15 +1,17 @@
 """
-A runnable example of the search step: QueryCMIP{5,6,7} -> live ESGF -> raw JSON
+A runnable example of the search step: QueryCMIP{5,6,7} -> live ESGF -> saved rows
 
-Everything that does the work now lives in `esmporium.search`; this is only a
-hand-run example of calling it. Logging is turned up to `DEBUG` so that the
-URL- and `curl`-equivalent of each request (and the process/thread it went out
-on) are printed as the search runs.
+Everything that does the work now lives in `esmporium.search` and `esmporium.db`;
+this is only a hand-run example of calling it. Logging is turned up to `DEBUG` so
+that the URL- and `curl`-equivalent of each request (and the process/thread it went
+out on) are printed as the search runs.
 
-It also shows the opt-in search-API health tracking: each search is given an
-`observer` that records every request into a throwaway SQLite database, and the
-recorded rows (which host, what status, how many results, how long) are printed
-after the searches finish.
+It shows two opt-in seams that hang off `search()`:
+
+- an `api_call_observer` that records every request into a throwaway SQLite database
+  (which host, what status, how many results, how long), printed after the searches;
+- a `processor` from `build_result_processor(session)` that parses and saves each
+  host's datasets the moment it answers. The rows it wrote are counted at the end.
 
 Run it:  uv run python scripts/first_search_cmipx_full.py
 """
@@ -19,11 +21,15 @@ from __future__ import annotations
 import logging
 import tempfile
 from pathlib import Path
-from typing import Any
 
 from sqlmodel import Session, create_engine, select
 
-from esmporium.db import SearchAPICallRecord, record_search_api_calls
+from esmporium.db import (
+    Dataset,
+    SearchAPICallRecord,
+    build_result_processor,
+    record_search_api_calls,
+)
 from esmporium.db.migrate import upgrade_to_head
 from esmporium.query import QueryCMIP5, QueryCMIP6, QueryCMIP7
 from esmporium.search import search
@@ -48,13 +54,6 @@ EXAMPLE_CMIP7 = QueryCMIP7(
 )
 
 
-def node_count_summary(raw: dict[str, Any]) -> str:
-    """Summarise a raw response's match count without knowing its generation."""
-    if "response" in raw:  # Solr-shaped (ESGF1 esg-search or the ESGF-1.5 bridge)
-        return f"numFound={raw['response'].get('numFound')}"
-    return f"numberMatched={raw.get('numberMatched')}"
-
-
 def print_health(session: Session) -> None:
     """Print every recorded search-API call, in the order they happened."""
     print("\nsearch API health (one row per request):")
@@ -72,7 +71,7 @@ def print_health(session: Session) -> None:
 
 
 def main() -> None:
-    """Search each example query, print match counts, then the recorded health."""
+    """Search each example query, save datasets as they arrive, then print a summary."""
     logging.basicConfig(
         level=logging.DEBUG,
         format=(
@@ -86,15 +85,26 @@ def main() -> None:
         upgrade_to_head(engine)
 
         with Session(engine) as session:
-            # This observer records every request the searches make. Passing it is
-            # the whole opt-in: leave it off and nothing is recorded.
+            # Passing these is the whole opt-in: leave them off and nothing is recorded
+            # or saved. The observer records every request; the processor saves each
+            # host's datasets the moment it answers.
             observer = record_search_api_calls(engine)
+            processor = build_result_processor(session)
 
             for query in (EXAMPLE_CMIP5, EXAMPLE_CMIP6, EXAMPLE_CMIP7):
                 print(f"\nquery: {query!r}")
-                results = search(query, limit=2, api_call_observer=observer).results
-                for host, raw in results.items():
-                    print(f"  {host:22} {node_count_summary(raw)}")
+                outcome = search(
+                    query, limit=2, api_call_observer=observer, processor=processor
+                )
+                for host, documents in outcome.datasets.items():
+                    dataset_rows = sum(len(doc.datasets) for doc in documents)
+                    print(
+                        f"  {host:22} matched={outcome.n_matches[host]} "
+                        f"documents={len(documents)} dataset_rows={dataset_rows}"
+                    )
+
+            saved = len(session.exec(select(Dataset)).all())
+            print(f"\nsaved {saved} dataset row(s) to the database")
 
             print_health(session)
 

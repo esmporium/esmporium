@@ -305,7 +305,7 @@ def test_selector_injects_into_search_and_is_asked_in_ranked_order(engine):
     }
     selector = build_health_selector(engine, candidates)
 
-    # Every node answers, so `results` is keyed in the order they were asked,
+    # Every node answers, so `datasets` is keyed in the order they were asked,
     # which is the selector's ranked (fastest-first) order.
     outcome = search(
         QUERY_CMIP6,
@@ -314,7 +314,7 @@ def test_selector_injects_into_search_and_is_asked_in_ranked_order(engine):
         client=client_for(lambda request: solr_response(1)),
     )
 
-    assert list(outcome.results) == ["fast", "slow"]
+    assert list(outcome.datasets) == ["fast", "slow"]
 
 
 def test_selector_needs_exactly_one_project(engine):

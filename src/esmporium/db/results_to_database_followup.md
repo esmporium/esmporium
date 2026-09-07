@@ -216,3 +216,61 @@ make sure there is a commit just adding that test
 - then talk to zeb, get comments
 - then we can role from there
 ```
+### Updates to schema / database model
+
+We have some updates to our database model that we need to implement. This only handles the dataset/version/node/raw_docs linking, with SearchAPICallRecord we consider separate to this current 'save results to database' step. Below is the mermaid-style flowchart for visualisation, and I will talk through the changes to make on the current schema (although the mermaid flowchart should give you indiciation of column names and what columns must be removed relative to the current schema).
+
+Firstly, we keep Dataset as is. We have already made updates and changes to this table and you can look at db/test_dataset_uniqueness.py to see the test cases we want Dataset to handle (especially by comparing "our" columns and the id_project_specific column, and when errors should raise).
+
+More importantly, we have DatasetVersionSpecific, where we need to remove the coupling between id_project_specific and version (currenlty coupled as version_id). From Dataset to DatasetVersionSpecific, we should have a one-to-many, for all CMIP projects. This includes CMIP5, where we save all variables as dataset rows (regardless of what the user searched for), thus every CMIP5 dataset has a row per variable which would become many rows per version for a variable of a dataset. It is for this reason that we define uniqueness in this table as dataset.id + version. (should this column be a str? or combine dataset.id and datasetversionspecific.id somehow?). DatasetVersionSpecific should have a primary key 'id', which is a plain int, instead of version_id. id_project_specific should not be included or learnt from in this table at all.
+
+The link from DatasetVersionSpecific to DatasetRawDocs should be relatively straightforward. This is where we have many-to-many for CMIP5, where we only want one raw_doc for many dataset rows (because we separate out variables). The change compared to the current schema is the raw_link, where we now are linking the tables with the dataset_version column, instead of 'version_id'. Again, no id_project_specific knowledge.
+
+Finally, we have DatasetNodeInformation. Previously, this table has been handled between version to node as one-to-many. However, we have an alternative option to explore. Given there are a limited number of data nodes (e.g. 15 possible data nodes that could host files), we are hoping to populate DatasetNodeInformation with as many unique data nodes as there are available following the search (e.g. <15 rows, if there are only 15 possible data nodes that host files). This would mean that many DatasetVersionSpecific rows would point to one DatasetNodeInformation row, AND that a single DatasetVersionSpecific row could point to multiple DatasetNodeInformation rows. We need help with this implementation, and to know whether this is possible.
+
+Please repeat the database changes back to me, so I can verify you understand (and in your plan include the columns you will be deleting/renaming etc). Please also identify any pros/cons to our changes and provide alternatives if you think there are better ways to handle the workflow we want to reproduce.
+
+
+
+erDiagram
+    DATASET ||--o{ DATASET_VERSION : "has editions"
+    DATASET_VERSION ||--o{ DATASET_NODE : "downloadable from"
+    DATASET_VERSION ||--o{ RAW_LINK : "described by"
+    RAW_RECORD ||--o{ RAW_LINK : "describes"
+
+    DATASET {
+        int id PK
+        string id_project_specific "index, not unique"
+        string project
+        string model
+        string institution
+        string experiment
+        string variant_label
+        string variable
+        string reporting_interval
+        string grid_label "NULL for CMIP5"
+        string processing_id
+    }
+    DATASET_VERSION {
+        string id PK
+        string version
+        string dataset_version "UNIQUE(dataset.id & version)"
+        bool is_latest
+        bool retracted
+    }
+    DATASET_NODE {
+        int id PK
+        string data_node
+
+    }
+    RAW_RECORD {
+        int id PK
+        string esgf_doc_id "UNIQUE (no version_id now)"
+        json raw_json
+        datetime retrieved_at
+    }
+    RAW_LINK {
+        int id PK
+        int raw_id FK
+        string dataset_version FK
+    }

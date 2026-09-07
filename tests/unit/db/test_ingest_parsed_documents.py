@@ -94,7 +94,7 @@ def test_reingesting_the_same_documents_is_idempotent(engine):
 
 
 def test_result_processor_commits_each_host(engine):
-    """The processor from `build_result_processor` persists a host's docs (it commits)."""  # noqa e501
+    """The `build_result_processor` processor persists a host's docs, committing."""
     facade = _facade(ESGF1_CMIP5_FACADE_PARAMETERS, SearchAPIESGF1Solr)
     documents = facade.parse_search_results(_load("esgf1-solr-cmip5-search"))
 
@@ -108,7 +108,7 @@ def test_result_processor_commits_each_host(engine):
 
 
 def test_ingest_stac_cmip7_writes_one_dataset_per_document(engine):
-    """A STAC CMIP7 document maps to a single dataset row, ingested through the sink."""
+    """A STAC CMIP7 document maps to one dataset row, ingested via the processor."""
     facade = _facade(ESGFNG_CMIP7_FACADE_PARAMETERS, SearchAPIESGFNGSTAC)
     documents = facade.parse_search_results(_load("esgf-ng-stac-cmip7-east-search"))
 

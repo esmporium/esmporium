@@ -71,15 +71,17 @@ def make_facade_cmip6_esgf1(
     )
 
 
-def test_search_returns_the_json_on_success():
-    """A 200 with a JSON body comes back as that JSON, keyed by host"""
+def test_search_parses_the_answer_on_success():
+    """A 200 is parsed into datasets and its match count, keyed by host"""
     selector = build_list_selector([make_facade_cmip6_esgf1("host")])
 
     outcome = search(
         QUERY_CMIP6, selector, client=client_for(lambda r: solr_response(3))
     )
 
-    assert outcome.results == {"host": {"response": {"numFound": 3, "docs": []}}}
+    # The body carries no docs, so there are no datasets, but the count is still read.
+    assert outcome.datasets == {"host": ()}
+    assert outcome.n_matches == {"host": 3}
     assert outcome.refusals == {}
 
 
@@ -145,7 +147,7 @@ def test_search_retries_a_transient_failure_then_succeeds():
 
     outcome = search(QUERY_CMIP6, selector, client=client_for(handler))
 
-    assert outcome.results == {"host": {"response": {"numFound": 9, "docs": []}}}
+    assert outcome.n_matches == {"host": 9}
     assert calls == 2
 
 
@@ -180,8 +182,8 @@ def test_search_stops_at_the_first_answer_by_default():
 
     outcome = search(QUERY_CMIP6, selector, client=client_for(by_host))
 
-    assert list(outcome.results) == ["host-a"]
-    assert outcome.results["host-a"]["response"]["numFound"] == 5
+    assert list(outcome.datasets) == ["host-a"]
+    assert outcome.n_matches["host-a"] == 5
     # host-b was never asked, so it did not refuse either.
     assert outcome.refusals == {}
 
@@ -196,9 +198,54 @@ def test_search_aggregates_every_node_when_asked_to():
         QUERY_CMIP6, selector, stop_at_first_result=False, client=client_for(by_host)
     )
 
-    assert set(outcome.results) == {"host-a", "host-b"}
-    assert outcome.results["host-a"]["response"]["numFound"] == 5
-    assert outcome.results["host-b"]["response"]["numFound"] == 7
+    assert set(outcome.datasets) == {"host-a", "host-b"}
+    assert outcome.n_matches["host-a"] == 5
+    assert outcome.n_matches["host-b"] == 7
+
+
+def test_search_hands_each_answer_to_the_processor():
+    """As each host answers, the processor is called with that host's parsed docs"""
+    calls: list[tuple[str, tuple]] = []
+    selector = build_list_selector(
+        [make_facade_cmip6_esgf1("host-a"), make_facade_cmip6_esgf1("host-b")]
+    )
+
+    outcome = search(
+        QUERY_CMIP6,
+        selector,
+        stop_at_first_result=False,
+        client=client_for(by_host),
+        processor=lambda host, parsed: calls.append((host, parsed)),
+    )
+
+    # One call per answering host, in the order they answered...
+    assert [host for host, _ in calls] == ["host-a", "host-b"]
+    # ...each handed exactly what the outcome carries for that host.
+    for host, parsed in calls:
+        assert parsed == outcome.datasets[host]
+
+
+def test_search_does_not_call_the_processor_for_a_refusal():
+    """A host that does not answer is never handed to the processor"""
+    calls: list[str] = []
+
+    def handler(request):
+        if request.url.host == "host-a":
+            return httpx.Response(404)
+        return solr_response(4)
+
+    selector = build_list_selector(
+        [make_facade_cmip6_esgf1("host-a"), make_facade_cmip6_esgf1("host-b")]
+    )
+
+    search(
+        QUERY_CMIP6,
+        selector,
+        client=client_for(handler),
+        processor=lambda host, parsed: calls.append(host),
+    )
+
+    assert calls == ["host-b"]
 
 
 def test_search_skips_a_node_that_does_not_answer():
@@ -215,8 +262,8 @@ def test_search_skips_a_node_that_does_not_answer():
 
     outcome = search(QUERY_CMIP6, selector, client=client_for(handler))
 
-    assert list(outcome.results) == ["host-b"]
-    assert outcome.results["host-b"]["response"]["numFound"] == 4
+    assert list(outcome.datasets) == ["host-b"]
+    assert outcome.n_matches["host-b"] == 4
     # The node which was passed over is kept, with what it said.
     assert set(outcome.refusals) == {"host-a"}
     assert "host-a" in str(outcome.refusals["host-a"])
@@ -242,7 +289,7 @@ def test_search_keeps_an_empty_but_valid_answer():
         QUERY_CMIP6, selector, client=client_for(lambda request: solr_response(0))
     )
 
-    assert outcome.results["host-a"]["response"]["numFound"] == 0
+    assert outcome.n_matches["host-a"] == 0
 
 
 def test_search_builds_and_closes_its_own_client(monkeypatch):
@@ -253,7 +300,7 @@ def test_search_builds_and_closes_its_own_client(monkeypatch):
     selector = build_list_selector([make_facade_cmip6_esgf1("host-a")])
     outcome = search(QUERY_CMIP6, selector)
 
-    assert outcome.results["host-a"]["response"]["numFound"] == 2
+    assert outcome.n_matches["host-a"] == 2
     assert built.is_closed, "a client search built itself should be closed after"
 
 
