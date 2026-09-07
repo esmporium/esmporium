@@ -40,6 +40,11 @@ MISSING = _Missing()
 """Marks the absent side when a facet appears in only one of two compared documents."""
 
 
+# Let's push this into _ingest_document
+# and add `get_normalised_facets` as a method on search API or facade
+# and add `normalised_facets` or something as a column of DatasetRawDoc
+# so this normalisation step is done when we know about facets
+# and we don't have this leaking of our facade.
 def _normalise(raw: dict[str, Any]) -> dict[str, Any]:
     """
     Flatten one raw search document to `{facet_name: scalar_value}`
