@@ -27,12 +27,13 @@ from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
+# Rename to DataNodeInfo or DataNode please
+# (to distinguish from search nodes)
 class NodeInfo:
-    """Where one edition is hosted."""
+    """Data node"""
 
     data_node: str
     index_node: str | None
-    replica: bool
 
 
 @dataclass(frozen=True)
