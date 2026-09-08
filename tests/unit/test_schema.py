@@ -391,10 +391,18 @@ def test_edition_node_link_is_many_to_many(engine):
 def test_raw_doc_esgf_id_is_unique(engine):
     """The exact JSON is stored once per source document, keyed by `esgf_doc_id`."""
     with Session(engine) as session:
-        session.add(DatasetRawDoc(esgf_doc_id="instance_id|node", raw_json="{}"))
+        session.add(
+            DatasetRawDoc(
+                esgf_doc_id="instance_id|node", raw_json="{}", search_api_tag="solr"
+            )
+        )
         session.commit()
 
-        session.add(DatasetRawDoc(esgf_doc_id="instance_id|node", raw_json="{}"))
+        session.add(
+            DatasetRawDoc(
+                esgf_doc_id="instance_id|node", raw_json="{}", search_api_tag="solr"
+            )
+        )
         with pytest.raises(IntegrityError):
             session.commit()
 

@@ -275,6 +275,7 @@ def _get_or_create_raw_doc(session: Session, parsed: ParsedDocument) -> DatasetR
     raw_doc = DatasetRawDoc(
         esgf_doc_id=parsed.esgf_doc_id,
         raw_json=parsed.raw_json,
+        search_api_tag=parsed.search_api_tag,
     )
     session.add(raw_doc)
     session.flush()

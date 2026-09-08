@@ -18,6 +18,7 @@ from esmporium.search.apis.protocol import (
     NoSearchResultNumberOfMatchesReturnedError,
 )
 from esmporium.search.apis.request import Request
+from esmporium.search.result_normalisation import SOLR_FORMAT_TAG
 from esmporium.search.result_parsing import DataNodeInfo, ParsedDocShell
 
 
@@ -179,6 +180,9 @@ class SearchAPIESGF1Solr:
 
     retrying: Retrying
     """See [SearchAPI.retrying][esmporium.search.apis.SearchAPI.retrying]."""
+
+    search_api_tag: str = SOLR_FORMAT_TAG
+    """See [SearchAPI.search_api_tag][esmporium.search.apis.SearchAPI.search_api_tag]."""  # noqa: E501
 
     timeout: float = 30.0
     """See [SearchAPI.timeout][esmporium.search.apis.SearchAPI.timeout]."""

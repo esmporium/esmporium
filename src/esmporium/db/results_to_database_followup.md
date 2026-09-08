@@ -28,9 +28,11 @@ Done and green (`pytest -m "not slow"`: all pass, 27 skipped; ruff clean):
 - **Ingestion** — `results_to_database.py`: `ParsedDocument` → rows. Verified live (a CMIP5
   bundle → one edition per per-variable dataset, all sharing one raw doc; re-ingest is
   idempotent; CMIP6 Solr and CMIP7 STAC ingest correctly).
-- **Disambiguation** — `dataset_uniqueness`: `all_facet_differences` (every differing
-  facet, the bottom layer) and `facet_differences` (the higher layer, only the id-linked
-  facet).
+- **Disambiguation** — split across two layers. `search.normalise_stored_document(raw,
+  search_api_tag)` flattens a stored raw doc into `{facet: value}`, dispatching on the
+  tag stored with it (no shape guessing); `db.dataset_uniqueness.facet_differences` then
+  compares those flat mappings, keyed by `Dataset.id`, N-way, and reports every facet the
+  clashing datasets do not all agree on. `db` never sees raw JSON or a search generation.
 
 ---
 
@@ -90,9 +92,11 @@ shared across editions.
   live on many nodes. This is the new link that lets node rows be shared.
 
 **`DatasetRawDoc`** — the exact JSON a search returned, stored once. `esgf_doc_id`
-(unique; Solr `<instance_id>|<data_node>`, STAC feature id), `raw_json`, `retrieved_at`.
-**No `source_api` / `search_host`** — the generation is derivable from the JSON shape, and
-the exact host lives in the search-health log (`SearchAPICallRecord`).
+(unique; Solr `<instance_id>|<data_node>`, STAC feature id), `raw_json`, `retrieved_at`,
+and `search_api_tag`. The tag is a small string the producing `SearchAPI` stamps on the
+doc (our Solr APIs store `"solr"`, STAC stores `"stac"`) so that at load time the right
+flattener can normalise the JSON without guessing its shape or needing a live API. **No
+`search_host`** — the exact host lives in the search-health log (`SearchAPICallRecord`).
 
 **`RawDocVersionLink`** — `(raw_id, dataset_version_id)` junction, unique pair. One CMIP5
 document describes many per-variable editions (one `raw_id`, many links); one edition can
@@ -105,9 +109,11 @@ be described by several documents (Solr returns one per node).
 2. Same all our columns, different `id_project_specific` → **allowed**; the distinguishing
    facet lives only in the native id / raw JSON. It differs per project: CMIP5 `product`,
    CMIP6 `activity_id`, CMIP7 `activity_id`/`region`/labels — so it is **never hardcoded**.
-   Reading it out is `dataset_uniqueness`: `all_facet_differences(raw_a, raw_b)` lists
-   *every* facet that differs (the bottom layer), and `facet_differences(…, ips_a, ips_b)`
-   keeps only facets whose value sits inside each native id (the id-linked one).
+   Reading it out is the load-time diagnostic: `normalise_stored_document(raw,
+   search_api_tag)` flattens each clashing dataset's stored raw doc, then
+   `facet_differences(((dataset_id, flat), ...))` reports every facet they do not all
+   agree on, keyed by `Dataset.id`. Filtering to the id-linked facet (the one whose value
+   sits inside each native id) is left to the higher-level clash-resolution wrapper.
 3. Identical across every column incl. `id_project_specific` → **loud**
    `UnhandledDatasetClashError` (via `save_dataset`), meaning the data differs in a facet
    we don't model.
@@ -135,8 +141,8 @@ search()                          (esmporium.search)
                     _get_or_create_link               raw doc ↔ edition
         → session.commit()                            once per host
   ↓  (later, off the write path, when a clash needs explaining)
-dataset_uniqueness.facet_differences / all_facet_differences
-        re-read DatasetRawDoc.raw_json for the two clashing rows and name what differs
+search.normalise_stored_document(raw_json, search_api_tag)   flatten each clashing row
+        → dataset_uniqueness.facet_differences   compare the flat facets, keyed by Dataset.id
 ```
 
 `ParsedDocument` (`search/result_parsing.py`) is the contract between the two layers:
@@ -158,9 +164,12 @@ Done this cycle:
   `(raw_id, dataset_version_id)` uniqueness, plus the two many-to-many shapes. (FKs are
   *not* asserted: SQLite doesn't enforce them without `PRAGMA foreign_keys=ON`, which we
   don't set.)
-- **Round-trip / clash tests** (`tests/unit/db/test_results_round_trip.py`) and
-  **disambiguation tests** (`tests/unit/db/test_dataset_uniqueness.py`, now covering the
-  new `all_facet_differences` bottom layer).
+- **Round-trip / clash tests** (`tests/unit/db/test_results_round_trip.py`, driving the
+  load-time `normalise_stored_document` → `facet_differences` flow end-to-end),
+  **disambiguation tests** (`tests/unit/db/test_dataset_uniqueness.py`, the N-way
+  `facet_differences` keyed by `Dataset.id`), and **normalisation tests**
+  (`tests/unit/search/test_result_normalisation.py`, tag dispatch, unknown-tag error,
+  injected registry, and the inbuilt-tag consistency guard).
 - **Ingestion tests** (`tests/unit/db/test_ingest_parsed_documents.py`): one edition per
   dataset, idempotent re-ingest, per-host commit, CMIP7 STAC.
 
@@ -184,11 +193,14 @@ Still to add:
 - `dataset_addition_source` column (dataset found via query vs. via local files).
 - Content-diff tracking when a raw doc changes under the same `esgf_doc_id` (today
   get-or-create keeps the first).
-- Precise `source_api` generation (the generation is derivable from the JSON shape; the
-  exact host lives in `SearchAPICallRecord`).
-- The **load / clash-resolution flow** (the "which product?" popup) built on
-  `facet_differences` / `all_facet_differences` — a later PR; the schema is already proven
-  loadable by the round-trip test.
+- Precise host / index-node provenance beyond the format-level `search_api_tag` now
+  stored on each raw doc (the exact host lives in `SearchAPICallRecord`).
+- The **load / clash-resolution flow** (the "which product?" popup): the higher-level
+  wrapper that, on a detected clash, loads each dataset's raw doc, runs
+  `normalise_stored_document(raw, search_api_tag)` + `facet_differences`, filters to the
+  id-linked facet, and renders the choice — a later PR; the schema is already proven
+  loadable by the round-trip test. (May revisit keying by `DatasetVersion.id` vs
+  `Dataset.id` if versions turn out to distinguish a clash.)
 
 ---
 

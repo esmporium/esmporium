@@ -39,7 +39,14 @@ from esmporium.search.health import (
     SearchAPICallObserver,
     fan_out,
 )
-from esmporium.search.result_normalisation import normalise_stored_document
+from esmporium.search.result_normalisation import (
+    DEFAULT_NORMALISERS,
+    SOLR_FORMAT_TAG,
+    STAC_FORMAT_TAG,
+    NormaliseFunc,
+    UnknownRawDocFormatTagError,
+    normalise_stored_document,
+)
 from esmporium.search.result_parsing import (
     DataNodeInfo,
     ParsedDocShell,
@@ -96,6 +103,7 @@ from esmporium.search.search_api_facade import (
 )
 
 __all__ = [
+    "DEFAULT_NORMALISERS",
     "DEFAULT_SEARCH_API_FACADES_BY_PROJECT",
     "DEFAULT_SELECTOR",
     "ESGF1_CMIP5_FACADE_PARAMETERS",
@@ -105,6 +113,8 @@ __all__ = [
     "ESGFNG_CMIP6_FACADE_PARAMETERS",
     "ESGFNG_CMIP7_FACADE_PARAMETERS",
     "INBUILT_SEARCH_API_FACADE_STORE",
+    "SOLR_FORMAT_TAG",
+    "STAC_FORMAT_TAG",
     "AllowedValues",
     "CouldNotGetAllowedValuesError",
     "CouldNotSearchError",
@@ -123,6 +133,7 @@ __all__ = [
     "NoFacetValuesReturnedError",
     "NoSearchResultNumberOfMatchesReturnedError",
     "NoSourceWouldAnswerError",
+    "NormaliseFunc",
     "NotAFacetOfTheQueryError",
     "OneProjectRequiredError",
     "ParsedDocShell",
@@ -147,6 +158,7 @@ __all__ = [
     "SelectorOfferedNoAPIFacadeError",
     "UnaskableFacetError",
     "UncompilableFacetPatternError",
+    "UnknownRawDocFormatTagError",
     "ValueCheckOutcome",
     "ValueReport",
     "allowed_values_from_api",

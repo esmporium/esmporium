@@ -29,6 +29,7 @@ CREATE TABLE datasetrawdoc (
 	id INTEGER NOT NULL,
 	esgf_doc_id VARCHAR NOT NULL,
 	raw_json VARCHAR NOT NULL,
+	search_api_tag VARCHAR NOT NULL,
 	retrieved_at DATETIME NOT NULL,
 	CONSTRAINT pk_datasetrawdoc PRIMARY KEY (id)
 );

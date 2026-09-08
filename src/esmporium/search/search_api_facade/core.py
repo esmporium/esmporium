@@ -440,6 +440,7 @@ class SearchAPIFacade:
             nodes=shell.nodes,
             esgf_doc_id=shell.esgf_doc_id,
             raw_json=shell.raw_json,
+            search_api_tag=self.search_api.search_api_tag,
         )
 
     # TODO: upgrade this facet-values reader's docstrings to the repository standards,

@@ -84,6 +84,15 @@ class ParsedDocument:
     esgf_doc_id: str
     raw_json: str
 
+    search_api_tag: str
+    """
+    Names the format of `raw_json`, taken from the producing
+    [`SearchAPI`][esmporium.search.apis.SearchAPI.search_api_tag]
+
+    Stored on the raw-doc row so the right flattener can normalise it at load time
+    (see [`esmporium.search.normalise_stored_document`][]).
+    """
+
     def dataset_facets(self) -> list[dict[str, str | None]]:
         """Return the full [`Dataset`][esmporium.db.schema.Dataset] kwargs per row."""
         return [

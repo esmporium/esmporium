@@ -685,6 +685,17 @@ class DatasetRawDoc(EsmporiumBase, table=True):
     raw_json: str
     """The document exactly as returned, JSON-encoded"""
 
+    search_api_tag: str
+    """
+    Names the format of `raw_json`, stamped by the search API that returned it
+
+    Recorded so that, long after the search with no live API in scope, the right
+    flattener can normalise this document when a clash needs explaining (see
+    [`esmporium.search.normalise_stored_document`][]). The format is stored, not guessed
+    from the JSON shape. APIs that return the same format share a tag (our two Solr APIs
+    both store `"solr"`).
+    """
+
     retrieved_at: datetime.datetime = Field(default_factory=_utcnow)
     """When we stored this document (UTC)"""
 

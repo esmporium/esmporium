@@ -49,7 +49,7 @@ from esmporium.db.schema import (
     DatasetVersion,
     RawDocVersionLink,
 )
-from esmporium.search import normalise_stored_document
+from esmporium.search import SOLR_FORMAT_TAG, normalise_stored_document
 
 # --- The scenario, as constants ------------------------------------------------
 
@@ -134,6 +134,7 @@ def _save_scenario(engine) -> None:
                         "data_node": DATA_NODE,
                     }
                 ),
+                search_api_tag=SOLR_FORMAT_TAG,  # this scenario is CMIP5 Solr
             )
             session.add(raw)
             session.commit()  # assign raw.id
@@ -158,27 +159,26 @@ def populated(engine):
 #
 # The "which facet differs?" logic now lives in `src`, split across two layers: the
 # search layer flattens a stored raw document into `{facet: value}`
-# (`esmporium.search.normalise_stored_document`, generation-aware, off the write path),
-# and `esmporium.db.facet_differences` compares those flat mappings keyed by
-# `Dataset.id`. So `db` never hard-codes `product`, never splits the native id on `.`,
-# and never sniffs Solr vs STAC. The helper below is just the plumbing that gets a
-# dataset's raw document back out of the database.
+# (`esmporium.search.normalise_stored_document`), dispatching on the `search_api_tag`
+# stored with the document, and `esmporium.db.facet_differences` compares those flat
+# mappings keyed by `Dataset.id`. So `db` never hard-codes `product`, never splits the
+# native id on `.`, and never sniffs Solr vs STAC. The helper below is just the plumbing
+# that gets a dataset's raw-document row back out of the database.
 
 
-def _raw_doc_for(session: Session, dataset: Dataset) -> dict:
-    """Return the parsed raw document behind a dataset (via its edition + link).
+def _raw_doc_for(session: Session, dataset: Dataset) -> DatasetRawDoc:
+    """Return the raw-document row behind a dataset (via its edition + link).
 
     A dataset reaches its edition through `dataset_id`; each dataset has exactly one.
     """
     version = session.exec(
         select(DatasetVersion).where(DatasetVersion.dataset_id == dataset.id)
     ).one()
-    raw = session.exec(
+    return session.exec(
         select(DatasetRawDoc)
         .join(RawDocVersionLink, RawDocVersionLink.raw_id == DatasetRawDoc.id)  # type: ignore[arg-type]
         .where(RawDocVersionLink.dataset_version_id == version.id)
     ).one()
-    return json.loads(raw.raw_json)
 
 
 def _query_by_generic_facets(session: Session) -> list[Dataset]:
@@ -239,13 +239,17 @@ def test_load_detects_the_product_clash_and_offers_a_choice(populated):
             # More than one dataset for one variable == the ambiguity that must pop up.
             assert len(matches) > 1
             # The choice offered to the user, read from the raw docs (no facet named):
-            # normalise each stored document at load time, then diff by Dataset.id.
+            # normalise each stored document at load time -- dispatching on the tag
+            # stored with it -- then diff by Dataset.id.
             output1_row, output2_row = matches
-            normalised_info = tuple(
-                (row.id, normalise_stored_document(_raw_doc_for(session, row)))
-                for row in matches
-            )
-            differences = facet_differences(normalised_info)
+            normalised_info = []
+            for row in matches:
+                raw = _raw_doc_for(session, row)
+                normalised = normalise_stored_document(
+                    json.loads(raw.raw_json), raw.search_api_tag
+                )
+                normalised_info.append((row.id, normalised))
+            differences = facet_differences(tuple(normalised_info))
             # `product` is the id-linked facet a higher layer would surface to the user.
             assert differences["product"] == {
                 output1_row.id: "output1",
@@ -268,7 +272,8 @@ def test_choosing_a_product_resolves_to_one_dataset_per_variable(populated):
                 row
                 for row in rows
                 if row.variable == variable
-                and _raw_doc_for(session, row)["product"] == [chosen]
+                and json.loads(_raw_doc_for(session, row).raw_json)["product"]
+                == [chosen]
             ]
             assert len(resolved) == 1
             assert resolved[0].id_project_specific == MASTER["output2"]

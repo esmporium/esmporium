@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from sqlmodel import Session, select
 
 from esmporium.db import (
@@ -25,12 +26,19 @@ from esmporium.db import (
     ingest_parsed_documents,
 )
 from esmporium.search import (
+    DEFAULT_NORMALISERS,
     ESGF1_CMIP5_FACADE_PARAMETERS,
     ESGFNG_CMIP7_FACADE_PARAMETERS,
+    SOLR_FORMAT_TAG,
+    STAC_FORMAT_TAG,
+    DataNodeInfo,
+    ParsedDocument,
     SearchAPIESGF1Solr,
     SearchAPIESGFNGSTAC,
     SearchAPIFacade,
+    UnknownRawDocFormatTagError,
     build_transient_retrying,
+    normalise_stored_document,
 )
 
 RECORDED_DIR = Path(__file__).parents[2] / "test-data" / "search"
@@ -119,3 +127,82 @@ def test_ingest_stac_cmip7_writes_one_dataset_per_document(engine):
         rows = session.exec(select(Dataset).where(Dataset.project == "CMIP7")).all()
 
     assert len(rows) == len(documents)
+
+
+def test_ingest_stamps_each_raw_doc_with_its_search_api_tag(engine):
+    """The producing API's tag is stored on every raw doc, ready for load-time reads.
+
+    Solr and STAC ingests are checked together so the tag really tracks the API that
+    parsed the response rather than a constant.
+    """
+    solr = _facade(ESGF1_CMIP5_FACADE_PARAMETERS, SearchAPIESGF1Solr)
+    stac = _facade(ESGFNG_CMIP7_FACADE_PARAMETERS, SearchAPIESGFNGSTAC)
+
+    with Session(engine) as session:
+        ingest_parsed_documents(
+            session, solr.parse_search_results(_load("esgf1-solr-cmip5-search"))
+        )
+        ingest_parsed_documents(
+            session, stac.parse_search_results(_load("esgf-ng-stac-cmip7-east-search"))
+        )
+        session.commit()
+        tags = {doc.search_api_tag for doc in session.exec(select(DatasetRawDoc)).all()}
+
+    assert tags == {SOLR_FORMAT_TAG, STAC_FORMAT_TAG}
+
+
+def test_bypassing_user_must_inject_a_normaliser_for_their_tag(engine):
+    """A user's own search API can ingest, but its tag needs a matching normaliser.
+
+    Our facade and search API are built so a user can bypass them with their own. When
+    they do, their documents are stored under their own `search_api_tag`, and reading
+    those back at load time needs the flattener for that tag: the default registry does
+    not know it, so normalisation raises until the user injects their own.
+    """
+    custom = ParsedDocument(
+        id_project_specific="my.native.id",
+        datasets=(
+            {
+                "project": "CMIP6",
+                "model": "M",
+                "institution": "INST",
+                "experiment": "historical",
+                "variant_label": "r1i1p1f1",
+                "variable": "tas",
+                "reporting_interval": "mon",
+                "grid_label": "gn",
+                "processing_id": "Amon",
+            },
+        ),
+        version="20200101",
+        is_latest=True,
+        retracted=False,
+        nodes=(DataNodeInfo("node.example"),),
+        esgf_doc_id="my.native.id|node.example",
+        raw_json=json.dumps({"blob": "product=output1"}),
+        search_api_tag="acme-format",
+    )
+
+    with Session(engine) as session:
+        ingest_parsed_documents(session, [custom])
+        session.commit()
+        stored = session.exec(select(DatasetRawDoc)).one()
+
+    # The user's tag rode all the way to the row.
+    assert stored.search_api_tag == "acme-format"
+    raw = json.loads(stored.raw_json)
+
+    # Load-time normalisation with the default registry cannot read an unknown tag.
+    with pytest.raises(UnknownRawDocFormatTagError):
+        normalise_stored_document(raw, stored.search_api_tag)
+
+    # Injecting a flattener for that tag (alongside ours) makes it readable.
+    normalisers = {
+        **DEFAULT_NORMALISERS,
+        "acme-format": lambda doc: dict(
+            pair.split("=", 1) for pair in doc["blob"].split("|")
+        ),
+    }
+    assert normalise_stored_document(raw, stored.search_api_tag, normalisers) == {
+        "product": "output1"
+    }

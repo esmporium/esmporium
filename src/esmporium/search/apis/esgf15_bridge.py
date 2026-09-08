@@ -23,6 +23,7 @@ from esmporium.search.apis.protocol import (
     LimitOutOfRangeError,
 )
 from esmporium.search.apis.request import Request
+from esmporium.search.result_normalisation import SOLR_FORMAT_TAG
 from esmporium.search.result_parsing import ParsedDocShell
 
 
@@ -40,6 +41,9 @@ class SearchAPIESGF15BridgeSolr:
 
     retrying: Retrying
     """See [SearchAPI.retrying][esmporium.search.apis.SearchAPI.retrying]."""
+
+    search_api_tag: str = SOLR_FORMAT_TAG
+    """See [SearchAPI.search_api_tag][esmporium.search.apis.SearchAPI.search_api_tag]."""  # noqa: E501
 
     timeout: float = 30.0
     """See [SearchAPI.timeout][esmporium.search.apis.SearchAPI.timeout]."""

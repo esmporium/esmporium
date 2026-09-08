@@ -277,6 +277,18 @@ class SearchAPI(Protocol):
     host: str
     """The host that provides this API, e.g. `esgf.nci.org.au`"""
 
+    search_api_tag: str
+    """
+    Names the format of the raw documents this API returns
+
+    Stamped onto every stored document (see
+    [`DatasetRawDoc.search_api_tag`][esmporium.db.schema.DatasetRawDoc]) so that, long
+    after the search, the right flattener can be picked to normalise it without a live
+    API in scope (see [`esmporium.search.normalise_stored_document`][]). APIs that
+    return the same format share a tag: our two Solr APIs both use
+    [`SOLR_FORMAT_TAG`][esmporium.search.result_normalisation.SOLR_FORMAT_TAG].
+    """
+
     retrying: Retrying
     """The retry policy to use when hitting this API"""
 

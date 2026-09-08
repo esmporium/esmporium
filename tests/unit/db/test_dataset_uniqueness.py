@@ -18,7 +18,11 @@ from __future__ import annotations
 import pytest
 
 from esmporium.db import MISSING, facet_differences
-from esmporium.search import normalise_stored_document
+from esmporium.search import (
+    SOLR_FORMAT_TAG,
+    STAC_FORMAT_TAG,
+    normalise_stored_document,
+)
 
 
 def test_single_distinguishing_facet_two_datasets():
@@ -112,8 +116,8 @@ def test_end_to_end_from_stored_solr_documents():
 
     result = facet_differences(
         (
-            (2015, normalise_stored_document(output1)),
-            (1031, normalise_stored_document(output2)),
+            (2015, normalise_stored_document(output1, SOLR_FORMAT_TAG)),
+            (1031, normalise_stored_document(output2, SOLR_FORMAT_TAG)),
         ),
     )
 
@@ -140,8 +144,8 @@ def test_end_to_end_from_stored_stac_features():
 
     result = facet_differences(
         (
-            (10, normalise_stored_document(cmip)),
-            (11, normalise_stored_document(scenario)),
+            (10, normalise_stored_document(cmip, STAC_FORMAT_TAG)),
+            (11, normalise_stored_document(scenario, STAC_FORMAT_TAG)),
         ),
     )
 
