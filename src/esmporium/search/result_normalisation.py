@@ -26,8 +26,8 @@ receives an already-flat mapping and never has to know which search API produced
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, TypeAlias
-from typing import Any
+from collections.abc import Callable, Mapping
+from typing import Any, TypeAlias
 
 SOLR_FORMAT_TAG = "solr"
 """The `search_api_tag` of our Solr search APIs (ESGF1 and the ESGF-1.5 bridge)."""
@@ -39,7 +39,7 @@ NormaliseFunc = Callable[[dict[str, Any]], dict[str, Any]]
 """Flattens one raw document into `{facet_name: value}`. Keyed by `search_api_tag`."""
 
 NormalisedDocument: TypeAlias = dict[str, Any]
-"""Document normalised by search API (e.g. removes prefix and list)"""
+"""Document normalised based on search API (e.g. removes prefix and list)"""
 
 
 def _normalise_solr(raw: dict[str, Any]) -> dict[str, Any]:
