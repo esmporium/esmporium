@@ -70,10 +70,10 @@ class ParsedDocument:
     """
     The dataset rows this document maps to, one full facet dict each
 
-    Each dict is the non-id `Dataset` facet columns (`project`, `model`, ...,
-    `variable`). A CMIP5 document yields one row per variable in its bundle; a
-    CMIP6/CMIP7 document yields exactly one. The `id_project_specific` shared by every
-    row is kept once, on this object, and folded back in by
+    Each dict is the non-id [`Dataset`][esmporium.db.schema.Dataset] facet columns
+    (`project`, `model`, ..., `variable`). A CMIP5 document yields one row per variable
+    in its bundle; a CMIP6/CMIP7 document yields exactly one. The `id_project_specific`
+    shared by every row is kept once, on this object, and folded back in by
     [`dataset_facets`][(c).dataset_facets].
     """
 
@@ -85,7 +85,7 @@ class ParsedDocument:
     raw_json: str
 
     def dataset_facets(self) -> list[dict[str, str | None]]:
-        """Return the full `Dataset` kwargs for each row in this document."""
+        """Return the full [`Dataset`][esmporium.db.schema.Dataset] kwargs per row."""
         return [
             {**row, "id_project_specific": self.id_project_specific}
             for row in self.datasets

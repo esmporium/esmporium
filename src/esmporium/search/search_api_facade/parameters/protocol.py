@@ -103,11 +103,12 @@ class FacadeParametersProtocol(Protocol):
         self, doc: dict[str, Any], api: SearchAPI
     ) -> tuple[dict[str, str | None], ...]:
         """
-        Read the `Dataset` facet rows one search document maps to
+        Read the [`Dataset`][esmporium.db.schema.Dataset] rows one document maps to
 
         This is the project half of result parsing: it turns one raw document into the
-        facet rows it covers, named as our columns. A CMIP5 document yields one row per
-        variable in its bundle; every other project yields exactly one row.
+        [`Dataset`][esmporium.db.schema.Dataset] facet rows it covers, named as our
+        columns. A CMIP5 document yields one row per variable in its bundle; every other
+        project yields exactly one row.
 
         Parameters
         ----------

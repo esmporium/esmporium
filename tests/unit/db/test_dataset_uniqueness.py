@@ -5,6 +5,12 @@ Tests for reporting the facets that distinguish datasets our model considers ide
 facet mappings (as produced by `esmporium.search.normalise_stored_document`) keyed by
 `Dataset.id`, and reports every facet the datasets do not all agree on. The Solr/STAC
 flattening is tested separately in `tests/unit/search/test_result_normalisation.py`.
+
+Most tests below feed `facet_differences` hand-written flat mappings so each behaviour
+is pinned in isolation. The two `test_end_to_end_*` tests at the bottom instead run the
+real workflow -- raw stored document -> `normalise_stored_document` ->
+`facet_differences` -- so the chain the clash-resolution flow actually uses is covered,
+not just its halves.
 """
 
 from __future__ import annotations
@@ -12,6 +18,7 @@ from __future__ import annotations
 import pytest
 
 from esmporium.db import MISSING, facet_differences
+from esmporium.search import normalise_stored_document
 
 
 def test_single_distinguishing_facet_two_datasets():
@@ -90,3 +97,52 @@ def test_repeated_dataset_id_is_rejected():
         facet_differences(
             ((7, {"product": "output1"}), (7, {"product": "output2"})),
         )
+
+
+def test_end_to_end_from_stored_solr_documents():
+    """Two stored CMIP5 Solr documents flatten and compare to reveal `product`.
+
+    This walks the real path: a raw Solr document (facets as single-element lists) goes
+    through `normalise_stored_document`, and the flattened mappings feed
+    `facet_differences`. The two rows share every modelled facet (`model`) but differ on
+    the un-modelled `product`, which is exactly the clash the flow has to explain.
+    """
+    output1 = {"product": ["output1"], "model": ["CMCC-CM"]}
+    output2 = {"product": ["output2"], "model": ["CMCC-CM"]}
+
+    result = facet_differences(
+        (
+            (2015, normalise_stored_document(output1)),
+            (1031, normalise_stored_document(output2)),
+        ),
+    )
+
+    assert result == {"product": {2015: "output1", 1031: "output2"}}
+
+
+def test_end_to_end_from_stored_stac_features():
+    """Two stored STAC features flatten and compare to reveal `activity_id`.
+
+    The STAC counterpart of the test above: facets live under `properties` with a
+    `cmipN:` prefix, so this also exercises that the flattening strips the prefix before
+    `facet_differences` sees the mappings. The features agree on `source_id` and differ
+    only on the un-modelled `activity_id`.
+    """
+    cmip = {
+        "properties": {"cmip7:activity_id": "CMIP", "cmip7:source_id": "BCC-CSM2-MR"}
+    }
+    scenario = {
+        "properties": {
+            "cmip7:activity_id": "ScenarioMIP",
+            "cmip7:source_id": "BCC-CSM2-MR",
+        }
+    }
+
+    result = facet_differences(
+        (
+            (10, normalise_stored_document(cmip)),
+            (11, normalise_stored_document(scenario)),
+        ),
+    )
+
+    assert result == {"activity_id": {10: "CMIP", 11: "ScenarioMIP"}}
