@@ -26,7 +26,7 @@ receives an already-flat mapping and never has to know which search API produced
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, TypeAlias
 from typing import Any
 
 SOLR_FORMAT_TAG = "solr"
@@ -37,6 +37,9 @@ STAC_FORMAT_TAG = "stac"
 
 NormaliseFunc = Callable[[dict[str, Any]], dict[str, Any]]
 """Flattens one raw document into `{facet_name: value}`. Keyed by `search_api_tag`."""
+
+NormalisedDocument: TypeAlias = dict[str, Any]
+"""Document normalised by search API (e.g. removes prefix and list)"""
 
 
 def _normalise_solr(raw: dict[str, Any]) -> dict[str, Any]:
@@ -137,7 +140,7 @@ def normalise_stored_document(
     raw: dict[str, Any],
     search_api_tag: str,
     normalisers: Mapping[str, NormaliseFunc] = DEFAULT_NORMALISERS,
-) -> dict[str, Any]:
+) -> NormalisedDocument:
     """
     Flatten a stored raw search document, dispatching on its recorded format tag
 
