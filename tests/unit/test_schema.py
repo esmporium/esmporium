@@ -21,6 +21,7 @@ from esmporium.db import (
     UnhandledDatasetClashError,
     save_dataset,
 )
+from esmporium.db.schema import DATASET_IDENTITY_INDEX
 
 VALID_DATASET_KWARGS = {
     # No `id`: it is a surrogate integer the database assigns. The row's real identity
@@ -195,6 +196,19 @@ def test_identical_all_columns_raises_clash(engine):
 
         with pytest.raises(UnhandledDatasetClashError):
             save_dataset(session, Dataset(**cmip5_shape))
+
+
+def test_identity_index_name_matches_constant():
+    """The constant naming the identity index must be a real index on the table.
+
+    `save_dataset` recognises a clash by matching this exact name in SQLite's
+    `IntegrityError` text, so the name in `__table_args__` and the
+    `DATASET_IDENTITY_INDEX` constant it (and `save_dataset`) share must not drift.
+    Renaming the index in the model without updating the constant would slip past the
+    clash tests only if SQLite happened to still report the old name; this pins the two
+    together directly.
+    """
+    assert DATASET_IDENTITY_INDEX in {ix.name for ix in Dataset.__table__.indexes}
 
 
 def test_facet_columns_are_the_declared_facets():
