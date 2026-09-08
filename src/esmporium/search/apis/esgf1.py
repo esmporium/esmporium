@@ -292,6 +292,13 @@ class SearchAPIESGF1Solr:
         """
         See [SearchAPI.read_facet][esmporium.search.apis.SearchAPI.read_facet].
         """
+        # This doesn't match its type hint.
+        # We need to be careful here.
+        # I would fail loudly if a user uses `read_facet`
+        # but we find more than one value
+        # (at the moment I don't think this would happen).
+        # Or we just get rid of read_facet
+        # and only have `read_facet_list` and push all length checking onto callers.
         return solr_read_facet(doc, api_field)
 
     def read_facet_list(self, doc: dict[str, Any], api_field: str) -> tuple[str, ...]:

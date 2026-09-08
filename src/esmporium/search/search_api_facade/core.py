@@ -465,30 +465,64 @@ class SearchAPIFacade:
             One [`DatasetFacets`][esmporium.search.result_parsing.DatasetFacets] per
             dataset row (one per variable for CMIP5, one otherwise)
         """  # noqa: E501
-        # The facet columns to read from the response. `id_project_specific` is stamped
-        # from the argument and `project` is resolved separately (Solr and STAC disagree
-        # on where it comes from), so both are excluded here.
-        columns = set(DatasetFacets.model_fields) - {"id_project_specific", "project"}
-        field_of = self.parameters.get_mapping_to_api_facet_names(columns)
-        project = self.parameters.result_project(doc, self.search_api)
+        ### Start of code that could be broken out into a common block ###
+        ### Name could be something like `get_base_dataset_facets` ###
+        ### (because this only returns single values for each facet) ###
+        ## Parameters we would pass
+        # For CMIP5, we would pass in an argument like this
+        known_multi_value_fields = {"variable"}
+        # For everything else, we would just pass nothing (so get the default, None)
+        known_multi_value_fields = None
 
+        ## Actual function body
+        project = self.parameters.result_project(doc, self.search_api)
         base: dict[str, str | None] = {
             "id_project_specific": id_project_specific,
             "project": project,
         }
-        for column in columns - {_VARIABLE_FACET}:
-            api_field = field_of.get(column)
-            # A column with no API name for this project (CMIP5 has no grid_label) is
-            # left unset, so DatasetFacets' default applies -- fine for the one optional
-            # facet, and a loud error at construction for any required one.
-            if api_field is not None:
-                base[column] = self.search_api.read_facet(doc, api_field)
 
-        variable_field = field_of[_VARIABLE_FACET]
-        return tuple(
+        columns_from_facets = set(DatasetFacets.model_fields) - base.keys()
+        if known_multi_value_fields:
+            columns_from_facets = columns_from_facets - known_multi_value_fields
+
+        field_of = self.parameters.get_mapping_to_api_facet_names(columns_from_facets)
+        for column in columns_from_facets:
+            api_field = field_of.get(column)
+            # Let Nones pass through explicitly
+            # Using read_facet should guarantee that only one value is returned,
+            # but currently doesn't (see other comments made in this commit).
+            base[column] = self.search_api.read_facet(doc, api_field)
+
+        ### End of code that could be broken out into a common block ###
+
+        ## CMIP6 and CMIP7 parsers would then just do
+        return (DatasetFacets(**base),)
+        ## CMIP5 parsers would then do the below
+        ## (where variable is hard-coded, but that's the point,
+        ## this is how CMIP5 responses are shaped with SOLR)
+        res = tuple(
             DatasetFacets(**base, variable=variable)
-            for variable in self.search_api.read_facet_list(doc, variable_field)
+            for variable in self.search_api.read_facet_list(doc, "variable")
         )
+
+        return res
+
+        ## This makes it much clearer I think.
+        ## The question is then, where does this all live.
+        ## My instinct is to add a new attribute to SearchAPIFacade,
+        ## e.g. `result_parser`.
+        ## This handles all of the result parsing
+        ## (and we'd need one for each search format i.e. API and project
+        ## e.g. ResultParserSolrCMIP5, ResultParserSolrCMIP6, ResultParserSTACCMIP5 etc.).
+        ## It can't all be done by search API (because result shape varies by project),
+        ## I don't think it makes sense to add it to `parameters`
+        ## (because parameters deals with querying the API,
+        ## which is different from parsing responess).
+        ## Hence I think a new attribute is the only way to go.
+        ## If we did that, this method would simply be replaced by
+        ## self.result_parser.read_dataset_rows.
+        ## To make this doable, `result_project` would also be moved onto result_parser.
+        ## We could (should?) also move the other result parsing stuff onto result_parser too.
 
     def _read_result(self, doc: dict[str, Any]) -> ParsedDocument:
         """Combine the format shell and the project facet rows for one document."""
