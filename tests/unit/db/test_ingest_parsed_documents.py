@@ -19,7 +19,7 @@ from esmporium.db import (
     Dataset,
     DatasetNodeInformation,
     DatasetRawDoc,
-    DatasetVersionSpecific,
+    DatasetVersion,
     RawDocVersionLink,
     build_result_processor,
     ingest_parsed_documents,
@@ -51,7 +51,7 @@ def _load(name: str) -> dict:
 def _counts(session: Session) -> dict[str, int]:
     return {
         "datasets": len(session.exec(select(Dataset)).all()),
-        "versions": len(session.exec(select(DatasetVersionSpecific)).all()),
+        "versions": len(session.exec(select(DatasetVersion)).all()),
         "nodes": len(session.exec(select(DatasetNodeInformation)).all()),
         "raw_docs": len(session.exec(select(DatasetRawDoc)).all()),
         "links": len(session.exec(select(RawDocVersionLink)).all()),

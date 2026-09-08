@@ -18,7 +18,7 @@ from esmporium.search.apis.protocol import (
     NoSearchResultNumberOfMatchesReturnedError,
 )
 from esmporium.search.apis.request import Request
-from esmporium.search.result_parsing import NodeInfo, ParsedDocShell
+from esmporium.search.result_parsing import DataNodeInfo, ParsedDocShell
 
 
 def solr_bool(value: bool) -> str:
@@ -159,13 +159,7 @@ def solr_read_document_shell(doc: dict[str, Any]) -> ParsedDocShell:
         version=str(extract_one_element_list(doc["version"])),
         is_latest=bool(extract_one_element_list(doc.get("latest", False))),
         retracted=bool(extract_one_element_list(doc.get("retracted", False))),
-        nodes=(
-            NodeInfo(
-                data_node=extract_one_element_list(doc["data_node"]),
-                index_node=extract_one_element_list(doc.get("index_node")),
-                replica=bool(extract_one_element_list(doc.get("replica", False))),
-            ),
-        ),
+        nodes=(DataNodeInfo(data_node=extract_one_element_list(doc["data_node"])),),
         esgf_doc_id=extract_one_element_list(doc["id"]),
         raw_json=json.dumps(doc),
     )

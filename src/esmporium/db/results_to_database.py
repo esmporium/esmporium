@@ -24,8 +24,8 @@ from esmporium.db.schema import (
     Dataset,
     DatasetNodeInformation,
     DatasetRawDoc,
+    DatasetVersion,
     DatasetVersionNodeLink,
-    DatasetVersionSpecific,
     RawDocVersionLink,
 )
 from esmporium.search.result_parsing import ParsedDocument, ResultProcessor
@@ -46,16 +46,18 @@ class UnhandledDatasetClashError(Exception):
     [`esmporium.db.dataset_uniqueness.facet_differences`][].
     """
 
-    # TODO : still handling under id_project_specific and variable uniqueness
-    # need to change this up to reflect current dataset model
     def __init__(self, dataset: Dataset) -> None:
         self.dataset = dataset
+        # A clash means the incoming dataset matches an existing row on *every* column
+        # our model records -- the identity index over `id_project_specific` and all the
+        # facets (see `Dataset.__table_args__`), not any single keying column. The
+        # native id is quoted only because it is the one human-readable handle on which
+        # dataset this was; it is not what defines identity.
         super().__init__(
             "Two datasets are identical across every column our model records "
-            f"(id_project_specific={dataset.id_project_specific!r}, "
-            f"variable={dataset.variable!r}), so our dataset model cannot tell them "
-            "apart. This clash is not handled: the data differs in a facet we do not "
-            "model. Flatten the raw documents with "
+            f"(id_project_specific={dataset.id_project_specific!r}), so our dataset "
+            "model cannot tell them apart. This clash is not handled: the data differs "
+            "in a facet we do not model. Flatten the raw documents with "
             "esmporium.search.normalise_stored_document and compare them with "
             "esmporium.db.dataset_uniqueness.facet_differences to find the difference."
         )
@@ -199,12 +201,12 @@ def _get_or_create_dataset(session: Session, facets: dict[str, str | None]) -> D
 
 def _upsert_version(
     session: Session, dataset_id: int | None, parsed: ParsedDocument
-) -> DatasetVersionSpecific:
+) -> DatasetVersion:
     """Insert this dataset's edition, or refresh its snapshot flags if seen before."""
     existing = session.exec(
-        select(DatasetVersionSpecific).where(
-            DatasetVersionSpecific.dataset_id == dataset_id,
-            DatasetVersionSpecific.version == parsed.version,
+        select(DatasetVersion).where(
+            DatasetVersion.dataset_id == dataset_id,
+            DatasetVersion.version == parsed.version,
         )
     ).first()
     if existing is not None:
@@ -214,7 +216,7 @@ def _upsert_version(
         session.flush()
         return existing
 
-    version = DatasetVersionSpecific(
+    version = DatasetVersion(
         dataset_id=dataset_id,
         version=parsed.version,
         is_latest=parsed.is_latest,

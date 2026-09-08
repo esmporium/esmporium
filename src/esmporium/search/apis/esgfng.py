@@ -19,9 +19,7 @@ from esmporium.search.apis.protocol import (
     UncompilableFacetPatternError,
 )
 from esmporium.search.apis.request import Request
-from esmporium.search.result_parsing import NodeInfo, ParsedDocShell
-
-_VERSION_TOKEN = re.compile(r"^v\d+$")
+from esmporium.search.result_parsing import DataNodeInfo, ParsedDocShell
 
 
 # In future, `aggregations` could be used to return value counts per facet value.
@@ -179,20 +177,25 @@ def stac_read_facet_list(feature: dict[str, Any], api_field: str) -> tuple[str, 
 def _strip_version(native_id: str) -> str:
     """Drop a trailing `.vYYYYMMDD` token so different editions share a bundle id."""
     parts = native_id.split(".")
-    if parts and _VERSION_TOKEN.match(parts[-1]):
+    # A version token is the last `.`-segment written as `v` followed by digits, e.g.
+    # `.v20200623`. `isdigit()` on the tail after the `v` requires at least one digit,
+    # so a bare `v` is not mistaken for a version.
+    if parts and parts[-1].startswith("v") and parts[-1][1:].isdigit():
         return ".".join(parts[:-1])
     return native_id
 
 
 def _version_from_id(native_id: str) -> str:
-    """Read the version out of a `.vYYYYMMDD` token, if present."""
-    parts = native_id.split(".")
-    if parts and _VERSION_TOKEN.match(parts[-1]):
-        return parts[-1][1:]
+    """Read the version out of a trailing `.vYYYYMMDD` token, if present."""
+    last = native_id.rsplit(".", 1)[-1]
+    # As in `_strip_version`: the token is `v` then digits, e.g. `v20200623`; return the
+    # digits (`20200623`). Anything else means there is no version token to read.
+    if last.startswith("v") and last[1:].isdigit():
+        return last[1:]
     return ""
 
 
-def stac_nodes(feature: dict[str, Any]) -> tuple[NodeInfo, ...]:
+def stac_nodes(feature: dict[str, Any]) -> tuple[DataNodeInfo, ...]:
     """Return the distinct data nodes a STAC feature's assets are hosted on."""
     hosts: list[str] = []
     for asset in feature.get("assets", {}).values():
@@ -203,7 +206,7 @@ def stac_nodes(feature: dict[str, Any]) -> tuple[NodeInfo, ...]:
         host = asset.get("alternate:name")
         if host and host not in hosts:
             hosts.append(host)
-    return tuple(NodeInfo(host, None, False) for host in hosts)
+    return tuple(DataNodeInfo(host) for host in hosts)
 
 
 def stac_read_document_shell(feature: dict[str, Any]) -> ParsedDocShell:

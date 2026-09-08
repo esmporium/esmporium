@@ -55,18 +55,18 @@ CREATE INDEX ix_searchapicallrecord_created_at ON searchapicallrecord (created_a
 
 CREATE INDEX ix_searchapicallrecord_host ON searchapicallrecord (host);
 
-CREATE TABLE datasetversionspecific (
+CREATE TABLE datasetversion (
 	id INTEGER NOT NULL,
 	dataset_id INTEGER NOT NULL,
 	version VARCHAR NOT NULL,
 	is_latest BOOLEAN NOT NULL,
 	retracted BOOLEAN NOT NULL,
-	CONSTRAINT pk_datasetversionspecific PRIMARY KEY (id),
-	CONSTRAINT uq_datasetversionspecific_dataset_id_version UNIQUE (dataset_id, version),
-	CONSTRAINT fk_datasetversionspecific_dataset_id_dataset FOREIGN KEY(dataset_id) REFERENCES dataset (id)
+	CONSTRAINT pk_datasetversion PRIMARY KEY (id),
+	CONSTRAINT uq_datasetversion_dataset_id_version UNIQUE (dataset_id, version),
+	CONSTRAINT fk_datasetversion_dataset_id_dataset FOREIGN KEY(dataset_id) REFERENCES dataset (id)
 );
 
-CREATE INDEX ix_datasetversionspecific_dataset_id ON datasetversionspecific (dataset_id);
+CREATE INDEX ix_datasetversion_dataset_id ON datasetversion (dataset_id);
 
 CREATE TABLE datasetversionnodelink (
 	id INTEGER NOT NULL,
@@ -74,7 +74,7 @@ CREATE TABLE datasetversionnodelink (
 	node_id INTEGER NOT NULL,
 	CONSTRAINT pk_datasetversionnodelink PRIMARY KEY (id),
 	CONSTRAINT uq_datasetversionnodelink_dataset_version_id_node_id UNIQUE (dataset_version_id, node_id),
-	CONSTRAINT fk_datasetversionnodelink_dataset_version_id_datasetversionspecific FOREIGN KEY(dataset_version_id) REFERENCES datasetversionspecific (id),
+	CONSTRAINT fk_datasetversionnodelink_dataset_version_id_datasetversion FOREIGN KEY(dataset_version_id) REFERENCES datasetversion (id),
 	CONSTRAINT fk_datasetversionnodelink_node_id_datasetnodeinformation FOREIGN KEY(node_id) REFERENCES datasetnodeinformation (id)
 );
 
@@ -89,7 +89,7 @@ CREATE TABLE rawdocversionlink (
 	CONSTRAINT pk_rawdocversionlink PRIMARY KEY (id),
 	CONSTRAINT uq_rawdocversionlink_raw_id_dataset_version_id UNIQUE (raw_id, dataset_version_id),
 	CONSTRAINT fk_rawdocversionlink_raw_id_datasetrawdoc FOREIGN KEY(raw_id) REFERENCES datasetrawdoc (id),
-	CONSTRAINT fk_rawdocversionlink_dataset_version_id_datasetversionspecific FOREIGN KEY(dataset_version_id) REFERENCES datasetversionspecific (id)
+	CONSTRAINT fk_rawdocversionlink_dataset_version_id_datasetversion FOREIGN KEY(dataset_version_id) REFERENCES datasetversion (id)
 );
 
 CREATE INDEX ix_rawdocversionlink_dataset_version_id ON rawdocversionlink (dataset_version_id);

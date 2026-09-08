@@ -27,12 +27,16 @@ from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
-class NodeInfo:
-    """Information about one place that a dataset version is available from."""
+class DataNodeInfo:
+    """The data node one copy of a dataset version is hosted on.
+
+    Only the data node (where the data lives) is kept. We deliberately do not carry the
+    index node (which search index answered) or the replica flag: neither is stored --
+    [`DatasetNodeInformation`][esmporium.db.schema.DatasetNodeInformation] records only
+    the data node -- so reading them here would be carrying fields nothing consumes.
+    """
 
     data_node: str
-    index_node: str | None
-    replica: bool
 
 
 @dataclass(frozen=True)
@@ -50,7 +54,7 @@ class ParsedDocShell:
     version: str
     is_latest: bool
     retracted: bool
-    nodes: tuple[NodeInfo, ...]
+    nodes: tuple[DataNodeInfo, ...]
     esgf_doc_id: str
     raw_json: str
 
@@ -76,7 +80,7 @@ class ParsedDocument:
     version: str
     is_latest: bool
     retracted: bool
-    nodes: tuple[NodeInfo, ...]
+    nodes: tuple[DataNodeInfo, ...]
     esgf_doc_id: str
     raw_json: str
 

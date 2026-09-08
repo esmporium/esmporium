@@ -15,8 +15,8 @@ from esmporium.db import (
     Dataset,
     DatasetNodeInformation,
     DatasetRawDoc,
+    DatasetVersion,
     DatasetVersionNodeLink,
-    DatasetVersionSpecific,
     RawDocVersionLink,
     UnhandledDatasetClashError,
     save_dataset,
@@ -123,8 +123,7 @@ def test_round_trip(engine):
 # columns from the ESGF column.
 
 
-# TODO: update test_case1,2,3 naming conventions
-def test_case1_same_native_id_differ_on_our_column_is_allowed(engine):
+def test_same_id_project_specific_differ_on_our_column_is_allowed(engine):
     """
     Two datasets sharing `id_project_specific` but differing on one of our columns
 
@@ -142,11 +141,13 @@ def test_case1_same_native_id_differ_on_our_column_is_allowed(engine):
 
 def test_same_id_project_specific_different_variable_is_allowed(engine):
     """
-    Test that one CMIP5 ESGF dataset's variables can coexist (a case-1 instance)
+    Test that one CMIP5 ESGF dataset's variables can coexist
 
-    A CMIP5 `master_id` bundles many variables, so every per-variable row we derive
-    from it shares one `id_project_specific`. Those rows differ only in `variable`,
-    and the database must accept them all.
+    A concrete instance of the case in
+    `test_same_id_project_specific_differ_on_our_column_is_allowed`, where the differing
+    column is `variable`: a CMIP5 `master_id` bundles many variables, so every
+    per-variable row we derive from it shares one `id_project_specific`. Those rows
+    differ only in `variable`, and the database must accept them all.
     """
     with Session(engine) as session:
         save_dataset(session, Dataset(**VALID_DATASET_KWARGS))
@@ -156,7 +157,7 @@ def test_same_id_project_specific_different_variable_is_allowed(engine):
         assert len(session.exec(select(Dataset)).all()) == 2
 
 
-def test_case2_same_our_columns_differ_on_native_id_is_allowed(engine):
+def test_same_our_columns_differ_on_id_project_specific_is_allowed(engine):
     """
     Two datasets identical across all our columns but with different native ids
 
@@ -177,7 +178,7 @@ def test_case2_same_our_columns_differ_on_native_id_is_allowed(engine):
         assert len(session.exec(select(Dataset)).all()) == 2
 
 
-def test_case3_identical_everything_raises_clash(engine):
+def test_identical_all_columns_raises_clash(engine):
     """
     Two datasets identical across our columns AND `id_project_specific` clash
 
@@ -309,9 +310,9 @@ def test_facet_columns_are_not_nullable(engine, column):
 # rows is covered in `tests/unit/db/test_results_round_trip.py`.
 
 
-def _version(dataset_id: int, version: str) -> DatasetVersionSpecific:
+def _version(dataset_id: int, version: str) -> DatasetVersion:
     """A version row with the required snapshot flags filled in."""
-    return DatasetVersionSpecific(
+    return DatasetVersion(
         dataset_id=dataset_id,
         version=version,
         is_latest=True,
@@ -351,7 +352,7 @@ def test_same_version_string_under_two_datasets_is_allowed(engine):
         session.add(_version(pr.id, "20200101"))
         session.commit()  # no clash: the pairs differ on dataset_id
 
-        assert len(session.exec(select(DatasetVersionSpecific)).all()) == 2
+        assert len(session.exec(select(DatasetVersion)).all()) == 2
 
 
 def test_data_node_is_unique(engine):

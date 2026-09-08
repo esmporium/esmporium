@@ -41,7 +41,7 @@ from esmporium.search.health import (
 )
 from esmporium.search.result_normalisation import normalise_stored_document
 from esmporium.search.result_parsing import (
-    NodeInfo,
+    DataNodeInfo,
     ParsedDocShell,
     ParsedDocument,
     ResultProcessor,
@@ -108,6 +108,7 @@ __all__ = [
     "AllowedValues",
     "CouldNotGetAllowedValuesError",
     "CouldNotSearchError",
+    "DataNodeInfo",
     "DirectMappingFacadeParameters",
     "ESGF1CMIP5ParametersQueryStyle",
     "ESGF1CMIP6ParametersQueryStyle",
@@ -122,7 +123,6 @@ __all__ = [
     "NoFacetValuesReturnedError",
     "NoSearchResultNumberOfMatchesReturnedError",
     "NoSourceWouldAnswerError",
-    "NodeInfo",
     "NotAFacetOfTheQueryError",
     "OneProjectRequiredError",
     "ParsedDocShell",

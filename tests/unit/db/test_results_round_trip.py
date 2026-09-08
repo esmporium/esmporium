@@ -26,7 +26,7 @@ BOTH products. Two things have to hold:
    one dataset per variable once a product is chosen.
 
 A version now belongs to a single `Dataset`, so `tas` and `rlut` of one product each
-get their own edition (`DatasetVersionSpecific`, keyed on `dataset_id`). The CMIP5
+get their own edition (`DatasetVersion`, keyed on `dataset_id`). The CMIP5
 bundle's single raw document is still stored once and linked to *both* of those
 per-variable editions, so the JSON is not duplicated per variable.
 """
@@ -46,7 +46,7 @@ from esmporium.db import (
 from esmporium.db.schema import (
     Dataset,
     DatasetRawDoc,
-    DatasetVersionSpecific,
+    DatasetVersion,
     RawDocVersionLink,
 )
 from esmporium.search import normalise_stored_document
@@ -102,14 +102,14 @@ def _save_scenario(engine) -> None:
     """
     with Session(engine) as session:
         # Datasets and their per-variable editions (four of each: 2 products x 2 vars).
-        versions: dict[tuple[str, str], DatasetVersionSpecific] = {}
+        versions: dict[tuple[str, str], DatasetVersion] = {}
         for product, master in MASTER.items():
             for variable in VARIABLES:
                 dataset = save_dataset(
                     session,
                     Dataset(id_project_specific=master, **_generic_facets(variable)),
                 )
-                version = DatasetVersionSpecific(
+                version = DatasetVersion(
                     dataset_id=dataset.id,
                     version=VERSION[product],
                     is_latest=True,
@@ -171,9 +171,7 @@ def _raw_doc_for(session: Session, dataset: Dataset) -> dict:
     A dataset reaches its edition through `dataset_id`; each dataset has exactly one.
     """
     version = session.exec(
-        select(DatasetVersionSpecific).where(
-            DatasetVersionSpecific.dataset_id == dataset.id
-        )
+        select(DatasetVersion).where(DatasetVersion.dataset_id == dataset.id)
     ).one()
     raw = session.exec(
         select(DatasetRawDoc)
@@ -288,9 +286,7 @@ def test_one_document_is_shared_by_both_variables(populated):
         # ...each now have their OWN edition (keyed on dataset_id).
         version_ids = {
             session.exec(
-                select(DatasetVersionSpecific).where(
-                    DatasetVersionSpecific.dataset_id == d.id
-                )
+                select(DatasetVersion).where(DatasetVersion.dataset_id == d.id)
             )
             .one()
             .id

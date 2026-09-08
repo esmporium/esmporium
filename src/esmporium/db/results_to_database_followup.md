@@ -48,7 +48,7 @@ shared across editions.
             │  identity = UNIQUE index over every column except id (grid_label via coalesce)
             │ 1
             │ *   one-to-many  (dataset_id FK)
-        DatasetVersionSpecific           one edition per (dataset_id, version)
+        DatasetVersion           one edition per (dataset_id, version)
           id (int, surrogate PK)
           dataset_id FK → Dataset.id
           version, is_latest, retracted
@@ -72,7 +72,7 @@ shared across editions.
 - Facets: `project, model, institution, experiment, variant_label, variable,
   reporting_interval, grid_label` (nullable, NULL for CMIP5), `processing_id`.
 
-**`DatasetVersionSpecific`** — one **edition**, now a real child of `Dataset`.
+**`DatasetVersion`** — one **edition**, now a real child of `Dataset`.
 - `id`: plain integer surrogate PK (was `version_id = f"{ips}.v{version}"`; that coupling
   is gone, along with any `id_project_specific` on this table).
 - `dataset_id`: FK to `Dataset.id` — a genuine one-to-many. Each per-variable CMIP5
@@ -265,11 +265,11 @@ We have some updates to our database model that we need to implement. This only 
 
 Firstly, we keep Dataset as is. We have already made updates and changes to this table and you can look at db/test_dataset_uniqueness.py to see the test cases we want Dataset to handle (especially by comparing "our" columns and the id_project_specific column, and when errors should raise).
 
-More importantly, we have DatasetVersionSpecific, where we need to remove the coupling between id_project_specific and version (currenlty coupled as version_id). From Dataset to DatasetVersionSpecific, we should have a one-to-many, for all CMIP projects. This includes CMIP5, where we save all variables as dataset rows (regardless of what the user searched for), thus every CMIP5 dataset has a row per variable which would become many rows per version for a variable of a dataset. It is for this reason that we define uniqueness in this table as dataset.id + version. (should this column be a str? or combine dataset.id and datasetversionspecific.id somehow?). DatasetVersionSpecific should have a primary key 'id', which is a plain int, instead of version_id. id_project_specific should not be included or learnt from in this table at all.
+More importantly, we have DatasetVersion, where we need to remove the coupling between id_project_specific and version (currenlty coupled as version_id). From Dataset to DatasetVersion, we should have a one-to-many, for all CMIP projects. This includes CMIP5, where we save all variables as dataset rows (regardless of what the user searched for), thus every CMIP5 dataset has a row per variable which would become many rows per version for a variable of a dataset. It is for this reason that we define uniqueness in this table as dataset.id + version. (should this column be a str? or combine dataset.id and datasetversion.id somehow?). DatasetVersion should have a primary key 'id', which is a plain int, instead of version_id. id_project_specific should not be included or learnt from in this table at all.
 
-The link from DatasetVersionSpecific to DatasetRawDocs should be relatively straightforward. This is where we have many-to-many for CMIP5, where we only want one raw_doc for many dataset rows (because we separate out variables). The change compared to the current schema is the raw_link, where we now are linking the tables with the dataset_version column, instead of 'version_id'. Again, no id_project_specific knowledge.
+The link from DatasetVersion to DatasetRawDocs should be relatively straightforward. This is where we have many-to-many for CMIP5, where we only want one raw_doc for many dataset rows (because we separate out variables). The change compared to the current schema is the raw_link, where we now are linking the tables with the dataset_version column, instead of 'version_id'. Again, no id_project_specific knowledge.
 
-Finally, we have DatasetNodeInformation. Previously, this table has been handled between version to node as one-to-many. However, we have an alternative option to explore. Given there are a limited number of data nodes (e.g. 15 possible data nodes that could host files), we are hoping to populate DatasetNodeInformation with as many unique data nodes as there are available following the search (e.g. <15 rows, if there are only 15 possible data nodes that host files). This would mean that many DatasetVersionSpecific rows would point to one DatasetNodeInformation row, AND that a single DatasetVersionSpecific row could point to multiple DatasetNodeInformation rows. We need help with this implementation, and to know whether this is possible.
+Finally, we have DatasetNodeInformation. Previously, this table has been handled between version to node as one-to-many. However, we have an alternative option to explore. Given there are a limited number of data nodes (e.g. 15 possible data nodes that could host files), we are hoping to populate DatasetNodeInformation with as many unique data nodes as there are available following the search (e.g. <15 rows, if there are only 15 possible data nodes that host files). This would mean that many DatasetVersion rows would point to one DatasetNodeInformation row, AND that a single DatasetVersion row could point to multiple DatasetNodeInformation rows. We need help with this implementation, and to know whether this is possible.
 
 Please repeat the database changes back to me, so I can verify you understand (and in your plan include the columns you will be deleting/renaming etc). Please also identify any pros/cons to our changes and provide alternatives if you think there are better ways to handle the workflow we want to reproduce.
 
@@ -371,3 +371,36 @@ def facet_differences(
     """
     # Check that no ID is repeated in normalised_info
     raise NotImplementedError
+
+
+We are in the process of implementing the results to database step. We have done a lot of work with getting the schema (database model) to a good place and it is doing exactly what we want. We have also made sure that result parsing and ingestion (and loading to find clashes for uniqueness) are all in the search api facade layer. We do not want any coupling between facades, we should not be questioning in the result saving or loading step "what solr or stac format is this data?". This should all happen in the api facade layer and hand results in a consistent format to the db/ layer for saving. You may have a look through the repository and verify to see if we have any lingering coupling between facades in this search step.
+
+However, beyond this, I have some additional updates to make.
+1. Rename DatasetVersionSpecific to DatasetVersion (please rename everywehre in doc strings and tests and functions)
+2. For class NodeInfo, why are we saving Index host informatin? Can we remove it (and replica?) and rename Node Info to DataNodeInfo?
+3. in results_to_databse.py     def __init__(self, dataset: Dataset) -> None:
+        self.dataset = dataset
+        super().__init__(
+            "Two datasets are identical across every column our model records "
+            f"(id_project_specific={dataset.id_project_specific!r}, "
+            f"variable={dataset.variable!r}), so our dataset model cannot tell them "
+            "apart. This clash is not handled: the data differs in a facet we do not "
+            "model. Flatten the raw documents with "
+            "esmporium.search.normalise_stored_document and compare them with "
+            "esmporium.db.dataset_uniqueness.facet_differences to find the difference."
+        )
+  We still have this conecpt of data being unique per variable and id_project_specific. Note that this is ONLY relevant for CMIP5 use cases. We want to remove this concept of uniqueness, and note that we have built our concept of the main Dataset table to be unique across all columnns (noting our potential test cases in tests). Please update this concept of uniquess here and elsewhere (is keying by variable a uniqueness constraint anywhere else that is left over from when that was the constraint in the db?).
+4. in schema.py we define DATASET_IDENTITY_INDEX. Aren't these meant to be autogenerated somewhere? Why is this hardcoded? Where is this relevant?
+5. In test_dataset_uniqueness.py, are we still testing uniqueness based on id_project_specific facets? Shound't this be tests by parsing the raw docs to reflect out updated workflow?
+6. In test_schema.py we have named some of the tests as test1/2/3. This is irrelevant to future developers (and even to our future selves). Could we please rename them:
+test_case1_same_native_id_differ_on_our_column_is_allowed - test_same_id_project_specific_differ_on_our_column_is_allowed
+test_case2_same_our_columns_differ_on_native_id_is_allowed - test_same_our_columns_differ_on_id_project_specific_is_allowed
+test_case3_identical_everything_raises_clash - test_identiical_all_columns_raises_clash
+Anywhere else in the repo are there numbered test/use cases that should have a more specific name?
+7. apis/esgfng.py lines 187-190 def _version_from_id(native_id: str) -> str:
+    """Read the version out of a `.vYYYYMMDD` token, if present."""
+    parts = native_id.split(".")
+    if parts and _VERSION_TOKEN.match(parts[-1]):
+  Please remove the regexp and just do this inline (ie. 'anything after .v'). regexp is super easy to make a mess and this task doesn't require it.
+8. doc string cross reference. search/result_parsing.py read_result_facets() dont' jsut have `dataset`, cross reference bakc to schema here.
+9. Finally, search/result_reader.py. Is this necessary to have separated from the facade parameters? Could we incoroprate that into the facade parameters rather than having a modelu that is global/hardcoded values? Are there benefits to keeping it there? Please investigate and let me know.

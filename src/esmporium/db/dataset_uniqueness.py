@@ -17,9 +17,6 @@ knows the response shapes; here we only compare the already-flat mappings it pro
 That keeps the database layer free of any search-generation knowledge.
 """
 
-# TODO: for facet differences also list id_project_specific?
-# Or just leave this to future higher level function which identifies to the user
-# where the clashes are
 from __future__ import annotations
 
 from typing import Any
@@ -88,7 +85,7 @@ def facet_differences(
     row -- a clash is a `Dataset`-level event (all our columns equal, with
     `id_project_specific` differing), so the distinguishing facet is a property of the
     dataset, not of any one edition. When the higher-level clash-resolution wrapper is
-    built we may need to key on (or additionally carry) a `DatasetVersionSpecific.id` if
+    built we may need to key on (or additionally carry) a `DatasetVersion.id` if
     versions turn out to distinguish a clash; revisit the key then.
     """
     ids = [dataset_id for dataset_id, _ in normalised_info]

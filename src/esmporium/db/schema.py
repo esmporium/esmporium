@@ -208,7 +208,7 @@ class Dataset(EsmporiumBase, table=True):
     See [`id_project_specific`][esmporium.db.schema.Dataset.id_project_specific].
 
     Version and data-node information are not part of this identity; they live in
-    [`DatasetVersionSpecific`][esmporium.db.schema.DatasetVersionSpecific] and
+    [`DatasetVersion`][esmporium.db.schema.DatasetVersion] and
     [`DatasetNodeInformation`][esmporium.db.schema.DatasetNodeInformation].
     """
 
@@ -521,8 +521,7 @@ class SearchAPICallRecord(EsmporiumBase, table=True):
         )
 
 
-# TODO: rename to DatasetVersion
-class DatasetVersionSpecific(EsmporiumBase, table=True):
+class DatasetVersion(EsmporiumBase, table=True):
     """
     One version of a [`Dataset`][esmporium.db.schema.Dataset]
 
@@ -626,11 +625,11 @@ class DatasetVersionNodeLink(EsmporiumBase, table=True):
     id: int | None = Field(default=None, primary_key=True)
     """Surrogate key; assigned by the database"""
 
-    dataset_version_id: int = Field(foreign_key="datasetversionspecific.id", index=True)
+    dataset_version_id: int = Field(foreign_key="datasetversion.id", index=True)
     """
     The edition hosted on the node
 
-    See [`DatasetVersionSpecific`][esmporium.db.schema.DatasetVersionSpecific].
+    See [`DatasetVersion`][esmporium.db.schema.DatasetVersion].
     """
 
     node_id: int = Field(foreign_key="datasetnodeinformation.id", index=True)
@@ -708,11 +707,11 @@ class RawDocVersionLink(EsmporiumBase, table=True):
     See [`DatasetRawDoc`][esmporium.db.schema.DatasetRawDoc].
     """
 
-    dataset_version_id: int = Field(foreign_key="datasetversionspecific.id", index=True)
+    dataset_version_id: int = Field(foreign_key="datasetversion.id", index=True)
     """
     The edition the document describes
 
-    See [`DatasetVersionSpecific`][esmporium.db.schema.DatasetVersionSpecific].
+    See [`DatasetVersion`][esmporium.db.schema.DatasetVersion].
     """
 
     __table_args__ = (UniqueConstraint("raw_id", "dataset_version_id"),)
