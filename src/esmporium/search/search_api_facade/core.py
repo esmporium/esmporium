@@ -16,12 +16,21 @@ from esmporium.query import (
     facet_spec,
 )
 from esmporium.search.apis import Request, SearchAPI
-from esmporium.search.result_parsing import ParsedDocument
+from esmporium.search.result_parsing import DatasetFacets, ParsedDocument
 from esmporium.search.search_api_facade.parameters import (
     FacadeParametersProtocol,
     OneProjectRequiredError,
     get_mapping_to_query_style_facet_names,
 )
+
+_VARIABLE_FACET = "variable"
+"""
+The one facet read as a *list* rather than a scalar
+
+A CMIP5 Solr document bundles many variables, so this axis explodes one document into
+one row per variable; every other facet is a single value shared by those rows. Matches
+[`DatasetFacets.variable`][esmporium.search.result_parsing.DatasetFacets.variable].
+"""
 
 
 def get_unexpressible_facets(
@@ -427,13 +436,66 @@ class SearchAPIFacade:
             for doc in self.search_api.extract_result_documents(raw)
         )
 
+    def read_dataset_rows(
+        self, doc: dict[str, Any], id_project_specific: str
+    ) -> tuple[DatasetFacets, ...]:
+        """
+        Read the complete dataset rows one search document maps to
+
+        The facade holds both halves this needs, so neither collaborator has to guess the
+        other's concern: [search_api][(c).search_api] reads a value out of the response
+        *format*, and [parameters][(c).parameters] name *which* field carries each facet
+        for this project. A CMIP5 document explodes into one row per variable in its
+        bundle; every other project yields exactly one row.
+
+        Parameters
+        ----------
+        doc
+            One document from
+            [search_api.extract_result_documents][esmporium.search.apis.SearchAPI.extract_result_documents]
+
+        id_project_specific
+            The bundle's native id, read once from the format shell by the caller and
+            stamped onto every row so each is a complete, savable
+            [`DatasetFacets`][esmporium.search.result_parsing.DatasetFacets]
+
+        Returns
+        -------
+        :
+            One [`DatasetFacets`][esmporium.search.result_parsing.DatasetFacets] per
+            dataset row (one per variable for CMIP5, one otherwise)
+        """  # noqa: E501
+        # The facet columns to read from the response. `id_project_specific` is stamped
+        # from the argument and `project` is resolved separately (Solr and STAC disagree
+        # on where it comes from), so both are excluded here.
+        columns = set(DatasetFacets.model_fields) - {"id_project_specific", "project"}
+        field_of = self.parameters.get_mapping_to_api_facet_names(columns)
+        project = self.parameters.result_project(doc, self.search_api)
+
+        base: dict[str, str | None] = {
+            "id_project_specific": id_project_specific,
+            "project": project,
+        }
+        for column in columns - {_VARIABLE_FACET}:
+            api_field = field_of.get(column)
+            # A column with no API name for this project (CMIP5 has no grid_label) is
+            # left unset, so DatasetFacets' default applies -- fine for the one optional
+            # facet, and a loud error at construction for any required one.
+            if api_field is not None:
+                base[column] = self.search_api.read_facet(doc, api_field)
+
+        variable_field = field_of[_VARIABLE_FACET]
+        return tuple(
+            DatasetFacets(**base, variable=variable)
+            for variable in self.search_api.read_facet_list(doc, variable_field)
+        )
+
     def _read_result(self, doc: dict[str, Any]) -> ParsedDocument:
         """Combine the format shell and the project facet rows for one document."""
         shell = self.search_api.read_document_shell(doc)
-        rows = self.parameters.read_result_facets(doc, self.search_api)
         return ParsedDocument(
             id_project_specific=shell.id_project_specific,
-            datasets=rows,
+            datasets=self.read_dataset_rows(doc, shell.id_project_specific),
             version=shell.version,
             is_latest=shell.is_latest,
             retracted=shell.retracted,

@@ -28,7 +28,11 @@ from esmporium.db.schema import (
     DatasetVersionNodeLink,
     RawDocVersionLink,
 )
-from esmporium.search.result_parsing import ParsedDocument, ResultProcessor
+from esmporium.search.result_parsing import (
+    DatasetFacets,
+    ParsedDocument,
+    ResultProcessor,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -171,9 +175,7 @@ def _ingest_document(session: Session, parsed: ParsedDocument) -> None:
     (for CMIP5 that is one per variable) and fan the node links and raw-doc link out
     over all of them.
     """
-    datasets = [
-        _get_or_create_dataset(session, facets) for facets in parsed.dataset_facets()
-    ]
+    datasets = [_get_or_create_dataset(session, facets) for facets in parsed.datasets]
     versions = [_upsert_version(session, dataset.id, parsed) for dataset in datasets]
 
     nodes = [_get_or_create_node(session, node.data_node) for node in parsed.nodes]
@@ -186,17 +188,24 @@ def _ingest_document(session: Session, parsed: ParsedDocument) -> None:
         _get_or_create_link(session, raw_doc.id, version.id)
 
 
-def _get_or_create_dataset(session: Session, facets: dict[str, str | None]) -> Dataset:
+def _get_or_create_dataset(session: Session, facets: DatasetFacets) -> Dataset:
     """Reuse an identical dataset if we have one, else save a new one.
+
+    `facets` is the search layer's typed row; `model_dump()` turns it into `Dataset`
+    kwargs. Building the `Dataset` here is also the loud boundary check: a field on
+    `DatasetFacets` that `Dataset` does not accept fails here, not silently dropped.
 
     Matching on *every* facet (an equal `grid_label` NULL included) keeps re-ingestion
     idempotent without merging two datasets that differ on any single column.
     """
-    conditions = [getattr(Dataset, column) == value for column, value in facets.items()]
+    facet_values = facets.model_dump()
+    conditions = [
+        getattr(Dataset, column) == value for column, value in facet_values.items()
+    ]
     existing = session.exec(select(Dataset).where(*conditions)).first()
     if existing is not None:
         return existing
-    return save_dataset(session, Dataset(**facets))
+    return save_dataset(session, Dataset(**facet_values))
 
 
 def _upsert_version(

@@ -49,6 +49,7 @@ from esmporium.search.result_normalisation import (
 )
 from esmporium.search.result_parsing import (
     DataNodeInfo,
+    DatasetFacets,
     ParsedDocShell,
     ParsedDocument,
     ResultProcessor,
@@ -119,6 +120,7 @@ __all__ = [
     "CouldNotGetAllowedValuesError",
     "CouldNotSearchError",
     "DataNodeInfo",
+    "DatasetFacets",
     "DirectMappingFacadeParameters",
     "ESGF1CMIP5ParametersQueryStyle",
     "ESGF1CMIP6ParametersQueryStyle",

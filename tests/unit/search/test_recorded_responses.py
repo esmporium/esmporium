@@ -40,6 +40,7 @@ from esmporium.search import (
     ESGF1_CMIP6_FACADE_PARAMETERS,
     ESGFNG_CMIP6_FACADE_PARAMETERS,
     ESGFNG_CMIP7_FACADE_PARAMETERS,
+    DatasetFacets,
     SearchAPIESGF1Solr,
     SearchAPIESGF15BridgeSolr,
     SearchAPIESGFNGSTAC,
@@ -47,7 +48,6 @@ from esmporium.search import (
     build_transient_retrying,
     get_mapping_to_query_style_facet_names,
 )
-from esmporium.search.result_readers import RESULT_FACET_COLUMNS
 
 RECORDED_DIR = Path(__file__).parents[2] / "test-data" / "search"
 """Where the recorded responses live"""
@@ -183,11 +183,11 @@ def test_parse_search_results_are_well_formed(name, facade):
         assert document.nodes, "a document was parsed with nowhere to fetch it from"
         assert document.datasets, "a document mapped to no dataset rows"
         for row in document.datasets:
-            assert set(row) == set(RESULT_FACET_COLUMNS), (
-                "a dataset row does not carry exactly our facet columns"
+            assert isinstance(row, DatasetFacets), (
+                "a dataset row is not the typed DatasetFacets we parse into"
             )
             # grid_label is legitimately NULL (CMIP5); every other facet must be set.
-            for column, value in row.items():
+            for column, value in row.model_dump().items():
                 if column == "grid_label":
                     continue
                 assert value, f"{column} was parsed empty"
@@ -201,14 +201,13 @@ def test_cmip5_document_explodes_into_variables_sharing_one_edition(name, facade
     documents = facade.parse_search_results(raw)
 
     for document in documents:
-        variables = [row["variable"] for row in document.datasets]
+        variables = [row.variable for row in document.datasets]
         assert len(variables) > 1, "a CMIP5 bundle should carry many variables"
         assert len(set(variables)) == len(variables), "a variable was repeated"
 
         # Everything but the variable is shared across the bundle's rows...
         without_variable = [
-            {column: value for column, value in row.items() if column != "variable"}
-            for row in document.datasets
+            row.model_dump(exclude={"variable"}) for row in document.datasets
         ]
         assert all(row == without_variable[0] for row in without_variable)
         # ...and CMIP5 has no grid label.

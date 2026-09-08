@@ -22,6 +22,7 @@ from esmporium.db import (
     save_dataset,
 )
 from esmporium.db.schema import DATASET_IDENTITY_INDEX
+from esmporium.search import DatasetFacets
 
 VALID_DATASET_KWARGS = {
     # No `id`: it is a surrogate integer the database assigns. The row's real identity
@@ -242,6 +243,22 @@ def test_facet_columns_are_the_declared_facets():
     assert sorted(FACET_COLUMNS) == sorted(DATASET_FACET_COLUMNS), (
         "Update FACET_COLUMNS to match DATASET_FACET_COLUMNS"
     )
+
+
+def test_dataset_facets_mirror_dataset_columns():
+    """`DatasetFacets` declares exactly `Dataset`'s facets plus `id_project_specific`.
+
+    This pins the `search` <-> `db` coupling in one assertion. The facade parses results
+    into [`DatasetFacets`][esmporium.search.result_parsing.DatasetFacets], and the `db`
+    layer builds a `Dataset` from each one, so if a facet is added to `Dataset` without
+    adding it to `DatasetFacets` (or vice versa), parsing and storage silently fall out
+    of step. This fails by name the moment they diverge -- a faster, sharper signal than
+    an ingest blowing up on a NOT NULL column.
+    """
+    assert set(DatasetFacets.model_fields) == {
+        "id_project_specific",
+        *DATASET_FACET_COLUMNS,
+    }
 
 
 def test_assignment_is_validated():

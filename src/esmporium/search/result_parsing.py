@@ -16,14 +16,68 @@ so the type has to sit at or below the search layer.
 The "one document, many rows" shape is deliberately project-agnostic. A CMIP5 Solr
 record bundles many variables and so yields many rows; a CMIP6/CMIP7 document yields
 exactly one. Which is which is the reader's concern (see
-[`esmporium.search.result_readers`][]), not this type's: here a document simply
-carries the list of dataset rows it maps to.
+[`esmporium.search.search_api_facade.SearchAPIFacade.read_dataset_rows`][]), not this
+type's: here a document simply carries the list of dataset rows it maps to.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+
+from pydantic import BaseModel, ConfigDict
+
+
+class DatasetFacets(BaseModel):
+    """
+    One complete, savable dataset row: the identity plus every facet we model
+
+    This is the typed shape
+    [`SearchAPIFacade.read_dataset_rows`][esmporium.search.search_api_facade.SearchAPIFacade.read_dataset_rows]
+    produces and the `db` layer promotes into a
+    [`Dataset`][esmporium.db.schema.Dataset] row (`Dataset(**facets.model_dump())`).
+    Its fields mirror `Dataset`'s facet columns plus `id_project_specific`.
+
+    Keeping this a real model, rather than a bare dict, moves the coupling with
+    `Dataset` from "hope the dict keys line up" to something checked in two places: a
+    field-parity test pins these fields to `Dataset`'s columns, and `db` validating each
+    row into a `Dataset` at ingest is the loud runtime backstop. Because the fields are
+    required (bar `grid_label`, which CMIP5 has no value for), a facet the reader forgot
+    to produce fails here at construction, in `search`, instead of as a far-away NOT
+    NULL error at commit time. `extra="forbid"` means an unexpected facet is rejected too.
+    """  # noqa: E501
+
+    model_config = ConfigDict(extra="forbid")
+
+    id_project_specific: str
+    """See [`Dataset.id_project_specific`][esmporium.db.schema.Dataset.id_project_specific]."""  # noqa: E501
+
+    project: str
+    """See [`Dataset.project`][esmporium.db.schema.Dataset.project]."""
+
+    model: str
+    """See [`Dataset.model`][esmporium.db.schema.Dataset.model]."""
+
+    institution: str
+    """See [`Dataset.institution`][esmporium.db.schema.Dataset.institution]."""
+
+    experiment: str
+    """See [`Dataset.experiment`][esmporium.db.schema.Dataset.experiment]."""
+
+    variant_label: str
+    """See [`Dataset.variant_label`][esmporium.db.schema.Dataset.variant_label]."""
+
+    variable: str
+    """See [`Dataset.variable`][esmporium.db.schema.Dataset.variable]."""
+
+    reporting_interval: str
+    """See [`Dataset.reporting_interval`][esmporium.db.schema.Dataset.reporting_interval]."""  # noqa: E501
+
+    grid_label: str | None = None
+    """See [`Dataset.grid_label`][esmporium.db.schema.Dataset.grid_label]. CMIP5 has none."""  # noqa: E501
+
+    processing_id: str
+    """See [`Dataset.processing_id`][esmporium.db.schema.Dataset.processing_id]."""
 
 
 @dataclass(frozen=True)
@@ -64,17 +118,23 @@ class ParsedDocument:
     """One raw search document, reduced to the pieces we store."""
 
     id_project_specific: str
-    """The bundle's native id (Solr `master_id`, or the version-free STAC id)."""
-
-    datasets: tuple[dict[str, str | None], ...]
     """
-    The dataset rows this document maps to, one full facet dict each
+    The bundle's native id (Solr `master_id`, or the version-free STAC id)
 
-    Each dict is the non-id [`Dataset`][esmporium.db.schema.Dataset] facet columns
-    (`project`, `model`, ..., `variable`). A CMIP5 document yields one row per variable
-    in its bundle; a CMIP6/CMIP7 document yields exactly one. The `id_project_specific`
-    shared by every row is kept once, on this object, and folded back in by
-    [`dataset_facets`][(c).dataset_facets].
+    Kept at the document level as the bundle's identity. Every row in `datasets`
+    also carries this same value (a row is a complete, savable
+    [`DatasetFacets`][(m).DatasetFacets]); both come from the one format shell, so they
+    cannot disagree.
+    """
+
+    datasets: tuple[DatasetFacets, ...]
+    """
+    The complete dataset rows this document maps to
+
+    Each is a [`DatasetFacets`][(m).DatasetFacets] -- every facet column plus
+    `id_project_specific`, ready to become a [`Dataset`][esmporium.db.schema.Dataset]. A
+    CMIP5 document yields one row per variable in its bundle; a CMIP6/CMIP7 document
+    yields exactly one.
     """
 
     version: str
@@ -92,13 +152,6 @@ class ParsedDocument:
     Stored on the raw-doc row so the right flattener can normalise it at load time
     (see [`esmporium.search.normalise_stored_document`][]).
     """
-
-    def dataset_facets(self) -> list[dict[str, str | None]]:
-        """Return the full [`Dataset`][esmporium.db.schema.Dataset] kwargs per row."""
-        return [
-            {**row, "id_project_specific": self.id_project_specific}
-            for row in self.datasets
-        ]
 
 
 ResultProcessor = Callable[[str, tuple[ParsedDocument, ...]], None]

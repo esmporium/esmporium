@@ -36,7 +36,6 @@ from esmporium.query import (
     from_canonical,
 )
 from esmporium.query.protocol import accept_without_validation
-from esmporium.search.result_readers import read_dataset_rows
 
 if TYPE_CHECKING:
     from esmporium.search.apis import SearchAPI
@@ -121,14 +120,8 @@ class DirectMappingFacadeParameters(BaseModel):
 
         return facet_values_from_attributes(native)
 
-    def read_result_facets(
-        self, doc: dict[str, Any], api: SearchAPI
-    ) -> tuple[dict[str, str | None], ...]:
-        """See [FacadeParametersProtocol.read_result_facets][esmporium.search.search_api_facade.parameters.protocol.FacadeParametersProtocol.read_result_facets]."""  # noqa: E501
-        return read_dataset_rows(self, doc, api, self._result_project(doc, api))
-
-    def _result_project(self, doc: dict[str, Any], api: SearchAPI) -> str | None:
-        """Read the project from the (Solr) `project` facet."""
+    def result_project(self, doc: dict[str, Any], api: SearchAPI) -> str | None:
+        """See [FacadeParametersProtocol.result_project][esmporium.search.search_api_facade.parameters.protocol.FacadeParametersProtocol.result_project]. Read from the (Solr) `project` facet."""  # noqa: E501
         api_field = self.get_mapping_to_api_facet_names({"project"}).get("project")
         return api.read_facet(doc, api_field) if api_field is not None else None
 
@@ -509,14 +502,8 @@ class STACFacadeParameters(BaseModel):
 
         return facet_values
 
-    def read_result_facets(
-        self, doc: dict[str, Any], api: SearchAPI
-    ) -> tuple[dict[str, str | None], ...]:
-        """See [FacadeParametersProtocol.read_result_facets][esmporium.search.search_api_facade.parameters.protocol.FacadeParametersProtocol.read_result_facets]."""  # noqa: E501
-        return read_dataset_rows(self, doc, api, self._result_project(doc, api))
-
-    def _result_project(self, doc: dict[str, Any], api: SearchAPI) -> str:
-        """STAC drops the project facet; recover it from `mip_era` (else the prefix)."""
+    def result_project(self, doc: dict[str, Any], api: SearchAPI) -> str:
+        """See [FacadeParametersProtocol.result_project][esmporium.search.search_api_facade.parameters.protocol.FacadeParametersProtocol.result_project]. STAC drops the project facet; recover it from `mip_era` (else the prefix)."""  # noqa: E501
         return api.read_facet(doc, f"{self.prefix}:mip_era") or self.prefix.upper()
 
 

@@ -13,9 +13,9 @@ CREATE TABLE dataset (
 	CONSTRAINT pk_dataset PRIMARY KEY (id)
 );
 
-CREATE INDEX ix_dataset_id_project_specific ON dataset (id_project_specific);
+CREATE UNIQUE INDEX dataset_uniqueness_idx ON dataset (id_project_specific, project, model, institution, experiment, variant_label, variable, reporting_interval, coalesce(grid_label, ''), processing_id);
 
-CREATE UNIQUE INDEX uq_dataset_identity ON dataset (id_project_specific, project, model, institution, experiment, variant_label, variable, reporting_interval, coalesce(grid_label, ''), processing_id);
+CREATE INDEX ix_dataset_id_project_specific ON dataset (id_project_specific);
 
 CREATE TABLE datasetnodeinformation (
 	id INTEGER NOT NULL,

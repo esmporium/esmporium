@@ -99,16 +99,15 @@ class FacadeParametersProtocol(Protocol):
         """
         ...
 
-    def read_result_facets(
-        self, doc: dict[str, Any], api: SearchAPI
-    ) -> tuple[dict[str, str | None], ...]:
+    def result_project(self, doc: dict[str, Any], api: SearchAPI) -> str | None:
         """
-        Read the [`Dataset`][esmporium.db.schema.Dataset] rows one document maps to
+        Read the project a result document belongs to
 
-        This is the project half of result parsing: it turns one raw document into the
-        [`Dataset`][esmporium.db.schema.Dataset] facet rows it covers, named as our
-        columns. A CMIP5 document yields one row per variable in its bundle; every other
-        project yields exactly one row.
+        This is the one project-specific piece of result reading that the generic
+        reader ([`SearchAPIFacade.read_dataset_rows`][esmporium.search.search_api_facade.SearchAPIFacade.read_dataset_rows])
+        cannot do itself: Solr carries an explicit `project` facet, whereas STAC drops it
+        (project is the collection) and it must be recovered from `mip_era`. Every other
+        facet is read uniformly via [get_mapping_to_api_facet_names][(c).get_mapping_to_api_facet_names].
 
         Parameters
         ----------
@@ -121,7 +120,6 @@ class FacadeParametersProtocol(Protocol):
         Returns
         -------
         :
-            One full facet dict per dataset row (without `id_project_specific`, which is
-            shared and added later)
-        """
+            The project value for this document's rows, or `None` if it cannot be read
+        """  # noqa: E501
         ...
