@@ -49,6 +49,7 @@ from esmporium.db.schema import (
     DatasetVersionSpecific,
     RawDocVersionLink,
 )
+from esmporium.search import normalise_stored_document
 
 # --- The scenario, as constants ------------------------------------------------
 
@@ -155,11 +156,13 @@ def populated(engine):
 
 # --- Disambiguation via the raw documents -------------------------------------
 #
-# The "which facet differs?" logic now lives in `src`
-# (`esmporium.db.facet_differences`): it reads the distinguishing facet's name and
-# values straight out of the stored raw JSON, so it never hard-codes `product` and
-# never splits the native id on `.`. The helper below is just the plumbing that gets a
-# dataset's raw document back out of the database for it.
+# The "which facet differs?" logic now lives in `src`, split across two layers: the
+# search layer flattens a stored raw document into `{facet: value}`
+# (`esmporium.search.normalise_stored_document`, generation-aware, off the write path),
+# and `esmporium.db.facet_differences` compares those flat mappings keyed by
+# `Dataset.id`. So `db` never hard-codes `product`, never splits the native id on `.`,
+# and never sniffs Solr vs STAC. The helper below is just the plumbing that gets a
+# dataset's raw document back out of the database.
 
 
 def _raw_doc_for(session: Session, dataset: Dataset) -> dict:
@@ -237,14 +240,23 @@ def test_load_detects_the_product_clash_and_offers_a_choice(populated):
             )
             # More than one dataset for one variable == the ambiguity that must pop up.
             assert len(matches) > 1
-            # The choice offered to the user, read from the raw docs (no facet named).
+            # The choice offered to the user, read from the raw docs (no facet named):
+            # normalise each stored document at load time, then diff by Dataset.id.
             output1_row, output2_row = matches
-            assert facet_differences(
-                _raw_doc_for(session, output1_row),
-                _raw_doc_for(session, output2_row),
-                output1_row.id_project_specific,
-                output2_row.id_project_specific,
-            ) == {"product": ("output1", "output2")}
+            normalised_info = tuple(
+                (row.id, normalise_stored_document(_raw_doc_for(session, row)))
+                for row in matches
+            )
+            differences = facet_differences(normalised_info)
+            # `product` is the id-linked facet a higher layer would surface to the user.
+            assert differences["product"] == {
+                output1_row.id: "output1",
+                output2_row.id: "output2",
+            }
+            # The bottom layer also reports id-noise (version, master/instance id) that
+            # differs too; filtering those to the id-linked facet is the higher layer's
+            # job, deferred to the clash-resolution wrapper (a later PR).
+            assert "version" in differences
 
 
 def test_choosing_a_product_resolves_to_one_dataset_per_variable(populated):

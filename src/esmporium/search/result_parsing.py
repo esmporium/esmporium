@@ -28,7 +28,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class NodeInfo:
-    """Where one edition is hosted."""
+    """Information about one place that a dataset version is available from."""
 
     data_node: str
     index_node: str | None

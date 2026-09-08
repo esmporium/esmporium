@@ -315,3 +315,59 @@ erDiagram
         int raw_id FK
         int dataset_version_id FK
     }
+
+
+We are in the process of implementing our search results into the database. We have made some changes to our schema (database model) and feel confident in these changes. The ingestion of the results we are still working on. To handle the various projects across the various esgf-"generations" with Solr and STAC, we have created the search_api_facades to handle all the translations and differences between Solr and STAC (and the 1.5bridge) in the search step. To actually ingest (save) results to the database, we have moved all the ingestion and results parsing into the seearch_api_facade space, however not all the ingestion/loading is in the facade space yet. In dataset_uniquess.py, we have the _normalise() function which does not assume the Solr or STAC of the raw_doc results. This should be moved into the serach_api_facade layer. We do not want this coupling between facades, and it is ok to copy and paste things as much as you need so that we keep solr and stac uncoupled and in the facade layer. The dataset_uniqueness clash itself should live in the db layer, but the normalisation should live in facade. This means that the data being handed to dataset_uniqueness.py should be a in a consistent format and shouldn't care which generation it came from.
+
+Additionally, dataset_uniqueness.py is primarily to raise a note for users if there is a clash upon loading of data. Given out uniqueness constraint across all columns in dataset, it is only when we load data and find that all "our" columns are the same but id_project_specific is different, that we investigate the source of the clash. The clash should identify the facet names (that clash), the facet values, both keyed by dataset.id. See here for an example. Please make a plan for this build adn then I will go over additional things to update in this PR
+# Please build this API.
+# We want to be able to pass in one or more pieces of normalised information
+# related to datasets
+# (we could get clashes over more than just two rows)
+# and to get back something which shows all the facets that differ,
+# with clear links back to the datasets we started with.
+#
+# The flow I'm expecting is:
+# - ingest datasets, including saving their normalised facets
+# - load data
+# - discover a clash
+# - load normalised facets for each dataset in the clash
+# - pass into this function
+# - get the differences
+# - higher-level wrapper then does something with these differences
+#   to make a nice error for the user
+#
+# I don't mind if you keep or delete the functions above.
+def facet_differences(
+    normalised_info: tuple[tuple[int, dict[str, Any]], ...],
+) -> dict[str, dict[int, Any]]:
+    """
+    Find the facets that explain why datasets differ
+
+    Parameters
+    ----------
+    raw_info
+        Raw information
+
+        Each element is a tuple with two elements.
+        The first is the ID of the dataset
+        (or dataset version, Anna please think and decide)
+        to which these facets are linked.
+        The second is the normalised facets.
+
+    Returns
+    -------
+    :
+        `{facet_name: {id_a: value_in_a, id_b: value_in_b}}`
+        for each distinguishing facet.
+        Empty if nothing in the raw documents explains the id difference.
+
+    Examples
+    --------
+    >>> facet_differences(
+    ...     ((2015, {"product": ["output1"]}), (1031, {"product": ["output2"]}))
+    ... )
+    {'product': {2015: 'output1', 1031: 'output2'}}
+    """
+    # Check that no ID is repeated in normalised_info
+    raise NotImplementedError

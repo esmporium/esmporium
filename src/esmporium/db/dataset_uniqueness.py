@@ -1,24 +1,20 @@
 """
-Explaining why two datasets that look identical to us are actually different
+Explaining why datasets that look identical to us are actually different
 
-When two datasets share every column our [`Dataset`][esmporium.db.schema.Dataset] model
+When datasets share every column our [`Dataset`][esmporium.db.schema.Dataset] model
 records but have different `id_project_specific` values, they are distinguished by some
 project-specific facet we do not model as a column: `product` for CMIP5, `activity_id`
 for CMIP6, and (for CMIP7) things like `activity_id`, `region` or the branding labels.
 
 Rather than hard-code any of those names, or try to split the native id on `.` (model
-names contain dots, so that is unsafe), we read the facet name and values straight out
-of the raw search documents we stored.
+names contain dots, so that is unsafe), we compare the facets read out of the raw search
+documents we stored.
 
-The flattening in `_normalise` deliberately lives here, not in the search facade. The
-facade's readers are polymorphic over a live search API and only know how to pull the
-facets we model as columns; this diagnostic needs *every* facet, runs against the stored
-raw JSON with no facade in scope, and the two clashing documents can even come from
-different search generations. A generic, shape-based flattener is the right tool here.
-
-[`all_facet_differences`][] is the unfiltered bottom layer (every facet that differs);
-[`facet_differences`][] is the higher layer that keeps only the id-linked facet the
-load/clash-resolution flow ("which product did you mean?") is built on.
+This module is deliberately generation-agnostic: it never sees raw JSON and never
+sniffs Solr vs STAC. The flattening of a stored document into `{facet_name: value}`
+lives in the search layer ([`esmporium.search.normalise_stored_document`][]), which
+knows the response shapes; here we only compare the already-flat mappings it produces.
+That keeps the database layer free of any search-generation knowledge.
 """
 
 # TODO: for facet differences also list id_project_specific?
@@ -30,146 +26,91 @@ from typing import Any
 
 
 class _Missing:
-    """Sentinel for a facet present in one document but absent from the other."""
+    """Sentinel for a facet present in some documents but absent from another."""
 
     def __repr__(self) -> str:
         return "<absent>"
 
 
 MISSING = _Missing()
-"""Marks the absent side when a facet appears in only one of two compared documents."""
-
-
-def _normalise(raw: dict[str, Any]) -> dict[str, Any]:
-    """
-    Flatten one raw search document to `{facet_name: scalar_value}`
-
-    Handles both search generations:
-
-    - Solr (ESGF1 / the ESGF-1.5 bridge) puts facets at the top level, usually as
-      single-element lists, e.g. `{"product": ["output1"]}`.
-    - STAC (ESGF-NG) puts them inside `properties`, under project-prefixed keys, e.g.
-      `{"properties": {"cmip7:activity_id": "ScenarioMIP"}}`.
-
-    Parameters
-    ----------
-    raw
-        One raw document, already parsed from its stored JSON
-
-    Returns
-    -------
-    :
-        The document's facets as a flat mapping of unprefixed name to scalar value
-    """
-    source = raw.get("properties", raw)  # STAC nests facets; Solr does not
-    flat: dict[str, Any] = {}
-    for key, value in source.items():
-        name = key.split(":", 1)[1] if ":" in key else key  # drop any `cmipN:` prefix
-        flat[name] = value[0] if isinstance(value, list) and len(value) == 1 else value
-
-    return flat
-
-
-def all_facet_differences(
-    raw_a: dict[str, Any],
-    raw_b: dict[str, Any],
-) -> dict[str, tuple[Any, Any]]:
-    """
-    List every facet that differs between two raw documents
-
-    The unfiltered bottom layer. Each document is flattened with `_normalise` first, so
-    a single-element list (`["output1"]`) and its scalar (`"output1"`), or a
-    `cmipN:`-prefixed STAC key and its unprefixed name, are never reported as spurious
-    differences. Every real difference is returned — the id-linked facet (`product`,
-    `activity_id`, ...) plus anything else that differs: `version`, `data_node`,
-    `replica`, urls, timestamps.
-
-    A facet present in only one document is reported with `MISSING` on the absent side.
-
-    Higher layers (e.g. `facet_differences`) decide which of these differences matter to
-    the user; this one decides nothing.
-
-    Parameters
-    ----------
-    raw_a, raw_b
-        The two raw documents, already parsed from their stored JSON
-
-    Returns
-    -------
-    :
-        `{facet_name: (value_in_a, value_in_b)}` for every facet whose values differ.
-        `MISSING` stands in for a facet absent from one document.
-    """
-    facets_a = _normalise(raw_a)
-    facets_b = _normalise(raw_b)
-
-    differences: dict[str, tuple[Any, Any]] = {}
-    for name in facets_a.keys() | facets_b.keys():
-        value_a = facets_a.get(name, MISSING)
-        value_b = facets_b.get(name, MISSING)
-        if value_a != value_b:
-            differences[name] = (value_a, value_b)
-
-    return differences
+"""Marks a dataset whose document lacks a facet that others in the comparison carry."""
 
 
 def facet_differences(
-    raw_a: dict[str, Any],
-    raw_b: dict[str, Any],
-    id_project_specific_a: str,
-    id_project_specific_b: str,
-) -> dict[str, tuple[Any, Any]]:
+    normalised_info: tuple[tuple[int, dict[str, Any]], ...],
+) -> dict[str, dict[int, Any]]:
     """
-    Find the facets that explain why two native ids differ
+    Find the facets that explain why datasets differ
 
-    Both documents describe datasets we consider identical (same values in every column
-    our model records), yet their `id_project_specific` differs. This returns the facet
-    name(s) and the two values behind that difference, read from the raw documents. It
-    is the higher layer over `all_facet_differences`, keeping only the id-linked facets.
+    Given the normalised facets of two or more datasets that our model considers
+    identical (same values in every column we record, yet different
+    `id_project_specific`), this reports every facet on which they do not all agree,
+    keyed back to the datasets it came from. The higher-level clash-resolution flow
+    ("which product did you mean?") uses this to tell the user what actually differs.
 
-    A differing facet counts only if its value appears **inside** each document's
-    `id_project_specific` but is not the whole id. That is what ties the facet to the
-    id difference, and it drops fields that also differ but are not identity
-    (`version`, `data_node`, download URLs, timestamps) — none of those appear in the
-    native id (the `master_id`). It does this without splitting the id on `.`.
+    A facet is reported whenever the datasets do not all share one value for it,
+    including when some carry it and others do not (the absent side is marked
+    [`MISSING`][(m).]). Nothing here decides which of those differences matter to the
+    user; that filtering is left to the caller.
 
     Parameters
     ----------
-    raw_a, raw_b
-        The two raw documents, already parsed from their stored JSON
-
-    id_project_specific_a, id_project_specific_b
-        The native id of each document's dataset (e.g. the CMIP5/6 `master_id`)
+    normalised_info
+        One entry per dataset in the clash. Each is a tuple of the dataset's id
+        (currently [`Dataset.id`][esmporium.db.schema.Dataset]; see the note below) and
+        its normalised facets, as produced by
+        [`esmporium.search.normalise_stored_document`][].
 
     Returns
     -------
     :
-        `{facet_name: (value_in_a, value_in_b)}` for each distinguishing facet. Empty
-        if nothing in the raw documents explains the id difference.
+        `{facet_name: {id: value}}` for each facet the datasets do not all agree on,
+        with one entry per dataset id (its value, or [`MISSING`][(m).] if its document
+        lacks the facet). Empty if the datasets agree on every facet -- meaning nothing
+        in the raw documents explains their `id_project_specific` difference.
+
+    Raises
+    ------
+    ValueError
+        The same dataset id appears more than once in `normalised_info`, so results
+        keyed by id would be ambiguous.
 
     Examples
     --------
     >>> facet_differences(
-    ...     {"product": ["output1"]},
-    ...     {"product": ["output2"]},
-    ...     "cmip5.output1.CMCC.CMCC-CM.piControl.mon.atmos.Amon.r1i1p1",
-    ...     "cmip5.output2.CMCC.CMCC-CM.piControl.mon.atmos.Amon.r1i1p1",
+    ...     ((2015, {"product": "output1"}), (1031, {"product": "output2"}))
     ... )
-    {'product': ('output1', 'output2')}
-    """
-    differences: dict[str, tuple[Any, Any]] = {}
-    for name, (value_a, value_b) in all_facet_differences(raw_a, raw_b).items():
-        if value_a is MISSING or value_b is MISSING:
-            continue  # an id-linked facet is present in both documents
+    {'product': {2015: 'output1', 1031: 'output2'}}
 
-        string_a, string_b = str(value_a), str(value_b)
-        in_each_id = (
-            string_a in id_project_specific_a and string_b in id_project_specific_b
+    Notes
+    -----
+    The id is currently the [`Dataset.id`][esmporium.db.schema.Dataset] of each clashing
+    row -- a clash is a `Dataset`-level event (all our columns equal, with
+    `id_project_specific` differing), so the distinguishing facet is a property of the
+    dataset, not of any one edition. When the higher-level clash-resolution wrapper is
+    built we may need to key on (or additionally carry) a `DatasetVersionSpecific.id` if
+    versions turn out to distinguish a clash; revisit the key then.
+    """
+    ids = [dataset_id for dataset_id, _ in normalised_info]
+    if len(ids) != len(set(ids)):
+        msg = (
+            "Every dataset id in normalised_info must be unique, but at least one is "
+            f"repeated: {ids}. Results are keyed by id, so duplicates are ambiguous."
         )
-        is_whole_id = (
-            string_a == id_project_specific_a or string_b == id_project_specific_b
-        )
-        if in_each_id and not is_whole_id:
-            differences[name] = (value_a, value_b)
+        raise ValueError(msg)
+
+    all_facet_names: set[str] = set().union(
+        *(facets.keys() for _, facets in normalised_info)
+    )
+
+    differences: dict[str, dict[int, Any]] = {}
+    for name in all_facet_names:
+        values_by_id = {
+            dataset_id: facets.get(name, MISSING)
+            for dataset_id, facets in normalised_info
+        }
+        distinct_values = list(values_by_id.values())
+        if any(value != distinct_values[0] for value in distinct_values[1:]):
+            differences[name] = values_by_id
 
     return differences

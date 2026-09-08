@@ -39,6 +39,7 @@ from esmporium.search.health import (
     SearchAPICallObserver,
     fan_out,
 )
+from esmporium.search.result_normalisation import normalise_stored_document
 from esmporium.search.result_parsing import (
     NodeInfo,
     ParsedDocShell,
@@ -168,6 +169,7 @@ __all__ = [
     "get_url",
     "identity_string",
     "log_request_as_url_and_curl",
+    "normalise_stored_document",
     "search",
     "values_set_for",
 ]

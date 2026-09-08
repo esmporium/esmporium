@@ -41,8 +41,9 @@ class UnhandledDatasetClashError(Exception):
     This means the data really is different in some facet we do not model, and that
     difference is invisible to [`Dataset`][esmporium.db.schema.Dataset]. It is a signal
     that our model is missing something for this data, not a duplicate to be dropped
-    silently. Compare the underlying raw documents with
-    [`esmporium.db.dataset_uniqueness.facet_differences`][] to see what differs.
+    silently. To see what differs, flatten the underlying raw documents with
+    [`esmporium.search.normalise_stored_document`][] and compare them with
+    [`esmporium.db.dataset_uniqueness.facet_differences`][].
     """
 
     # TODO : still handling under id_project_specific and variable uniqueness
@@ -54,7 +55,8 @@ class UnhandledDatasetClashError(Exception):
             f"(id_project_specific={dataset.id_project_specific!r}, "
             f"variable={dataset.variable!r}), so our dataset model cannot tell them "
             "apart. This clash is not handled: the data differs in a facet we do not "
-            "model. Inspect the raw documents with "
+            "model. Flatten the raw documents with "
+            "esmporium.search.normalise_stored_document and compare them with "
             "esmporium.db.dataset_uniqueness.facet_differences to find the difference."
         )
 

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from esmporium.db.dataset_uniqueness import (
     MISSING,
-    all_facet_differences,
     facet_differences,
 )
 from esmporium.db.results_to_database import (
@@ -53,7 +52,6 @@ __all__ = [
     "SearchAPICallRecord",
     "UnhandledDatasetClashError",
     "aggregate_host_health",
-    "all_facet_differences",
     "build_health_selector",
     "build_result_processor",
     "facet_differences",
