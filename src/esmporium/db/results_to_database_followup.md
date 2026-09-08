@@ -37,28 +37,31 @@ Done and green (`pytest -m "not slow"`: all pass, 27 skipped; ruff clean):
 ## The database model (current)
 
 Six tables in `schema.py`. `SearchAPICallRecord` is the pre-existing search-health log;
-the other five hold results.
+the other five hold results. Version is decoupled from the bundle, and data nodes are
+shared across editions.
 
 ```
-        Dataset                      one row per (bundle, variable)
-          │  id (int, surrogate PK)
-          │  id_project_specific ────────────────┐  (grouping key, not a FK)
-          │  project, model, …, grid_label, processing_id
-          │                                       │  match on id_project_specific
-          ▼                                       ▼
-   identity: UNIQUE index over          DatasetVersionSpecific   one row per bundle EDITION
-   every column except id                 version_id (PK) = f"{id_project_specific}.v{version}"
-   (grid_label via coalesce)              id_project_specific, version, is_latest, retracted
-                                                 │
-                          ┌──────────────────────┼───────────────────────┐
-                          ▼                       ▼                       │
-              DatasetNodeInformation      RawDocVersionLink ──*:*── DatasetRawDoc
-              one row per (edition,        (raw_id, version_id)      esgf_doc_id (unique)
-              data_node); replica,          unique pair             search_host, raw_json
-              index_node                                            retrieved_at
+        Dataset                          one row per (bundle, variable)
+          id (int, surrogate PK)
+          id_project_specific            the ESGF native id (grouping value, NOT a FK)
+          project, model, …, grid_label, processing_id
+            │  identity = UNIQUE index over every column except id (grid_label via coalesce)
+            │ 1
+            │ *   one-to-many  (dataset_id FK)
+        DatasetVersionSpecific           one edition per (dataset_id, version)
+          id (int, surrogate PK)
+          dataset_id FK → Dataset.id
+          version, is_latest, retracted
+            │                                     ▲
+            │ *:* via DatasetVersionNodeLink      │ *:* via RawDocVersionLink
+            ▼                                     │
+        DatasetNodeInformation              DatasetRawDoc
+          id (PK)                             id (PK)
+          data_node (UNIQUE)                  esgf_doc_id (UNIQUE), raw_json, retrieved_at
+        one row per distinct node           the exact JSON a search returned, stored once
 ```
 
-**`Dataset`** — one row per (ESGF bundle × variable).
+**`Dataset`** — one row per (ESGF bundle × variable). Unchanged this cycle.
 - `id`: surrogate integer PK, meaningless.
 - **Identity** is a unique *expression index* `uq_dataset_identity` over **every column
   except `id`** — `id_project_specific` + the nine facets, with `grid_label` wrapped in
@@ -69,24 +72,31 @@ the other five hold results.
 - Facets: `project, model, institution, experiment, variant_label, variable,
   reporting_interval, grid_label` (nullable, NULL for CMIP5), `processing_id`.
 
-**`DatasetVersionSpecific`** — one row per **bundle edition** (not per variable).
-- `version_id` (PK) = `f"{id_project_specific}.v{version}"`.
-- `id_project_specific` (indexed grouping key — a `Dataset` finds its editions by
-  matching this), `version`, `is_latest`, `retracted` (search-time snapshots).
-- CMIP5: all variables of one bundle share **one** edition row. CMIP6/7: the bundle is
-  already per-variable, so it's one edition per `Dataset` anyway.
+**`DatasetVersionSpecific`** — one **edition**, now a real child of `Dataset`.
+- `id`: plain integer surrogate PK (was `version_id = f"{ips}.v{version}"`; that coupling
+  is gone, along with any `id_project_specific` on this table).
+- `dataset_id`: FK to `Dataset.id` — a genuine one-to-many. Each per-variable CMIP5
+  dataset gets its **own** edition row rather than sharing one; CMIP6/7 are per-variable
+  already, so one edition per `Dataset` there.
+- Unique on `(dataset_id, version)`. `version`, `is_latest`, `retracted` are search-time
+  snapshots.
 
-**`DatasetNodeInformation`** — one row per (edition, data node). `version_id` (FK),
-`data_node`, `index_node`, `replica`. Unique `(version_id, data_node)`. **No download
-URLs** — file access is a later PR.
+**`DatasetNodeInformation`** — one row per **distinct** data node.
+- `data_node` is UNIQUE (there are only a handful across ESGF). Many editions point at one
+  node row. No download URLs — file access is a later PR.
+
+**`DatasetVersionNodeLink`** — the many-to-many join between editions and nodes.
+- `(dataset_version_id, node_id)`, unique pair. A node hosts many editions; an edition can
+  live on many nodes. This is the new link that lets node rows be shared.
 
 **`DatasetRawDoc`** — the exact JSON a search returned, stored once. `esgf_doc_id`
-(unique; Solr `<instance_id>|<data_node>`, STAC feature id), `search_host`, `raw_json`,
-`retrieved_at`. **No `source_api`** — the exact host is `search_host`.
+(unique; Solr `<instance_id>|<data_node>`, STAC feature id), `raw_json`, `retrieved_at`.
+**No `source_api` / `search_host`** — the generation is derivable from the JSON shape, and
+the exact host lives in the search-health log (`SearchAPICallRecord`).
 
-**`RawDocVersionLink`** — `(raw_id, version_id)` junction, unique pair. Kept as a
-many-to-many for future flexibility; with per-bundle editions it is effectively
-many-documents-to-one-edition (one raw doc per node).
+**`RawDocVersionLink`** — `(raw_id, dataset_version_id)` junction, unique pair. One CMIP5
+document describes many per-variable editions (one `raw_id`, many links); one edition can
+be described by several documents (Solr returns one per node).
 
 ### Identity behaviour (three cases, all real and verified live)
 
@@ -95,54 +105,77 @@ many-documents-to-one-edition (one raw doc per node).
 2. Same all our columns, different `id_project_specific` → **allowed**; the distinguishing
    facet lives only in the native id / raw JSON. It differs per project: CMIP5 `product`,
    CMIP6 `activity_id`, CMIP7 `activity_id`/`region`/labels — so it is **never hardcoded**.
-   `facet_differences(raw_a, raw_b, ips_a, ips_b)` reads the facet name+values from the
-   raw docs (rule: value differs, appears inside each native id, isn't the whole id).
+   Reading it out is `dataset_uniqueness`: `all_facet_differences(raw_a, raw_b)` lists
+   *every* facet that differs (the bottom layer), and `facet_differences(…, ips_a, ips_b)`
+   keeps only facets whose value sits inside each native id (the id-linked one).
 3. Identical across every column incl. `id_project_specific` → **loud**
    `UnhandledDatasetClashError` (via `save_dataset`), meaning the data differs in a facet
    we don't model.
 
 ---
 
-## Ingestion (how raw JSON becomes rows)
+## How it fits together (search → rows → diagnosis)
 
-`results_to_database.ingest_results(session, results)` — consumes `SearchOutcome.results`
-(host → raw JSON), commits once, and is **idempotent** (a re-run reuses rows).
+Parsing now lives in the **search facade**, which turns each Solr/STAC response into a
+`ParsedDocument` (one common shape). `results_to_database.py` consumes those and only
+writes rows — it never touches raw JSON shape itself.
 
-Per host, per document (`parse.parse_document` → `ParsedDoc`):
-- Detect shape from the response: `response.docs[]` ⇒ Solr, `features[]` ⇒ STAC.
-- **CMIP5**: read the whole `variable` list from the dataset-level doc and emit one
-  `Dataset` per variable — **all** of them, never the file layer. `model` is the DRS
-  token (`instance_id` index 3), `grid_label = None`.
-- **CMIP6 (Solr)**: `source_id`/`institution_id`/…/`table_id`; one variable.
-- **CMIP6/7 (STAC)**: facets from `properties` under `cmipN:` keys; `processing_id` =
-  `table_id` (CMIP6) / `variable_branding_suffix` (CMIP7); `id_project_specific` = the
-  feature id with the trailing `.vYYYYMMDD` stripped; `version` from `properties.version`;
-  data node(s) from the asset href hostnames.
-- Write: get-or-create `Dataset` (by all facets, so re-ingest is idempotent and NULL grid
-  matches); upsert edition on `version_id` (refresh `is_latest`/`retracted`); upsert node
-  on `(version_id, data_node)`; get-or-create raw doc by `esgf_doc_id`; link.
+```
+search()                          (esmporium.search)
+  → facade parses each response into ParsedDocument   (Solr & STAC → one shape)
+  → processor(host, parsed) = build_result_processor(session)
+        → ingest_parsed_documents(session, parsed)
+              → _ingest_document(parsed)              once per document
+                    parsed.dataset_facets()           one facet-set per variable (CMIP5)
+                    _get_or_create_dataset            match on ALL facets → idempotent
+                    _upsert_version                   on (dataset_id, version)
+                    _get_or_create_node               dedup by data_node
+                    _get_or_create_version_node_link  edition ↔ node
+                    _get_or_create_raw_doc            dedup by esgf_doc_id
+                    _get_or_create_link               raw doc ↔ edition
+        → session.commit()                            once per host
+  ↓  (later, off the write path, when a clash needs explaining)
+dataset_uniqueness.facet_differences / all_facet_differences
+        re-read DatasetRawDoc.raw_json for the two clashing rows and name what differs
+```
 
-`parse.data_node_from_esgf_doc_id` recovers the node from a Solr id (`rsplit("|", 1)[-1]`;
-STAC ids have no `|`).
+`ParsedDocument` (`search/result_parsing.py`) is the contract between the two layers:
+`db` may import `search`, never the reverse. Ingestion is idempotent because every write
+is a get-or-create keyed on the relevant unique constraint (so re-running a search reuses
+rows rather than duplicating them). A genuine clash — everything equal incl.
+`id_project_specific` — surfaces as `UnhandledDatasetClashError` from `save_dataset`.
 
 ---
 
 ## Remaining to finish this PR
 
-1. **Tests (the main remaining work).** Deliberately deferred until the model settled;
-   now it has. Add:
-   - **Parser** unit tests, per generation, driven from the recorded fixtures in
-     `tests/test-data/search/` (Solr CMIP5/CMIP6, bridge CMIP6, STAC CMIP6/CMIP7):
-     assert the exact rows, especially CMIP5 emitting **all** variables under one edition.
-   - **Ingestion** tests: idempotent re-ingest; per-bundle sharing (many variables → one
-     edition + one raw doc); a genuine clash raises `UnhandledDatasetClashError`.
-   - **Constraint** tests on the new tables: FK integrity, `esgf_doc_id` uniqueness,
-     `(version_id, data_node)` uniqueness, `(raw_id, version_id)` uniqueness.
-   - One **integration** test: recorded (or opt-in live) search → `ingest_results` →
-     assert `Dataset`/edition/node/rawdoc/link rows.
-2. **Optional hand-run script** `scripts/search_results_to_database.py` (visual, in the
-   style of `scripts/cmip5_results_to_dataset.py`): search → ingest → print the rows.
-3. **Changelog** fragment (`changelog/<MR>.feature.md`) at merge time.
+**Essentially just test coverage** — the schema and ingestion are built and verified live;
+what's left is pinning them down.
+
+Done this cycle:
+- **Schema-constraint tests** for the five result tables (`tests/unit/test_schema.py`):
+  `(dataset_id, version)`, `data_node`, `(dataset_version_id, node_id)`, `esgf_doc_id`,
+  `(raw_id, dataset_version_id)` uniqueness, plus the two many-to-many shapes. (FKs are
+  *not* asserted: SQLite doesn't enforce them without `PRAGMA foreign_keys=ON`, which we
+  don't set.)
+- **Round-trip / clash tests** (`tests/unit/db/test_results_round_trip.py`) and
+  **disambiguation tests** (`tests/unit/db/test_dataset_uniqueness.py`, now covering the
+  new `all_facet_differences` bottom layer).
+- **Ingestion tests** (`tests/unit/db/test_ingest_parsed_documents.py`): one edition per
+  dataset, idempotent re-ingest, per-host commit, CMIP7 STAC.
+
+Still to add:
+- **Ingestion clash test**: a genuine clash (all columns incl. `id_project_specific`
+  equal) raises `UnhandledDatasetClashError` through `ingest_parsed_documents`.
+- **Parser tests per generation**, driven from the recorded fixtures in
+  `tests/test-data/search/`, asserting the exact rows — especially CMIP5 emitting **all**
+  variables under one raw doc. (Parsing lives in `search/` now, so these are search-layer
+  tests.)
+- One **integration** test: recorded (or opt-in live) search → ingest → assert
+  `Dataset`/edition/node/rawdoc/link rows.
+- Optional **hand-run script** `scripts/search_results_to_database.py` (visual, in the
+  style of `scripts/cmip5_results_to_dataset.py`): search → ingest → print the rows.
+- **Changelog** fragment (`changelog/<MR>.feature.md`) at merge time.
 
 ## Deferred to later PRs (out of scope here)
 
@@ -151,11 +184,11 @@ STAC ids have no `|`).
 - `dataset_addition_source` column (dataset found via query vs. via local files).
 - Content-diff tracking when a raw doc changes under the same `esgf_doc_id` (today
   get-or-create keeps the first).
-- Precise `source_api` generation (we keep the exact `search_host`; solr/stac is derivable
-  from the shape).
+- Precise `source_api` generation (the generation is derivable from the JSON shape; the
+  exact host lives in `SearchAPICallRecord`).
 - The **load / clash-resolution flow** (the "which product?" popup) built on
-  `facet_differences` — a later PR; the schema is already proven loadable by the
-  round-trip test.
+  `facet_differences` / `all_facet_differences` — a later PR; the schema is already proven
+  loadable by the round-trip test.
 
 ---
 
@@ -221,6 +254,12 @@ make sure there is a commit just adding that test
 - then we can role from there
 ```
 ### Updates to schema / database model
+
+> **IMPLEMENTED (2026-09-07, migration `20260907_b35e5c5503c9`).** The spec below is the
+> brief for the version/node decoupling; it is now done and reflected in "The database
+> model (current)" above. Kept verbatim for the rationale. The one open question it raises
+> — DatasetNodeInformation as shared nodes via a many-to-many — was taken: nodes are unique
+> and joined through `DatasetVersionNodeLink`.
 
 We have some updates to our database model that we need to implement. This only handles the dataset/version/node/raw_docs linking, with SearchAPICallRecord we consider separate to this current 'save results to database' step. Below is the mermaid-style flowchart for visualisation, and I will talk through the changes to make on the current schema (although the mermaid flowchart should give you indiciation of column names and what columns must be removed relative to the current schema).
 
