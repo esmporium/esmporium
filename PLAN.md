@@ -312,7 +312,7 @@ Not included:
 
 Dataset clash handling
 
-Look in `schema.py` a the comment that starts with "TODO: work out how we handle clashes".
+Look in `schema.py` at the comment that starts with "TODO: work out how we handle clashes".
 Then think about how we handle these cases.
 Probably we will just write tests for each to lock down the behaviour,
 but we might have to make some behaviour changes/add high-level helpers to get the behaviour we want.
