@@ -40,6 +40,8 @@ from esmporium.search import (
     ESGF1_CMIP6_FACADE_PARAMETERS,
     ESGFNG_CMIP6_FACADE_PARAMETERS,
     ESGFNG_CMIP7_FACADE_PARAMETERS,
+    SINGLE_ROW_DOC_PARSER,
+    VARIABLE_BUNDLE_DOC_PARSER,
     DatasetFacets,
     SearchAPIESGF1Solr,
     SearchAPIESGF15BridgeSolr,
@@ -61,7 +63,12 @@ and it is what the recorded query asked for.
 """
 
 
-def facade(parameters, search_api_cls, host="recorded.example") -> SearchAPIFacade:
+def facade(
+    parameters,
+    search_api_cls,
+    host="recorded.example",
+    doc_parser=SINGLE_ROW_DOC_PARSER,
+) -> SearchAPIFacade:
     """
     Build a facade for parsing a recording
 
@@ -71,6 +78,7 @@ def facade(parameters, search_api_cls, host="recorded.example") -> SearchAPIFaca
     return SearchAPIFacade(
         parameters=parameters,
         search_api=search_api_cls(host, build_transient_retrying(1)),
+        doc_parser=doc_parser,
     )
 
 
@@ -98,7 +106,11 @@ def every_facet(facade: SearchAPIFacade) -> set[str]:
 RECORDED_CASES = (
     pytest.param(
         "esgf1-solr-cmip5",
-        facade(ESGF1_CMIP5_FACADE_PARAMETERS, SearchAPIESGF1Solr),
+        facade(
+            ESGF1_CMIP5_FACADE_PARAMETERS,
+            SearchAPIESGF1Solr,
+            doc_parser=VARIABLE_BUNDLE_DOC_PARSER,
+        ),
         id="esgf1-solr-cmip5",
     ),
     pytest.param(

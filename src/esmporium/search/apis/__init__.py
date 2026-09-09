@@ -15,15 +15,18 @@ from esmporium.search.apis.esgf15_bridge import SearchAPIESGF15BridgeSolr
 from esmporium.search.apis.esgfng import SearchAPIESGFNGSTAC
 from esmporium.search.apis.protocol import (
     LimitOutOfRangeError,
+    MultipleFacetValuesError,
     NoFacetValuesReturnedError,
     NoSearchResultNumberOfMatchesReturnedError,
     SearchAPI,
     UncompilableFacetPatternError,
+    single_facet_value_or_none,
 )
 from esmporium.search.apis.request import Request
 
 __all__ = [
     "LimitOutOfRangeError",
+    "MultipleFacetValuesError",
     "NoFacetValuesReturnedError",
     "NoSearchResultNumberOfMatchesReturnedError",
     "Request",
@@ -32,4 +35,5 @@ __all__ = [
     "SearchAPIESGF15BridgeSolr",
     "SearchAPIESGFNGSTAC",
     "UncompilableFacetPatternError",
+    "single_facet_value_or_none",
 ]

@@ -34,6 +34,8 @@ from esmporium.search import (
     ESGF1_CMIP6_FACADE_PARAMETERS,
     ESGFNG_CMIP6_FACADE_PARAMETERS,
     ESGFNG_CMIP7_FACADE_PARAMETERS,
+    SINGLE_ROW_DOC_PARSER,
+    VARIABLE_BUNDLE_DOC_PARSER,
     SearchAPIESGF1Solr,
     SearchAPIESGF15BridgeSolr,
     SearchAPIESGFNGSTAC,
@@ -62,6 +64,7 @@ CASES = (
         SearchAPIFacade(
             ESGF1_CMIP5_FACADE_PARAMETERS,
             SearchAPIESGF1Solr("esgf.nci.org.au", build_transient_retrying(2)),
+            doc_parser=VARIABLE_BUNDLE_DOC_PARSER,
         ),
         QueryCMIP5(experiment="historical", variable="tas", time_frequency="mon"),
     ),
@@ -70,6 +73,7 @@ CASES = (
         SearchAPIFacade(
             ESGF1_CMIP6_FACADE_PARAMETERS,
             SearchAPIESGF1Solr("esgf.nci.org.au", build_transient_retrying(2)),
+            doc_parser=SINGLE_ROW_DOC_PARSER,
         ),
         QueryCMIP6(experiment_id="historical", variable_id="tas", frequency="mon"),
     ),
@@ -80,6 +84,7 @@ CASES = (
             SearchAPIESGF15BridgeSolr(
                 "esgf-node.ornl.gov", build_transient_retrying(2)
             ),
+            doc_parser=SINGLE_ROW_DOC_PARSER,
         ),
         QueryCMIP6(experiment_id="historical", variable_id="tas", frequency="mon"),
     ),
@@ -88,6 +93,7 @@ CASES = (
         SearchAPIFacade(
             ESGFNG_CMIP6_FACADE_PARAMETERS,
             SearchAPIESGFNGSTAC("search.east.esgf.io", build_transient_retrying(2)),
+            doc_parser=SINGLE_ROW_DOC_PARSER,
         ),
         QueryCMIP6(experiment_id="historical", variable_id="tas", frequency="mon"),
     ),
@@ -96,6 +102,7 @@ CASES = (
         SearchAPIFacade(
             ESGFNG_CMIP7_FACADE_PARAMETERS,
             SearchAPIESGFNGSTAC("search.east.esgf.io", build_transient_retrying(2)),
+            doc_parser=SINGLE_ROW_DOC_PARSER,
         ),
         QueryCMIP7(variable_id="tas"),
     ),
@@ -108,6 +115,7 @@ CASES = (
         SearchAPIFacade(
             ESGFNG_CMIP7_FACADE_PARAMETERS,
             SearchAPIESGFNGSTAC("search.west.esgf.io", build_transient_retrying(2)),
+            doc_parser=SINGLE_ROW_DOC_PARSER,
         ),
         QueryCMIP7(variable_id="tas"),
     ),

@@ -16,6 +16,7 @@ from esmporium.search.apis.protocol import (
     LimitOutOfRangeError,
     NoFacetValuesReturnedError,
     NoSearchResultNumberOfMatchesReturnedError,
+    single_facet_value_or_none,
 )
 from esmporium.search.apis.request import Request
 from esmporium.search.result_normalisation import SOLR_FORMAT_TAG
@@ -137,12 +138,6 @@ def solr_extract_result_documents(raw: dict[str, Any]) -> list[dict[str, Any]]:
     return list(docs)
 
 
-def solr_read_facet(doc: dict[str, Any], api_field: str) -> str | None:
-    """Read one scalar facet out of a Solr record by its API field name."""
-    value = extract_one_element_list(doc.get(api_field))
-    return None if value is None else str(value)
-
-
 def solr_read_facet_list(doc: dict[str, Any], api_field: str) -> tuple[str, ...]:
     """Read a multi-valued facet (e.g. CMIP5's whole `variable` bundle) as a tuple."""
     values = doc.get(api_field)
@@ -151,6 +146,16 @@ def solr_read_facet_list(doc: dict[str, Any], api_field: str) -> tuple[str, ...]
     if not isinstance(values, list):
         values = [values]
     return tuple(str(value) for value in values)
+
+
+def solr_read_facet(doc: dict[str, Any], api_field: str) -> str | None:
+    """Read one scalar facet out of a Solr record by its API field name.
+
+    Built on [solr_read_facet_list][(m).] so a field that unexpectedly carries several
+    values raises [MultipleFacetValuesError][esmporium.search.apis.MultipleFacetValuesError]
+    rather than being stringified into a single value.
+    """  # noqa: E501
+    return single_facet_value_or_none(solr_read_facet_list(doc, api_field), api_field)
 
 
 def solr_read_document_shell(doc: dict[str, Any]) -> ParsedDocShell:

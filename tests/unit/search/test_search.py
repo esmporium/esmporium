@@ -21,6 +21,7 @@ from esmporium.query import QueryCMIP6
 from esmporium.search import (
     ESGF1_CMIP6_FACADE_PARAMETERS,
     ESGFNG_CMIP6_FACADE_PARAMETERS,
+    SINGLE_ROW_DOC_PARSER,
     NoAPIWouldAnswerError,
     SearchAPIESGF1Solr,
     SearchAPIESGFNGSTAC,
@@ -68,6 +69,7 @@ def make_facade_cmip6_esgf1(
     return SearchAPIFacade(
         parameters=ESGF1_CMIP6_FACADE_PARAMETERS,
         search_api=SearchAPIESGF1Solr(host, fast_retrying(attempts), timeout=timeout),
+        doc_parser=SINGLE_ROW_DOC_PARSER,
     )
 
 
@@ -340,6 +342,7 @@ def test_search_curl_reproduces_a_post_body(caplog):
     stac_api = SearchAPIFacade(
         parameters=ESGFNG_CMIP6_FACADE_PARAMETERS,
         search_api=SearchAPIESGFNGSTAC("search.example.io", fast_retrying(1)),
+        doc_parser=SINGLE_ROW_DOC_PARSER,
     )
     selector = build_list_selector([stac_api])
 

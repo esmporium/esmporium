@@ -262,6 +262,73 @@ class UncompilableFacetPatternError(ValueError):
         )
 
 
+class MultipleFacetValuesError(ValueError):
+    """
+    Raised when a facet we expected to be single-valued carries more than one value
+
+    [read_facet][(c).SearchAPI.read_facet] promises one scalar value (or `None`). A
+    document that lists several values for such a field is not something we can quietly
+    collapse into one -- doing so used to stringify the whole list (e.g. `"['a', 'b']"`)
+    and slip through. This turns that into a loud failure: either the field really is
+    multi-valued and should be read with
+    [read_facet_list][(c).SearchAPI.read_facet_list], or the document is not shaped the
+    way we thought.
+    """
+
+    def __init__(self, api_field: str, values: tuple[str, ...]) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        api_field
+            The field name we read, in the API's own vocabulary
+
+        values
+            The multiple values the document carried for `api_field`
+        """
+        self.api_field = api_field
+        self.values = values
+        joined = ", ".join(repr(value) for value in values)
+        super().__init__(
+            f"Expected at most one value for {api_field!r}, "
+            f"but the document carries {len(values)}: {joined}. "
+            "If this facet is meant to be multi-valued, read it with read_facet_list."
+        )
+
+
+def single_facet_value_or_none(values: tuple[str, ...], api_field: str) -> str | None:
+    """
+    Collapse the values read for a facet into the single scalar it should be
+
+    This is the shared guard behind every format's
+    [read_facet][(c).SearchAPI.read_facet]: it reuses that format's
+    [read_facet_list][(c).SearchAPI.read_facet_list] and enforces the scalar promise,
+    rather than each format collapsing a list its own (silently lossy) way.
+
+    Parameters
+    ----------
+    values
+        The values read for the facet, e.g. from a format's `read_facet_list`
+
+    api_field
+        The field name the values were read from, used only for error messages
+
+    Returns
+    -------
+    :
+        The single value, or `None` if there were none
+
+    Raises
+    ------
+    MultipleFacetValuesError
+        `values` holds more than one value
+    """
+    if len(values) > 1:
+        raise MultipleFacetValuesError(api_field, values)
+    return values[0] if values else None
+
+
 class SearchAPI(Protocol):
     """
     A search API endpoint we can query

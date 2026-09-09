@@ -24,6 +24,8 @@ from esmporium.db import Dataset, save_dataset
 from esmporium.search import (
     ESGF1_CMIP5_FACADE_PARAMETERS,
     ESGF1_CMIP6_FACADE_PARAMETERS,
+    SINGLE_ROW_DOC_PARSER,
+    VARIABLE_BUNDLE_DOC_PARSER,
     DatasetFacets,
     SearchAPIESGF1Solr,
     SearchAPIFacade,
@@ -31,11 +33,14 @@ from esmporium.search import (
 )
 
 
-def _facade(parameters, search_api_cls) -> SearchAPIFacade:
+def _facade(
+    parameters, search_api_cls, doc_parser=SINGLE_ROW_DOC_PARSER
+) -> SearchAPIFacade:
     """A facade for parsing a fabricated document (nothing is sent, so the host is fake)."""  # noqa: E501
     return SearchAPIFacade(
         parameters=parameters,
         search_api=search_api_cls("fabricated.example", build_transient_retrying(1)),
+        doc_parser=doc_parser,
     )
 
 
@@ -106,7 +111,11 @@ def test_solr_cmip5_bundle_explodes_into_saved_rows(engine):
     The rows share `id_project_specific` and every other facet, differ only in
     `variable`, and (CMIP5 having no grid) all carry `grid_label=None`.
     """
-    facade = _facade(ESGF1_CMIP5_FACADE_PARAMETERS, SearchAPIESGF1Solr)
+    facade = _facade(
+        ESGF1_CMIP5_FACADE_PARAMETERS,
+        SearchAPIESGF1Solr,
+        doc_parser=VARIABLE_BUNDLE_DOC_PARSER,
+    )
     shared = {
         "id_project_specific": "native.cmip5.id",
         "project": "CMIP5",

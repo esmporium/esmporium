@@ -17,6 +17,7 @@ from esmporium.search.apis.protocol import (
     NoFacetValuesReturnedError,
     NoSearchResultNumberOfMatchesReturnedError,
     UncompilableFacetPatternError,
+    single_facet_value_or_none,
 )
 from esmporium.search.apis.request import Request
 from esmporium.search.result_normalisation import STAC_FORMAT_TAG
@@ -163,16 +164,31 @@ def stac_extract_result_documents(raw: dict[str, Any]) -> list[dict[str, Any]]:
     return list(features)
 
 
-def stac_read_facet(feature: dict[str, Any], api_field: str) -> str | None:
-    """Read one scalar facet from a STAC feature's `properties` by API field name."""
-    value = feature.get("properties", {}).get(api_field)
-    return None if value is None else str(value)
-
-
 def stac_read_facet_list(feature: dict[str, Any], api_field: str) -> tuple[str, ...]:
-    """Read a facet as a tuple. A STAC feature carries one value per facet: 0 or 1."""
-    value = stac_read_facet(feature, api_field)
-    return () if value is None else (value,)
+    """Read a facet from a STAC feature's `properties` as a tuple of its values.
+
+    A STAC feature is expected to carry one value per facet, but a `properties` entry
+    that is itself a list is read as the values it holds (so
+    [stac_read_facet][(m).] can flag it), rather than being stringified whole.
+    """
+    value = feature.get("properties", {}).get(api_field)
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        value = [value]
+    return tuple(str(item) for item in value)
+
+
+def stac_read_facet(feature: dict[str, Any], api_field: str) -> str | None:
+    """Read one scalar facet from a STAC feature's `properties` by API field name.
+
+    Built on [stac_read_facet_list][(m).] so a field that unexpectedly carries several
+    values raises [MultipleFacetValuesError][esmporium.search.apis.MultipleFacetValuesError]
+    rather than being stringified into a single value.
+    """  # noqa: E501
+    return single_facet_value_or_none(
+        stac_read_facet_list(feature, api_field), api_field
+    )
 
 
 def _strip_version(native_id: str) -> str:

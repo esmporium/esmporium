@@ -17,20 +17,12 @@ from esmporium.query import (
 )
 from esmporium.search.apis import Request, SearchAPI
 from esmporium.search.result_parsing import DatasetFacets, ParsedDocument
+from esmporium.search.search_api_facade.doc_parsing import DocParserProtocol
 from esmporium.search.search_api_facade.parameters import (
     FacadeParametersProtocol,
     OneProjectRequiredError,
     get_mapping_to_query_style_facet_names,
 )
-
-_VARIABLE_FACET = "variable"
-"""
-The one facet read as a *list* rather than a scalar
-
-A CMIP5 Solr document bundles many variables, so this axis explodes one document into
-one row per variable; every other facet is a single value shared by those rows. Matches
-[`DatasetFacets.variable`][esmporium.search.result_parsing.DatasetFacets.variable].
-"""
 
 
 def get_unexpressible_facets(
@@ -221,6 +213,16 @@ class SearchAPIFacade:
     search_api: SearchAPI
     """
     The search API for which we are providing a facade
+    """
+
+    doc_parser: DocParserProtocol
+    """
+    The parser that reads this facade's result documents into dataset rows
+
+    A document's shape is a function of its project *and* its response format (a CMIP5
+    Solr document bundles many variables, everything else is one row), which is why the
+    parser is chosen for this pairing rather than derived from either half alone; see
+    [DocParserStore][esmporium.search.search_api_facade.DocParserStore].
     """
 
     def askable_facets(self, facets: set[str]) -> set[str]:
@@ -465,30 +467,20 @@ class SearchAPIFacade:
             One [`DatasetFacets`][esmporium.search.result_parsing.DatasetFacets] per
             dataset row (one per variable for CMIP5, one otherwise)
         """  # noqa: E501
-        # The facet columns to read from the response. `id_project_specific` is stamped
-        # from the argument and `project` is resolved separately (Solr and STAC disagree
-        # on where it comes from), so both are excluded here.
-        columns = set(DatasetFacets.model_fields) - {"id_project_specific", "project"}
-        field_of = self.parameters.get_mapping_to_api_facet_names(columns)
-        project = self.parameters.result_project(doc, self.search_api)
-
+        # The columns the facade owns: `id_project_specific` is stamped from the
+        # argument and `project` is resolved separately (Solr and STAC disagree on where
+        # it comes from). The doc parser reads every other column, so exclude these.
         base: dict[str, str | None] = {
             "id_project_specific": id_project_specific,
-            "project": project,
+            "project": self.parameters.result_project(doc, self.search_api),
         }
-        for column in columns - {_VARIABLE_FACET}:
-            api_field = field_of.get(column)
-            # A column with no API name for this project (CMIP5 has no grid_label) is
-            # left unset, so DatasetFacets' default applies -- fine for the one optional
-            # facet, and a loud error at construction for any required one.
-            if api_field is not None:
-                base[column] = self.search_api.read_facet(doc, api_field)
-
-        variable_field = field_of[_VARIABLE_FACET]
-        return tuple(
-            DatasetFacets(**base, variable=variable)
-            for variable in self.search_api.read_facet_list(doc, variable_field)
+        rows = self.doc_parser.get_dataset_rows_from_doc(
+            doc,
+            api=self.search_api,
+            facade_parameters=self.parameters,
+            exclude_columns=tuple(base),
         )
+        return tuple(DatasetFacets(**{**base, **row}) for row in rows)
 
     def _read_result(self, doc: dict[str, Any]) -> ParsedDocument:
         """Combine the format shell and the project facet rows for one document."""

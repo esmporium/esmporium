@@ -18,11 +18,14 @@ from esmporium.search.apis import (
 )
 from esmporium.search.retry import build_transient_retrying
 from esmporium.search.search_api_facade.core import SearchAPIFacade
+from esmporium.search.search_api_facade.doc_parsing import (
+    INBUILT_DOC_PARSER_STORE,
+    DocParserStore,
+)
 from esmporium.search.search_api_facade.parameters import (
     ESGF1_CMIP5_FACADE_PARAMETERS,
     ESGF1_CMIP6_FACADE_PARAMETERS,
     ESGF1_CMIP7_FACADE_PARAMETERS,
-    ESGFNG_CMIP5_FACADE_PARAMETERS,
     ESGFNG_CMIP6_FACADE_PARAMETERS,
     ESGFNG_CMIP7_FACADE_PARAMETERS,
 )
@@ -202,7 +205,9 @@ class SearchAPIFacadeStore:
 
     @classmethod
     def initialise_with_default_api_facades(
-        cls, create_retrying: RetryingBuilder = build_default_retrying
+        cls,
+        create_retrying: RetryingBuilder = build_default_retrying,
+        doc_parser_store: DocParserStore = INBUILT_DOC_PARSER_STORE,
     ) -> SearchAPIFacadeStore:
         """
         Initialise with our default API facade set and ordering
@@ -213,6 +218,10 @@ class SearchAPIFacadeStore:
             Builds the retrying strategy to use with an API.
 
             We call this once per API, so each API gets a policy of its own.
+
+        doc_parser_store
+            The store used to pick each facade's doc parser from its project and
+            response format.
 
         Returns
         -------
@@ -251,16 +260,10 @@ class SearchAPIFacadeStore:
                 SearchAPIESGF1Solr,
                 "esgf-data.dkrz.de",
             ),
-            (
-                ESGFNG_CMIP5_FACADE_PARAMETERS,
-                SearchAPIESGFNGSTAC,
-                "search.east.esgf.io",
-            ),
-            (
-                ESGFNG_CMIP5_FACADE_PARAMETERS,
-                SearchAPIESGFNGSTAC,
-                "search.west.esgf.io",
-            ),
+            # STAC serves no CMIP5 data, and we do not know the shape of a CMIP5 STAC
+            # document, so there is deliberately no CMIP5 STAC facade. If STAC starts
+            # serving CMIP5, add the facade here and a CMIP5 STAC doc parser to go with
+            # it.
         )
 
         cmip6_facades = (
@@ -344,11 +347,18 @@ class SearchAPIFacadeStore:
                 search_api = cast(
                     "SearchAPI", search_api_type(host=host, retrying=create_retrying())
                 )
+                # The document shape depends on both the project and the response
+                # format, so the parser is chosen for the pairing. Each block here is a
+                # single project, so `projects[0]` names it.
+                doc_parser = doc_parser_store.get_doc_parser(
+                    projects[0], search_api.search_api_tag
+                )
                 classifications_l.append(
                     SearchAPIFacadeClassification(
                         SearchAPIFacade(
                             parameters=facade_parameters,
                             search_api=search_api,
+                            doc_parser=doc_parser,
                         ),
                         projects=projects,
                     )

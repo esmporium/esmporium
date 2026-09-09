@@ -29,8 +29,10 @@ from esmporium.search import (
     DEFAULT_NORMALISERS,
     ESGF1_CMIP5_FACADE_PARAMETERS,
     ESGFNG_CMIP7_FACADE_PARAMETERS,
+    SINGLE_ROW_DOC_PARSER,
     SOLR_FORMAT_TAG,
     STAC_FORMAT_TAG,
+    VARIABLE_BUNDLE_DOC_PARSER,
     DataNodeInfo,
     DatasetFacets,
     ParsedDocument,
@@ -45,11 +47,14 @@ from esmporium.search import (
 RECORDED_DIR = Path(__file__).parents[2] / "test-data" / "search"
 
 
-def _facade(parameters, search_api_cls) -> SearchAPIFacade:
+def _facade(
+    parameters, search_api_cls, doc_parser=SINGLE_ROW_DOC_PARSER
+) -> SearchAPIFacade:
     """Build a facade for parsing a recording (nothing is sent, so the host is fake)."""
     return SearchAPIFacade(
         parameters=parameters,
         search_api=search_api_cls("recorded.example", build_transient_retrying(1)),
+        doc_parser=doc_parser,
     )
 
 
@@ -69,7 +74,11 @@ def _counts(session: Session) -> dict[str, int]:
 
 def test_ingest_cmip5_writes_one_edition_per_dataset(engine):
     """Each CMIP5 bundle explodes into many variables, each its own dataset+edition."""
-    facade = _facade(ESGF1_CMIP5_FACADE_PARAMETERS, SearchAPIESGF1Solr)
+    facade = _facade(
+        ESGF1_CMIP5_FACADE_PARAMETERS,
+        SearchAPIESGF1Solr,
+        doc_parser=VARIABLE_BUNDLE_DOC_PARSER,
+    )
     documents = facade.parse_search_results(_load("esgf1-solr-cmip5-search"))
     expected_rows = sum(len(doc.datasets) for doc in documents)
 
@@ -89,7 +98,11 @@ def test_ingest_cmip5_writes_one_edition_per_dataset(engine):
 
 def test_reingesting_the_same_documents_is_idempotent(engine):
     """A second ingest of the same response reuses rows rather than duplicating them."""
-    facade = _facade(ESGF1_CMIP5_FACADE_PARAMETERS, SearchAPIESGF1Solr)
+    facade = _facade(
+        ESGF1_CMIP5_FACADE_PARAMETERS,
+        SearchAPIESGF1Solr,
+        doc_parser=VARIABLE_BUNDLE_DOC_PARSER,
+    )
     documents = facade.parse_search_results(_load("esgf1-solr-cmip5-search"))
 
     with Session(engine) as session:
@@ -106,7 +119,11 @@ def test_reingesting_the_same_documents_is_idempotent(engine):
 
 def test_result_processor_commits_each_host(engine):
     """The `build_result_processor` processor persists a host's docs, committing."""
-    facade = _facade(ESGF1_CMIP5_FACADE_PARAMETERS, SearchAPIESGF1Solr)
+    facade = _facade(
+        ESGF1_CMIP5_FACADE_PARAMETERS,
+        SearchAPIESGF1Solr,
+        doc_parser=VARIABLE_BUNDLE_DOC_PARSER,
+    )
     documents = facade.parse_search_results(_load("esgf1-solr-cmip5-search"))
 
     with Session(engine) as session:
@@ -136,7 +153,11 @@ def test_ingest_stamps_each_raw_doc_with_its_search_api_tag(engine):
     Solr and STAC ingests are checked together so the tag really tracks the API that
     parsed the response rather than a constant.
     """
-    solr = _facade(ESGF1_CMIP5_FACADE_PARAMETERS, SearchAPIESGF1Solr)
+    solr = _facade(
+        ESGF1_CMIP5_FACADE_PARAMETERS,
+        SearchAPIESGF1Solr,
+        doc_parser=VARIABLE_BUNDLE_DOC_PARSER,
+    )
     stac = _facade(ESGFNG_CMIP7_FACADE_PARAMETERS, SearchAPIESGFNGSTAC)
 
     with Session(engine) as session:
