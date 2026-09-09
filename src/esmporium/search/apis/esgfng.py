@@ -160,6 +160,10 @@ def stac_summary_patterns(
 
 def stac_extract_result_documents(raw: dict[str, Any]) -> list[dict[str, Any]]:
     """Return the per-dataset features in a STAC-shaped search response."""
+    # Let's raise if there is no "features" key
+    # rather than silently returning no results.
+    # We expect there to be a features key.
+    # If there isn't, something has gone really wrong.
     features: list[dict[str, Any]] = raw.get("features", [])
     return list(features)
 
@@ -171,6 +175,10 @@ def stac_read_facet_list(feature: dict[str, Any], api_field: str) -> tuple[str, 
     that is itself a list is read as the values it holds (so
     [stac_read_facet][(m).] can flag it), rather than being stringified whole.
     """
+    # As above, let's raise if there is no "properties" key
+    # rather than silently returning nothing.
+    # We expect there to be a properties key.
+    # If there isn't, something has gone really wrong.
     value = feature.get("properties", {}).get(api_field)
     if value is None:
         return ()
@@ -191,25 +199,19 @@ def stac_read_facet(feature: dict[str, Any], api_field: str) -> str | None:
     )
 
 
+def _is_version_token(inv: str) -> bool:
+    return inv.startswith("v") and inv[1:].isdigit()
+
+
 def _strip_version(native_id: str) -> str:
     """Drop a trailing `.vYYYYMMDD` token so different editions share a bundle id."""
     parts = native_id.split(".")
     # A version token is the last `.`-segment written as `v` followed by digits, e.g.
     # `.v20200623`. `isdigit()` on the tail after the `v` requires at least one digit,
     # so a bare `v` is not mistaken for a version.
-    if parts and parts[-1].startswith("v") and parts[-1][1:].isdigit():
+    if parts and _is_version_token(parts[-1]):
         return ".".join(parts[:-1])
     return native_id
-
-
-def _version_from_id(native_id: str) -> str:
-    """Read the version out of a trailing `.vYYYYMMDD` token, if present."""
-    last = native_id.rsplit(".", 1)[-1]
-    # As in `_strip_version`: the token is `v` then digits, e.g. `v20200623`; return the
-    # digits (`20200623`). Anything else means there is no version token to read.
-    if last.startswith("v") and last[1:].isdigit():
-        return last[1:]
-    return ""
 
 
 def stac_nodes(feature: dict[str, Any]) -> tuple[DataNodeInfo, ...]:
@@ -231,10 +233,26 @@ def stac_read_document_shell(feature: dict[str, Any]) -> ParsedDocShell:
     props: dict[str, Any] = feature["properties"]
     feature_id = feature["id"]
     return ParsedDocShell(
+        # Funny: STAC fixed their IDs so we can't use them
+        # without applying strip_version here.
+        # The shape of this ID could be different in a different project
+        # i.e. there are still hidden assumptions about the project in here.
+        #
+        # Let's fix this by changing doc_parsing to response_parsing,
+        # then we can use the response parsers to handle all of this stuff
+        # in a way that allows us to make the coupling between project and API clear.
+        # Let's move any response handling
+        # which is project specific to response_parsing,
+        # leaving only things
+        # which are purely defined by the response format on the search API classes.
+        #
+        # (The paragraph above should be ok as a start for a claude prompt,
+        # we can also this together tomorrow morning
+        # if you want to avoid going round in more circles).
         id_project_specific=_strip_version(feature_id),
-        version=str(props.get("version") or _version_from_id(feature_id)),
-        is_latest=bool(props.get("latest", False)),
-        retracted=bool(props.get("retracted", False)),
+        version=props["version"],  # if there isn't a version, fail loudly
+        is_latest=props["latest"],  # if there isn't latest, fail loudly
+        retracted=props["retracted"],  # if there isn't retracted, fail loudly
         nodes=stac_nodes(feature),
         esgf_doc_id=feature_id,
         raw_json=json.dumps(feature),
@@ -316,6 +334,11 @@ class SearchAPIESGFNGSTAC:
         # east reports `numberMatched` (the STAC spelling),
         # west reports `numMatched` and `context.matched`.
         # We try everything, starting with the correct (STAC) spelling.
+        # Given the different APIs disagree,
+        # this is the kind of thing
+        # I would consider pushing onto the new response parser
+        # (to make clear that it's coupled to the endpoint,
+        # not just a pure formatting thing).
         context = raw.get("context")
         candidates = (
             ("numberMatched", raw.get("numberMatched")),
@@ -375,22 +398,33 @@ class SearchAPIESGFNGSTAC:
         """
         See [SearchAPI.extract_result_documents][esmporium.search.apis.SearchAPI.extract_result_documents].
         """  # noqa: E501
+        # Can stay here: this just assumes there's a 'features' key,
+        # which I think is how the STAC spec works.
+        # We might want to inline `stac_extract_result_documents` given how small it is.
         return stac_extract_result_documents(raw)
 
     def read_document_shell(self, doc: dict[str, Any]) -> ParsedDocShell:
         """
         See [SearchAPI.read_document_shell][esmporium.search.apis.SearchAPI.read_document_shell].
         """  # noqa: E501
+        # This gets pushed onto result parser
+        # as the details of how this works can vary by project.
         return stac_read_document_shell(doc)
 
     def read_facet(self, doc: dict[str, Any], api_field: str) -> str | None:
         """
         See [SearchAPI.read_facet][esmporium.search.apis.SearchAPI.read_facet].
         """
+        # This can stay here:
+        # I believe the way this is setup just follows the STAC spec.
+        # We can inline stac_read_facet given how tiny it is.
         return stac_read_facet(doc, api_field)
 
     def read_facet_list(self, doc: dict[str, Any], api_field: str) -> tuple[str, ...]:
         """
         See [SearchAPI.read_facet_list][esmporium.search.apis.SearchAPI.read_facet_list].
         """  # noqa: E501
+        # This can stay here:
+        # I believe the way this is setup just follows the STAC spec.
+        # We can inline stac_read_facet_list given how tiny it is.
         return stac_read_facet_list(doc, api_field)

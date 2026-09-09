@@ -308,6 +308,16 @@ Not included:
 
 -
 
+## PR5.5
+
+Dataset clash handling
+
+Look in `schema.py` a the comment that starts with "TODO: work out how we handle clashes".
+Then think about how we handle these cases.
+Probably we will just write tests for each to lock down the behaviour,
+but we might have to make some behaviour changes/add high-level helpers to get the behaviour we want.
+The tests will probably all be integration tests because setting up the database for the test could be a bit involved/slow.
+
 ## PR6
 
 Finding dataset ancestry

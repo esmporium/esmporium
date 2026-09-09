@@ -180,6 +180,10 @@ class Dataset(EsmporiumBase, table=True):
         ),
     )
 
+    # @Anna, let's check with claude
+    # whether this idea has effectively been resolved/implemented
+    # with the addition of DatasetFacets
+    # (hence whether we can remove the comment below here).
     # TODO: once we parse ESGF records, split the facets out into a base model.
     # Models *without* `table=True` are validated normally, so:
     #
@@ -385,6 +389,9 @@ class Dataset(EsmporiumBase, table=True):
     # )
 
 
+# @Anna is this now redundant?
+# I only see it used in tests so I don't think it affects behaviour,
+# but maybe it is needed for the tests and this is the best place to keep it?
 DATASET_FACET_COLUMNS: tuple[str, ...] = (
     "project",
     "model",
@@ -417,6 +424,8 @@ see `test_facet_columns_are_the_declared_facets`.
 """
 
 
+# Let's shift this down the bottom of this file so all the dataset stuff
+# is declared 'together' and this search thing comes on its own last.
 class SearchAPICallRecord(EsmporiumBase, table=True):
     """
     One recorded request to one search API

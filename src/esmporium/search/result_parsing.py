@@ -154,6 +154,10 @@ class ParsedDocument:
     """
 
 
+# Note: this shape will likely need to change once we want to link Datasets
+# and searches/query collections in our database.
+# (No need to change anything now though,
+# let's deal with this change when we need it in PR4)
 ResultProcessor = Callable[[str, tuple[ParsedDocument, ...]], None]
 """
 A callback that processes the parsed results one host answered with

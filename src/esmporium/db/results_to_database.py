@@ -176,15 +176,17 @@ def _ingest_document(session: Session, parsed: ParsedDocument) -> None:
     over all of them.
     """
     datasets = [_get_or_create_dataset(session, facets) for facets in parsed.datasets]
-    versions = [_upsert_version(session, dataset.id, parsed) for dataset in datasets]
+    dataset_versions = [
+        _upsert_version(session, dataset.id, parsed) for dataset in datasets
+    ]
 
     nodes = [_get_or_create_node(session, node.data_node) for node in parsed.nodes]
-    for version in versions:
+    for version in dataset_versions:
         for node in nodes:
             _get_or_create_version_node_link(session, version.id, node.id)
 
     raw_doc = _get_or_create_raw_doc(session, parsed)
-    for version in versions:
+    for version in dataset_versions:
         _get_or_create_link(session, raw_doc.id, version.id)
 
 
@@ -202,6 +204,13 @@ def _get_or_create_dataset(session: Session, facets: DatasetFacets) -> Dataset:
     conditions = [
         getattr(Dataset, column) == value for column, value in facet_values.items()
     ]
+    # Checking over all columns hence, because of our uniqueness constraint,
+    # we can't get more than one result so using `first` here is safe.
+    # I would ask claude: is this as far as we should/can go
+    # in terms of checking use of `first` here,
+    # or should we add something to guard against more than one row matching `facets`
+    # (just in case the database got corrupted somehow,
+    # even though that should be impossible).
     existing = session.exec(select(Dataset).where(*conditions)).first()
     if existing is not None:
         return existing
@@ -212,6 +221,7 @@ def _upsert_version(
     session: Session, dataset_id: int | None, parsed: ParsedDocument
 ) -> DatasetVersion:
     """Insert this dataset's edition, or refresh its snapshot flags if seen before."""
+    # As above re use of first and whether we should guard more carefully here or not
     existing = session.exec(
         select(DatasetVersion).where(
             DatasetVersion.dataset_id == dataset_id,
@@ -238,6 +248,7 @@ def _upsert_version(
 
 def _get_or_create_node(session: Session, data_node: str) -> DatasetNodeInformation:
     """Reuse the row for this data node if we have one, else create it."""
+    # As above re use of first and whether we should guard more carefully here or not
     existing = session.exec(
         select(DatasetNodeInformation).where(
             DatasetNodeInformation.data_node == data_node
@@ -256,6 +267,7 @@ def _get_or_create_version_node_link(
     session: Session, dataset_version_id: int | None, node_id: int | None
 ) -> DatasetVersionNodeLink:
     """Link an edition to a data node, once."""
+    # As above re use of first and whether we should guard more carefully here or not
     existing = session.exec(
         select(DatasetVersionNodeLink).where(
             DatasetVersionNodeLink.dataset_version_id == dataset_version_id,
@@ -275,6 +287,7 @@ def _get_or_create_version_node_link(
 
 def _get_or_create_raw_doc(session: Session, parsed: ParsedDocument) -> DatasetRawDoc:
     """Store the raw JSON once, keyed by `esgf_doc_id`."""
+    # As above re use of first and whether we should guard more carefully here or not
     existing = session.exec(
         select(DatasetRawDoc).where(DatasetRawDoc.esgf_doc_id == parsed.esgf_doc_id)
     ).first()
@@ -295,6 +308,7 @@ def _get_or_create_link(
     session: Session, raw_id: int | None, dataset_version_id: int | None
 ) -> RawDocVersionLink:
     """Link a raw document to an edition, once."""
+    # As above re use of first and whether we should guard more carefully here or not
     existing = session.exec(
         select(RawDocVersionLink).where(
             RawDocVersionLink.raw_id == raw_id,

@@ -134,12 +134,26 @@ def extract_one_element_list(value: Any) -> Any:
 
 def solr_extract_result_documents(raw: dict[str, Any]) -> list[dict[str, Any]]:
     """Return the per-dataset records in a Solr-shaped search response."""
+    # Shall we make this raise if we don't have response.docs
+    # rather than silently returning no records?
+    # I think a loud failure here would be better than a silent 'no docs'
     docs: list[dict[str, Any]] = raw.get("response", {}).get("docs", [])
     return list(docs)
 
 
 def solr_read_facet_list(doc: dict[str, Any], api_field: str) -> tuple[str, ...]:
     """Read a multi-valued facet (e.g. CMIP5's whole `variable` bundle) as a tuple."""
+    # I'd be tempted to make this stricter, something like
+    # if the value is a list, return it as a tuple then return
+    # if the value is a string or float or int, turn it into a tuple then return
+    # if the value is None, return an empty tuple
+    # for anything else, raise NotImplementedError
+    #
+    # The current function could do funny things like wrapping a dict inside a list
+    # then returning the string version of the dict.
+    # The above implementation would turn this into,
+    # if we recognise the case, we do the thing,
+    # for anything else, we raise as we're seeing something unexpected.
     values = doc.get(api_field)
     if values is None:
         return ()
@@ -163,8 +177,8 @@ def solr_read_document_shell(doc: dict[str, Any]) -> ParsedDocShell:
     return ParsedDocShell(
         id_project_specific=extract_one_element_list(doc["master_id"]),
         version=str(extract_one_element_list(doc["version"])),
-        is_latest=bool(extract_one_element_list(doc.get("latest", False))),
-        retracted=bool(extract_one_element_list(doc.get("retracted", False))),
+        is_latest=bool(extract_one_element_list(doc["latest"])),
+        retracted=bool(extract_one_element_list(doc["retracted"])),
         nodes=(DataNodeInfo(data_node=extract_one_element_list(doc["data_node"])),),
         esgf_doc_id=extract_one_element_list(doc["id"]),
         raw_json=json.dumps(doc),

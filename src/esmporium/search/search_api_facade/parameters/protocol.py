@@ -99,6 +99,7 @@ class FacadeParametersProtocol(Protocol):
         """
         ...
 
+    # Let's push this onto the new result_parser class
     def result_project(self, doc: dict[str, Any], api: SearchAPI) -> str | None:
         """
         Read the project a result document belongs to

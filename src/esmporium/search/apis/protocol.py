@@ -408,6 +408,8 @@ class SearchAPI(Protocol):
         """
         ...
 
+    # (See the comments in esgfng for context)
+    # I would move this onto result_parser too
     def get_search_result_n_matches(self, raw: dict[str, Any]) -> int:
         """
         Get the number of records that matched a search from a raw response
@@ -551,6 +553,8 @@ class SearchAPI(Protocol):
         """
         ...
 
+    # (See the comments in esgfng for context)
+    # I would move this onto result_parser
     def read_document_shell(self, doc: dict[str, Any]) -> ParsedDocShell:
         """
         Read the pieces of one document that its response *format* determines

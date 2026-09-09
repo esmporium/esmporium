@@ -215,6 +215,8 @@ class SearchAPIFacade:
     The search API for which we are providing a facade
     """
 
+    # As noted elsewhere, let's change this to result_parser
+    # and do other relevant updates noted elsewhere.
     doc_parser: DocParserProtocol
     """
     The parser that reads this facade's result documents into dataset rows
@@ -470,6 +472,10 @@ class SearchAPIFacade:
         # The columns the facade owns: `id_project_specific` is stamped from the
         # argument and `project` is resolved separately (Solr and STAC disagree on where
         # it comes from). The doc parser reads every other column, so exclude these.
+        #
+        # When we switch to result_parser, we can push all of this there
+        # (result_parser will know how to get both project and id_project_specific
+        # out of a doc, so none of this behaviour needs to stay on the facade)
         base: dict[str, str | None] = {
             "id_project_specific": id_project_specific,
             "project": self.parameters.result_project(doc, self.search_api),
@@ -484,6 +490,10 @@ class SearchAPIFacade:
 
     def _read_result(self, doc: dict[str, Any]) -> ParsedDocument:
         """Combine the format shell and the project facet rows for one document."""
+        # When we switch to result_parser, we can push all of this there
+        # (result_parser will hold all the document shell logic
+        # and can create ParsedDocument's instead,
+        # so none of this behaviour needs to stay on the facade)
         shell = self.search_api.read_document_shell(doc)
         return ParsedDocument(
             id_project_specific=shell.id_project_specific,
