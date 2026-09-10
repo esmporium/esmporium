@@ -17,12 +17,12 @@ from esmporium.query import (
 )
 from esmporium.search.apis import Request, SearchAPI
 from esmporium.search.result_parsing import DatasetFacets, ParsedDocument
-from esmporium.search.search_api_facade.doc_parsing import DocParserProtocol
 from esmporium.search.search_api_facade.parameters import (
     FacadeParametersProtocol,
     OneProjectRequiredError,
     get_mapping_to_query_style_facet_names,
 )
+from esmporium.search.search_api_facade.result_parsers import ResultParserProtocol
 
 
 def get_unexpressible_facets(
@@ -215,16 +215,18 @@ class SearchAPIFacade:
     The search API for which we are providing a facade
     """
 
-    # As noted elsewhere, let's change this to result_parser
-    # and do other relevant updates noted elsewhere.
-    doc_parser: DocParserProtocol
+    result_parser: ResultParserProtocol
     """
-    The parser that reads this facade's result documents into dataset rows
+    The parser that reads this facade's search results
 
-    A document's shape is a function of its project *and* its response format (a CMIP5
-    Solr document bundles many variables, everything else is one row), which is why the
-    parser is chosen for this pairing rather than derived from either half alone; see
-    [DocParserStore][esmporium.search.search_api_facade.DocParserStore].
+    What a result looks like can be a function of its project
+    and the endpoint that answered
+    (e.g. a CMIP5 Solr record bundles many variables;
+    a CMIP6 STAC feature writes its bundle id
+    and its project somewhere a CMIP7 one does not),
+    which is why the parser is chosen for this pairing
+    rather than derived from either half alone;
+    see [esmporium.search.search_api_facade.result_parsers][].
     """
 
     def askable_facets(self, facets: set[str]) -> set[str]:
@@ -413,14 +415,12 @@ class SearchAPIFacade:
         """
         return self._read_back(self.search_api.parse_facet_patterns, raw, facets)
 
-    def parse_search_results(self, raw: dict[str, Any]) -> tuple[ParsedDocument, ...]:
+    def get_n_matches(self, raw: dict[str, Any]) -> int:
         """
-        Parse a raw search response into the documents it carries
+        Get the number of records that matched a search from a raw response
 
-        The facade knows both halves this needs: the [search_api][(c).search_api] knows
-        the response *format* (how to split the envelope and read the format-determined
-        fields), and the [parameters][(c).parameters] know the *project* (which field
-        names carry which facet). Neither has to guess the other's concern.
+        Note: this is not necessarily the same as the number of results in `raw`.
+        Some search APIs will only return a limited number of results.
 
         Parameters
         ----------
@@ -431,80 +431,61 @@ class SearchAPIFacade:
         Returns
         -------
         :
-            One [`ParsedDocument`][esmporium.search.result_parsing.ParsedDocument] per
-            source document (a CMIP5 document carries many dataset rows, a CMIP6/CMIP7
-            document one)
-        """
-        return tuple(
-            self._read_result(doc)
-            for doc in self.search_api.extract_result_documents(raw)
-        )
+            The number of records that matched the search
 
-    def read_dataset_rows(
-        self, doc: dict[str, Any], id_project_specific: str
-    ) -> tuple[DatasetFacets, ...]:
+        Raises
+        ------
+        NoSearchResultNumberOfMatchesReturnedError
+            `raw` does not report the number of records that matched the search
         """
-        Read the complete dataset rows one search document maps to
+        return self.result_parser.get_n_matches(raw)
 
-        The facade holds both halves this needs, so neither collaborator has to guess the
-        other's concern: [search_api][(c).search_api] reads a value out of the response
-        *format*, and [parameters][(c).parameters] name *which* field carries each facet
-        for this project. A CMIP5 document explodes into one row per variable in its
-        bundle; every other project yields exactly one row.
+    def parse_search_results(self, raw: dict[str, Any]) -> tuple[ParsedDocument, ...]:
+        """
+        Parse a raw search response into the documents it carries
+
+        The facade holds the pieces this needs, so no collaborator has to guess
+        another's concern: the [result_parser][(c).result_parser] knows how this
+        project's results are written by this endpoint, the
+        [search_api][(c).search_api] knows the response format, and the
+        [parameters][(c).parameters] know which API field carries each facet.
 
         Parameters
         ----------
-        doc
-            One document from
-            [search_api.extract_result_documents][esmporium.search.apis.SearchAPI.extract_result_documents]
+        raw
+            The response to read
 
-        id_project_specific
-            The bundle's native id, read once from the format shell by the caller and
-            stamped onto every row so each is a complete, savable
-            [`DatasetFacets`][esmporium.search.result_parsing.DatasetFacets]
+            Usually the answer to a request built with
+            [build_search_request][(c).build_search_request].
 
         Returns
         -------
         :
-            One [`DatasetFacets`][esmporium.search.result_parsing.DatasetFacets] per
-            dataset row (one per variable for CMIP5, one otherwise)
-        """  # noqa: E501
-        # The columns the facade owns: `id_project_specific` is stamped from the
-        # argument and `project` is resolved separately (Solr and STAC disagree on where
-        # it comes from). The doc parser reads every other column, so exclude these.
-        #
-        # When we switch to result_parser, we can push all of this there
-        # (result_parser will know how to get both project and id_project_specific
-        # out of a doc, so none of this behaviour needs to stay on the facade)
-        base: dict[str, str | None] = {
-            "id_project_specific": id_project_specific,
-            "project": self.parameters.result_project(doc, self.search_api),
-        }
-        rows = self.doc_parser.get_dataset_rows_from_doc(
-            doc,
-            api=self.search_api,
-            facade_parameters=self.parameters,
-            exclude_columns=tuple(base),
+            Parsed documents
+        """
+        return self.result_parser.parse_search_results(
+            raw, api=self.search_api, facade_parameters=self.parameters
         )
-        return tuple(DatasetFacets(**{**base, **row}) for row in rows)
 
-    def _read_result(self, doc: dict[str, Any]) -> ParsedDocument:
-        """Combine the format shell and the project facet rows for one document."""
-        # When we switch to result_parser, we can push all of this there
-        # (result_parser will hold all the document shell logic
-        # and can create ParsedDocument's instead,
-        # so none of this behaviour needs to stay on the facade)
-        shell = self.search_api.read_document_shell(doc)
-        return ParsedDocument(
-            id_project_specific=shell.id_project_specific,
-            datasets=self.read_dataset_rows(doc, shell.id_project_specific),
-            version=shell.version,
-            is_latest=shell.is_latest,
-            retracted=shell.retracted,
-            nodes=shell.nodes,
-            esgf_doc_id=shell.esgf_doc_id,
-            raw_json=shell.raw_json,
-            search_api_tag=self.search_api.search_api_tag,
+    def read_dataset_rows(self, doc: dict[str, Any]) -> tuple[DatasetFacets, ...]:
+        """
+        Read the complete dataset rows one search document maps to
+
+        Parameters
+        ----------
+        doc
+            One document
+
+            Usually extracted with
+            [search_api.extract_result_documents][esmporium.search.apis.SearchAPI.extract_result_documents].
+
+        Returns
+        -------
+        :
+            Parsed dataset facets
+        """
+        return self.result_parser.get_dataset_rows(
+            doc, api=self.search_api, facade_parameters=self.parameters
         )
 
     # TODO: upgrade this facet-values reader's docstrings to the repository standards,

@@ -20,7 +20,7 @@ Known facade parameter definitions
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, PlainValidator
 
@@ -36,9 +36,6 @@ from esmporium.query import (
     from_canonical,
 )
 from esmporium.query.protocol import accept_without_validation
-
-if TYPE_CHECKING:
-    from esmporium.search.apis import SearchAPI
 
 
 def get_mapping_to_query_style_facet_names(
@@ -119,11 +116,6 @@ class DirectMappingFacadeParameters(BaseModel):
         native = from_canonical(canonical=canonical, to=self.base_query_style)
 
         return facet_values_from_attributes(native)
-
-    def result_project(self, doc: dict[str, Any], api: SearchAPI) -> str | None:
-        """See [FacadeParametersProtocol.result_project][esmporium.search.search_api_facade.parameters.protocol.FacadeParametersProtocol.result_project]. Read from the (Solr) `project` facet."""  # noqa: E501
-        api_field = self.get_mapping_to_api_facet_names({"project"}).get("project")
-        return api.read_facet(doc, api_field) if api_field is not None else None
 
 
 class ESGF1CMIP5ParametersQueryStyle(BaseModel):
@@ -501,27 +493,6 @@ class STACFacadeParameters(BaseModel):
             facet_values[f"{self.prefix}:{facet_name}"] = values
 
         return facet_values
-
-    def result_project(self, doc: dict[str, Any], api: SearchAPI) -> str:
-        """See [FacadeParametersProtocol.result_project][esmporium.search.search_api_facade.parameters.protocol.FacadeParametersProtocol.result_project]. STAC drops the project facet; recover it from `mip_era` (else the prefix)."""  # noqa: E501
-        # Project hard-coded for ESGF-NG STAC APIs.
-        # Notice that this varies depending on project.
-        # This dependence on project
-        # is another good reason for this to go on the new result parser.
-        #
-        # Other things I noticed while looking at CMIP6 vs. CMIP7 with ESGF-NG:
-        # - cmip6 has a "base_id" key
-        #   which is the same as the old "master_id" so we can use that.
-        #   cmip7 doesn't have this
-        #   so we have to keep this 'strip version' trick for cmip7 parsing.
-        #
-        # Yuck hard-coding to illustrate the issue.
-        # This can be removed when we split to result parsers.
-        if self.prefix == "cmip6":
-            return api.read_facet(doc, "cmip6:mip_era")
-
-        # The CMIP7 (and I guess general) case
-        return api.read_facet(doc, "project")
 
 
 class ESGFNGCMIP5ParametersQueryStyle(BaseModel):

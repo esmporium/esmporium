@@ -81,6 +81,17 @@ CASES = (
         ),
         QueryCMIP6(experiment_id="historical", variable_id="tas", frequency="mon"),
     ),
+    # West is recorded alongside east because the two are not identical:
+    # e.g. they disagree on where the match count lives,
+    # so a real west response is worth parsing against.
+    (
+        "esgf-ng-stac-cmip6-west",
+        INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
+            "CMIP6",
+            "search.west.esgf.io",
+        ),
+        QueryCMIP6(experiment_id="historical", variable_id="tas", frequency="mon"),
+    ),
     (
         "esgf-ng-stac-cmip7-east",
         INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
@@ -89,9 +100,6 @@ CASES = (
         ),
         QueryCMIP7(variable_id="tas"),
     ),
-    # West is recorded alongside east because the two are not identical:
-    # e.g. they disagree on where the match count lives
-    # so a real west response is worth parsing against.
     (
         "esgf-ng-stac-cmip7-west",
         INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
