@@ -358,6 +358,7 @@ def test_a_solr_cmip5_record_explodes_into_one_row_per_variable():
         variant_label="r1i1p1",
         variable="tas",
         reporting_interval="mon",
+        grid_label=None,
         processing_id="Amon",
     )
     doc = solr_doc(ESGF1_CMIP5_FACADE_PARAMETERS, row, variable=["tas", "pr"])
@@ -367,7 +368,7 @@ def test_a_solr_cmip5_record_explodes_into_one_row_per_variable():
     )
 
     assert rows == (row, row.model_copy(update={"variable": "pr"}))
-    # CMIP5 models no grid, so the column is left at its default rather than guessed.
+    # CMIP5 models no grid, so the parser states the absence explicitly as None.
     assert all(parsed.grid_label is None for parsed in rows)
 
 

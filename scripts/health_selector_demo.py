@@ -1,7 +1,7 @@
 """
 Show how the health-based search API selector ranks the ESGF nodes by speed
 
-Sits beside `first_search_cmipx_full.py`, and builds on it: that script shows
+Sits beside `search_cmipx.py`, and builds on it: that script shows
 recording search-API health; this one *uses* the recorded health to rank the
 nodes for the next search.
 

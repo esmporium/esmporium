@@ -318,7 +318,7 @@ def solr_parsed_document(
         nodes=(DataNodeInfo(data_node=extract_one_element_list(doc["data_node"])),),
         esgf_doc_id=extract_one_element_list(doc["id"]),
         raw_json=json.dumps(doc),
-        search_api_tag=api.search_api_tag,
+        raw_docs_format_tag=api.raw_docs_format_tag,
     )
 
 
@@ -491,8 +491,14 @@ class SolrVariableBundleResultParser:
             "variable"
         ]
 
+        # A variable-bundle project (CMIP5) has no grid concept, so nothing maps
+        # `grid_label` and `shared` never carries it. `DatasetFacets.grid_label` is
+        # required with no default, so we state the absence explicitly as `None` (a real
+        # mapping, if one ever existed, would land in `shared` and override this).
         return tuple(
-            DatasetFacets.model_validate({**base, **shared, "variable": variable})
+            DatasetFacets.model_validate(
+                {"grid_label": None, **base, **shared, "variable": variable}
+            )
             for variable in api.read_facet_list(doc, variable_field)
         )
 
@@ -585,7 +591,7 @@ def stac_parsed_document(
         nodes=stac_nodes(feature),
         esgf_doc_id=feature["id"],
         raw_json=json.dumps(feature),
-        search_api_tag=api.search_api_tag,
+        raw_docs_format_tag=api.raw_docs_format_tag,
     )
 
 

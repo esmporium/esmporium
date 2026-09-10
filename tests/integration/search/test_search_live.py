@@ -9,10 +9,12 @@ the thing that changed is on the other end of the wire.
 
 from __future__ import annotations
 
+import re
+
 import httpx
 import pytest
 
-from esmporium.query import QueryCMIP5, QueryCMIP6, QueryCMIP7
+from esmporium.query import QueryCMIP5, QueryCMIP6, QueryCMIP7, to_canonical
 from esmporium.search import (
     ESGF1_CMIP6_FACADE_PARAMETERS,
     INBUILT_SEARCH_API_FACADE_STORE,
@@ -20,9 +22,11 @@ from esmporium.search import (
     ParsedDocument,
     SearchAPIESGF1Solr,
     SearchAPIFacade,
+    SearchAPIRequestError,
     SolrSingleRowResultParser,
     build_list_selector,
     build_transient_retrying,
+    fire,
     search,
 )
 
@@ -460,3 +464,168 @@ def test_search_ors_within_a_facet(client, api, make_query):
 # what is returning (rather than simply results > 0).
 # Eventually also will have higher level wrappers for more sophisticated
 # search logic -> i.e. Malte's search example.
+
+
+# --- Raw ESGF-NG east/west shape assumptions ---------------------------------
+#
+# Our STAC result parsing leans on a few differences between the two ESGF-NG
+# deployments (east and west): where the bundle id lives (`base_id` vs the feature id),
+# where the project lives (`cmip6:mip_era` vs a `project` property), and where the match
+# count lives (`numberMatched` vs `numMatched`/`context.matched`). Those are pinned
+# against fabricated docs in `tests/unit/search/test_result_parsers.py` and against
+# recorded responses in `tests/unit/search/test_recorded_responses.py`, but a recording
+# only notices a change when it is refreshed by hand. ESGF plans to converge east and
+# west, so these assert the assumptions against the *live* responses: the day a
+# deployment changes shape (or the two converge), the relevant test fails loudly rather
+# than our parsers silently reading the wrong field.
+
+EAST_HOST = "search.east.esgf.io"
+WEST_HOST = "search.west.esgf.io"
+
+CMIP7_QUERY = QueryCMIP7(variable_id="tas")
+"""A CMIP7 query kept broad, because CMIP7 data is still sparse"""
+
+# (project, host, query) for every live ESGF-NG STAC deployment we parse.
+NG_STAC_CASES = (
+    pytest.param("CMIP6", EAST_HOST, CMIP6_QUERY, id="cmip6-east"),
+    pytest.param("CMIP6", WEST_HOST, CMIP6_QUERY, id="cmip6-west"),
+    pytest.param("CMIP7", EAST_HOST, CMIP7_QUERY, id="cmip7-east"),
+    pytest.param("CMIP7", WEST_HOST, CMIP7_QUERY, id="cmip7-west"),
+)
+
+CMIP6_STAC_CASES = tuple(case for case in NG_STAC_CASES if "cmip6" in case.id)
+CMIP7_STAC_CASES = tuple(case for case in NG_STAC_CASES if "cmip7" in case.id)
+
+VERSION_TOKEN = re.compile(r"v\d+")
+"""A STAC feature id's trailing version token, e.g. the `v20240101` in `...tas.v20240101`."""  # noqa: E501
+
+
+def fetch_raw_stac_or_skip(client, project, host, query):
+    """Fetch one live STAC response as raw JSON, skipping if there is nothing to check.
+
+    Skips (rather than fails) if the node will not answer or returns no features: a node
+    being down, or a project having no data yet, says nothing about whether our shape
+    assumptions still hold.
+    """
+    facade = INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
+        project, host
+    )
+    request = facade.build_search_request(to_canonical(query), 5)
+    try:
+        raw = fire(client, facade.search_api, request)
+    except SearchAPIRequestError:
+        pytest.skip(f"{host} did not answer, so it is down or unwell")
+
+    features = raw.get("features") or []
+    if not features:
+        pytest.skip(f"{host} returned no {project} features, nothing to check")
+
+    return raw, features
+
+
+@pytest.mark.parametrize(
+    "project, host, query, expect_base_id",
+    [
+        pytest.param("CMIP6", EAST_HOST, CMIP6_QUERY, True, id="cmip6-east"),
+        pytest.param("CMIP6", WEST_HOST, CMIP6_QUERY, False, id="cmip6-west"),
+        pytest.param("CMIP7", EAST_HOST, CMIP7_QUERY, False, id="cmip7-east"),
+        pytest.param("CMIP7", WEST_HOST, CMIP7_QUERY, False, id="cmip7-west"),
+    ],
+)
+def test_live_stac_base_id_assumption(client, project, host, query, expect_base_id):
+    """Only east's CMIP6 features carry `base_id`; west's do not, nor does either CMIP7.
+
+    We read the bundle id from `base_id` where it exists and recover it from the feature
+    id otherwise (see `ESGFNGCMIP6ResultParser` / `ESGFNGCMIP7ResultParser`). If a
+    deployment gains or loses `base_id`, that choice silently becomes wrong.
+    """
+    _, features = fetch_raw_stac_or_skip(client, project, host, query)
+
+    carry_base_id = ["base_id" in feature["properties"] for feature in features]
+    if expect_base_id:
+        assert all(carry_base_id), (
+            f"{host} {project} features no longer all carry `base_id`, "
+            "which the parser reads the bundle id from here"
+        )
+    else:
+        assert not any(carry_base_id), (
+            f"{host} {project} features now carry `base_id`; here we recover the "
+            "bundle id from the feature id and would ignore a `base_id`"
+        )
+
+
+@pytest.mark.parametrize("project, host, query", CMIP6_STAC_CASES)
+def test_live_cmip6_project_lives_in_mip_era(client, project, host, query):
+    """CMIP6 STAC features carry the project in `cmip6:mip_era`, on both deployments.
+
+    We read the CMIP6 project from `cmip6:mip_era` rather than a plain `project`
+    property because east carries no `project` property at all (west does, as of
+    writing) -- so `cmip6:mip_era`, which both carry, is the field that works
+    everywhere. What breaks us is `cmip6:mip_era` going away; a `project` property
+    appearing does not, so we do not assert on it here (it already differs between the
+    deployments).
+    """
+    _, features = fetch_raw_stac_or_skip(client, project, host, query)
+
+    for feature in features:
+        assert "cmip6:mip_era" in feature["properties"], (
+            f"{host} CMIP6 feature has no `cmip6:mip_era`, which we read as the project"
+        )
+
+
+@pytest.mark.parametrize("project, host, query", CMIP7_STAC_CASES)
+def test_live_cmip7_project_is_a_plain_property(client, project, host, query):
+    """CMIP7 STAC features carry the project as a plain `project` property.
+
+    Unlike CMIP6 (which has none), so if it disappears our CMIP7 project reading breaks.
+    """
+    _, features = fetch_raw_stac_or_skip(client, project, host, query)
+
+    for feature in features:
+        assert "project" in feature["properties"], (
+            f"{host} CMIP7 feature has no `project` property, "
+            "which we read as the project"
+        )
+
+
+@pytest.mark.parametrize("project, host, query", NG_STAC_CASES)
+def test_live_stac_match_count_key_matches_the_deployment(client, project, host, query):
+    """East reports the count as `numberMatched`; west uses `numMatched`/`context`.
+
+    The count is read by a deployment-specific reader (`stac_east_n_matches` vs
+    `stac_west_n_matches`). If east dropped `numberMatched`, or west started sending it,
+    that split -- and the readers that depend on it -- would be wrong.
+    """
+    raw, _ = fetch_raw_stac_or_skip(client, project, host, query)
+
+    if host == EAST_HOST:
+        assert "numberMatched" in raw, (
+            f"{host} no longer reports the count as `numberMatched`"
+        )
+    else:
+        assert "numberMatched" not in raw, (
+            f"{host} now reports `numberMatched` (have east and west converged?)"
+        )
+        context = raw.get("context")
+        has_west_count = "numMatched" in raw or (
+            isinstance(context, dict) and "matched" in context
+        )
+        assert has_west_count, (
+            f"{host} reports neither `numMatched` nor `context.matched`"
+        )
+
+
+@pytest.mark.parametrize("project, host, query", NG_STAC_CASES)
+def test_live_stac_feature_id_ends_with_a_version_token(client, project, host, query):
+    """A STAC feature id ends in a `.vYYYYMMDD` token.
+
+    We recover a bundle id by dropping that token (west, and both CMIP7); if the id
+    shape changes, that recovery silently produces the wrong id.
+    """
+    _, features = fetch_raw_stac_or_skip(client, project, host, query)
+
+    for feature in features:
+        last_segment = feature["id"].rsplit(".", 1)[-1]
+        assert VERSION_TOKEN.fullmatch(last_segment), (
+            f"{host} feature id {feature['id']!r} does not end with a version token"
+        )

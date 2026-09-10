@@ -236,8 +236,8 @@ class SearchAPIESGF1Solr:
     retrying: Retrying
     """See [SearchAPI.retrying][esmporium.search.apis.SearchAPI.retrying]."""
 
-    search_api_tag: str = SOLR_FORMAT_TAG
-    """See [SearchAPI.search_api_tag][esmporium.search.apis.SearchAPI.search_api_tag]."""  # noqa: E501
+    raw_docs_format_tag: str = SOLR_FORMAT_TAG
+    """See [SearchAPI.raw_docs_format_tag][esmporium.search.apis.SearchAPI.raw_docs_format_tag]."""  # noqa: E501
 
     timeout: float = 30.0
     """See [SearchAPI.timeout][esmporium.search.apis.SearchAPI.timeout]."""

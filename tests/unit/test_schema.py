@@ -12,11 +12,11 @@ from sqlmodel import Session, create_engine, select
 from esmporium.db import (
     DATASET_FACET_COLUMNS,
     METADATA,
+    DataNode,
     Dataset,
-    DatasetNodeInformation,
     DatasetRawDoc,
     DatasetVersion,
-    DatasetVersionNodeLink,
+    DatasetVersionDataNodeLink,
     RawDocVersionLink,
     UnhandledDatasetClashError,
     save_dataset,
@@ -389,10 +389,10 @@ def test_same_version_string_under_two_datasets_is_allowed(engine):
 def test_data_node_is_unique(engine):
     """One row per distinct data node (there are only a handful across ESGF)."""
     with Session(engine) as session:
-        session.add(DatasetNodeInformation(data_node="esgf.nci.org.au"))
+        session.add(DataNode(data_node="esgf.nci.org.au"))
         session.commit()
 
-        session.add(DatasetNodeInformation(data_node="esgf.nci.org.au"))
+        session.add(DataNode(data_node="esgf.nci.org.au"))
         with pytest.raises(IntegrityError):
             session.commit()
 
@@ -400,10 +400,10 @@ def test_data_node_is_unique(engine):
 def test_edition_node_link_pair_is_unique(engine):
     """The same (edition, node) link twice is refused, so recording it again reuses."""
     with Session(engine) as session:
-        session.add(DatasetVersionNodeLink(dataset_version_id=1, node_id=1))
+        session.add(DatasetVersionDataNodeLink(dataset_version_id=1, data_node_id=1))
         session.commit()
 
-        session.add(DatasetVersionNodeLink(dataset_version_id=1, node_id=1))
+        session.add(DatasetVersionDataNodeLink(dataset_version_id=1, data_node_id=1))
         with pytest.raises(IntegrityError):
             session.commit()
 
@@ -411,12 +411,12 @@ def test_edition_node_link_pair_is_unique(engine):
 def test_edition_node_link_is_many_to_many(engine):
     """A node hosts many editions, an edition many nodes: (1,1) (1,2) (2,1) coexist."""
     with Session(engine) as session:
-        session.add(DatasetVersionNodeLink(dataset_version_id=1, node_id=1))
-        session.add(DatasetVersionNodeLink(dataset_version_id=1, node_id=2))
-        session.add(DatasetVersionNodeLink(dataset_version_id=2, node_id=1))
+        session.add(DatasetVersionDataNodeLink(dataset_version_id=1, data_node_id=1))
+        session.add(DatasetVersionDataNodeLink(dataset_version_id=1, data_node_id=2))
+        session.add(DatasetVersionDataNodeLink(dataset_version_id=2, data_node_id=1))
         session.commit()
 
-        assert len(session.exec(select(DatasetVersionNodeLink)).all()) == 3
+        assert len(session.exec(select(DatasetVersionDataNodeLink)).all()) == 3
 
 
 def test_raw_doc_esgf_id_is_unique(engine):
@@ -424,14 +424,18 @@ def test_raw_doc_esgf_id_is_unique(engine):
     with Session(engine) as session:
         session.add(
             DatasetRawDoc(
-                esgf_doc_id="instance_id|node", raw_json="{}", search_api_tag="solr"
+                esgf_doc_id="instance_id|node",
+                raw_json="{}",
+                raw_docs_format_tag="solr",
             )
         )
         session.commit()
 
         session.add(
             DatasetRawDoc(
-                esgf_doc_id="instance_id|node", raw_json="{}", search_api_tag="solr"
+                esgf_doc_id="instance_id|node",
+                raw_json="{}",
+                raw_docs_format_tag="solr",
             )
         )
         with pytest.raises(IntegrityError):
@@ -441,19 +445,19 @@ def test_raw_doc_esgf_id_is_unique(engine):
 def test_raw_doc_edition_link_pair_is_unique(engine):
     """One (document, edition) pair; linking the same document to it twice is a dupe."""
     with Session(engine) as session:
-        session.add(RawDocVersionLink(raw_id=1, dataset_version_id=1))
+        session.add(RawDocVersionLink(raw_doc_id=1, dataset_version_id=1))
         session.commit()
 
-        session.add(RawDocVersionLink(raw_id=1, dataset_version_id=1))
+        session.add(RawDocVersionLink(raw_doc_id=1, dataset_version_id=1))
         with pytest.raises(IntegrityError):
             session.commit()
 
 
 def test_one_document_can_describe_many_editions(engine):
-    """A CMIP5 document bundles many per-variable editions: one raw_id, many links."""
+    """A CMIP5 document bundles many per-variable editions: one raw_doc, many links."""
     with Session(engine) as session:
-        session.add(RawDocVersionLink(raw_id=1, dataset_version_id=1))
-        session.add(RawDocVersionLink(raw_id=1, dataset_version_id=2))
+        session.add(RawDocVersionLink(raw_doc_id=1, dataset_version_id=1))
+        session.add(RawDocVersionLink(raw_doc_id=1, dataset_version_id=2))
         session.commit()
 
         assert len(session.exec(select(RawDocVersionLink)).all()) == 2

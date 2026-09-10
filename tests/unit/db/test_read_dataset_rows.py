@@ -151,8 +151,10 @@ def test_dataset_facets_requires_every_non_optional_facet():
     """A row missing a required facet fails loudly at construction, in `search`.
 
     This is the typed-model upgrade over the old bare dict: the omission is caught here,
-    naming the field, rather than surfacing as a NOT NULL error at commit time. Only
-    `grid_label` is optional (CMIP5 has no grid).
+    naming the field, rather than surfacing as a NOT NULL error at commit time. Every
+    facet must be supplied -- including `grid_label`, which has no default: a parser
+    must state it, passing `None` for a project with no grid (CMIP5), so a forgotten
+    grid is a loud error here rather than a silent `NULL`.
     """
     with pytest.raises(ValidationError):
         DatasetFacets(id_project_specific="native.id", project="CMIP6")  # rest missing

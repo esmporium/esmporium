@@ -17,11 +17,12 @@ import pytest
 from sqlmodel import Session, select
 
 from esmporium.db import (
+    DataNode,
     Dataset,
-    DatasetNodeInformation,
     DatasetRawDoc,
     DatasetVersion,
     RawDocVersionLink,
+    UnhandledDatasetClashError,
     build_result_processor,
     ingest_parsed_documents,
 )
@@ -65,7 +66,7 @@ def _counts(session: Session) -> dict[str, int]:
     return {
         "datasets": len(session.exec(select(Dataset)).all()),
         "versions": len(session.exec(select(DatasetVersion)).all()),
-        "nodes": len(session.exec(select(DatasetNodeInformation)).all()),
+        "nodes": len(session.exec(select(DataNode)).all()),
         "raw_docs": len(session.exec(select(DatasetRawDoc)).all()),
         "links": len(session.exec(select(RawDocVersionLink)).all()),
     }
@@ -116,6 +117,58 @@ def test_reingesting_the_same_documents_is_idempotent(engine):
     assert first == second
 
 
+def test_ingest_propagates_a_dataset_clash(engine):
+    """A dataset clash surfacing mid-ingest is raised, not swallowed on the write path.
+
+    Two *identical* documents are idempotently merged onto one `Dataset` (see
+    `test_reingesting_the_same_documents_is_idempotent`), so a clash is not simply "the
+    same dataset twice". It arises when two datasets are the same under the identity
+    index yet the get-or-create lookup cannot see them as equal, and with our columns
+    the one such case is `grid_label`: the index compares `coalesce(grid_label, '')`, so
+    a document reporting no grid as `None` and another reporting it as `""` are one
+    dataset to the index but two to the lookup. That is exactly the coalesce edge the
+    index exists to catch. This pins that when it fires, `ingest_parsed_documents` lets
+    the `UnhandledDatasetClashError` out rather than hiding it behind the savepoint.
+    """
+
+    def cmip5_document(grid_label: str | None, esgf_doc_id: str) -> ParsedDocument:
+        return ParsedDocument(
+            id_project_specific="cmip5.output1.native.id",
+            datasets=(
+                DatasetFacets(
+                    id_project_specific="cmip5.output1.native.id",
+                    project="CMIP5",
+                    model="ACCESS1-0",
+                    institution="CSIRO-BOM",
+                    experiment="historical",
+                    variant_label="r1i1p1",
+                    variable="tas",
+                    reporting_interval="mon",
+                    grid_label=grid_label,
+                    processing_id="Amon",
+                ),
+            ),
+            version="20110101",
+            is_latest=True,
+            retracted=False,
+            nodes=(DataNodeInfo("node.example"),),
+            esgf_doc_id=esgf_doc_id,
+            raw_json="{}",
+            raw_docs_format_tag=SOLR_FORMAT_TAG,
+        )
+
+    # Distinct esgf_doc_ids, so if the clash somehow did not fire on the dataset it
+    # would not be masked by a raw-doc collision instead.
+    clashing = [
+        cmip5_document(None, "cmip5.output1.native.id|node.a"),
+        cmip5_document("", "cmip5.output1.native.id|node.b"),
+    ]
+
+    with Session(engine) as session:
+        with pytest.raises(UnhandledDatasetClashError):
+            ingest_parsed_documents(session, clashing)
+
+
 def test_result_processor_commits_each_host(engine):
     """The `build_result_processor` processor persists a host's docs, committing."""
     facade = _facade(
@@ -150,7 +203,7 @@ def test_ingest_stac_cmip7_writes_one_dataset_per_document(engine):
     assert len(rows) == len(documents)
 
 
-def test_ingest_stamps_each_raw_doc_with_its_search_api_tag(engine):
+def test_ingest_stamps_each_raw_doc_with_its_raw_docs_format_tag(engine):
     """The producing API's tag is stored on every raw doc, ready for load-time reads.
 
     Solr and STAC ingests are checked together so the tag really tracks the API that
@@ -175,7 +228,9 @@ def test_ingest_stamps_each_raw_doc_with_its_search_api_tag(engine):
             session, stac.parse_search_results(_load("esgf-ng-stac-cmip7-east-search"))
         )
         session.commit()
-        tags = {doc.search_api_tag for doc in session.exec(select(DatasetRawDoc)).all()}
+        tags = {
+            doc.raw_docs_format_tag for doc in session.exec(select(DatasetRawDoc)).all()
+        }
 
     assert tags == {SOLR_FORMAT_TAG, STAC_FORMAT_TAG}
 
@@ -184,7 +239,8 @@ def test_bypassing_user_must_inject_a_normaliser_for_their_tag(engine):
     """A user's own search API can ingest, but its tag needs a matching normaliser.
 
     Our facade and search API are built so a user can bypass them with their own. When
-    they do, their documents are stored under their own `search_api_tag`, and reading
+    they do, their documents are stored under their own `raw_docs_format_tag`, and
+    reading
     those back at load time needs the flattener for that tag: the default registry does
     not know it, so normalisation raises until the user injects their own.
     """
@@ -210,7 +266,7 @@ def test_bypassing_user_must_inject_a_normaliser_for_their_tag(engine):
         nodes=(DataNodeInfo("node.example"),),
         esgf_doc_id="my.native.id|node.example",
         raw_json=json.dumps({"blob": "product=output1"}),
-        search_api_tag="acme-format",
+        raw_docs_format_tag="acme-format",
     )
 
     with Session(engine) as session:
@@ -219,12 +275,12 @@ def test_bypassing_user_must_inject_a_normaliser_for_their_tag(engine):
         stored = session.exec(select(DatasetRawDoc)).one()
 
     # The user's tag rode all the way to the row.
-    assert stored.search_api_tag == "acme-format"
+    assert stored.raw_docs_format_tag == "acme-format"
     raw = json.loads(stored.raw_json)
 
     # Load-time normalisation with the default registry cannot read an unknown tag.
     with pytest.raises(UnknownRawDocFormatTagError):
-        normalise_stored_document(raw, stored.search_api_tag)
+        normalise_stored_document(raw, stored.raw_docs_format_tag)
 
     # Injecting a flattener for that tag (alongside ours) makes it readable.
     normalisers = {
@@ -233,6 +289,6 @@ def test_bypassing_user_must_inject_a_normaliser_for_their_tag(engine):
             pair.split("=", 1) for pair in doc["blob"].split("|")
         ),
     }
-    assert normalise_stored_document(raw, stored.search_api_tag, normalisers) == {
+    assert normalise_stored_document(raw, stored.raw_docs_format_tag, normalisers) == {
         "product": "output1"
     }

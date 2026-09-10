@@ -1,7 +1,7 @@
 """
 Tests for flattening a stored raw search document into `{facet_name: value}`.
 
-`normalise_stored_document` dispatches on the `search_api_tag` recorded with each
+`normalise_stored_document` dispatches on the `raw_docs_format_tag` recorded with each
 document (no shape sniffing): the tag names the format, and a registry maps it to the
 flattener. The default registry covers the search APIs we ship; it is injectable so a
 user who bypasses our facade can supply the flattener for their own tag, and an unknown
@@ -100,7 +100,7 @@ def test_injected_mapping_that_drops_defaults_no_longer_knows_solr():
 )
 def test_each_inbuilt_api_declares_its_tag(search_api, expected_tag):
     """Each shipped search API declares the tag its stored docs are normalised by."""
-    assert search_api.search_api_tag == expected_tag
+    assert search_api.raw_docs_format_tag == expected_tag
 
 
 @pytest.mark.parametrize(
@@ -111,7 +111,7 @@ def test_every_inbuilt_tag_has_a_default_normaliser(search_api):
     """Our own APIs can never trip the unknown-tag error: each tag is registered.
 
     This guards the pairing between the two edits a new inbuilt API needs -- declaring
-    a `search_api_tag` and registering a flattener for it -- so one cannot ship without
-    the other.
+    a `raw_docs_format_tag` and registering a flattener for it -- so one cannot ship
+    without the other.
     """
-    assert search_api.search_api_tag in DEFAULT_NORMALISERS
+    assert search_api.raw_docs_format_tag in DEFAULT_NORMALISERS

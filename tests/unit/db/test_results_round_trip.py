@@ -134,14 +134,14 @@ def _save_scenario(engine) -> None:
                         "data_node": DATA_NODE,
                     }
                 ),
-                search_api_tag=SOLR_FORMAT_TAG,  # this scenario is CMIP5 Solr
+                raw_docs_format_tag=SOLR_FORMAT_TAG,  # this scenario is CMIP5 Solr
             )
             session.add(raw)
             session.commit()  # assign raw.id
             for variable in VARIABLES:
                 session.add(
                     RawDocVersionLink(
-                        raw_id=raw.id,
+                        raw_doc_id=raw.id,
                         dataset_version_id=versions[(product, variable)].id,
                     )
                 )
@@ -159,8 +159,9 @@ def populated(engine):
 #
 # The "which facet differs?" logic now lives in `src`, split across two layers: the
 # search layer flattens a stored raw document into `{facet: value}`
-# (`esmporium.search.normalise_stored_document`), dispatching on the `search_api_tag`
-# stored with the document, and `esmporium.db.facet_differences` compares those flat
+# (`esmporium.search.normalise_stored_document`), dispatching on the
+# `raw_docs_format_tag` stored with the document, and `esmporium.db.facet_differences`
+# compares those flat
 # mappings keyed by `Dataset.id`. So `db` never hard-codes `product`, never splits the
 # native id on `.`, and never sniffs Solr vs STAC. The helper below is just the plumbing
 # that gets a dataset's raw-document row back out of the database.
@@ -176,7 +177,7 @@ def _raw_doc_for(session: Session, dataset: Dataset) -> DatasetRawDoc:
     ).one()
     return session.exec(
         select(DatasetRawDoc)
-        .join(RawDocVersionLink, RawDocVersionLink.raw_id == DatasetRawDoc.id)  # type: ignore[arg-type]
+        .join(RawDocVersionLink, RawDocVersionLink.raw_doc_id == DatasetRawDoc.id)  # type: ignore[arg-type]
         .where(RawDocVersionLink.dataset_version_id == version.id)
     ).one()
 
@@ -246,7 +247,7 @@ def test_load_detects_the_product_clash_and_offers_a_choice(populated):
             for row in matches:
                 raw = _raw_doc_for(session, row)
                 normalised = normalise_stored_document(
-                    json.loads(raw.raw_json), raw.search_api_tag
+                    json.loads(raw.raw_json), raw.raw_docs_format_tag
                 )
                 normalised_info.append((row.id, normalised))
             differences = facet_differences(tuple(normalised_info))
@@ -300,14 +301,14 @@ def test_one_document_is_shared_by_both_variables(populated):
         assert len(version_ids) == len(VARIABLES)
 
         # ...but all those editions are backed by exactly one raw document.
-        raw_ids = set(
+        raw_doc_ids = set(
             session.exec(
-                select(RawDocVersionLink.raw_id).where(
+                select(RawDocVersionLink.raw_doc_id).where(
                     RawDocVersionLink.dataset_version_id.in_(version_ids)  # type: ignore[attr-defined]
                 )
             ).all()
         )
-        assert len(raw_ids) == 1
+        assert len(raw_doc_ids) == 1
 
 
 def test_each_product_is_preserved_as_a_distinct_raw_document(populated):

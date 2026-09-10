@@ -22,8 +22,12 @@ from __future__ import annotations
 from typing import Any
 
 
+# A sentinel, not the string "<absent>": a unique object can never equal a real facet
+# value (a facet that genuinely held "<absent>" would otherwise be mistaken for
+# missing), while the `__repr__` keeps it readable in output. That is the whole reason
+# it is a class -- uniqueness by identity plus a friendly repr -- so it is kept, shrunk.
 class _Missing:
-    """Sentinel for a facet present in some documents but absent from another."""
+    __slots__ = ()
 
     def __repr__(self) -> str:
         return "<absent>"

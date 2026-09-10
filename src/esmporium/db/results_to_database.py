@@ -20,12 +20,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from esmporium.db.schema import (
+    DATASET_FACET_COLUMNS,
     DATASET_IDENTITY_INDEX,
+    DataNode,
     Dataset,
-    DatasetNodeInformation,
     DatasetRawDoc,
     DatasetVersion,
-    DatasetVersionNodeLink,
+    DatasetVersionDataNodeLink,
     RawDocVersionLink,
 )
 from esmporium.search.result_parsing import (
@@ -54,16 +55,27 @@ class UnhandledDatasetClashError(Exception):
         self.dataset = dataset
         # A clash means the incoming dataset matches an existing row on *every* column
         # our model records -- the identity index over `id_project_specific` and all the
-        # facets (see `Dataset.__table_args__`), not any single keying column. The
-        # native id is quoted only because it is the one human-readable handle on which
-        # dataset this was; it is not what defines identity.
+        # facets (see `Dataset.__table_args__`), not any single keying column.
+        #
+        # We quote the full modelled identity rather than `dataset` itself, because a
+        # `Dataset`'s repr carries its surrogate `id`, which is meaningless outside one
+        # person's database. `id_project_specific` plus the facet columns is exactly
+        # what a developer needs to reproduce the clash, and it is reproducible across
+        # databases -- so it is what we ask users to quote when they raise an issue.
+        identity = {
+            "id_project_specific": dataset.id_project_specific,
+            **{column: getattr(dataset, column) for column in DATASET_FACET_COLUMNS},
+        }
         super().__init__(
             "Two datasets are identical across every column our model records "
-            f"(id_project_specific={dataset.id_project_specific!r}), so our dataset "
-            "model cannot tell them apart. This clash is not handled: the data differs "
-            "in a facet we do not model. Flatten the raw documents with "
+            f"({identity!r}), so our dataset model cannot tell them apart. This clash "
+            "is not handled: the data differs in a facet we do not model. Please raise "
+            "an issue at https://github.com/esmporium/esmporium/issues to discuss your "
+            "use case, quoting the identity above. To find the differing facet, "
+            "flatten the clashing datasets' raw documents with "
             "esmporium.search.normalise_stored_document and compare them with "
-            "esmporium.db.dataset_uniqueness.facet_differences to find the difference."
+            "esmporium.db.dataset_uniqueness.facet_differences, and quote that "
+            "difference in the issue too."
         )
 
 
@@ -204,14 +216,12 @@ def _get_or_create_dataset(session: Session, facets: DatasetFacets) -> Dataset:
     conditions = [
         getattr(Dataset, column) == value for column, value in facet_values.items()
     ]
-    # Checking over all columns hence, because of our uniqueness constraint,
-    # we can't get more than one result so using `first` here is safe.
-    # I would ask claude: is this as far as we should/can go
-    # in terms of checking use of `first` here,
-    # or should we add something to guard against more than one row matching `facets`
-    # (just in case the database got corrupted somehow,
-    # even though that should be impossible).
-    existing = session.exec(select(Dataset).where(*conditions)).first()
+    # We match on every column, so the identity index (see `Dataset.__table_args__`)
+    # guarantees at most one row can satisfy this. `one_or_none` encodes exactly that
+    # expectation: it returns the row or `None`, and raises `MultipleResultsFound` if a
+    # second ever exists -- a corrupt or mis-migrated database then fails loudly here
+    # rather than silently picking the first row, which `first` would have hidden.
+    existing = session.exec(select(Dataset).where(*conditions)).one_or_none()
     if existing is not None:
         return existing
     return save_dataset(session, Dataset(**facet_values))
@@ -221,13 +231,15 @@ def _upsert_version(
     session: Session, dataset_id: int | None, parsed: ParsedDocument
 ) -> DatasetVersion:
     """Insert this dataset's edition, or refresh its snapshot flags if seen before."""
-    # As above re use of first and whether we should guard more carefully here or not
+    # `(dataset_id, version)` is unique (see `DatasetVersion.__table_args__`), so at
+    # most one row matches. `one_or_none` makes a duplicate fail loudly rather than be
+    # hidden (see the note in `_get_or_create_dataset`).
     existing = session.exec(
         select(DatasetVersion).where(
             DatasetVersion.dataset_id == dataset_id,
             DatasetVersion.version == parsed.version,
         )
-    ).first()
+    ).one_or_none()
     if existing is not None:
         existing.is_latest = parsed.is_latest
         existing.retracted = parsed.retracted
@@ -246,39 +258,39 @@ def _upsert_version(
     return version
 
 
-def _get_or_create_node(session: Session, data_node: str) -> DatasetNodeInformation:
+def _get_or_create_node(session: Session, data_node: str) -> DataNode:
     """Reuse the row for this data node if we have one, else create it."""
-    # As above re use of first and whether we should guard more carefully here or not
+    # `data_node` is unique (see `DataNode`), so at most one row matches; `one_or_none`
+    # makes a duplicate fail loudly (see the note in `_get_or_create_dataset`).
     existing = session.exec(
-        select(DatasetNodeInformation).where(
-            DatasetNodeInformation.data_node == data_node
-        )
-    ).first()
+        select(DataNode).where(DataNode.data_node == data_node)
+    ).one_or_none()
     if existing is not None:
         return existing
 
-    node = DatasetNodeInformation(data_node=data_node)
+    node = DataNode(data_node=data_node)
     session.add(node)
     session.flush()
     return node
 
 
 def _get_or_create_version_node_link(
-    session: Session, dataset_version_id: int | None, node_id: int | None
-) -> DatasetVersionNodeLink:
+    session: Session, dataset_version_id: int | None, data_node_id: int | None
+) -> DatasetVersionDataNodeLink:
     """Link an edition to a data node, once."""
-    # As above re use of first and whether we should guard more carefully here or not
+    # `(dataset_version_id, data_node_id)` is unique, so at most one row matches;
+    # `one_or_none` makes a duplicate fail loudly (see `_get_or_create_dataset`).
     existing = session.exec(
-        select(DatasetVersionNodeLink).where(
-            DatasetVersionNodeLink.dataset_version_id == dataset_version_id,
-            DatasetVersionNodeLink.node_id == node_id,
+        select(DatasetVersionDataNodeLink).where(
+            DatasetVersionDataNodeLink.dataset_version_id == dataset_version_id,
+            DatasetVersionDataNodeLink.data_node_id == data_node_id,
         )
-    ).first()
+    ).one_or_none()
     if existing is not None:
         return existing
 
-    link = DatasetVersionNodeLink(
-        dataset_version_id=dataset_version_id, node_id=node_id
+    link = DatasetVersionDataNodeLink(
+        dataset_version_id=dataset_version_id, data_node_id=data_node_id
     )
     session.add(link)
     session.flush()
@@ -287,17 +299,18 @@ def _get_or_create_version_node_link(
 
 def _get_or_create_raw_doc(session: Session, parsed: ParsedDocument) -> DatasetRawDoc:
     """Store the raw JSON once, keyed by `esgf_doc_id`."""
-    # As above re use of first and whether we should guard more carefully here or not
+    # `esgf_doc_id` is unique, so at most one row matches; `one_or_none` makes a
+    # duplicate fail loudly (see the note in `_get_or_create_dataset`).
     existing = session.exec(
         select(DatasetRawDoc).where(DatasetRawDoc.esgf_doc_id == parsed.esgf_doc_id)
-    ).first()
+    ).one_or_none()
     if existing is not None:
         return existing
 
     raw_doc = DatasetRawDoc(
         esgf_doc_id=parsed.esgf_doc_id,
         raw_json=parsed.raw_json,
-        search_api_tag=parsed.search_api_tag,
+        raw_docs_format_tag=parsed.raw_docs_format_tag,
     )
     session.add(raw_doc)
     session.flush()
@@ -305,20 +318,23 @@ def _get_or_create_raw_doc(session: Session, parsed: ParsedDocument) -> DatasetR
 
 
 def _get_or_create_link(
-    session: Session, raw_id: int | None, dataset_version_id: int | None
+    session: Session, raw_doc_id: int | None, dataset_version_id: int | None
 ) -> RawDocVersionLink:
     """Link a raw document to an edition, once."""
-    # As above re use of first and whether we should guard more carefully here or not
+    # `(raw_doc_id, dataset_version_id)` is unique, so at most one row matches;
+    # `one_or_none` makes a duplicate fail loudly (see `_get_or_create_dataset`).
     existing = session.exec(
         select(RawDocVersionLink).where(
-            RawDocVersionLink.raw_id == raw_id,
+            RawDocVersionLink.raw_doc_id == raw_doc_id,
             RawDocVersionLink.dataset_version_id == dataset_version_id,
         )
-    ).first()
+    ).one_or_none()
     if existing is not None:
         return existing
 
-    link = RawDocVersionLink(raw_id=raw_id, dataset_version_id=dataset_version_id)
+    link = RawDocVersionLink(
+        raw_doc_id=raw_doc_id, dataset_version_id=dataset_version_id
+    )
     session.add(link)
     session.flush()
     return link

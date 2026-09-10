@@ -180,28 +180,12 @@ class Dataset(EsmporiumBase, table=True):
         ),
     )
 
-    # @Anna, let's check with claude
-    # whether this idea has effectively been resolved/implemented
-    # with the addition of DatasetFacets
-    # (hence whether we can remove the comment below here).
-    # TODO: once we parse ESGF records, split the facets out into a base model.
-    # Models *without* `table=True` are validated normally, so:
-    #
-    #     class DatasetBase(EsmporiumBase):
-    #         project: str
-    #         ...
-    #
-    #     class Dataset(DatasetBase, table=True):
-    #         id: str = Field(primary_key=True)
-    #
-    # Parsing then builds a `DatasetBase`
-    # and promotes it with `Dataset.model_validate(parsed)`.
-    # A malformed record then fails where it is read, naming the field at fault,
-    # instead of turning up as an IntegrityError from a commit much later,
-    # after we have already thrown away the context needed to explain it.
-    # Note that `Dataset.model_validate` validates today,
-    # so this is a question of where the facets are declared,
-    # not of adding new machinery.
+    # The "validate at parse time, fail where the record is read" goal that once lived
+    # here as a TODO (split the facets into a non-table base model) is now met by
+    # `DatasetFacets` (esmporium.search.result_parsing): the facade parses each record
+    # into that validated model, and `db` then builds a `Dataset` from it. A malformed
+    # record therefore fails in `search`, naming the field at fault, rather than as a
+    # far-away IntegrityError at commit time.
 
     id: int | None = Field(default=None, primary_key=True)
     """
@@ -219,7 +203,7 @@ class Dataset(EsmporiumBase, table=True):
 
     Version and data-node information are not part of this identity; they live in
     [`DatasetVersion`][esmporium.db.schema.DatasetVersion] and
-    [`DatasetNodeInformation`][esmporium.db.schema.DatasetNodeInformation].
+    [`DataNode`][esmporium.db.schema.DataNode].
     """
 
     id_project_specific: str = Field(index=True)
@@ -389,9 +373,12 @@ class Dataset(EsmporiumBase, table=True):
     # )
 
 
-# @Anna is this now redundant?
-# I only see it used in tests so I don't think it affects behaviour,
-# but maybe it is needed for the tests and this is the best place to keep it?
+# Not redundant, and kept here on purpose: this is the single source of truth for
+# "which columns are facets". It is hand-written (see the note below) but cannot drift.
+# `test_facet_columns_are_the_declared_facets` pins it to `Dataset`'s columns, and
+# `test_dataset_facets_mirror_dataset_columns` pins `DatasetFacets` to it in turn. Its
+# uses are test infrastructure (fixtures build datasets generically from it), but that
+# is load-bearing: adding a facet to `Dataset` without adding it here fails those tests.
 DATASET_FACET_COLUMNS: tuple[str, ...] = (
     "project",
     "model",
@@ -439,7 +426,7 @@ class DatasetVersion(EsmporiumBase, table=True):
     already per-variable, so it is one edition per `Dataset` there anyway.
 
     Version-specific information does not include data-node information. That lives in
-    [`DatasetNodeInformation`][esmporium.db.schema.DatasetNodeInformation].
+    [`DataNode`][esmporium.db.schema.DataNode].
     """
 
     # See the note on `Dataset.model_config`: this catches a bad *value* at
@@ -490,14 +477,15 @@ class DatasetVersion(EsmporiumBase, table=True):
     """
 
 
-class DatasetNodeInformation(EsmporiumBase, table=True):
+class DataNode(EsmporiumBase, table=True):
     """
     A data node that hosts data
 
     There are only a handful of data nodes across ESGF, so this table holds one row per
     *distinct* node rather than one per (edition, node). Editions reach their nodes
-    through [`DatasetVersionNodeLink`][esmporium.db.schema.DatasetVersionNodeLink]
-    (many-to-many): a node hosts many editions, and an edition can live on many nodes.
+    through the
+    [`DatasetVersionDataNodeLink`][esmporium.db.schema.DatasetVersionDataNodeLink]
+    many-to-many join: a node hosts many editions, and an edition lives on many nodes.
 
     This records only *where* the data lives. Download URLs (file access) are
     deliberately out of scope for now and will be handled in a later step.
@@ -513,13 +501,13 @@ class DatasetNodeInformation(EsmporiumBase, table=True):
     """The data node hosting the data, e.g. `esgf.nci.org.au`. Unique in this table."""
 
 
-class DatasetVersionNodeLink(EsmporiumBase, table=True):
+class DatasetVersionDataNodeLink(EsmporiumBase, table=True):
     """
     A many-to-many link between an edition and a data node
 
     Each row is one (edition, node) pair: this edition is hosted on this node. The pair
     is unique, so recording the same edition on the same node twice reuses the row.
-    See [`DatasetNodeInformation`][esmporium.db.schema.DatasetNodeInformation].
+    See [`DataNode`][esmporium.db.schema.DataNode].
     """
 
     # See the note on `Dataset.model_config`.
@@ -535,14 +523,14 @@ class DatasetVersionNodeLink(EsmporiumBase, table=True):
     See [`DatasetVersion`][esmporium.db.schema.DatasetVersion].
     """
 
-    node_id: int = Field(foreign_key="datasetnodeinformation.id", index=True)
+    data_node_id: int = Field(foreign_key="datanode.id", index=True)
     """
     The node hosting the edition
 
-    See [`DatasetNodeInformation`][esmporium.db.schema.DatasetNodeInformation].
+    See [`DataNode`][esmporium.db.schema.DataNode].
     """
 
-    __table_args__ = (UniqueConstraint("dataset_version_id", "node_id"),)
+    __table_args__ = (UniqueConstraint("dataset_version_id", "data_node_id"),)
 
 
 class DatasetRawDoc(EsmporiumBase, table=True):
@@ -581,7 +569,7 @@ class DatasetRawDoc(EsmporiumBase, table=True):
     raw_json: str
     """The document exactly as returned, JSON-encoded"""
 
-    search_api_tag: str
+    raw_docs_format_tag: str
     """
     Names the format of `raw_json`, stamped by the search API that returned it
 
@@ -614,7 +602,7 @@ class RawDocVersionLink(EsmporiumBase, table=True):
     id: int | None = Field(default=None, primary_key=True)
     """Surrogate key; assigned by the database"""
 
-    raw_id: int = Field(foreign_key="datasetrawdoc.id", index=True)
+    raw_doc_id: int = Field(foreign_key="datasetrawdoc.id", index=True)
     """
     The raw document
 
@@ -628,7 +616,7 @@ class RawDocVersionLink(EsmporiumBase, table=True):
     See [`DatasetVersion`][esmporium.db.schema.DatasetVersion].
     """
 
-    __table_args__ = (UniqueConstraint("raw_id", "dataset_version_id"),)
+    __table_args__ = (UniqueConstraint("raw_doc_id", "dataset_version_id"),)
 
 
 class SearchAPICallRecord(EsmporiumBase, table=True):

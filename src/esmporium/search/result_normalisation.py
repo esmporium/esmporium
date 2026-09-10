@@ -8,9 +8,9 @@ which facet distinguishes two datasets our model considers identical (see
 
 It runs long after the search, with no live
 [`SearchAPI`][esmporium.search.apis.SearchAPI] in scope, so it cannot ask the API how to
-read its own format. Instead each raw doc is stored with a `search_api_tag` -- a small
-string the producing search API stamps on it at ingest (see
-[`SearchAPI.search_api_tag`][esmporium.search.apis.SearchAPI]) -- and
+read its own format. Instead each raw doc is stored with a `raw_docs_format_tag` -- a
+small string the producing search API stamps on it at ingest (see
+[`SearchAPI.raw_docs_format_tag`][esmporium.search.apis.SearchAPI]) -- and
 [`normalise_stored_document`][(m).] dispatches on that tag through a registry of
 per-format flatteners. No shape sniffing: the format is recorded, not guessed.
 
@@ -30,13 +30,13 @@ from collections.abc import Callable, Mapping
 from typing import Any, TypeAlias
 
 SOLR_FORMAT_TAG = "solr"
-"""The `search_api_tag` of our Solr search APIs (ESGF1 and the ESGF-1.5 bridge)."""
+"""The `raw_docs_format_tag` of our Solr search APIs (ESGF1 and the ESGF-1.5 bridge)."""
 
 STAC_FORMAT_TAG = "stac"
-"""The `search_api_tag` of our STAC search API (ESGF-NG)."""
+"""The `raw_docs_format_tag` of our STAC search API (ESGF-NG)."""
 
 NormaliseFunc = Callable[[dict[str, Any]], dict[str, Any]]
-"""Flattens one raw document into `{facet_name: value}`. Keyed by `search_api_tag`."""
+"""Flattens one raw document into `{facet_name: value}`. Keyed by `raw_docs_format_tag`."""  # noqa: E501
 
 NormalisedDocument: TypeAlias = dict[str, Any]
 """
@@ -117,7 +117,7 @@ DEFAULT_NORMALISERS: Mapping[str, NormaliseFunc] = {
     STAC_FORMAT_TAG: _normalise_stac,
 }
 """
-The flattener for each search API we ship, keyed by its `search_api_tag`
+The flattener for each search API we ship, keyed by its `raw_docs_format_tag`
 
 Passed as the default to [`normalise_stored_document`][(m).]. To handle a document from
 a search API you injected, pass your own mapping -- to keep ours as well as yours,
@@ -127,7 +127,7 @@ merge: `{**DEFAULT_NORMALISERS, your_tag: your_flattener}`.
 
 class UnknownRawDocFormatTagError(ValueError):
     """
-    Raised when a stored raw doc's `search_api_tag` has no registered flattener
+    Raised when a stored raw doc's `raw_docs_format_tag` has no registered flattener
 
     Every raw document is stored with the tag of the search API that produced it. If we
     are asked to normalise one whose tag is not in the registry, we do not guess: either
@@ -140,7 +140,7 @@ class UnknownRawDocFormatTagError(ValueError):
         self.known = tuple(sorted(normalisers))
         known = ", ".join(repr(name) for name in self.known) or "(none)"
         super().__init__(
-            f"No flattener is registered for search_api_tag {tag!r}. "
+            f"No flattener is registered for raw_docs_format_tag {tag!r}. "
             f"Known tags: {known}. If this document came from a search API you "
             "injected, pass a `normalisers` mapping that includes this tag, e.g. "
             "{**DEFAULT_NORMALISERS, <your tag>: <your flattener>}."
@@ -149,7 +149,7 @@ class UnknownRawDocFormatTagError(ValueError):
 
 def normalise_stored_document(
     raw: dict[str, Any],
-    search_api_tag: str,
+    raw_docs_format_tag: str,
     normalisers: Mapping[str, NormaliseFunc] = DEFAULT_NORMALISERS,
 ) -> NormalisedDocument:
     """
@@ -160,10 +160,10 @@ def normalise_stored_document(
     raw
         One raw search document, already parsed from its stored JSON
 
-    search_api_tag
-        The tag stored alongside the document (see
-        [`DatasetRawDoc.search_api_tag`][esmporium.db.schema.DatasetRawDoc]), naming the
-        format the producing search API returned
+    raw_docs_format_tag
+        The tag stored alongside the document, naming the format the producing search
+        API returned (see
+        [`DatasetRawDoc.raw_docs_format_tag`][esmporium.db.schema.DatasetRawDoc])
 
     normalisers
         The flattener to use for each tag. Defaults to [`DEFAULT_NORMALISERS`][(m).],
@@ -179,9 +179,9 @@ def normalise_stored_document(
     Raises
     ------
     UnknownRawDocFormatTagError
-        `search_api_tag` has no flattener in `normalisers`
+        `raw_docs_format_tag` has no flattener in `normalisers`
     """
-    if search_api_tag not in normalisers:
-        raise UnknownRawDocFormatTagError(search_api_tag, normalisers)
+    if raw_docs_format_tag not in normalisers:
+        raise UnknownRawDocFormatTagError(raw_docs_format_tag, normalisers)
 
-    return normalisers[search_api_tag](raw)
+    return normalisers[raw_docs_format_tag](raw)

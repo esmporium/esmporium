@@ -73,8 +73,16 @@ class DatasetFacets(BaseModel):
     reporting_interval: str
     """See [`Dataset.reporting_interval`][esmporium.db.schema.Dataset.reporting_interval]."""  # noqa: E501
 
-    grid_label: str | None = None
-    """See [`Dataset.grid_label`][esmporium.db.schema.Dataset.grid_label]. CMIP5 has none."""  # noqa: E501
+    grid_label: str | None
+    """
+    See [`Dataset.grid_label`][esmporium.db.schema.Dataset.grid_label].
+
+    Required with no default (unlike the column it maps to): a parser must state the
+    value, passing `None` for a project with no grid concept (CMIP5). That makes "this
+    data has no grid" an explicit decision at parse time rather than a silent omission,
+    so a reader that simply forgets `grid_label` fails here in `search` rather than
+    quietly storing `NULL`.
+    """
 
     processing_id: str
     """See [`Dataset.processing_id`][esmporium.db.schema.Dataset.processing_id]."""
@@ -86,8 +94,8 @@ class DataNodeInfo:
 
     Only the data node (where the data lives) is kept. We deliberately do not carry the
     index node (which search index answered) or the replica flag: neither is stored --
-    [`DatasetNodeInformation`][esmporium.db.schema.DatasetNodeInformation] records only
-    the data node -- so reading them here would be carrying fields nothing consumes.
+    [`DataNode`][esmporium.db.schema.DataNode] records only the data node -- so reading
+    them here would be carrying fields nothing consumes.
     """
 
     data_node: str
@@ -124,10 +132,10 @@ class ParsedDocument:
     esgf_doc_id: str
     raw_json: str
 
-    search_api_tag: str
+    raw_docs_format_tag: str
     """
     Names the format of `raw_json`, taken from the producing
-    [`SearchAPI`][esmporium.search.apis.SearchAPI.search_api_tag]
+    [`SearchAPI`][esmporium.search.apis.SearchAPI.raw_docs_format_tag]
 
     Stored on the raw-doc row so the right flattener can normalise it at load time
     (see [`esmporium.search.normalise_stored_document`][]).

@@ -1,5 +1,8 @@
 """
-A runnable example of the search step: QueryCMIP{5,6,7} -> live ESGF -> saved rows
+A runnable example of the search step: QueryCMIP{5,6,7} -> ESGF -> rows -> query them
+
+This walks the whole path end to end: search live ESGF, save the results, then query
+those saved rows straight back out of the database.
 
 Everything that does the work now lives in `esmporium.search` and `esmporium.db`;
 this is only a hand-run example of calling it. Logging is turned up to `DEBUG` so
@@ -13,7 +16,12 @@ It shows two opt-in seams that hang off `search()`:
 - a `processor` from `build_result_processor(session)` that parses and saves each
   host's datasets the moment it answers. The rows it wrote are counted at the end.
 
-Run it:  uv run python scripts/first_search_cmipx_full.py
+Finally, once the rows are stored, it queries the database directly to show that the
+saved `Dataset` rows are now just ordinary rows you can filter -- e.g. "give me only
+the CMIP5 datasets", or "give me CMIP5 and CMIP7 together" -- with no memory of which
+search or API they came from.
+
+Run it:  uv run python scripts/search_cmipx.py
 """
 
 from __future__ import annotations
@@ -52,6 +60,37 @@ EXAMPLE_CMIP6 = QueryCMIP6(
 EXAMPLE_CMIP7 = QueryCMIP7(
     variable_id="tas",
 )
+
+
+def print_datasets_by_project(session: Session, projects: tuple[str, ...]) -> None:
+    """
+    Query the saved rows back out, filtered to a set of projects
+
+    This is the "load it back out" half of the demo: the rows are now just `Dataset`
+    rows, so getting "only CMIP5" or "CMIP5 and CMIP7 together" is an ordinary `WHERE
+    project IN (...)` -- nothing here knows or cares which search or API produced them.
+
+    Parameters
+    ----------
+    session
+        The session holding the saved rows
+
+    projects
+        The projects to include, e.g. `("CMIP5",)` or `("CMIP5", "CMIP7")`
+    """
+    label = " + ".join(projects)
+    statement = (
+        select(Dataset)
+        .where(Dataset.project.in_(projects))  # type: ignore[attr-defined]
+        .order_by(Dataset.id)
+    )
+    datasets = session.exec(statement).all()
+    print(f"\nquerying the database for {label} only -> {len(datasets)} row(s):")
+    for dataset in datasets:
+        print(
+            f"  [{dataset.project}] {dataset.variable} / {dataset.experiment} "
+            f"/ {dataset.reporting_interval}  ({dataset.id_project_specific})"
+        )
 
 
 def print_health(session: Session) -> None:
@@ -105,6 +144,11 @@ def main() -> None:
 
             saved = len(session.exec(select(Dataset)).all())
             print(f"\nsaved {saved} dataset row(s) to the database")
+
+            # The rows are now just database rows: query them back out, filtered to the
+            # projects we care about, with no reference to the searches that found them.
+            print_datasets_by_project(session, ("CMIP5",))
+            print_datasets_by_project(session, ("CMIP5", "CMIP7"))
 
             print_health(session)
 
