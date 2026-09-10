@@ -16,8 +16,8 @@ so the type has to sit at or below the search layer.
 The "one document, many rows" shape is deliberately project-agnostic. A CMIP5 Solr
 record bundles many variables and so yields many rows; a CMIP6/CMIP7 document yields
 exactly one. Which is which is the reader's concern (see
-[`esmporium.search.search_api_facade.SearchAPIFacade.read_dataset_rows`][]), not this
-type's: here a document simply carries the list of dataset rows it maps to.
+[`esmporium.search.search_api_facade.result_parsers`][]), not this type's: here a
+document simply carries the list of dataset rows it maps to.
 """
 
 from __future__ import annotations
@@ -32,9 +32,9 @@ class DatasetFacets(BaseModel):
     """
     One complete, savable dataset row: the identity plus every facet we model
 
-    This is the typed shape
-    [`SearchAPIFacade.read_dataset_rows`][esmporium.search.search_api_facade.SearchAPIFacade.read_dataset_rows]
-    produces and the `db` layer promotes into a
+    This is the typed shape the result parsers
+    ([`esmporium.search.search_api_facade.result_parsers`][])
+    produce and the `db` layer promotes into a
     [`Dataset`][esmporium.db.schema.Dataset] row (`Dataset(**facets.model_dump())`).
     Its fields mirror `Dataset`'s facet columns plus `id_project_specific`.
 
@@ -94,26 +94,6 @@ class DataNodeInfo:
 
 
 @dataclass(frozen=True)
-class ParsedDocShell:
-    """
-    The pieces of a document that its response *format* alone determines
-
-    These are read by the [`SearchAPI`][esmporium.search.apis.SearchAPI] (Solr vs
-    STAC), which knows the envelope shape but nothing about which project's facet
-    names to read. The facade combines this with the project-specific facet rows to
-    build a full [`ParsedDocument`][(m).].
-    """
-
-    id_project_specific: str
-    version: str
-    is_latest: bool
-    retracted: bool
-    nodes: tuple[DataNodeInfo, ...]
-    esgf_doc_id: str
-    raw_json: str
-
-
-@dataclass(frozen=True)
 class ParsedDocument:
     """One raw search document, reduced to the pieces we store."""
 
@@ -154,6 +134,10 @@ class ParsedDocument:
     """
 
 
+# Note: this shape will likely need to change once we want to link Datasets
+# and searches/query collections in our database.
+# (No need to change anything now though,
+# let's deal with this change when we need it in PR4)
 ResultProcessor = Callable[[str, tuple[ParsedDocument, ...]], None]
 """
 A callback that processes the parsed results one host answered with

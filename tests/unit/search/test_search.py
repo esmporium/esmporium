@@ -21,14 +21,17 @@ from esmporium.query import QueryCMIP6
 from esmporium.search import (
     ESGF1_CMIP6_FACADE_PARAMETERS,
     ESGFNG_CMIP6_FACADE_PARAMETERS,
-    SINGLE_ROW_DOC_PARSER,
+    ESGFNGCMIP6ResultParser,
     NoAPIWouldAnswerError,
     SearchAPIESGF1Solr,
     SearchAPIESGFNGSTAC,
     SearchAPIFacade,
     SelectorOfferedNoAPIFacadeError,
+    SolrSingleRowResultParser,
     build_list_selector,
     search,
+    stac_base_id,
+    stac_east_n_matches,
 )
 from esmporium.search.retry import _is_transient
 
@@ -69,7 +72,7 @@ def make_facade_cmip6_esgf1(
     return SearchAPIFacade(
         parameters=ESGF1_CMIP6_FACADE_PARAMETERS,
         search_api=SearchAPIESGF1Solr(host, fast_retrying(attempts), timeout=timeout),
-        doc_parser=SINGLE_ROW_DOC_PARSER,
+        result_parser=SolrSingleRowResultParser(),
     )
 
 
@@ -342,7 +345,10 @@ def test_search_curl_reproduces_a_post_body(caplog):
     stac_api = SearchAPIFacade(
         parameters=ESGFNG_CMIP6_FACADE_PARAMETERS,
         search_api=SearchAPIESGFNGSTAC("search.example.io", fast_retrying(1)),
-        doc_parser=SINGLE_ROW_DOC_PARSER,
+        result_parser=ESGFNGCMIP6ResultParser(
+            read_id_project_specific=stac_base_id,
+            read_n_matches=stac_east_n_matches,
+        ),
     )
     selector = build_list_selector([stac_api])
 
@@ -350,7 +356,10 @@ def test_search_curl_reproduces_a_post_body(caplog):
         search(
             QUERY_CMIP6,
             selector,
-            client=client_for(lambda r: httpx.Response(200, json={"numberMatched": 1})),
+            # A real STAC answer always carries `features`, empty or not.
+            client=client_for(
+                lambda r: httpx.Response(200, json={"numberMatched": 1, "features": []})
+            ),
         )
 
     (record,) = [r for r in caplog.records if r.name == LOGGER_NAME]

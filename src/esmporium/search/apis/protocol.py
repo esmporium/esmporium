@@ -6,14 +6,11 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import Any, Protocol
 
 from tenacity import Retrying
 
 from esmporium.search.apis.request import Request
-
-if TYPE_CHECKING:
-    from esmporium.search.result_parsing import ParsedDocShell
 
 
 def _describe_where_we_looked(expected_at: tuple[str, ...]) -> str:
@@ -200,6 +197,42 @@ class NoSearchResultNumberOfMatchesReturnedError(ValueError):
         )
 
 
+class NoSearchResultDocumentsError(ValueError):
+    """
+    Raised when a search response does not carry the documents it should
+
+    We expect to know where documents appear in search results.
+    A response missing the expected key(s) is not a search with no results
+    (an empty search still carries an empty list in the expected place)
+    it is a response we do not understand.
+    Hence, if we look and can't find the search results we expect, we raise loudly.
+    """
+
+    def __init__(self, raw: dict[str, Any], expected_at: str | tuple[str, ...]) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        raw
+            The response we could not read the documents out of
+
+        expected_at
+            Where in `raw` we looked for the documents
+        """
+        self.raw = raw
+        self.expected_at = (
+            (expected_at,) if isinstance(expected_at, str) else expected_at
+        )
+
+        super().__init__(
+            "This response does not carry the documents a search answers with. "
+            "We expected to read them from "
+            f"{_describe_where_we_looked(self.expected_at)}, "
+            f"{_explain_why_we_could_not_read(raw, self.expected_at)}"
+        )
+
+
 class NoFacetValuesReturnedError(ValueError):
     """
     Raised when a response does not enumerate facet values at all
@@ -266,13 +299,13 @@ class MultipleFacetValuesError(ValueError):
     """
     Raised when a facet we expected to be single-valued carries more than one value
 
-    [read_facet][(c).SearchAPI.read_facet] promises one scalar value (or `None`). A
-    document that lists several values for such a field is not something we can quietly
-    collapse into one -- doing so used to stringify the whole list (e.g. `"['a', 'b']"`)
-    and slip through. This turns that into a loud failure: either the field really is
-    multi-valued and should be read with
-    [read_facet_list][(c).SearchAPI.read_facet_list], or the document is not shaped the
-    way we thought.
+    [SearchAPI.read_facet][esmporium.search.apis.SearchAPI.read_facet]
+    promises one scalar value (or `None`).
+    A document that lists several values for such a field
+    is not something we can quietly collapse into one.
+    Either the field really is multi-valued and should be read with
+    [SearchAPI.read_facet_list][esmporium.search.apis.SearchAPI.read_facet_list],
+    or the document is not shaped the way we thought.
     """
 
     def __init__(self, api_field: str, values: tuple[str, ...]) -> None:
@@ -301,11 +334,6 @@ def single_facet_value_or_none(values: tuple[str, ...], api_field: str) -> str |
     """
     Collapse the values read for a facet into the single scalar it should be
 
-    This is the shared guard behind every format's
-    [read_facet][(c).SearchAPI.read_facet]: it reuses that format's
-    [read_facet_list][(c).SearchAPI.read_facet_list] and enforces the scalar promise,
-    rather than each format collapsing a list its own (silently lossy) way.
-
     Parameters
     ----------
     values
@@ -317,7 +345,7 @@ def single_facet_value_or_none(values: tuple[str, ...], api_field: str) -> str |
     Returns
     -------
     :
-        The single value, or `None` if there were none
+        The single value, or `None` if there were no values
 
     Raises
     ------
@@ -326,6 +354,7 @@ def single_facet_value_or_none(values: tuple[str, ...], api_field: str) -> str |
     """
     if len(values) > 1:
         raise MultipleFacetValuesError(api_field, values)
+
     return values[0] if values else None
 
 
@@ -341,39 +370,56 @@ class SearchAPI(Protocol):
     because of their more robust query creation, result parsing and error handling.
     """
 
-    host: str
-    """The host that provides this API, e.g. `esgf.nci.org.au`"""
+    # These are declared read-only (as properties rather than as plain attributes)
+    # because that is what a search API really promises:
+    # what it is, not somewhere to write to.
+    # Implementations are free to keep these properties as ordinary attributes:
+    # a frozen dataclass field, a plain instance attribute
+    # or a property all satisfy this.
 
-    search_api_tag: str
-    """
-    Names the format of the raw documents this API returns
+    @property
+    def host(self) -> str:
+        """The host that provides this API, e.g. `esgf.nci.org.au`"""
+        ...
 
-    Stamped onto every stored document (see
-    [`DatasetRawDoc.search_api_tag`][esmporium.db.schema.DatasetRawDoc]) so that, long
-    after the search, the right flattener can be picked to normalise it without a live
-    API in scope (see [`esmporium.search.normalise_stored_document`][]). APIs that
-    return the same format share a tag: our two Solr APIs both use
-    [`SOLR_FORMAT_TAG`][esmporium.search.result_normalisation.SOLR_FORMAT_TAG].
-    """
+    @property
+    def search_api_tag(self) -> str:
+        """
+        Names the format of the raw documents this API returns
 
-    retrying: Retrying
-    """The retry policy to use when hitting this API"""
+        Stamped onto every stored document (see
+        [`DatasetRawDoc.search_api_tag`][esmporium.db.schema.DatasetRawDoc]) so that,
+        long after the search, the right flattener can be picked to normalise it without
+        a live API in scope (see [`esmporium.search.normalise_stored_document`][]). APIs
+        that return the same format share a tag: our two Solr APIs both use
+        [`SOLR_FORMAT_TAG`][esmporium.search.result_normalisation.SOLR_FORMAT_TAG].
+        """
+        ...
 
-    timeout: float = 30.0
-    """
-    How long to wait on a single request to this host, in seconds
+    @property
+    def retrying(self) -> Retrying:
+        """The retry policy to use when hitting this API"""
+        ...
 
-    Most hosts reply quickly e.g. 5 seconds.
-    The slowest hosts take around 30 seconds.
-    In general, you want to make this as short as possible
-    because waiting for a reply that will never come
-    can make your retries take forever.
-    """
+    @property
+    def timeout(self) -> float:
+        """
+        How long to wait on a single request to this host, in seconds
 
-    scheme: str = "https"
-    """
-    The URL scheme to reach this host over
-    """
+        Most hosts reply quickly e.g. 5 seconds.
+        The slowest hosts take around 30 seconds.
+        In general, you want to make this as short as possible
+        because waiting for a reply that will never come
+        can make your retries take forever.
+        """
+        ...
+
+    @property
+    def scheme(self) -> str:
+        """
+        The URL scheme to reach this host over
+        """
+        ...
 
     def build_search_request(
         self,
@@ -394,7 +440,8 @@ class SearchAPI(Protocol):
 
             This is not the total number of matches;
             that comes back in the response itself and is what
-            [get_search_result_n_matches][(c).get_search_result_n_matches] reads.
+            [ResultParserProtocol.get_n_matches][esmporium.search.search_api_facade.result_parsers.ResultParserProtocol.get_n_matches]
+            reads.
 
         Returns
         -------
@@ -405,33 +452,6 @@ class SearchAPI(Protocol):
         ------
         LimitOutOfRangeError
             `limit` is outside the range this search API accepts
-        """
-        ...
-
-    def get_search_result_n_matches(self, raw: dict[str, Any]) -> int:
-        """
-        Get the number of records that matched a search from a raw response
-
-        Note: this is not necessarily the same as the number of results in `raw`.
-        Some search APIs will only return a limited number of results.
-        This method should return the total number of records which matched the search,
-        which can be much higher than the number of results returned in `raw`.
-
-        Parameters
-        ----------
-        raw
-            The response to read, i.e. the answer to a
-            [build_search_request][(c).build_search_request]
-
-        Returns
-        -------
-        :
-            The number of records that matched the search
-
-        Raises
-        ------
-        NoSearchResultNumberOfMatchesReturnedError
-            `raw` does not report the number of records that matched the search
         """
         ...
 
@@ -548,27 +568,6 @@ class SearchAPI(Protocol):
         -------
         :
             The per-dataset documents, each still in this API's own format
-        """
-        ...
-
-    def read_document_shell(self, doc: dict[str, Any]) -> ParsedDocShell:
-        """
-        Read the pieces of one document that its response *format* determines
-
-        These are the fields that do not depend on the project's facet naming: the
-        bundle id, the edition (version and its snapshot flags), where it is hosted, the
-        source document id and the raw JSON. The project-specific facet rows are read
-        separately (the facade combines the two).
-
-        Parameters
-        ----------
-        doc
-            One document from [extract_result_documents][(c).extract_result_documents]
-
-        Returns
-        -------
-        :
-            The format-determined pieces of `doc`
         """
         ...
 

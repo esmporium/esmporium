@@ -416,7 +416,13 @@ def allowed_values_from_api(
     request = facade.build_get_facet_values_request(canonical, askable)
 
     try:
-        raw = fire(client, facade.search_api, request, api_call_observer)
+        raw = fire(
+            client,
+            facade.search_api,
+            request,
+            api_call_observer,
+            read_n_matches=facade.get_n_matches,
+        )
     except SearchAPIRequestError as exc:
         raise CouldNotGetAllowedValuesError(facade.search_api.host) from exc
 

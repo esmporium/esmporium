@@ -8,15 +8,12 @@ is better expressed as more than just a pure mapping.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Annotated, Any, Protocol
+from typing import Annotated, Protocol
 
 from pydantic import PlainValidator
 
 from esmporium.query import QueryCanonical, QueryProtocol
 from esmporium.query.protocol import accept_without_validation
-
-if TYPE_CHECKING:
-    from esmporium.search.apis import SearchAPI
 
 
 class FacadeParametersProtocol(Protocol):
@@ -97,29 +94,4 @@ class FacadeParametersProtocol(Protocol):
         :
             Facet values to use in a search request
         """
-        ...
-
-    def result_project(self, doc: dict[str, Any], api: SearchAPI) -> str | None:
-        """
-        Read the project a result document belongs to
-
-        This is the one project-specific piece of result reading that the generic
-        reader ([`SearchAPIFacade.read_dataset_rows`][esmporium.search.search_api_facade.SearchAPIFacade.read_dataset_rows])
-        cannot do itself: Solr carries an explicit `project` facet, whereas STAC drops it
-        (project is the collection) and it must be recovered from `mip_era`. Every other
-        facet is read uniformly via [get_mapping_to_api_facet_names][(c).get_mapping_to_api_facet_names].
-
-        Parameters
-        ----------
-        doc
-            One document from the search API's `extract_result_documents`
-
-        api
-            The search API the document came from, used to read its fields
-
-        Returns
-        -------
-        :
-            The project value for this document's rows, or `None` if it cannot be read
-        """  # noqa: E501
         ...

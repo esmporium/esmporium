@@ -20,9 +20,9 @@ from esmporium.query import QueryCanonical, QueryCMIP6
 from esmporium.search import (
     DEFAULT_SEARCH_API_FACADES_BY_PROJECT,
     ESGF1_CMIP6_FACADE_PARAMETERS,
-    SINGLE_ROW_DOC_PARSER,
     SearchAPIESGF1Solr,
     SearchAPIFacade,
+    SolrSingleRowResultParser,
     build_list_selector,
     search,
 )
@@ -165,7 +165,7 @@ def cmip6_solr_api_facade(host: str) -> SearchAPIFacade:
     return SearchAPIFacade(
         parameters=ESGF1_CMIP6_FACADE_PARAMETERS,
         search_api=SearchAPIESGF1Solr(host, build_transient_retrying(1)),
-        doc_parser=SINGLE_ROW_DOC_PARSER,
+        result_parser=SolrSingleRowResultParser(),
     )
 
 
