@@ -39,7 +39,18 @@ NormaliseFunc = Callable[[dict[str, Any]], dict[str, Any]]
 """Flattens one raw document into `{facet_name: value}`. Keyed by `search_api_tag`."""
 
 NormalisedDocument: TypeAlias = dict[str, Any]
-"""Document normalised based on search API (e.g. removes prefix and list)"""
+"""
+Normalised document
+In this context, "normalised" means that we convert to a basic mapping
+from facet names to the values that they take
+(removing any project/API prefixes and ensuring that values
+are lists if multi-valued, single values otherwise).
+"Document" means a single result from a search API.
+This does not usually line up with our definition
+of dataset or dataset version.
+We simply want to normalise the documents we are given,
+rather than trying to do any other data format conversion.
+"""
 
 
 def _normalise_solr(raw: dict[str, Any]) -> dict[str, Any]:

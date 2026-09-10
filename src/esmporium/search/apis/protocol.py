@@ -532,7 +532,7 @@ class SearchAPI(Protocol):
 
     def extract_result_documents(self, raw: dict[str, Any]) -> list[dict[str, Any]]:
         """
-        Split a raw search response into its per-dataset documents
+        Split a raw search response into its documents
 
         This is the format-level split -- Solr nests its records under `response.docs`,
         STAC lists its features under `features` -- and knows nothing about which

@@ -416,3 +416,84 @@ Anywhere else in the repo are there numbered test/use cases that should have a m
   Please remove the regexp and just do this inline (ie. 'anything after .v'). regexp is super easy to make a mess and this task doesn't require it.
 8. doc string cross reference. search/result_parsing.py read_result_facets() dont' jsut have `dataset`, cross reference bakc to schema here.
 9. Finally, search/result_reader.py. Is this necessary to have separated from the facade parameters? Could we incoroprate that into the facade parameters rather than having a modelu that is global/hardcoded values? Are there benefits to keeping it there? Please investigate and let me know.
+
+
+## TODO today
+
+- result_parsing.py (might have changed?) make grid_label: str | None (remove the = None)
+- schema.py rename DatasetVersionNodeLink to DatasetVersionDataNodeLink
+- schema.py, rename node_id to data_node_id
+- schema.py, rename raw_id to raw_doc_id
+- schema.py (and where else it is defined), rename search_api_tag, to raw_docs_format_tag
+- apis/esgf1.py go from     is_latest=bool(extract_one_element_list(doc.get("latest", False))), to
+        is_latest=bool(extract_one_element_list(doc["latest"])),
+      And elsewhere, this comes up a few times. We don't want this to silently fail as false, should fail more loudly.
+- in result_parsing.py rename DataNodeInfo to GetDataNodeInfo
+- in schema.py, rename DatasetNodeInformation to DataNode
+- results_to_database.py .first() is concerning because what if our data model is not correct and there are more than one. We don't want to silently return first() if there are multiple rows when there shouldn't be. Wouldn't it be better to assert .only() ?    # Checking over all columns hence, because of our uniqueness constraint,
+    # we can't get more than one result so using `first` here is safe.
+    # I would ask claude: is this as far as we should/can go
+    # in terms of checking use of `first` here,
+    # or should we add something to guard against more than one row matching `facets`
+    # (just in case the database got corrupted somehow,
+    # even though that should be impossible).
+    Throughout this file, use of .first(), or guarding more carefully?
+- results_to_database.py change up this part to something like thissuper().__init__(
+            "Two datasets are identical across every column our model records "
+            f"(dataset={dataset!r}), so our dataset model cannot tell them apart. "
+            "This clash is not handled: the data differs "
+            "in a facet we do not model. "
+            "Please raise an issue at https://github.com/esmporium/esmporium/issues "
+            "to discuss your use case. "
+            "It will help if you flatten the raw documents with "
+            "esmporium.search.normalise_stored_document and compare them with "
+            "esmporium.db.dataset_uniqueness.facet_differences to find the difference, "
+             "and quote this difference in the issue."
+        )
+  However, for this error message, rather than getting a user to do the flatteing to find the differences, could we do the flattening so they know what to quote? One difference though is our current flattening includes dataset.id, which is unique to each users database. Instead, perhaps we need to list an alternative so that when an issue is raised developers (us) know what to look into to explore.
+- dataset_uniqueness.py, is there a reason to have a _Missing class? why not just have MISSING = "<absent>"? If there is a reason for the class let me know, otherwise we can change it?
+- In scripts/cmip5_results_to_dataset.py, let's get rid of this script
+# and instead rename `first_search_cmipx_full.py`
+# to `search_cmipx.py` and use that as our demonstration of searching
+# and ending up with Dataset rows in the database
+# (e.g. we might show how we can then query the database to just get CMIP5 data,
+# or get CMIP5 and CMIP7 data etc.).
+
+From results-to-database-zn:
+- schema.py
+   # @Anna, let's check with claude
+    # whether this idea has effectively been resolved/implemented
+    # with the addition of DatasetFacets
+    # (hence whether we can remove the comment below here).
+    # TODO: once we parse ESGF records, split the facets out into a base model.
+    # Models *without* `table=True` are validated normally, so:
+@Anna is this now redundant?
+# I only see it used in tests so I don't think it affects behaviour,
+# but maybe it is needed for the tests and this is the best place to keep it?
+DATASET_FACET_COLUMNS: tuple[str, ...] = (
+    "project",
+    "model",
+
+## Let's think about tests:
+
+When we get to testing, I'd probably start with a prompt like the below
+
+Please run git fetch origin.
+
+Then please compare this branch to origin/main.
+
+Given the features that we have added (result parsing to datasets, updated schema to support this), what tests would you suggest adding to the existing ones, if any? What modifications would you suggest making to the existing tests?
+
+I already think we should add the following tests
+
+Test of parsing raw responses into datasets
+
+1. start with our presaved or fabricated search results (so we control them)
+2. check parsing with read_dataset_rows
+3. assert that the produced dataset rows are as expected
+4. check that these rows can actually be saved in the database
+5. I think this should make sure that, if we update Dataset, we also remember to update this parsing
+    (i.e. if we update dataset and don't update read_dataset_rows, this test should fail)
+
+Additional tests we can think of
+- For our database model, CMIP has NULL for grid_label and we perform coalesce(grid_label) for our uniqueness constraint so that CMIP dataset rows are unique with a NULL column. Can we test this uniqueness explicitly?

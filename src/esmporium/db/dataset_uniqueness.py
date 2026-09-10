@@ -75,9 +75,9 @@ def facet_differences(
     Examples
     --------
     >>> facet_differences(
-    ...     ((2015, {"product": "output1"}), (1031, {"product": "output2"}))
+    ...     ((201545, {"product": "output1"}), (103137, {"product": "output2"}))
     ... )
-    {'product': {2015: 'output1', 1031: 'output2'}}
+    {'product': {201545: 'output1', 103137: 'output2'}}
 
     Notes
     -----
