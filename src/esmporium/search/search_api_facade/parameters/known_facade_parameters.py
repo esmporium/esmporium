@@ -495,6 +495,9 @@ class STACFacadeParameters(BaseModel):
         return facet_values
 
 
+# Note that we can search for CMIP5 on an ESGF-NG Search API
+# but we cannot parse CMIP5 STAC results into our database because
+# CMIP5 datasets are not unique by variable.
 class ESGFNGCMIP5ParametersQueryStyle(BaseModel):
     """CMIP5 facet values under their ESGF-NG parameter names"""
 

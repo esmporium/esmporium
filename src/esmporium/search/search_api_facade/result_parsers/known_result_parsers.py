@@ -232,6 +232,8 @@ def stac_east_n_matches(raw: dict[str, Any]) -> int:
     return _n_matches_from(raw, (("numberMatched", raw.get("numberMatched")),))
 
 
+# TODO: run live integration tests to test for failure in west's `numMatched`
+# ESGF-NG west is replacing numMatched with numberMatched, matching east.
 def stac_west_n_matches(raw: dict[str, Any]) -> int:
     """
     Get the number of records that matched a search from an ESGF-NG west response
