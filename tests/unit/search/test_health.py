@@ -34,6 +34,8 @@ from esmporium.search import (
     fan_out,
     fire,
     search,
+    stac_base_id,
+    stac_east_n_matches,
 )
 from esmporium.search.health import SearchAPICall
 from esmporium.search.retry import _is_transient
@@ -80,7 +82,10 @@ def make_cmip6_facade(host, *, stac=False, attempts=1) -> SearchAPIFacade:
         return SearchAPIFacade(
             parameters=ESGFNG_CMIP6_FACADE_PARAMETERS,
             search_api=SearchAPIESGFNGSTAC(host, fast_retrying(attempts)),
-            result_parser=ESGFNGCMIP6ResultParser(),
+            result_parser=ESGFNGCMIP6ResultParser(
+                read_id_project_specific=stac_base_id,
+                read_n_matches=stac_east_n_matches,
+            ),
         )
 
     return SearchAPIFacade(

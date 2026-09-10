@@ -4,6 +4,7 @@ Definition of the interface for parsing search results into the pieces we store
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Protocol
 
 from esmporium.search.result_parsing import DatasetFacets
@@ -16,6 +17,24 @@ if TYPE_CHECKING:
     from esmporium.search.search_api_facade.parameters import (
         FacadeParametersProtocol,
     )
+
+NMatchesReader = Callable[[dict[str, Any]], int]
+"""
+Reads how many records matched a search out of a raw response
+
+Where that is written can be an endpoint's own choice rather than the format's, which
+is why this is something a result parser is given rather than something it knows.
+"""
+
+IdProjectSpecificReader = Callable[[dict[str, Any]], str]
+"""
+Reads the bundle id (see
+[`DatasetFacets.id_project_specific`][esmporium.search.result_parsing.DatasetFacets])
+out of one result document
+
+As with [NMatchesReader][(m).], where that is written can be an endpoint's own choice:
+one ESGF-NG deployment publishes it outright, the other does not.
+"""
 
 
 def get_single_value_columns_from_doc(

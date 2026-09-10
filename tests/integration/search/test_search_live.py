@@ -59,6 +59,13 @@ LIVE_CASES = (
     ),
     pytest.param(
         INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
+            "CMIP6", "search.west.esgf.io"
+        ),
+        CMIP6_QUERY,
+        id="esgf-ng-cmip6-west",
+    ),
+    pytest.param(
+        INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
             "CMIP7", "search.east.esgf.io"
         ),
         QueryCMIP7(variable_id="tas"),

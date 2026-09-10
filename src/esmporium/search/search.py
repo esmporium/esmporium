@@ -8,7 +8,6 @@ import json
 import logging
 import shlex
 import time
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -24,16 +23,12 @@ from esmporium.search.health import SearchAPICall, SearchAPICallObserver
 from esmporium.search.result_parsing import ParsedDocument, ResultProcessor
 from esmporium.search.search_api_facade import (
     DEFAULT_SELECTOR,
+    NMatchesReader,
     SearchAPIFacadeSelector,
     SelectorOfferedNoAPIFacadeError,
 )
 
 logger = logging.getLogger(__name__)
-
-NMatchesReader = Callable[[dict[str, Any]], int]
-"""
-Reads how many records matched a search out of a raw response
-"""
 
 
 def get_url(api: SearchAPI, request: Request) -> str:

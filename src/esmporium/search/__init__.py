@@ -110,6 +110,10 @@ from esmporium.search.search_api_facade import (
     get_single_value_columns_from_doc,
     get_unexpressible_facets,
     identity_string,
+    stac_base_id,
+    stac_east_n_matches,
+    stac_id_without_version,
+    stac_west_n_matches,
 )
 
 __all__ = [
@@ -203,5 +207,9 @@ __all__ = [
     "log_request_as_url_and_curl",
     "normalise_stored_document",
     "search",
+    "stac_base_id",
+    "stac_east_n_matches",
+    "stac_id_without_version",
+    "stac_west_n_matches",
     "values_set_for",
 ]

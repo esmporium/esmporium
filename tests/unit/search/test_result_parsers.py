@@ -37,7 +37,26 @@ from esmporium.search import (
     SolrSingleRowResultParser,
     SolrVariableBundleResultParser,
     build_transient_retrying,
+    stac_base_id,
+    stac_east_n_matches,
+    stac_id_without_version,
+    stac_west_n_matches,
 )
+
+
+def esgfng_cmip6_parser(east: bool = True) -> ESGFNGCMIP6ResultParser:
+    """A CMIP6 ESGF-NG parser for one deployment or the other"""
+    if east:
+        return ESGFNGCMIP6ResultParser(
+            read_id_project_specific=stac_base_id,
+            read_n_matches=stac_east_n_matches,
+        )
+
+    return ESGFNGCMIP6ResultParser(
+        read_id_project_specific=stac_id_without_version,
+        read_n_matches=stac_west_n_matches,
+    )
+
 
 CMIP6_ROW = DatasetFacets(
     id_project_specific="CMIP6.CMIP.CSIRO.ACCESS-CM2.historical.r1i1p1f1.Amon.tas.gn",
@@ -145,7 +164,7 @@ def test_cmip6_stac_bundle_id_is_read_from_base_id():
         **{"cmip6:mip_era": "CMIP6"},
     )
 
-    (document,) = ESGFNGCMIP6ResultParser().parse_search_results(
+    (document,) = esgfng_cmip6_parser(east=True).parse_search_results(
         {"features": [feature]},
         api=stac_api(),
         facade_parameters=ESGFNG_CMIP6_FACADE_PARAMETERS,
@@ -154,6 +173,50 @@ def test_cmip6_stac_bundle_id_is_read_from_base_id():
     assert document.id_project_specific == CMIP6_ROW.id_project_specific
     # The edition it actually came from is still remembered.
     assert document.esgf_doc_id == "CMIP6.something.else.entirely.v20200623"
+
+
+def test_cmip6_stac_bundle_id_on_west_is_recovered_from_the_feature_id():
+    """West publishes no `base_id` for CMIP6, so the same parser recovers the id
+
+    The feature here carries a `base_id` that disagrees with the feature id, which west
+    never sends: it is here so that a parser reading `base_id` when it was told not to
+    fails this rather than passing by luck.
+    """
+    feature = stac_feature(
+        ESGFNG_CMIP6_FACADE_PARAMETERS,
+        CMIP6_ROW,
+        f"{CMIP6_ROW.id_project_specific}.v20200623",
+        base_id="CMIP6.something.else.entirely",
+        **{"cmip6:mip_era": "CMIP6"},
+    )
+
+    (document,) = esgfng_cmip6_parser(east=False).parse_search_results(
+        {"features": [feature]},
+        api=stac_api(),
+        facade_parameters=ESGFNG_CMIP6_FACADE_PARAMETERS,
+    )
+
+    assert document.id_project_specific == CMIP6_ROW.id_project_specific
+
+
+def test_cmip6_stac_on_east_needs_a_base_id():
+    """East is read as publishing a `base_id`, so a feature without one is a failure
+
+    Quietly falling back to stripping the feature id would hide east changing shape.
+    """
+    feature = stac_feature(
+        ESGFNG_CMIP6_FACADE_PARAMETERS,
+        CMIP6_ROW,
+        f"{CMIP6_ROW.id_project_specific}.v20200623",
+        **{"cmip6:mip_era": "CMIP6"},
+    )
+
+    with pytest.raises(KeyError, match="base_id"):
+        esgfng_cmip6_parser(east=True).parse_search_results(
+            {"features": [feature]},
+            api=stac_api(),
+            facade_parameters=ESGFNG_CMIP6_FACADE_PARAMETERS,
+        )
 
 
 def test_cmip7_stac_bundle_id_drops_the_version_token():
@@ -165,7 +228,9 @@ def test_cmip7_stac_bundle_id_drops_the_version_token():
         project="CMIP7",
     )
 
-    (document,) = ESGFNGCMIP7ResultParser().parse_search_results(
+    (document,) = ESGFNGCMIP7ResultParser(
+        read_n_matches=stac_east_n_matches
+    ).parse_search_results(
         {"features": [feature]},
         api=stac_api(),
         facade_parameters=ESGFNG_CMIP7_FACADE_PARAMETERS,
@@ -183,7 +248,9 @@ def test_cmip7_stac_bundle_id_of_an_id_with_no_version_is_left_alone():
         project="CMIP7",
     )
 
-    (document,) = ESGFNGCMIP7ResultParser().parse_search_results(
+    (document,) = ESGFNGCMIP7ResultParser(
+        read_n_matches=stac_east_n_matches
+    ).parse_search_results(
         {"features": [feature]},
         api=stac_api(),
         facade_parameters=ESGFNG_CMIP7_FACADE_PARAMETERS,
@@ -202,7 +269,7 @@ def test_cmip6_stac_project_is_read_from_mip_era():
         **{"cmip6:mip_era": "CMIP6"},
     )
 
-    (row,) = ESGFNGCMIP6ResultParser().get_dataset_rows(
+    (row,) = esgfng_cmip6_parser().get_dataset_rows(
         feature, api=stac_api(), facade_parameters=ESGFNG_CMIP6_FACADE_PARAMETERS
     )
 
@@ -218,7 +285,9 @@ def test_cmip7_stac_project_is_read_from_the_project_property():
         project="CMIP7",
     )
 
-    (row,) = ESGFNGCMIP7ResultParser().get_dataset_rows(
+    (row,) = ESGFNGCMIP7ResultParser(
+        read_n_matches=stac_east_n_matches
+    ).get_dataset_rows(
         feature, api=stac_api(), facade_parameters=ESGFNG_CMIP7_FACADE_PARAMETERS
     )
 
@@ -229,14 +298,14 @@ def test_cmip7_stac_project_is_read_from_the_project_property():
     "parser, parameters, feature, api_field",
     (
         pytest.param(
-            ESGFNGCMIP6ResultParser(),
+            esgfng_cmip6_parser(),
             ESGFNG_CMIP6_FACADE_PARAMETERS,
             "cmip6",
             "cmip6:mip_era",
             id="cmip6-stac",
         ),
         pytest.param(
-            ESGFNGCMIP7ResultParser(),
+            ESGFNGCMIP7ResultParser(read_n_matches=stac_east_n_matches),
             ESGFNG_CMIP7_FACADE_PARAMETERS,
             "cmip7",
             "project",
@@ -383,89 +452,144 @@ def test_solr_n_matches_with_no_count_raises(raw, exp):
         SolrSingleRowResultParser().get_n_matches(raw)
 
 
-@pytest.mark.parametrize(
-    "parser",
-    (
-        pytest.param(ESGFNGCMIP6ResultParser(), id="cmip6"),
-        pytest.param(ESGFNGCMIP7ResultParser(), id="cmip7"),
-    ),
-)
+def test_east_n_matches_reads_the_stac_spelling():
+    """East writes the count where STAC says to, and that is all east's reader reads"""
+    assert stac_east_n_matches({"numberMatched": 7, "features": []}) == 7
+
+
 @pytest.mark.parametrize(
     "raw, exp",
     (
-        pytest.param({"numberMatched": 7}, 7, id="stac-spelling"),
-        pytest.param({"numMatched": 0}, 0, id="west-spelling"),
-        pytest.param({"context": {"matched": 4}}, 4, id="west-context"),
+        pytest.param({"numMatched": 7}, 7, id="top-level"),
+        pytest.param({"context": {"matched": 7}}, 7, id="context"),
+        # West sends both, and they agree; `numMatched` is the one we read.
+        pytest.param({"numMatched": 7, "context": {"matched": 7}}, 7, id="both"),
     ),
 )
-def test_stac_n_matches_reads_whichever_spelling_is_present(parser, raw, exp):
-    """The two deployments disagree on where the total lives; we read either
-
-    This is the reason the count is read by something picked per endpoint rather than
-    by the search API class: east and west speak the same format and still differ.
-    """
-    assert parser.get_n_matches(raw) == exp
+def test_west_n_matches_reads_wests_own_spellings(raw, exp):
+    """West does not write `numberMatched` at all; it writes these instead"""
+    assert stac_west_n_matches(raw) == exp
 
 
-# The count lives in one of three places on the two deployments,
-# so the error reports on all three: any of them could have answered us.
-WHERE_WE_LOOKED_FOR_THE_COUNT = (
+# Each reader looks only where its own deployment writes the count, so the error names
+# only those places.
+WHERE_EAST_LOOKED = (
     "This response does not report how many records matched the search. "
-    "We expected to read the count from "
-    "one of 'numberMatched', 'numMatched' or 'context.matched', "
+    "We expected to read the count from 'numberMatched', "
+)
+WHERE_WEST_LOOKED = (
+    "This response does not report how many records matched the search. "
+    "We expected to read the count from one of 'numMatched' or 'context.matched', "
 )
 
 
+def test_east_n_matches_does_not_read_wests_spellings():
+    """Reading west's spellings on east would hide east changing shape
+
+    The whole point of a reader per deployment is that the day one of them starts
+    answering like the other, we are told rather than quietly carrying on.
+    """
+    with pytest.raises(
+        NoSearchResultNumberOfMatchesReturnedError,
+        match=re.escape(
+            f"{WHERE_EAST_LOOKED}but 'numberMatched' is not in the response's top "
+            "level, there is only: 'context', 'numMatched'"
+        ),
+    ):
+        stac_east_n_matches({"numMatched": 7, "context": {"matched": 7}})
+
+
+def test_west_n_matches_does_not_read_easts_spelling():
+    """And the same the other way round"""
+    with pytest.raises(
+        NoSearchResultNumberOfMatchesReturnedError,
+        match=re.escape(f"{WHERE_WEST_LOOKED}but: "),
+    ):
+        stac_west_n_matches({"numberMatched": 7})
+
+
 @pytest.mark.parametrize(
-    "raw, exp",
+    "read_n_matches, raw, exp",
     (
         pytest.param(
+            stac_east_n_matches,
             {},
             pytest.raises(
                 NoSearchResultNumberOfMatchesReturnedError,
-                match=re.escape(
-                    f"{WHERE_WE_LOOKED_FOR_THE_COUNT}but the response is empty."
-                ),
+                match=re.escape(f"{WHERE_EAST_LOOKED}but the response is empty."),
             ),
-            id="nothing-we-recognise",
+            id="east-nothing-we-recognise",
         ),
         pytest.param(
+            stac_east_n_matches,
             {"features": [{"id": "a"}]},
             pytest.raises(
                 NoSearchResultNumberOfMatchesReturnedError,
                 match=re.escape(
-                    f"{WHERE_WE_LOOKED_FOR_THE_COUNT}but: "
-                    "'numberMatched' is not in the response's top level, "
-                    "there is only: 'features'; "
-                    "'numMatched' is not in the response's top level, "
-                    "there is only: 'features'; "
-                    "'context' is not in the response's top level, "
-                    "there is only: 'features'."
+                    f"{WHERE_EAST_LOOKED}but 'numberMatched' is not in the response's "
+                    "top level, there is only: 'features'."
                 ),
             ),
-            id="records-but-no-count",
+            id="east-records-but-no-count",
         ),
         pytest.param(
+            stac_east_n_matches,
+            {"numberMatched": "7"},
+            pytest.raises(
+                TypeError,
+                match=re.escape(
+                    "We expected to get an integer at numberMatched, "
+                    "but instead got '7'"
+                ),
+            ),
+            id="east-a-count-we-cannot-read",
+        ),
+        pytest.param(
+            stac_west_n_matches,
+            {},
+            pytest.raises(
+                NoSearchResultNumberOfMatchesReturnedError,
+                match=re.escape(f"{WHERE_WEST_LOOKED}but the response is empty."),
+            ),
+            id="west-nothing-we-recognise",
+        ),
+        pytest.param(
+            stac_west_n_matches,
             {"numMatched": None, "context": {"total": 4}},
             # Each place we looked is explained as far as we got in it,
             # so the one which came closest says so.
             pytest.raises(
                 NoSearchResultNumberOfMatchesReturnedError,
                 match=re.escape(
-                    f"{WHERE_WE_LOOKED_FOR_THE_COUNT}but: "
-                    "'numberMatched' is not in the response's top level, "
-                    "there is only: 'context', 'numMatched'; "
-                    "we found None at 'numMatched'; "
+                    f"{WHERE_WEST_LOOKED}but: we found None at 'numMatched'; "
                     "'matched' is not in 'context', there is only: 'total'."
                 ),
             ),
-            id="a-context-which-does-not-carry-the-count",
+            id="west-a-context-which-does-not-carry-the-count",
         ),
     ),
 )
-def test_stac_n_matches_with_no_count_raises(raw, exp):
+def test_stac_n_matches_with_no_count_raises(read_n_matches, raw, exp):
+    """A response we cannot read a count out of is one we have not understood"""
     with exp:
-        ESGFNGCMIP7ResultParser().get_n_matches(raw)
+        read_n_matches(raw)
+
+
+@pytest.mark.parametrize(
+    "parser",
+    (
+        pytest.param(esgfng_cmip6_parser(east=False), id="cmip6"),
+        pytest.param(
+            ESGFNGCMIP7ResultParser(read_n_matches=stac_west_n_matches), id="cmip7"
+        ),
+    ),
+)
+def test_a_stac_parser_reads_the_count_with_the_reader_it_was_given(parser):
+    """Whichever project it parses, the parser counts the way its deployment does"""
+    assert parser.get_n_matches({"numMatched": 7, "features": []}) == 7
+
+    with pytest.raises(NoSearchResultNumberOfMatchesReturnedError):
+        parser.get_n_matches({"numberMatched": 7, "features": []})
 
 
 def test_no_search_result_n_matches_returned_error_when_there_is_a_match_raises():

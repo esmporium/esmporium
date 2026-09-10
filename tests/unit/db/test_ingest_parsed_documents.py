@@ -42,6 +42,7 @@ from esmporium.search import (
     UnknownRawDocFormatTagError,
     build_transient_retrying,
     normalise_stored_document,
+    stac_east_n_matches,
 )
 
 RECORDED_DIR = Path(__file__).parents[2] / "test-data" / "search"
@@ -138,7 +139,7 @@ def test_ingest_stac_cmip7_writes_one_dataset_per_document(engine):
     facade = _facade(
         ESGFNG_CMIP7_FACADE_PARAMETERS,
         SearchAPIESGFNGSTAC,
-        ESGFNGCMIP7ResultParser(),
+        ESGFNGCMIP7ResultParser(read_n_matches=stac_east_n_matches),
     )
     documents = facade.parse_search_results(_load("esgf-ng-stac-cmip7-east-search"))
 
@@ -163,7 +164,7 @@ def test_ingest_stamps_each_raw_doc_with_its_search_api_tag(engine):
     stac = _facade(
         ESGFNG_CMIP7_FACADE_PARAMETERS,
         SearchAPIESGFNGSTAC,
-        ESGFNGCMIP7ResultParser(),
+        ESGFNGCMIP7ResultParser(read_n_matches=stac_east_n_matches),
     )
 
     with Session(engine) as session:

@@ -51,6 +51,10 @@ from esmporium.search import (
     SolrVariableBundleResultParser,
     build_transient_retrying,
     get_mapping_to_query_style_facet_names,
+    stac_base_id,
+    stac_east_n_matches,
+    stac_id_without_version,
+    stac_west_n_matches,
 )
 
 RECORDED_DIR = Path(__file__).parents[2] / "test-data" / "search"
@@ -136,21 +140,39 @@ RECORDED_CASES = (
         ),
         id="esgf15-bridge-cmip6",
     ),
+    # Each ESGF-NG case names the deployment its recording came from,
+    # because that is what the parsers are told apart by:
+    # the readers below are the ones the store gives a facade for that host.
     pytest.param(
         "esgf-ng-stac-cmip6-east",
         facade(
             ESGFNG_CMIP6_FACADE_PARAMETERS,
             SearchAPIESGFNGSTAC,
-            ESGFNGCMIP6ResultParser(),
+            ESGFNGCMIP6ResultParser(
+                read_id_project_specific=stac_base_id,
+                read_n_matches=stac_east_n_matches,
+            ),
         ),
         id="esgf-ng-stac-cmip6-east",
+    ),
+    pytest.param(
+        "esgf-ng-stac-cmip6-west",
+        facade(
+            ESGFNG_CMIP6_FACADE_PARAMETERS,
+            SearchAPIESGFNGSTAC,
+            ESGFNGCMIP6ResultParser(
+                read_id_project_specific=stac_id_without_version,
+                read_n_matches=stac_west_n_matches,
+            ),
+        ),
+        id="esgf-ng-stac-cmip6-west",
     ),
     pytest.param(
         "esgf-ng-stac-cmip7-east",
         facade(
             ESGFNG_CMIP7_FACADE_PARAMETERS,
             SearchAPIESGFNGSTAC,
-            ESGFNGCMIP7ResultParser(),
+            ESGFNGCMIP7ResultParser(read_n_matches=stac_east_n_matches),
         ),
         id="esgf-ng-stac-cmip7-east",
     ),
@@ -159,7 +181,7 @@ RECORDED_CASES = (
         facade(
             ESGFNG_CMIP7_FACADE_PARAMETERS,
             SearchAPIESGFNGSTAC,
-            ESGFNGCMIP7ResultParser(),
+            ESGFNGCMIP7ResultParser(read_n_matches=stac_west_n_matches),
         ),
         id="esgf-ng-stac-cmip7-west",
     ),
@@ -283,20 +305,25 @@ def test_recorded_rows_carry_the_project_they_were_asked_for(name, facade):
     assert {row.project for doc in documents for row in doc.datasets} == {expected}
 
 
-CMIP6_STAC_RECORDED_CASES = tuple(
-    case for case in STAC_RECORDED_CASES if "cmip6" in str(case.id)
+BASE_ID_RECORDED_CASES = tuple(
+    case for case in STAC_RECORDED_CASES if str(case.id) == "esgf-ng-stac-cmip6-east"
 )
-"""The recorded STAC cases whose features carry a `base_id`"""
+"""
+The recorded STAC cases whose features carry a `base_id`
 
-CMIP7_STAC_RECORDED_CASES = tuple(
-    case for case in STAC_RECORDED_CASES if "cmip7" in str(case.id)
+Only east's CMIP6 collection publishes one: west's CMIP6 features do not, and neither
+deployment publishes one for CMIP7.
+"""
+
+RECOVERED_ID_RECORDED_CASES = tuple(
+    case for case in STAC_RECORDED_CASES if case not in BASE_ID_RECORDED_CASES
 )
-"""The recorded STAC cases whose features do not"""
+"""The recorded STAC cases whose bundle id has to be recovered from the feature id"""
 
 
-@pytest.mark.parametrize("name, facade", CMIP6_STAC_RECORDED_CASES)
-def test_recorded_cmip6_stac_bundle_id_is_read_from_base_id(name, facade):
-    """CMIP6 STAC features carry the bundle id outright, so we read it
+@pytest.mark.parametrize("name, facade", BASE_ID_RECORDED_CASES)
+def test_recorded_stac_bundle_id_is_read_from_base_id(name, facade):
+    """Where a deployment carries the bundle id outright, we read it
 
     Recovering it from the feature id instead would work today, but only because a
     CMIP6 feature id happens to be the bundle id with a version token on the end.
@@ -312,12 +339,12 @@ def test_recorded_cmip6_stac_bundle_id_is_read_from_base_id(name, facade):
     ]
 
 
-@pytest.mark.parametrize("name, facade", CMIP7_STAC_RECORDED_CASES)
-def test_recorded_cmip7_stac_bundle_id_drops_the_version_token(name, facade):
-    """CMIP7 STAC features carry no `base_id`, so the bundle id is recovered
+@pytest.mark.parametrize("name, facade", RECOVERED_ID_RECORDED_CASES)
+def test_recorded_stac_bundle_id_drops_the_version_token(name, facade):
+    """Where it carries no `base_id`, the bundle id is recovered from the feature id
 
-    The recording is checked for the absence first: the day CMIP7 starts publishing a
-    `base_id`, this says so rather than quietly carrying on stripping ids.
+    The recording is checked for the absence first: the day one of these starts
+    publishing a `base_id`, this says so rather than quietly carrying on stripping ids.
     """
     raw = load(f"{name}-search")
 

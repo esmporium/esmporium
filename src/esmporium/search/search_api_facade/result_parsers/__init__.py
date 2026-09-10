@@ -19,8 +19,14 @@ from esmporium.search.search_api_facade.result_parsers.known_result_parsers impo
     MissingResultFieldError,
     SolrSingleRowResultParser,
     SolrVariableBundleResultParser,
+    stac_base_id,
+    stac_east_n_matches,
+    stac_id_without_version,
+    stac_west_n_matches,
 )
 from esmporium.search.search_api_facade.result_parsers.protocol import (
+    IdProjectSpecificReader,
+    NMatchesReader,
     ResultParserProtocol,
     get_single_value_columns_from_doc,
 )
@@ -28,9 +34,15 @@ from esmporium.search.search_api_facade.result_parsers.protocol import (
 __all__ = [
     "ESGFNGCMIP6ResultParser",
     "ESGFNGCMIP7ResultParser",
+    "IdProjectSpecificReader",
     "MissingResultFieldError",
+    "NMatchesReader",
     "ResultParserProtocol",
     "SolrSingleRowResultParser",
     "SolrVariableBundleResultParser",
     "get_single_value_columns_from_doc",
+    "stac_base_id",
+    "stac_east_n_matches",
+    "stac_id_without_version",
+    "stac_west_n_matches",
 ]

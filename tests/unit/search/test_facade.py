@@ -40,6 +40,8 @@ from esmporium.search import (
     UnaskableFacetError,
     build_transient_retrying,
     identity_string,
+    stac_base_id,
+    stac_east_n_matches,
 )
 
 # This file is where at least some of the tests in PR2.2 should be added.
@@ -69,7 +71,10 @@ def api_facade_cmip6_esgfng(host="stac.example") -> SearchAPIFacade:
     return SearchAPIFacade(
         parameters=ESGFNG_CMIP6_FACADE_PARAMETERS,
         search_api=SearchAPIESGFNGSTAC(host, build_transient_retrying(1)),
-        result_parser=ESGFNGCMIP6ResultParser(),
+        result_parser=ESGFNGCMIP6ResultParser(
+            read_id_project_specific=stac_base_id,
+            read_n_matches=stac_east_n_matches,
+        ),
     )
 
 
@@ -310,7 +315,10 @@ def test_stac_facade_project_to_collection_converter_is_used():
     facade = SearchAPIFacade(
         parameters=parameters,
         search_api=SearchAPIESGFNGSTAC("stac.example", build_transient_retrying(1)),
-        result_parser=ESGFNGCMIP6ResultParser(),
+        result_parser=ESGFNGCMIP6ResultParser(
+            read_id_project_specific=stac_base_id,
+            read_n_matches=stac_east_n_matches,
+        ),
     )
     body = facade.build_search_request(CMIP6_CANONICALISED, limit=5).json_body
     clauses = body["filter"]["args"]

@@ -31,6 +31,10 @@ from esmporium.search.search_api_facade.result_parsers import (
     ResultParserProtocol,
     SolrSingleRowResultParser,
     SolrVariableBundleResultParser,
+    stac_base_id,
+    stac_east_n_matches,
+    stac_id_without_version,
+    stac_west_n_matches,
 )
 
 RetryingBuilder = Callable[[], Retrying]
@@ -92,6 +96,162 @@ class FacadeDefinition:
 
     project: str
     """The project the facade supports."""
+
+
+def get_default_facade_definition(project: str, host: str) -> FacadeDefinition:  # noqa: PLR0912, PLR0915
+    """
+    Get our default facade definition
+
+    For most hosts and projects, our default will work.
+    If we're wrong, get the facade definition and build the facade yourself.
+
+    Parameters
+    ----------
+    project
+        Project for which to get the facade definition
+
+    host
+        Host for which to get the facade definition
+
+    Returns
+    -------
+    :
+        Facade definition
+    """
+    solr_esgf1_hosts = (
+        "esg-dn1.nsc.liu.se",
+        "esgf.nci.org.au",
+        "esgf.ceda.ac.uk",
+        "esgf-data.dkrz.de",
+    )
+    solr_esgf15_bridge_hosts = ("esgf-node.ornl.gov",)
+    esgfng_east_hosts = ("search.east.esgf.io",)
+    esgfng_west_hosts = ("search.west.esgf.io",)
+
+    if project == "CMIP5":
+        if host in solr_esgf1_hosts:
+            facade_parameters = ESGF1_CMIP5_FACADE_PARAMETERS
+            result_parser = SolrVariableBundleResultParser()
+            search_api_type = SearchAPIESGF1Solr
+
+        elif host in solr_esgf15_bridge_hosts:
+            facade_parameters = ESGF1_CMIP5_FACADE_PARAMETERS
+            result_parser = SolrVariableBundleResultParser()
+            search_api_type = SearchAPIESGF15BridgeSolr
+
+        else:
+            # STAC serves no CMIP5 data, and we do not know the shape of a
+            # CMIP5 STAC document, so there is deliberately no CMIP5 STAC
+            # facade (and no CMIP5 STAC result parser to guess at its shape).
+            raise NotImplementedError(f"{project} {host}")
+
+    elif project == "CMIP6":
+        if host in solr_esgf1_hosts:
+            facade_parameters = ESGF1_CMIP6_FACADE_PARAMETERS
+            result_parser = SolrSingleRowResultParser()
+            search_api_type = SearchAPIESGF1Solr
+
+        elif host in solr_esgf15_bridge_hosts:
+            facade_parameters = ESGF1_CMIP5_FACADE_PARAMETERS
+            result_parser = SolrSingleRowResultParser()
+            search_api_type = SearchAPIESGF15BridgeSolr
+
+        elif host in esgfng_east_hosts:
+            facade_parameters = ESGFNG_CMIP6_FACADE_PARAMETERS
+            result_parser = ESGFNGCMIP6ResultParser(
+                read_id_project_specific=stac_base_id,
+                read_n_matches=stac_east_n_matches,
+            )
+            search_api_type = SearchAPIESGFNGSTAC
+
+        elif host in esgfng_west_hosts:
+            facade_parameters = ESGFNG_CMIP6_FACADE_PARAMETERS
+            result_parser = ESGFNGCMIP6ResultParser(
+                read_id_project_specific=stac_id_without_version,
+                read_n_matches=stac_west_n_matches,
+            )
+            search_api_type = SearchAPIESGFNGSTAC
+
+        else:
+            # STAC serves no CMIP5 data, and we do not know the shape of a
+            # CMIP5 STAC document, so there is deliberately no CMIP5 STAC
+            # facade (and no CMIP5 STAC result parser to guess at its shape).
+            raise NotImplementedError(f"{project} {host}")
+
+    elif project == "CMIP7":
+        if host in solr_esgf1_hosts:
+            facade_parameters = ESGF1_CMIP7_FACADE_PARAMETERS
+            result_parser = SolrSingleRowResultParser()
+            search_api_type = SearchAPIESGF1Solr
+
+        elif host in solr_esgf15_bridge_hosts:
+            facade_parameters = ESGF1_CMIP7_FACADE_PARAMETERS
+            result_parser = SolrSingleRowResultParser()
+            search_api_type = SearchAPIESGF15BridgeSolr
+
+        elif host in esgfng_east_hosts:
+            facade_parameters = ESGFNG_CMIP7_FACADE_PARAMETERS
+            result_parser = ESGFNGCMIP7ResultParser(
+                read_n_matches=stac_east_n_matches,
+            )
+            search_api_type = SearchAPIESGFNGSTAC
+
+        elif host in esgfng_west_hosts:
+            facade_parameters = ESGFNG_CMIP7_FACADE_PARAMETERS
+            result_parser = ESGFNGCMIP7ResultParser(
+                read_n_matches=stac_west_n_matches,
+            )
+            search_api_type = SearchAPIESGFNGSTAC
+
+        else:
+            # STAC serves no CMIP5 data, and we do not know the shape of a
+            # CMIP5 STAC document, so there is deliberately no CMIP5 STAC
+            # facade (and no CMIP5 STAC result parser to guess at its shape).
+            raise NotImplementedError(f"{project} {host}")
+
+    else:
+        raise NotImplementedError(project)
+
+    res = FacadeDefinition(
+        search_api_type=search_api_type,
+        host=host,
+        facade_parameters=facade_parameters,
+        result_parser=result_parser,
+        project=project,
+    )
+
+    return res
+
+
+def build_facade(
+    definition: FacadeDefinition,
+    create_retrying: RetryingBuilder,
+) -> SearchAPIFacade:
+    """
+    Build a facade from a given definition
+
+    Parameters
+    ----------
+    definition
+        Definition
+
+    create_retrying
+        Builds the retrying strategy to use with the search API
+
+    Returns
+    -------
+    :
+        Built facade instance
+    """
+    search_api = definition.search_api_type(definition.host, create_retrying())
+
+    res = SearchAPIFacade(
+        parameters=definition.facade_parameters,
+        search_api=search_api,
+        result_parser=definition.result_parser,
+    )
+
+    return res
 
 
 @dataclass(frozen=True)
@@ -240,7 +400,7 @@ class SearchAPIFacadeStore:
         return matches[0].facade
 
     @classmethod
-    def initialise_with_default_api_facades(  # noqa: PLR0915
+    def initialise_with_default_api_facades(
         cls,
         create_retrying: RetryingBuilder = build_default_retrying,
     ) -> SearchAPIFacadeStore:
@@ -259,115 +419,38 @@ class SearchAPIFacadeStore:
         :
             Initialised object
         """
-
-        # Urgh, intialisation code is the worst
-        def create_facade_definition(  # noqa: PLR0912
-            project: str, host: str, style: str
-        ) -> FacadeDefinition:
-            search_api_type: SearchAPIBuilder
-            facade_parameters: FacadeParametersProtocol
-            result_parser: ResultParserProtocol
-
-            if project == "CMIP5":
-                if style in ("ESGF1", "ESGF15Bridge"):
-                    facade_parameters = ESGF1_CMIP5_FACADE_PARAMETERS
-                    result_parser = SolrVariableBundleResultParser()
-
-                    if style == "ESGF1":
-                        search_api_type = SearchAPIESGF1Solr
-                    elif style == "ESGF15Bridge":
-                        search_api_type = SearchAPIESGF15BridgeSolr
-                    else:
-                        raise NotImplementedError(style)
-
-                else:
-                    # STAC serves no CMIP5 data, and we do not know the shape of a
-                    # CMIP5 STAC document, so there is deliberately no CMIP5 STAC
-                    # facade (and no CMIP5 STAC result parser to guess at its shape).
-                    raise NotImplementedError(style)
-
-            elif project == "CMIP6":
-                if style in ("ESGF1", "ESGF15Bridge"):
-                    facade_parameters = ESGF1_CMIP6_FACADE_PARAMETERS
-                    result_parser = SolrSingleRowResultParser()
-
-                    if style == "ESGF1":
-                        search_api_type = SearchAPIESGF1Solr
-                    elif style == "ESGF15Bridge":
-                        search_api_type = SearchAPIESGF15BridgeSolr
-                    else:
-                        raise NotImplementedError(style)
-
-                elif style == "ESGF-NG":
-                    search_api_type = SearchAPIESGFNGSTAC
-                    facade_parameters = ESGFNG_CMIP6_FACADE_PARAMETERS
-                    result_parser = ESGFNGCMIP6ResultParser()
-
-                else:
-                    raise NotImplementedError(style)
-
-            elif project == "CMIP7":
-                if style == "ESGF1":
-                    search_api_type = SearchAPIESGF1Solr
-                    facade_parameters = ESGF1_CMIP7_FACADE_PARAMETERS
-                    result_parser = SolrSingleRowResultParser()
-
-                elif style == "ESGF15Bridge":
-                    search_api_type = SearchAPIESGF15BridgeSolr
-                    facade_parameters = ESGF1_CMIP7_FACADE_PARAMETERS
-                    result_parser = SolrSingleRowResultParser()
-
-                elif style == "ESGF-NG":
-                    search_api_type = SearchAPIESGFNGSTAC
-                    facade_parameters = ESGFNG_CMIP7_FACADE_PARAMETERS
-                    result_parser = ESGFNGCMIP7ResultParser()
-
-                else:
-                    raise NotImplementedError(style)
-
-            else:
-                raise NotImplementedError(project)
-
-            return FacadeDefinition(
-                search_api_type=search_api_type,
-                host=host,
-                facade_parameters=facade_parameters,
-                result_parser=result_parser,
-                project=project,
-            )
-
         facade_definitions = [
-            create_facade_definition(project, host, style)
-            for project, host, style in (
+            get_default_facade_definition(project, host)
+            for project, host in (
                 *(
-                    ("CMIP5", host, style)
-                    for host, style in (
-                        ("esg-dn1.nsc.liu.se", "ESGF1"),
-                        ("esgf.nci.org.au", "ESGF1"),
-                        ("esgf-node.ornl.gov", "ESGF15Bridge"),
-                        ("esgf.ceda.ac.uk", "ESGF1"),
-                        ("esgf-data.dkrz.de", "ESGF1"),
+                    ("CMIP5", host)
+                    for host in (
+                        "esg-dn1.nsc.liu.se",
+                        "esgf.nci.org.au",
+                        "esgf-node.ornl.gov",
+                        "esgf.ceda.ac.uk",
+                        "esgf-data.dkrz.de",
                     )
                 ),
                 *(
-                    ("CMIP6", host, style)
-                    for host, style in (
-                        ("esg-dn1.nsc.liu.se", "ESGF1"),
-                        ("esgf.nci.org.au", "ESGF1"),
-                        ("esgf-node.ornl.gov", "ESGF15Bridge"),
-                        ("esgf.ceda.ac.uk", "ESGF1"),
-                        ("esgf-data.dkrz.de", "ESGF1"),
-                        ("search.east.esgf.io", "ESGF-NG"),
-                        ("search.west.esgf.io", "ESGF-NG"),
+                    ("CMIP6", host)
+                    for host in (
+                        "esg-dn1.nsc.liu.se",
+                        "esgf.nci.org.au",
+                        "esgf-node.ornl.gov",
+                        "esgf.ceda.ac.uk",
+                        "esgf-data.dkrz.de",
+                        "search.east.esgf.io",
+                        "search.west.esgf.io",
                     )
                 ),
                 *(
-                    ("CMIP7", host, style)
-                    for host, style in (
-                        ("search.east.esgf.io", "ESGF-NG"),
-                        ("search.west.esgf.io", "ESGF-NG"),
-                        ("esgf.nci.org.au", "ESGF1"),
-                        ("esgf-data.dkrz.de", "ESGF1"),
+                    ("CMIP7", host)
+                    for host in (
+                        "search.east.esgf.io",
+                        "search.west.esgf.io",
+                        "esgf.nci.org.au",
+                        "esgf-data.dkrz.de",
                     )
                 ),
             )
@@ -375,18 +458,10 @@ class SearchAPIFacadeStore:
 
         classifications_l = []
         for facade_definition in facade_definitions:
-            # A fresh retry policy per API:
-            # tenacity's Retrying carries per-run state.
-            search_api = facade_definition.search_api_type(
-                facade_definition.host, create_retrying()
-            )
+            facade = build_facade(facade_definition, create_retrying)
             classifications_l.append(
                 SearchAPIFacadeClassification(
-                    SearchAPIFacade(
-                        parameters=facade_definition.facade_parameters,
-                        search_api=search_api,
-                        result_parser=facade_definition.result_parser,
-                    ),
+                    facade,
                     project=facade_definition.project,
                 )
             )

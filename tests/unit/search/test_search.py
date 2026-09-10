@@ -30,6 +30,8 @@ from esmporium.search import (
     SolrSingleRowResultParser,
     build_list_selector,
     search,
+    stac_base_id,
+    stac_east_n_matches,
 )
 from esmporium.search.retry import _is_transient
 
@@ -343,7 +345,10 @@ def test_search_curl_reproduces_a_post_body(caplog):
     stac_api = SearchAPIFacade(
         parameters=ESGFNG_CMIP6_FACADE_PARAMETERS,
         search_api=SearchAPIESGFNGSTAC("search.example.io", fast_retrying(1)),
-        result_parser=ESGFNGCMIP6ResultParser(),
+        result_parser=ESGFNGCMIP6ResultParser(
+            read_id_project_specific=stac_base_id,
+            read_n_matches=stac_east_n_matches,
+        ),
     )
     selector = build_list_selector([stac_api])
 

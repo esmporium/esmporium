@@ -65,11 +65,17 @@ from esmporium.search.search_api_facade.parameters import (
 from esmporium.search.search_api_facade.result_parsers import (
     ESGFNGCMIP6ResultParser,
     ESGFNGCMIP7ResultParser,
+    IdProjectSpecificReader,
     MissingResultFieldError,
+    NMatchesReader,
     ResultParserProtocol,
     SolrSingleRowResultParser,
     SolrVariableBundleResultParser,
     get_single_value_columns_from_doc,
+    stac_base_id,
+    stac_east_n_matches,
+    stac_id_without_version,
+    stac_west_n_matches,
 )
 from esmporium.search.search_api_facade.selectors import (
     DEFAULT_SEARCH_API_FACADES_BY_PROJECT,
@@ -109,7 +115,9 @@ __all__ = [
     "ESGFNGCMIP7ResultParser",
     "FacadeDefinition",
     "FacadeParametersProtocol",
+    "IdProjectSpecificReader",
     "MissingResultFieldError",
+    "NMatchesReader",
     "OneProjectRequiredError",
     "ProjectPrefixMismatchError",
     "ResultParserProtocol",
@@ -132,4 +140,8 @@ __all__ = [
     "get_single_value_columns_from_doc",
     "get_unexpressible_facets",
     "identity_string",
+    "stac_base_id",
+    "stac_east_n_matches",
+    "stac_id_without_version",
+    "stac_west_n_matches",
 ]

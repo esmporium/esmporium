@@ -19,6 +19,8 @@ from esmporium.search.result_parsing import (
     ParsedDocument,
 )
 from esmporium.search.search_api_facade.result_parsers.protocol import (
+    IdProjectSpecificReader,
+    NMatchesReader,
     get_single_value_columns_from_doc,
 )
 
@@ -164,9 +166,53 @@ def solr_n_matches(raw: dict[str, Any]) -> int:
     raise NoSearchResultNumberOfMatchesReturnedError(raw, "response.numFound")
 
 
-def stac_n_matches(raw: dict[str, Any]) -> int:
+def _n_matches_from(
+    raw: dict[str, Any], candidates: tuple[tuple[str, Any], ...]
+) -> int:
     """
-    Get the number of records that matched a search from a STAC-shaped response
+    Read a match count out of the places one deployment might write it
+
+    Parameters
+    ----------
+    raw
+        The raw search result the values were read from
+
+        Only used for error messages.
+
+    candidates
+        Where we looked and what we found there, in the order we prefer them
+
+    Returns
+    -------
+    :
+        The number of records that matched the search
+
+    Raises
+    ------
+    NoSearchResultNumberOfMatchesReturnedError
+        None of `candidates` carries a count
+
+    TypeError
+        A candidate carries something which is not a count
+    """
+    for loc, total in candidates:
+        if isinstance(total, int):
+            return total
+
+        elif total is not None:
+            msg = f"We expected to get an integer at {loc}, but instead got {total!r}"
+            raise TypeError(msg)
+
+    raise NoSearchResultNumberOfMatchesReturnedError(
+        raw, tuple(loc for loc, _ in candidates)
+    )
+
+
+def stac_east_n_matches(raw: dict[str, Any]) -> int:
+    """
+    Get the number of records that matched a search from an ESGF-NG east response
+
+    East writes the count as `numberMatched`, which is what STAC calls it.
 
     Parameters
     ----------
@@ -183,37 +229,42 @@ def stac_n_matches(raw: dict[str, Any]) -> int:
     NoSearchResultNumberOfMatchesReturnedError
         `raw` does not report the number of records that matched the search
     """
-    # The two ESGF-NG deployments disagree on where the total lives:
-    # east reports `numberMatched` (the STAC spelling),
-    # west reports `numMatched` and `context.matched`.
-    # We try everything, starting with the correct (STAC) spelling.
-    #
-    # This is shared by both ESGF-NG parsers rather than written out in each,
-    # because the disagreement is between east and west
-    # while the parsers are split by project:
-    # each parser answers for both deployments,
-    # so each would have to try every spelling anyway.
-    # Writing it out per parser would duplicate it
-    # without saying anything about which deployment does what.
+    return _n_matches_from(raw, (("numberMatched", raw.get("numberMatched")),))
+
+
+def stac_west_n_matches(raw: dict[str, Any]) -> int:
+    """
+    Get the number of records that matched a search from an ESGF-NG west response
+
+    West does not write `numberMatched` at all. It writes the count twice, as
+    `numMatched` and as `context.matched`, neither of which is the STAC spelling.
+
+    Parameters
+    ----------
+    raw
+        The raw search result to read
+
+    Returns
+    -------
+    :
+        The number of records that matched the search
+
+    Raises
+    ------
+    NoSearchResultNumberOfMatchesReturnedError
+        `raw` does not report the number of records that matched the search
+    """
     context = raw.get("context")
-    candidates = (
-        ("numberMatched", raw.get("numberMatched")),
-        ("numMatched", raw.get("numMatched")),
+
+    return _n_matches_from(
+        raw,
         (
-            "context.matched",
-            context.get("matched") if isinstance(context, dict) else None,
+            ("numMatched", raw.get("numMatched")),
+            (
+                "context.matched",
+                context.get("matched") if isinstance(context, dict) else None,
+            ),
         ),
-    )
-    for loc, total in candidates:
-        if isinstance(total, int):
-            return total
-
-        elif total is not None:
-            msg = f"We expected to get an integer at {loc}, but instead got {total!r}"
-            raise TypeError(msg)
-
-    raise NoSearchResultNumberOfMatchesReturnedError(
-        raw, tuple(loc for loc, _ in candidates)
     )
 
 
@@ -446,6 +497,55 @@ class SolrVariableBundleResultParser:
         )
 
 
+def stac_base_id(feature: dict[str, Any]) -> str:
+    """
+    Read the bundle id a STAC feature publishes as `base_id`
+
+    This is the same value Solr writes as `master_id`. Where a deployment publishes it,
+    reading it means assuming nothing about the shape of the feature id itself.
+
+    Parameters
+    ----------
+    feature
+        Feature (i.e. document) from which to read the bundle id
+
+    Returns
+    -------
+    :
+        The bundle's native id
+
+    Raises
+    ------
+    KeyError
+        `feature` has no `base_id`, i.e. this deployment does not publish one
+    """
+    res: str = feature["properties"]["base_id"]
+
+    return res
+
+
+def stac_id_without_version(feature: dict[str, Any]) -> str:
+    """
+    Recover the bundle id of a STAC feature which does not publish one
+
+    The feature id is the bundle id with the version token on the end, so dropping the
+    token recovers it (see [strip_version][(m).]).
+
+    Parameters
+    ----------
+    feature
+        Feature (i.e. document) from which to read the bundle id
+
+    Returns
+    -------
+    :
+        The bundle's native id
+    """
+    feature_id: str = feature["id"]
+
+    return strip_version(feature_id)
+
+
 def stac_parsed_document(
     feature: dict[str, Any],
     api: SearchAPI,
@@ -494,22 +594,42 @@ class ESGFNGCMIP6ResultParser:
     """
     Read CMIP6 results from the ESGF-NG STAC API
 
-    Two things here are CMIP6's rather than STAC's:
+    Reading CMIP6 is not the same on both ESGF-NG deployments:
 
-    - the bundle id is the feature's `base_id` property,
-      which is the same value Solr writes as `master_id`.
-      Reading it means we do not have to assume anything
-      about the shape of the feature id itself.
-    - the project is not written as a `project` property (CMIP6 features have none),
-      so it is read from `cmip6:mip_era`
-      (this may be a temporary workaround, let's see if the APIs are updated).
+    - east publishes the bundle id as `base_id` (the same value Solr writes as
+      `master_id`), west does not, so [read_id_project_specific][(c).] says which
+      deployment this parser is for
+    - east's features carry no `project` property at all, so the project is read from
+      `cmip6:mip_era`, which both deployments do carry
+      (this may be a temporary workaround, let's see if the APIs are updated)
+    """
+
+    read_id_project_specific: IdProjectSpecificReader
+    """
+    Reads the bundle id out of one of this deployment's features
+
+    Deliberately has no default, for the same reason as [read_n_matches][(c).]: east
+    publishes a `base_id` and west does not
+    (see [stac_base_id][(m).] and [stac_id_without_version][(m).]),
+    so whoever builds a parser has to say which deployment it is for.
+    """
+
+    read_n_matches: NMatchesReader
+    """
+    Reads how many records matched a search out of one of this endpoint's responses
+
+    Deliberately has no default: east and west should answer the same way and do not
+    (see [stac_east_n_matches][(m).] and [stac_west_n_matches][(m).]), so whoever builds
+    a parser has to say which deployment it is for rather than getting a reader that
+    quietly tries every spelling. If the two ever agree, this can go and the count can
+    move back onto the search API, where a format-level concern belongs.
     """
 
     def get_n_matches(self, raw: dict[str, Any]) -> int:
         """
         See [ResultParserProtocol.get_n_matches][esmporium.search.search_api_facade.result_parsers.ResultParserProtocol.get_n_matches].
         """  # noqa: E501
-        return stac_n_matches(raw)
+        return self.read_n_matches(raw)
 
     def parse_search_results(
         self,
@@ -567,9 +687,7 @@ class ESGFNGCMIP6ResultParser:
         :
             The bundle's native id
         """
-        res: str = feature["properties"]["base_id"]
-
-        return res
+        return self.read_id_project_specific(feature)
 
 
 @dataclass(frozen=True)
@@ -588,11 +706,22 @@ class ESGFNGCMIP7ResultParser:
     - the project is written as a plain `project` property
     """
 
+    read_n_matches: NMatchesReader
+    """
+    Reads how many records matched a search out of one of this endpoint's responses
+
+    Deliberately has no default: east and west should answer the same way and do not
+    (see [stac_east_n_matches][(m).] and [stac_west_n_matches][(m).]), so whoever builds
+    a parser has to say which deployment it is for rather than getting a reader that
+    quietly tries every spelling. If the two ever agree, this can go and the count can
+    move back onto the search API, where a format-level concern belongs.
+    """
+
     def get_n_matches(self, raw: dict[str, Any]) -> int:
         """
         See [ResultParserProtocol.get_n_matches][esmporium.search.search_api_facade.result_parsers.ResultParserProtocol.get_n_matches].
         """  # noqa: E501
-        return stac_n_matches(raw)
+        return self.read_n_matches(raw)
 
     def parse_search_results(
         self,
@@ -648,9 +777,7 @@ class ESGFNGCMIP7ResultParser:
         :
             The bundle's native id, i.e. the feature id without its version token
         """
-        feature_id: str = feature["id"]
-
-        return strip_version(feature_id)
+        return stac_id_without_version(feature)
 
 
 def is_version_token(token: str) -> bool:
