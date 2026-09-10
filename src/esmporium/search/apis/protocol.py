@@ -389,7 +389,7 @@ class SearchAPI(Protocol):
 
         Stamped onto every stored document
         (see [`DatasetRawDoc.raw_docs_format_tag`][esmporium.db.schema.DatasetRawDoc])
-        so that, long after the search, the right flattener can be picked to normalise
+        so that, the right flattener can be picked to normalise
         it without a live API in scope (see
         [`esmporium.search.normalise_stored_document`][]). APIs that return the same
         format share a tag: our two Solr APIs both use
@@ -602,7 +602,7 @@ class SearchAPI(Protocol):
 
         This is how the varying axis of a bundle is read: a CMIP5 Solr record carries
         its whole `variable` list here, whereas a CMIP6/CMIP7 document carries a single
-        value (returned as a one-element tuple).
+        value (returned as a one-element tuple), regardless of search API.
 
         Parameters
         ----------

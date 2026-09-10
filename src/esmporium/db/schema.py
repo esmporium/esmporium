@@ -306,7 +306,7 @@ class Dataset(EsmporiumBase, table=True):
 
     For example, `gn`, `gr`, `g115`
 
-    CMIP5 has no concept of grid_label
+    CMIP5 has no concept of grid_label, hence it can be NULL
     """
 
     processing_id: str
@@ -373,12 +373,6 @@ class Dataset(EsmporiumBase, table=True):
     # )
 
 
-# Not redundant, and kept here on purpose: this is the single source of truth for
-# "which columns are facets". It is hand-written (see the note below) but cannot drift.
-# `test_facet_columns_are_the_declared_facets` pins it to `Dataset`'s columns, and
-# `test_dataset_facets_mirror_dataset_columns` pins `DatasetFacets` to it in turn. Its
-# uses are test infrastructure (fixtures build datasets generically from it), but that
-# is load-bearing: adding a facet to `Dataset` without adding it here fails those tests.
 DATASET_FACET_COLUMNS: tuple[str, ...] = (
     "project",
     "model",
@@ -393,15 +387,11 @@ DATASET_FACET_COLUMNS: tuple[str, ...] = (
 """
 The columns of [`Dataset`][esmporium.db.schema.Dataset] that describe the data itself
 
-In other words, everything except the ID(s)
-and (in future) the bookkeeping columns such as when we last saw the dataset.
+In other words, everything except the [Dataset.id]
 
 Two rows agreeing on all of these is allowed:
-the same dataset can legitimately turn up under more than one ID
-(ESGF's IDs are not ours to control, and we do not always parse one).
-It is unusual enough to be worth telling the user about, though,
-which is the open question recorded in the note above
-[`Dataset`][esmporium.db.schema.Dataset].
+the same dataset can legitimately turn up under more than one ID (but differ on
+[Dataset.id_project_specific]).
 
 This list is written out rather than derived from the table
 because not every future column will be a facet.
@@ -418,15 +408,6 @@ class DatasetVersion(EsmporiumBase, table=True):
     A dataset can be published more than once over time
     (a rerun, a fix, or more variables added).
     Each such edition is a row here, dated by its `version`.
-
-    An edition belongs to a single `Dataset` (a real one-to-many via `dataset_id`),
-    and is unique on `(dataset_id, version)`. For CMIP5, where a `master_id` bundle is
-    split into one `Dataset` per variable, each of those per-variable datasets gets its
-    own edition row here rather than sharing one; for CMIP6 and CMIP7 the bundle is
-    already per-variable, so it is one edition per `Dataset` there anyway.
-
-    Version-specific information does not include data-node information. That lives in
-    [`DataNode`][esmporium.db.schema.DataNode].
     """
 
     # See the note on `Dataset.model_config`: this catches a bad *value* at
@@ -486,9 +467,6 @@ class DataNode(EsmporiumBase, table=True):
     through the
     [`DatasetVersionDataNodeLink`][esmporium.db.schema.DatasetVersionDataNodeLink]
     many-to-many join: a node hosts many editions, and an edition lives on many nodes.
-
-    This records only *where* the data lives. Download URLs (file access) are
-    deliberately out of scope for now and will be handled in a later step.
     """
 
     # See the note on `Dataset.model_config`.
@@ -555,6 +533,7 @@ class DatasetRawDoc(EsmporiumBase, table=True):
     id: int | None = Field(default=None, primary_key=True)
     """Surrogate key; assigned by the database"""
 
+    # TODO: Will need to change STAC to base_id, once west changes?
     esgf_doc_id: str = Field(unique=True, index=True)
     """
     The source document's own ESGF id
@@ -573,11 +552,12 @@ class DatasetRawDoc(EsmporiumBase, table=True):
     """
     Names the format of `raw_json`, stamped by the search API that returned it
 
-    Recorded so that, long after the search with no live API in scope, the right
-    flattener can normalise this document when a clash needs explaining (see
-    [`esmporium.search.normalise_stored_document`][]). The format is stored, not guessed
-    from the JSON shape. APIs that return the same format share a tag (our two Solr APIs
-    both store `"solr"`).
+    Recorded for use in [`esmporium.search.normalise_stored_document`][] to
+    normalise the raw_json in the event of a
+    [`Dataset`][esmporium.db.schema.Dataset] row clash on all columns except
+    `id_project_specific`.
+
+    Known tags are "solr" and "stac".
     """
 
     retrieved_at: datetime.datetime = Field(default_factory=_utcnow)

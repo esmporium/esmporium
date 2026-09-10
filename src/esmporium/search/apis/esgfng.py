@@ -64,8 +64,9 @@ def stac_summary_values(raw: dict[str, Any], facets: set[str]) -> dict[str, set[
     for api_name, summary in raw["summaries"].items():
         # This match is deliberately exact (case-sensitive). We only ever build
         # lowercase-prefixed names (`cmip7:variable_id`), and both ESGF-NG
-        # deployments key their summaries the same way today, so exact matching
-        # works. Do not "fix" this by case-folding the keys: these collections
+        # deployments (east and west) key their summaries the same way today,
+        # so exact matching works.
+        # Do not "fix" this by case-folding the keys: these collections
         # really do treat case as significant -- east's CMIP6Plus, for one,
         # carries both `cmip6plus:Conventions` and `cmip6plus:conventions` as
         # separate keys, so lowering every key would collapse the two and

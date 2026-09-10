@@ -1,25 +1,19 @@
 """
-Explaining why datasets that look identical to us are actually different
+Identify the facets which make datasets unique, even if they look identical to us
 
 When datasets share every column our [`Dataset`][esmporium.db.schema.Dataset] model
 records but have different `id_project_specific` values, they are distinguished by some
 project-specific facet we do not model as a column: `product` for CMIP5, `activity_id`
 for CMIP6, and (for CMIP7) things like `activity_id`, `region` or the branding labels.
-
-Rather than hard-code any of those names, or try to split the native id on `.` (model
-names contain dots, so that is unsafe), we compare the facets read out of the raw search
-documents we stored.
-
-This module is deliberately generation-agnostic: it never sees raw JSON and never
-sniffs Solr vs STAC. The flattening of a stored document into `{facet_name: value}`
-lives in the search layer ([`esmporium.search.normalise_stored_document`][]), which
-knows the response shapes; here we only compare the already-flat mappings it produces.
-That keeps the database layer free of any search-generation knowledge.
 """
 
 from __future__ import annotations
 
 from typing import Any
+
+# TODO Zeb: can delete the below comment if makes sense?
+# Alternatively can make inline rather than a class if a parameter returning "<absent>"
+# is not a real risk
 
 
 # A sentinel, not the string "<absent>": a unique object can never equal a real facet
@@ -41,24 +35,18 @@ def facet_differences(
     normalised_info: tuple[tuple[int, dict[str, Any]], ...],
 ) -> dict[str, dict[int, Any]]:
     """
-    Find the facets that explain why datasets differ
+    Find all the facets that explain why datasets differ
 
     Given the normalised facets of two or more datasets that our model considers
     identical (same values in every column we record, yet different
     `id_project_specific`), this reports every facet on which they do not all agree,
-    keyed back to the datasets it came from. The higher-level clash-resolution flow
-    ("which product did you mean?") uses this to tell the user what actually differs.
-
-    A facet is reported whenever the datasets do not all share one value for it,
-    including when some carry it and others do not (the absent side is marked
-    [`MISSING`][(m).]). Nothing here decides which of those differences matter to the
-    user; that filtering is left to the caller.
+    keyed back to the datasets it came from.
 
     Parameters
     ----------
     normalised_info
         One entry per dataset in the clash. Each is a tuple of the dataset's id
-        (currently [`Dataset.id`][esmporium.db.schema.Dataset]; see the note below) and
+        [`Dataset.id`][esmporium.db.schema.Dataset] and
         its normalised facets, as produced by
         [`esmporium.search.normalise_stored_document`][].
 
@@ -82,15 +70,6 @@ def facet_differences(
     ...     ((201545, {"product": "output1"}), (103137, {"product": "output2"}))
     ... )
     {'product': {201545: 'output1', 103137: 'output2'}}
-
-    Notes
-    -----
-    The id is currently the [`Dataset.id`][esmporium.db.schema.Dataset] of each clashing
-    row -- a clash is a `Dataset`-level event (all our columns equal, with
-    `id_project_specific` differing), so the distinguishing facet is a property of the
-    dataset, not of any one edition. When the higher-level clash-resolution wrapper is
-    built we may need to key on (or additionally carry) a `DatasetVersion.id` if
-    versions turn out to distinguish a clash; revisit the key then.
     """
     ids = [dataset_id for dataset_id, _ in normalised_info]
     if len(ids) != len(set(ids)):
