@@ -30,17 +30,7 @@ from esmporium.query import (
     to_canonical,
 )
 from esmporium.search import (
-    ESGF1_CMIP5_FACADE_PARAMETERS,
-    ESGF1_CMIP6_FACADE_PARAMETERS,
-    ESGFNG_CMIP6_FACADE_PARAMETERS,
-    ESGFNG_CMIP7_FACADE_PARAMETERS,
-    SINGLE_ROW_DOC_PARSER,
-    VARIABLE_BUNDLE_DOC_PARSER,
-    SearchAPIESGF1Solr,
-    SearchAPIESGF15BridgeSolr,
-    SearchAPIESGFNGSTAC,
-    SearchAPIFacade,
-    build_transient_retrying,
+    INBUILT_SEARCH_API_FACADE_STORE,
     fire,
 )
 
@@ -61,61 +51,60 @@ Enough to see the shape of a record, few enough to keep the files reviewable.
 CASES = (
     (
         "esgf1-solr-cmip5",
-        SearchAPIFacade(
-            ESGF1_CMIP5_FACADE_PARAMETERS,
-            SearchAPIESGF1Solr("esgf.nci.org.au", build_transient_retrying(2)),
-            doc_parser=VARIABLE_BUNDLE_DOC_PARSER,
+        INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
+            "CMIP5",
+            "esgf.nci.org.au",
         ),
         QueryCMIP5(experiment="historical", variable="tas", time_frequency="mon"),
     ),
     (
         "esgf1-solr-cmip6",
-        SearchAPIFacade(
-            ESGF1_CMIP6_FACADE_PARAMETERS,
-            SearchAPIESGF1Solr("esgf.nci.org.au", build_transient_retrying(2)),
-            doc_parser=SINGLE_ROW_DOC_PARSER,
+        INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
+            "CMIP6",
+            "esgf.nci.org.au",
         ),
         QueryCMIP6(experiment_id="historical", variable_id="tas", frequency="mon"),
     ),
     (
         "esgf15-bridge-cmip6",
-        SearchAPIFacade(
-            ESGF1_CMIP6_FACADE_PARAMETERS,
-            SearchAPIESGF15BridgeSolr(
-                "esgf-node.ornl.gov", build_transient_retrying(2)
-            ),
-            doc_parser=SINGLE_ROW_DOC_PARSER,
+        INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
+            "CMIP6",
+            "esgf-node.ornl.gov",
         ),
         QueryCMIP6(experiment_id="historical", variable_id="tas", frequency="mon"),
     ),
     (
         "esgf-ng-stac-cmip6-east",
-        SearchAPIFacade(
-            ESGFNG_CMIP6_FACADE_PARAMETERS,
-            SearchAPIESGFNGSTAC("search.east.esgf.io", build_transient_retrying(2)),
-            doc_parser=SINGLE_ROW_DOC_PARSER,
+        INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
+            "CMIP6",
+            "search.east.esgf.io",
+        ),
+        QueryCMIP6(experiment_id="historical", variable_id="tas", frequency="mon"),
+    ),
+    # West is recorded alongside east because the two are not identical:
+    # e.g. they disagree on where the match count lives,
+    # so a real west response is worth parsing against.
+    (
+        "esgf-ng-stac-cmip6-west",
+        INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
+            "CMIP6",
+            "search.west.esgf.io",
         ),
         QueryCMIP6(experiment_id="historical", variable_id="tas", frequency="mon"),
     ),
     (
         "esgf-ng-stac-cmip7-east",
-        SearchAPIFacade(
-            ESGFNG_CMIP7_FACADE_PARAMETERS,
-            SearchAPIESGFNGSTAC("search.east.esgf.io", build_transient_retrying(2)),
-            doc_parser=SINGLE_ROW_DOC_PARSER,
+        INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
+            "CMIP7",
+            "search.east.esgf.io",
         ),
         QueryCMIP7(variable_id="tas"),
     ),
-    # West is recorded alongside east because the two are not identical:
-    # they disagree on where the match count lives
-    # (see `get_search_result_n_matches` in `esmporium.search.apis.esgfng`),
-    # so a real west response is worth parsing against.
     (
         "esgf-ng-stac-cmip7-west",
-        SearchAPIFacade(
-            ESGFNG_CMIP7_FACADE_PARAMETERS,
-            SearchAPIESGFNGSTAC("search.west.esgf.io", build_transient_retrying(2)),
-            doc_parser=SINGLE_ROW_DOC_PARSER,
+        INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
+            "CMIP7",
+            "search.west.esgf.io",
         ),
         QueryCMIP7(variable_id="tas"),
     ),

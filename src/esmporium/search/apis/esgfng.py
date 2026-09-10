@@ -4,7 +4,6 @@ ESGF-NG search API class
 
 from __future__ import annotations
 
-import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -15,13 +14,13 @@ from tenacity import Retrying
 from esmporium.search.apis.protocol import (
     LimitOutOfRangeError,
     NoFacetValuesReturnedError,
-    NoSearchResultNumberOfMatchesReturnedError,
+    NoSearchResultDocumentsError,
     UncompilableFacetPatternError,
     single_facet_value_or_none,
 )
 from esmporium.search.apis.request import Request
 from esmporium.search.result_normalisation import STAC_FORMAT_TAG
-from esmporium.search.result_parsing import DataNodeInfo, ParsedDocShell
+from esmporium.search.result_parsing import DataNodeInfo
 
 
 # In future, `aggregations` could be used to return value counts per facet value.
@@ -159,86 +158,174 @@ def stac_summary_patterns(
 
 
 def stac_extract_result_documents(raw: dict[str, Any]) -> list[dict[str, Any]]:
-    """Return the per-dataset features in a STAC-shaped search response."""
-    features: list[dict[str, Any]] = raw.get("features", [])
+    """
+    Get the response documents from a raw STAC response
+
+    Parameters
+    ----------
+    raw
+        Raw STAC response to parse
+
+    Returns
+    -------
+    :
+        Extracted response documents
+
+    Raises
+    ------
+    NoSearchResultDocumentsError
+        No search result documents are included in `raw`
+    """
+    if "features" not in raw:
+        raise NoSearchResultDocumentsError(raw, "features")
+
+    features: list[dict[str, Any]] = raw["features"]
+
     return list(features)
 
 
-def stac_read_facet_list(feature: dict[str, Any], api_field: str) -> tuple[str, ...]:
-    """Read a facet from a STAC feature's `properties` as a tuple of its values.
-
-    A STAC feature is expected to carry one value per facet, but a `properties` entry
-    that is itself a list is read as the values it holds (so
-    [stac_read_facet][(m).] can flag it), rather than being stringified whole.
+def stac_read_facet_list_as_strings(
+    feature: dict[str, Any], api_field: str
+) -> tuple[str, ...]:
     """
-    value = feature.get("properties", {}).get(api_field)
-    if value is None:
+    Read a facet from a STAC feature (document) as a tuple of strings
+
+    Parameters
+    ----------
+    feature
+        Feature (i.e. document) from which to read the facet
+
+    api_field
+        Facet (i.e. field in the API response) to read
+
+    Returns
+    -------
+    :
+        The value of `api_field`, cast to a tuple of strings
+
+    Raises
+    ------
+    NotImplementedError
+        The value we found is not one we can safely cast to a tuple of strings
+    """
+    # `properties` is where a STAC feature keeps its facets,
+    # so a feature without it is not one we can read at all.
+    # So we try to get its value and let that fail loudly if it's not there.
+    values = feature["properties"].get(api_field)
+    if values is None:
         return ()
-    if not isinstance(value, list):
-        value = [value]
-    return tuple(str(item) for item in value)
+
+    if not isinstance(values, list):
+        values = [values]
+
+    return tuple(stac_facet_value_as_string(value, api_field) for value in values)
 
 
-def stac_read_facet(feature: dict[str, Any], api_field: str) -> str | None:
-    """Read one scalar facet from a STAC feature's `properties` by API field name.
+def stac_facet_value_as_string(value: Any, api_field: str) -> str:
+    """
+    Cast a single value read from a STAC feature (document) to a string
 
-    Built on [stac_read_facet_list][(m).] so a field that unexpectedly carries several
-    values raises [MultipleFacetValuesError][esmporium.search.apis.MultipleFacetValuesError]
-    rather than being stringified into a single value.
-    """  # noqa: E501
-    return single_facet_value_or_none(
-        stac_read_facet_list(feature, api_field), api_field
+    Parameters
+    ----------
+    value
+        Value to cast
+
+    api_field
+        Facet (i.e. field in the API response) `value` was read from
+
+        Only used for error messages.
+
+    Returns
+    -------
+    :
+        `value`, cast to a string
+
+    Raises
+    ------
+    NotImplementedError
+        `value` is not one we can safely cast to a string
+
+        Casting anything else would put a value in our database
+        that nobody published,
+        e.g. a `dict` would come back as `"{'a': 1}"`.
+    """
+    if isinstance(value, (str, int, float)):
+        return str(value)
+
+    msg = (
+        f"We do not know how to read {api_field!r} out of a STAC record: "
+        f"expected a string, an int, a float or nothing, got {value!r}"
     )
+    raise NotImplementedError(msg)
 
 
-def _strip_version(native_id: str) -> str:
-    """Drop a trailing `.vYYYYMMDD` token so different editions share a bundle id."""
-    parts = native_id.split(".")
-    # A version token is the last `.`-segment written as `v` followed by digits, e.g.
-    # `.v20200623`. `isdigit()` on the tail after the `v` requires at least one digit,
-    # so a bare `v` is not mistaken for a version.
-    if parts and parts[-1].startswith("v") and parts[-1][1:].isdigit():
-        return ".".join(parts[:-1])
-    return native_id
+def stac_read_facet_as_string(feature: dict[str, Any], api_field: str) -> str | None:
+    """
+    Read a facet from a STAC feature (document) as a single string
 
+    Parameters
+    ----------
+    feature
+        Feature (i.e. document) from which to read the facet
 
-def _version_from_id(native_id: str) -> str:
-    """Read the version out of a trailing `.vYYYYMMDD` token, if present."""
-    last = native_id.rsplit(".", 1)[-1]
-    # As in `_strip_version`: the token is `v` then digits, e.g. `v20200623`; return the
-    # digits (`20200623`). Anything else means there is no version token to read.
-    if last.startswith("v") and last[1:].isdigit():
-        return last[1:]
-    return ""
+    api_field
+        Facet (i.e. field in the API response) to read
+
+    Returns
+    -------
+    :
+        The value of `api_field`, cast to a single string
+
+    Raises
+    ------
+    MultipleFacetValuesError
+        In the doc, `api_field` maps to more than one value
+    """
+    return single_facet_value_or_none(
+        stac_read_facet_list_as_strings(feature, api_field), api_field
+    )
 
 
 def stac_nodes(feature: dict[str, Any]) -> tuple[DataNodeInfo, ...]:
-    """Return the distinct data nodes a STAC feature's assets are hosted on."""
+    """
+    Get the distinct data nodes a STAC feature's assets are hosted on
+
+    Parameters
+    ----------
+    feature
+        Feature (i.e. document) from which to read the data nodes
+
+    Returns
+    -------
+    :
+        The distinct data nodes `feature`'s assets are hosted on
+
+        A feature with no assets is hosted nowhere,
+        so it has no data nodes.
+
+    Raises
+    ------
+    KeyError
+        One of `feature`'s assets does not say which node hosts it
+
+        Something is hosting it and we cannot see what,
+        which means the response is not the shape we expect,
+        so we fail loudly rather than quietly dropping the node.
+    """
     hosts: list[str] = []
+    # No assets at all is fine: nothing is hosting this, so there is no node to report.
     for asset in feature.get("assets", {}).values():
         # `alternate:name` (STAC alternate-assets extension) is the canonical data-node
-        # identity, matching Solr's `data_node` (e.g. `ceda.ac.uk`). Deliberately do NOT
-        # read `href` here: `href` is the file-download URL (e.g. `dap.ceda.ac.uk`), a
-        # different concept from the data node, reserved for a future file-access step.
-        host = asset.get("alternate:name")
-        if host and host not in hosts:
+        # identity, matching Solr's `data_node` (e.g. `ceda.ac.uk`).
+        # Deliberately do NOT read `href` here:
+        # `href` is the file-download URL (e.g. `dap.ceda.ac.uk`),
+        # a different concept from the data node,
+        # reserved for a future file-access step.
+        host = asset["alternate:name"]
+        if host not in hosts:
             hosts.append(host)
+
     return tuple(DataNodeInfo(host) for host in hosts)
-
-
-def stac_read_document_shell(feature: dict[str, Any]) -> ParsedDocShell:
-    """Read the format-determined pieces of a STAC feature."""
-    props: dict[str, Any] = feature["properties"]
-    feature_id = feature["id"]
-    return ParsedDocShell(
-        id_project_specific=_strip_version(feature_id),
-        version=str(props.get("version") or _version_from_id(feature_id)),
-        is_latest=bool(props.get("latest", False)),
-        retracted=bool(props.get("retracted", False)),
-        nodes=stac_nodes(feature),
-        esgf_doc_id=feature_id,
-        raw_json=json.dumps(feature),
-    )
 
 
 @dataclass(frozen=True)
@@ -308,37 +395,6 @@ class SearchAPIESGFNGSTAC:
 
         return Request("POST", "/search", json_body=json_body)
 
-    def get_search_result_n_matches(self, raw: dict[str, Any]) -> int:
-        """
-        See [SearchAPI.get_search_result_n_matches][esmporium.search.apis.SearchAPI.get_search_result_n_matches].
-        """  # noqa: E501
-        # The two ESGF-NG deployments disagree on where the total lives:
-        # east reports `numberMatched` (the STAC spelling),
-        # west reports `numMatched` and `context.matched`.
-        # We try everything, starting with the correct (STAC) spelling.
-        context = raw.get("context")
-        candidates = (
-            ("numberMatched", raw.get("numberMatched")),
-            ("numMatched", raw.get("numMatched")),
-            (
-                "context.matched",
-                context.get("matched") if isinstance(context, dict) else None,
-            ),
-        )
-        for loc, total in candidates:
-            if isinstance(total, int):
-                return total
-
-            elif total is not None:
-                msg = (
-                    f"We expected to get an integer at {loc}, but instead got {total!r}"
-                )
-                raise TypeError(msg)
-
-        raise NoSearchResultNumberOfMatchesReturnedError(
-            raw, tuple(loc for loc, _ in candidates)
-        )
-
     def build_get_facet_values_for_project_request(
         self, facets: set[str], project: str
     ) -> Request:
@@ -377,20 +433,14 @@ class SearchAPIESGFNGSTAC:
         """  # noqa: E501
         return stac_extract_result_documents(raw)
 
-    def read_document_shell(self, doc: dict[str, Any]) -> ParsedDocShell:
-        """
-        See [SearchAPI.read_document_shell][esmporium.search.apis.SearchAPI.read_document_shell].
-        """  # noqa: E501
-        return stac_read_document_shell(doc)
-
     def read_facet(self, doc: dict[str, Any], api_field: str) -> str | None:
         """
         See [SearchAPI.read_facet][esmporium.search.apis.SearchAPI.read_facet].
         """
-        return stac_read_facet(doc, api_field)
+        return stac_read_facet_as_string(doc, api_field)
 
     def read_facet_list(self, doc: dict[str, Any], api_field: str) -> tuple[str, ...]:
         """
         See [SearchAPI.read_facet_list][esmporium.search.apis.SearchAPI.read_facet_list].
         """  # noqa: E501
-        return stac_read_facet_list(doc, api_field)
+        return stac_read_facet_list_as_strings(doc, api_field)

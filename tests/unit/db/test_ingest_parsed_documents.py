@@ -29,32 +29,31 @@ from esmporium.search import (
     DEFAULT_NORMALISERS,
     ESGF1_CMIP5_FACADE_PARAMETERS,
     ESGFNG_CMIP7_FACADE_PARAMETERS,
-    SINGLE_ROW_DOC_PARSER,
     SOLR_FORMAT_TAG,
     STAC_FORMAT_TAG,
-    VARIABLE_BUNDLE_DOC_PARSER,
     DataNodeInfo,
     DatasetFacets,
+    ESGFNGCMIP7ResultParser,
     ParsedDocument,
     SearchAPIESGF1Solr,
     SearchAPIESGFNGSTAC,
     SearchAPIFacade,
+    SolrVariableBundleResultParser,
     UnknownRawDocFormatTagError,
     build_transient_retrying,
     normalise_stored_document,
+    stac_east_n_matches,
 )
 
 RECORDED_DIR = Path(__file__).parents[2] / "test-data" / "search"
 
 
-def _facade(
-    parameters, search_api_cls, doc_parser=SINGLE_ROW_DOC_PARSER
-) -> SearchAPIFacade:
+def _facade(parameters, search_api_cls, result_parser) -> SearchAPIFacade:
     """Build a facade for parsing a recording (nothing is sent, so the host is fake)."""
     return SearchAPIFacade(
         parameters=parameters,
         search_api=search_api_cls("recorded.example", build_transient_retrying(1)),
-        doc_parser=doc_parser,
+        result_parser=result_parser,
     )
 
 
@@ -77,7 +76,7 @@ def test_ingest_cmip5_writes_one_edition_per_dataset(engine):
     facade = _facade(
         ESGF1_CMIP5_FACADE_PARAMETERS,
         SearchAPIESGF1Solr,
-        doc_parser=VARIABLE_BUNDLE_DOC_PARSER,
+        SolrVariableBundleResultParser(),
     )
     documents = facade.parse_search_results(_load("esgf1-solr-cmip5-search"))
     expected_rows = sum(len(doc.datasets) for doc in documents)
@@ -101,7 +100,7 @@ def test_reingesting_the_same_documents_is_idempotent(engine):
     facade = _facade(
         ESGF1_CMIP5_FACADE_PARAMETERS,
         SearchAPIESGF1Solr,
-        doc_parser=VARIABLE_BUNDLE_DOC_PARSER,
+        SolrVariableBundleResultParser(),
     )
     documents = facade.parse_search_results(_load("esgf1-solr-cmip5-search"))
 
@@ -122,7 +121,7 @@ def test_result_processor_commits_each_host(engine):
     facade = _facade(
         ESGF1_CMIP5_FACADE_PARAMETERS,
         SearchAPIESGF1Solr,
-        doc_parser=VARIABLE_BUNDLE_DOC_PARSER,
+        SolrVariableBundleResultParser(),
     )
     documents = facade.parse_search_results(_load("esgf1-solr-cmip5-search"))
 
@@ -137,7 +136,11 @@ def test_result_processor_commits_each_host(engine):
 
 def test_ingest_stac_cmip7_writes_one_dataset_per_document(engine):
     """A STAC CMIP7 document maps to one dataset row, ingested via the processor."""
-    facade = _facade(ESGFNG_CMIP7_FACADE_PARAMETERS, SearchAPIESGFNGSTAC)
+    facade = _facade(
+        ESGFNG_CMIP7_FACADE_PARAMETERS,
+        SearchAPIESGFNGSTAC,
+        ESGFNGCMIP7ResultParser(read_n_matches=stac_east_n_matches),
+    )
     documents = facade.parse_search_results(_load("esgf-ng-stac-cmip7-east-search"))
 
     with Session(engine) as session:
@@ -156,9 +159,13 @@ def test_ingest_stamps_each_raw_doc_with_its_search_api_tag(engine):
     solr = _facade(
         ESGF1_CMIP5_FACADE_PARAMETERS,
         SearchAPIESGF1Solr,
-        doc_parser=VARIABLE_BUNDLE_DOC_PARSER,
+        SolrVariableBundleResultParser(),
     )
-    stac = _facade(ESGFNG_CMIP7_FACADE_PARAMETERS, SearchAPIESGFNGSTAC)
+    stac = _facade(
+        ESGFNG_CMIP7_FACADE_PARAMETERS,
+        SearchAPIESGFNGSTAC,
+        ESGFNGCMIP7ResultParser(read_n_matches=stac_east_n_matches),
+    )
 
     with Session(engine) as session:
         ingest_parsed_documents(

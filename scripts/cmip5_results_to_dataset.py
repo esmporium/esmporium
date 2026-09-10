@@ -18,6 +18,12 @@ node sent.
 
 Run it:  uv run python scripts/cmip5_results_to_dataset.py
 """
+# TODO: let's get rid of this script
+# and instead rename `first_search_cmipx_full.py`
+# to `search_cmipx.py` and use that as our demonstration of searching
+# and ending up with Dataset rows in the database
+# (e.g. we might show how we can then query the database to just get CMIP5 data,
+# or get CMIP5 and CMIP7 data etc.).
 
 from __future__ import annotations
 

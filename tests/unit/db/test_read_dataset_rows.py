@@ -24,23 +24,21 @@ from esmporium.db import Dataset, save_dataset
 from esmporium.search import (
     ESGF1_CMIP5_FACADE_PARAMETERS,
     ESGF1_CMIP6_FACADE_PARAMETERS,
-    SINGLE_ROW_DOC_PARSER,
-    VARIABLE_BUNDLE_DOC_PARSER,
     DatasetFacets,
     SearchAPIESGF1Solr,
     SearchAPIFacade,
+    SolrSingleRowResultParser,
+    SolrVariableBundleResultParser,
     build_transient_retrying,
 )
 
 
-def _facade(
-    parameters, search_api_cls, doc_parser=SINGLE_ROW_DOC_PARSER
-) -> SearchAPIFacade:
+def _facade(parameters, search_api_cls, result_parser) -> SearchAPIFacade:
     """A facade for parsing a fabricated document (nothing is sent, so the host is fake)."""  # noqa: E501
     return SearchAPIFacade(
         parameters=parameters,
         search_api=search_api_cls("fabricated.example", build_transient_retrying(1)),
-        doc_parser=doc_parser,
+        result_parser=result_parser,
     )
 
 
@@ -52,6 +50,9 @@ def _solr_doc(facade: SearchAPIFacade, *rows: DatasetFacets) -> dict:
     come from the facade's own mapping, so the document is in exactly the API names
     `read_dataset_rows` reads back. A facet the project does not model (CMIP5's
     `grid_label`) has no mapping, so it is simply omitted.
+
+    `master_id` is written by hand because it is not a facet: it is where a Solr record
+    keeps its bundle id, which the result parser reads for itself.
     """
     first = rows[0]
     scalar_columns = set(DatasetFacets.model_fields) - {
@@ -62,7 +63,7 @@ def _solr_doc(facade: SearchAPIFacade, *rows: DatasetFacets) -> dict:
         scalar_columns | {"variable"}
     )
 
-    doc: dict = {}
+    doc: dict = {"master_id": [first.id_project_specific]}
     for column in scalar_columns:
         api_field = field_of.get(column)
         value = getattr(first, column)
@@ -74,7 +75,11 @@ def _solr_doc(facade: SearchAPIFacade, *rows: DatasetFacets) -> dict:
 
 def test_solr_cmip6_document_parses_and_saves(engine):
     """A single CMIP6 Solr document parses to one row that round-trips the database."""
-    facade = _facade(ESGF1_CMIP6_FACADE_PARAMETERS, SearchAPIESGF1Solr)
+    facade = _facade(
+        ESGF1_CMIP6_FACADE_PARAMETERS,
+        SearchAPIESGF1Solr,
+        SolrSingleRowResultParser(),
+    )
     expected = DatasetFacets(
         id_project_specific="native.cmip6.id",
         project="CMIP6",
@@ -88,9 +93,7 @@ def test_solr_cmip6_document_parses_and_saves(engine):
         processing_id="Amon",
     )
 
-    rows = facade.read_dataset_rows(
-        _solr_doc(facade, expected), expected.id_project_specific
-    )
+    rows = facade.read_dataset_rows(_solr_doc(facade, expected))
 
     assert rows == (expected,)
 
@@ -114,7 +117,7 @@ def test_solr_cmip5_bundle_explodes_into_saved_rows(engine):
     facade = _facade(
         ESGF1_CMIP5_FACADE_PARAMETERS,
         SearchAPIESGF1Solr,
-        doc_parser=VARIABLE_BUNDLE_DOC_PARSER,
+        SolrVariableBundleResultParser(),
     )
     shared = {
         "id_project_specific": "native.cmip5.id",
@@ -130,9 +133,7 @@ def test_solr_cmip5_bundle_explodes_into_saved_rows(engine):
     tas = DatasetFacets(**shared, variable="tas")
     pr = DatasetFacets(**shared, variable="pr")
 
-    rows = facade.read_dataset_rows(
-        _solr_doc(facade, tas, pr), shared["id_project_specific"]
-    )
+    rows = facade.read_dataset_rows(_solr_doc(facade, tas, pr))
 
     assert rows == (tas, pr)
     assert all(row.grid_label is None for row in rows)
