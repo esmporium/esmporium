@@ -4,7 +4,6 @@ ESGF1 search API class
 
 from __future__ import annotations
 
-import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -15,12 +14,11 @@ from tenacity import Retrying
 from esmporium.search.apis.protocol import (
     LimitOutOfRangeError,
     NoFacetValuesReturnedError,
-    NoSearchResultNumberOfMatchesReturnedError,
+    NoSearchResultDocumentsError,
     single_facet_value_or_none,
 )
 from esmporium.search.apis.request import Request
 from esmporium.search.result_normalisation import SOLR_FORMAT_TAG
-from esmporium.search.result_parsing import DataNodeInfo, ParsedDocShell
 
 
 def solr_bool(value: bool) -> str:
@@ -45,42 +43,6 @@ def solr_bool(value: bool) -> str:
     'false'
     """
     return "true" if value else "false"
-
-
-def get_solr_search_result_n_matches(raw: dict[str, Any]) -> int:
-    """
-    Get the number of records that matched a search from a Solr-shaped response
-
-    Note: this is not the same as the number of results in `raw`.
-    Solr has the idea of 'limit', which means that the number of results returned
-    can differ from the total number of records which matched a given query.
-
-    Parameters
-    ----------
-    raw
-        The raw search result to read
-
-    Returns
-    -------
-    :
-        The number of records that matched the search
-
-    Raises
-    ------
-    NoSearchResultNumberOfMatchesReturnedError
-        `raw` does not report the number of records that matched the search
-    """
-    num_found = raw.get("response", {}).get("numFound")
-    if isinstance(num_found, int):
-        return num_found
-    elif num_found is not None:
-        msg = (
-            "We expected to get an integer at 'response.numFound', "
-            f"but instead got {num_found!r}"
-        )
-        raise TypeError(msg)
-
-    raise NoSearchResultNumberOfMatchesReturnedError(raw, "response.numFound")
 
 
 def solr_facet_values(raw: dict[str, Any], facets: set[str]) -> dict[str, set[str]]:
@@ -133,55 +95,129 @@ def extract_one_element_list(value: Any) -> Any:
 
 
 def solr_extract_result_documents(raw: dict[str, Any]) -> list[dict[str, Any]]:
-    """Return the per-dataset records in a Solr-shaped search response."""
-    # Shall we make this raise if we don't have response.docs
-    # rather than silently returning no records?
-    # I think a loud failure here would be better than a silent 'no docs'
-    docs: list[dict[str, Any]] = raw.get("response", {}).get("docs", [])
+    """
+    Extract result documents from a raw Solr response
+
+    Parameters
+    ----------
+    raw
+        Raw response
+
+    Returns
+    -------
+    :
+        Extracted documents
+
+    Raises
+    ------
+    NoSearchResultDocumentsError
+        No search result documents are included in `raw`
+    """
+    response = raw.get("response")
+    if not isinstance(response, dict) or "docs" not in response:
+        raise NoSearchResultDocumentsError(raw, "response.docs")
+
+    docs: list[dict[str, Any]] = response["docs"]
+
     return list(docs)
 
 
-def solr_read_facet_list(doc: dict[str, Any], api_field: str) -> tuple[str, ...]:
-    """Read a multi-valued facet (e.g. CMIP5's whole `variable` bundle) as a tuple."""
-    # I'd be tempted to make this stricter, something like
-    # if the value is a list, return it as a tuple then return
-    # if the value is a string or float or int, turn it into a tuple then return
-    # if the value is None, return an empty tuple
-    # for anything else, raise NotImplementedError
-    #
-    # The current function could do funny things like wrapping a dict inside a list
-    # then returning the string version of the dict.
-    # The above implementation would turn this into,
-    # if we recognise the case, we do the thing,
-    # for anything else, we raise as we're seeing something unexpected.
+def solr_read_facet_list_as_strings(
+    doc: dict[str, Any], api_field: str
+) -> tuple[str, ...]:
+    """
+    Read a facet from a Solr document as a tuple of strings
+
+    Parameters
+    ----------
+    doc
+        Document from which to read the facet
+
+    api_field
+        Facet (i.e. field in the API response) to read
+
+    Returns
+    -------
+    :
+        The value of `api_field`, cast to a tuple of strings
+
+    Raises
+    ------
+    NotImplementedError
+        The value we found is not one we can safely cast to a tuple of strings
+    """
     values = doc.get(api_field)
     if values is None:
         return ()
+
     if not isinstance(values, list):
         values = [values]
-    return tuple(str(value) for value in values)
+
+    return tuple(solr_facet_value_as_string(value, api_field) for value in values)
 
 
-def solr_read_facet(doc: dict[str, Any], api_field: str) -> str | None:
-    """Read one scalar facet out of a Solr record by its API field name.
+def solr_facet_value_as_string(value: Any, api_field: str) -> str:
+    """
+    Cast a single value read from a Solr document to a string
 
-    Built on [solr_read_facet_list][(m).] so a field that unexpectedly carries several
-    values raises [MultipleFacetValuesError][esmporium.search.apis.MultipleFacetValuesError]
-    rather than being stringified into a single value.
-    """  # noqa: E501
-    return single_facet_value_or_none(solr_read_facet_list(doc, api_field), api_field)
+    Parameters
+    ----------
+    value
+        Value to cast
+
+    api_field
+        Facet (i.e. field in the API response) `value` was read from
+
+        Only used for error messages.
+
+    Returns
+    -------
+    :
+        `value`, cast to a string
+
+    Raises
+    ------
+    NotImplementedError
+        `value` is not one we can safely cast to a string
+
+        Casting anything else would put a value in our database
+        that nobody published,
+        e.g. a `dict` would come back as `"{'a': 1}"`.
+    """
+    if isinstance(value, (str, int, float)):
+        return str(value)
+
+    msg = (
+        f"We do not know how to read {api_field!r} out of a Solr record: "
+        f"expected a string, an int, a float or nothing, got {value!r}"
+    )
+    raise NotImplementedError(msg)
 
 
-def solr_read_document_shell(doc: dict[str, Any]) -> ParsedDocShell:
-    """Read the format-determined pieces of a Solr record."""
-    return ParsedDocShell(
-        id_project_specific=extract_one_element_list(doc["master_id"]),
-        version=str(extract_one_element_list(doc["version"])),
-        is_latest=bool(extract_one_element_list(doc["latest"])),
-        retracted=bool(extract_one_element_list(doc["retracted"])),
-        nodes=(DataNodeInfo(data_node=extract_one_element_list(doc["data_node"])),),
-        esgf_doc_id=extract_one_element_list(doc["id"]),
-        raw_json=json.dumps(doc),
+def solr_read_facet_as_string(doc: dict[str, Any], api_field: str) -> str | None:
+    """
+    Read a facet from a Solr document as a single string
+
+    Parameters
+    ----------
+    doc
+        Document from which to read the facet
+
+    api_field
+        Facet (i.e. field in the API response) to read
+
+    Returns
+    -------
+    :
+        The value of `api_field`, cast to a single string
+
+    Raises
+    ------
+    MultipleFacetValuesError
+        In the doc, `api_field` maps to more than one value
+    """
+    return single_facet_value_or_none(
+        solr_read_facet_list_as_strings(doc, api_field), api_field
     )
 
 
@@ -253,12 +289,6 @@ class SearchAPIESGF1Solr:
 
         return Request("GET", "/esg-search/search", params=params)
 
-    def get_search_result_n_matches(self, raw: dict[str, Any]) -> int:
-        """
-        See [SearchAPI.get_search_result_n_matches][esmporium.search.apis.SearchAPI.get_search_result_n_matches].
-        """  # noqa: E501
-        return get_solr_search_result_n_matches(raw)
-
     def build_get_facet_values_for_project_request(
         self, facets: set[str], project: str
     ) -> Request:
@@ -301,20 +331,14 @@ class SearchAPIESGF1Solr:
         """  # noqa: E501
         return solr_extract_result_documents(raw)
 
-    def read_document_shell(self, doc: dict[str, Any]) -> ParsedDocShell:
-        """
-        See [SearchAPI.read_document_shell][esmporium.search.apis.SearchAPI.read_document_shell].
-        """  # noqa: E501
-        return solr_read_document_shell(doc)
-
     def read_facet(self, doc: dict[str, Any], api_field: str) -> str | None:
         """
         See [SearchAPI.read_facet][esmporium.search.apis.SearchAPI.read_facet].
         """
-        return solr_read_facet(doc, api_field)
+        return solr_read_facet_as_string(doc, api_field)
 
     def read_facet_list(self, doc: dict[str, Any], api_field: str) -> tuple[str, ...]:
         """
         See [SearchAPI.read_facet_list][esmporium.search.apis.SearchAPI.read_facet_list].
         """  # noqa: E501
-        return solr_read_facet_list(doc, api_field)
+        return solr_read_facet_list_as_strings(doc, api_field)

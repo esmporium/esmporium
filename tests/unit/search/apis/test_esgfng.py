@@ -5,6 +5,10 @@ STAC answers with CQL2 and describes its facet values in a collection document.
 These pin the request we build from facet values and the reading of a collection,
 both under the API's own parameter names: the caller (the facade) is assumed to have
 already put each property under its collection prefix, and named the collection.
+
+What a *result* means (its bundle id, its project, where this deployment writes the
+match count) is the result parsers' business, tested in
+`tests/unit/search/test_result_parsers.py`.
 """
 
 from __future__ import annotations
@@ -16,10 +20,12 @@ import pytest
 from esmporium.search.apis import (
     LimitOutOfRangeError,
     NoFacetValuesReturnedError,
-    NoSearchResultNumberOfMatchesReturnedError,
+    NoSearchResultDocumentsError,
     SearchAPIESGFNGSTAC,
     UncompilableFacetPatternError,
 )
+from esmporium.search.apis.esgfng import stac_nodes
+from esmporium.search.result_parsing import DataNodeInfo
 from esmporium.search.retry import build_transient_retrying
 
 
@@ -67,92 +73,111 @@ def test_build_search_request_accepts_the_ends_of_the_range():
         assert api().build_search_request({}, limit=limit).json_body["limit"] == limit
 
 
-@pytest.mark.parametrize(
-    "raw, exp",
-    (
-        pytest.param({"numberMatched": 7}, 7, id="stac-spelling"),
-        pytest.param({"numMatched": 0}, 0, id="west-spelling"),
-        pytest.param({"context": {"matched": 4}}, 4, id="west-context"),
-    ),
-)
-def test_get_search_result_n_matches_reads_whichever_spelling_is_present(raw, exp):
-    """The two deployments disagree on where the total lives; we read either"""
-    assert api().get_search_result_n_matches(raw) == exp
+def test_extract_result_documents_reads_the_features():
+    """A search answer keeps its records under `features`"""
+    features = [{"id": "a"}, {"id": "b"}]
+
+    assert api().extract_result_documents({"features": features}) == features
 
 
-# The count lives in one of three places on the two deployments,
-# so the error reports on all three: any of them could have answered us.
-WHERE_WE_LOOKED_FOR_THE_COUNT = (
-    "This response does not report how many records matched the search. "
-    "We expected to read the count from "
-    "one of 'numberMatched', 'numMatched' or 'context.matched', "
-)
+def test_extract_result_documents_of_an_empty_search_is_empty():
+    """A search which matched nothing still answers with a `features` list"""
+    assert api().extract_result_documents({"numberMatched": 0, "features": []}) == []
 
 
 @pytest.mark.parametrize(
-    "raw, exp",
+    "raw",
     (
-        pytest.param(
-            {},
-            pytest.raises(
-                NoSearchResultNumberOfMatchesReturnedError,
-                match=re.escape(
-                    f"{WHERE_WE_LOOKED_FOR_THE_COUNT}but the response is empty."
-                ),
-            ),
-            id="nothing-we-recognise",
-        ),
-        pytest.param(
-            {"features": [{"id": "a"}]},
-            pytest.raises(
-                NoSearchResultNumberOfMatchesReturnedError,
-                match=re.escape(
-                    f"{WHERE_WE_LOOKED_FOR_THE_COUNT}but: "
-                    "'numberMatched' is not in the response's top level, "
-                    "there is only: 'features'; "
-                    "'numMatched' is not in the response's top level, "
-                    "there is only: 'features'; "
-                    "'context' is not in the response's top level, "
-                    "there is only: 'features'."
-                ),
-            ),
-            id="records-but-no-count",
-        ),
-        pytest.param(
-            {"numMatched": None, "context": {"total": 4}},
-            # Each place we looked is explained as far as we got in it,
-            # so the one which came closest says so.
-            pytest.raises(
-                NoSearchResultNumberOfMatchesReturnedError,
-                match=re.escape(
-                    f"{WHERE_WE_LOOKED_FOR_THE_COUNT}but: "
-                    "'numberMatched' is not in the response's top level, "
-                    "there is only: 'context', 'numMatched'; "
-                    "we found None at 'numMatched'; "
-                    "'matched' is not in 'context', there is only: 'total'."
-                ),
-            ),
-            id="a-context-which-does-not-carry-the-count",
-        ),
+        pytest.param({}, id="nothing-we-recognise"),
+        pytest.param({"numberMatched": 3}, id="a-count-but-no-features"),
     ),
 )
-def test_get_search_result_n_matches_with_no_count_raises(raw, exp):
-    with exp:
-        api().get_search_result_n_matches(raw)
-
-
-def test_no_search_result_n_matches_returned_error_when_there_is_a_match_raises():
-    """The error is for responses we could not read; a readable one is a bug"""
+def test_extract_result_documents_without_features_raises(raw):
+    """No `features` at all is a response we do not understand, not an empty search"""
     with pytest.raises(
-        AssertionError,
+        NoSearchResultDocumentsError,
         match=re.escape(
-            "context.matched is in {'context': {'matched': 4}}, raw[context][matched]=4"
+            "This response does not carry the documents a search answers with. "
+            "We expected to read them from 'features'"
         ),
     ):
-        NoSearchResultNumberOfMatchesReturnedError(
-            {"context": {"matched": 4}},
-            expected_at=("numberMatched", "context.matched"),
+        api().extract_result_documents(raw)
+
+
+def test_read_facet_list_reads_a_features_properties():
+    """A facet lives in `properties`, under the name the caller asks for"""
+    feature = {"properties": {"cmip6:variable_id": "tas", "cmip6:realm": ["atmos"]}}
+
+    assert api().read_facet_list(feature, "cmip6:variable_id") == ("tas",)
+    assert api().read_facet_list(feature, "cmip6:realm") == ("atmos",)
+    # A facet this feature does not carry is simply absent, which is normal.
+    assert api().read_facet_list(feature, "cmip6:grid_label") == ()
+
+
+def test_read_facet_list_of_a_feature_with_no_properties_raises():
+    """A feature with no `properties` is one we cannot read at all"""
+    with pytest.raises(KeyError, match="properties"):
+        api().read_facet_list({"id": "a"}, "cmip6:variable_id")
+
+
+@pytest.mark.parametrize(
+    "value",
+    (
+        pytest.param({"nested": "value"}, id="a-bare-dict"),
+        pytest.param([{"nested": "value"}], id="a-dict-inside-a-list"),
+        pytest.param(["tas", {"nested": "value"}], id="one-bad-value-among-good-ones"),
+        pytest.param([["tas"]], id="a-nested-list"),
+    ),
+)
+def test_read_facet_list_of_something_we_do_not_recognise_raises(value):
+    """Anything else is not stringified into a value that looks real
+
+    As on Solr, each value is checked rather than only the shape around it, so one bad
+    value inside an otherwise readable list is caught too.
+    """
+    with pytest.raises(
+        NotImplementedError,
+        match=re.escape("We do not know how to read 'cmip6:variable_id'"),
+    ):
+        api().read_facet_list(
+            {"properties": {"cmip6:variable_id": value}}, "cmip6:variable_id"
         )
+
+
+def test_nodes_of_a_feature_with_no_assets_is_empty():
+    """Nothing is hosting a feature with no assets, so it has no nodes"""
+    assert stac_nodes({"id": "a"}) == ()
+
+
+def test_nodes_reads_the_distinct_hosts_of_a_features_assets():
+    """Two files on the same node are one node; `href` is deliberately not read"""
+    feature = {
+        "assets": {
+            "one.nc": {
+                "alternate:name": "ceda.ac.uk",
+                "href": "https://dap.ceda.ac.uk",
+            },
+            "two.nc": {"alternate:name": "ceda.ac.uk"},
+            "three.nc": {"alternate:name": "esgf.nci.org.au"},
+        }
+    }
+
+    assert stac_nodes(feature) == (
+        DataNodeInfo("ceda.ac.uk"),
+        DataNodeInfo("esgf.nci.org.au"),
+    )
+
+
+def test_nodes_of_an_asset_which_does_not_say_where_it_is_hosted_raises():
+    """Something is hosting this asset and we cannot see what, so we say so
+
+    Quietly dropping the node would leave us reporting a dataset as available from
+    fewer places than it really is.
+    """
+    feature = {"assets": {"one.nc": {"href": "https://dap.ceda.ac.uk"}}}
+
+    with pytest.raises(KeyError, match="alternate:name"):
+        stac_nodes(feature)
 
 
 def test_build_get_facet_values_request_asks_for_the_collection():

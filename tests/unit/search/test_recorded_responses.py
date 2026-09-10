@@ -14,14 +14,14 @@ and read the diff.
 Two kinds of recording are read here,
 because a search API facade answers two kinds of question:
 how to do searches
-(the total a search matched, via `get_search_result_n_matches`,
+(the total a search matched, via `get_n_matches`,
 and the datasets a search returned, via `parse_search_results`)
 and which values a facet has (`parse_facet_values`).
 
-The count is read off the wire-format layer (`facade.search_api`) directly,
-because it is keyed the same way whatever query style asked for it.
-The facet values are read through the facade, because reading them back into the
-canonical names is the facade's job.
+Everything is read through the facade.
+The count in particular is *not* keyed the same way by every endpoint --
+ESGF-NG east and west speak the same format and still disagree about where it lives --
+so it is the facade's result parser, picked per project and endpoint, which reads it.
 The wiring is covered on its own, with mocked responses we wrote, in
 `test_search.py` and `test_check_query_values.py`.
 """
@@ -40,13 +40,15 @@ from esmporium.search import (
     ESGF1_CMIP6_FACADE_PARAMETERS,
     ESGFNG_CMIP6_FACADE_PARAMETERS,
     ESGFNG_CMIP7_FACADE_PARAMETERS,
-    SINGLE_ROW_DOC_PARSER,
-    VARIABLE_BUNDLE_DOC_PARSER,
     DatasetFacets,
+    ESGFNGCMIP6ResultParser,
+    ESGFNGCMIP7ResultParser,
     SearchAPIESGF1Solr,
     SearchAPIESGF15BridgeSolr,
     SearchAPIESGFNGSTAC,
     SearchAPIFacade,
+    SolrSingleRowResultParser,
+    SolrVariableBundleResultParser,
     build_transient_retrying,
     get_mapping_to_query_style_facet_names,
 )
@@ -66,19 +68,22 @@ and it is what the recorded query asked for.
 def facade(
     parameters,
     search_api_cls,
+    result_parser,
     host="recorded.example",
-    doc_parser=SINGLE_ROW_DOC_PARSER,
 ) -> SearchAPIFacade:
     """
     Build a facade for parsing a recording
 
     The host and retry policy are irrelevant here (nothing is sent),
     so any values will do.
+
+    The result parser is not: it is picked for the project and the endpoint,
+    so each case below has to name the one the real facade would use.
     """
     return SearchAPIFacade(
         parameters=parameters,
         search_api=search_api_cls(host, build_transient_retrying(1)),
-        doc_parser=doc_parser,
+        result_parser=result_parser,
     )
 
 
@@ -109,33 +114,53 @@ RECORDED_CASES = (
         facade(
             ESGF1_CMIP5_FACADE_PARAMETERS,
             SearchAPIESGF1Solr,
-            doc_parser=VARIABLE_BUNDLE_DOC_PARSER,
+            SolrVariableBundleResultParser(),
         ),
         id="esgf1-solr-cmip5",
     ),
     pytest.param(
         "esgf1-solr-cmip6",
-        facade(ESGF1_CMIP6_FACADE_PARAMETERS, SearchAPIESGF1Solr),
+        facade(
+            ESGF1_CMIP6_FACADE_PARAMETERS,
+            SearchAPIESGF1Solr,
+            SolrSingleRowResultParser(),
+        ),
         id="esgf1-solr-cmip6",
     ),
     pytest.param(
         "esgf15-bridge-cmip6",
-        facade(ESGF1_CMIP6_FACADE_PARAMETERS, SearchAPIESGF15BridgeSolr),
+        facade(
+            ESGF1_CMIP6_FACADE_PARAMETERS,
+            SearchAPIESGF15BridgeSolr,
+            SolrSingleRowResultParser(),
+        ),
         id="esgf15-bridge-cmip6",
     ),
     pytest.param(
         "esgf-ng-stac-cmip6-east",
-        facade(ESGFNG_CMIP6_FACADE_PARAMETERS, SearchAPIESGFNGSTAC),
+        facade(
+            ESGFNG_CMIP6_FACADE_PARAMETERS,
+            SearchAPIESGFNGSTAC,
+            ESGFNGCMIP6ResultParser(),
+        ),
         id="esgf-ng-stac-cmip6-east",
     ),
     pytest.param(
         "esgf-ng-stac-cmip7-east",
-        facade(ESGFNG_CMIP7_FACADE_PARAMETERS, SearchAPIESGFNGSTAC),
+        facade(
+            ESGFNG_CMIP7_FACADE_PARAMETERS,
+            SearchAPIESGFNGSTAC,
+            ESGFNGCMIP7ResultParser(),
+        ),
         id="esgf-ng-stac-cmip7-east",
     ),
     pytest.param(
         "esgf-ng-stac-cmip7-west",
-        facade(ESGFNG_CMIP7_FACADE_PARAMETERS, SearchAPIESGFNGSTAC),
+        facade(
+            ESGFNG_CMIP7_FACADE_PARAMETERS,
+            SearchAPIESGFNGSTAC,
+            ESGFNGCMIP7ResultParser(),
+        ),
         id="esgf-ng-stac-cmip7-west",
     ),
 )
@@ -170,7 +195,7 @@ def test_result_count_of_a_recorded_search(name, facade):
     """Test that we can count the matches in a response an API really sent"""
     raw = load(f"{name}-search")
 
-    assert facade.search_api.get_search_result_n_matches(raw) > 0
+    assert facade.get_n_matches(raw) > 0
 
 
 CMIP5_RECORDED_CASES = tuple(c for c in RECORDED_CASES if "cmip5" in str(c.id))
@@ -237,6 +262,86 @@ def test_non_cmip5_document_is_a_single_dataset(name, facade):
         assert len(document.datasets) == 1
 
 
+STAC_RECORDED_CASES = tuple(case for case in RECORDED_CASES if "stac" in str(case.id))
+"""The recorded cases whose API describes its facet values in a STAC collection"""
+
+
+@pytest.mark.parametrize("name, facade", RECORDED_CASES)
+def test_recorded_rows_carry_the_project_they_were_asked_for(name, facade):
+    """Every dataset row says which project it belongs to, and says the right one
+
+    Which field carries the project is the parser's business and it varies
+    (a Solr `project` facet, CMIP6 STAC's `cmip6:mip_era`, CMIP7 STAC's `project`
+    property), so it is worth pinning the value rather than only its shape.
+    """
+    raw = load(f"{name}-search")
+    (expected,) = [p for p in ("CMIP5", "CMIP6", "CMIP7") if p.lower() in name]
+
+    documents = facade.parse_search_results(raw)
+
+    assert documents
+    assert {row.project for doc in documents for row in doc.datasets} == {expected}
+
+
+CMIP6_STAC_RECORDED_CASES = tuple(
+    case for case in STAC_RECORDED_CASES if "cmip6" in str(case.id)
+)
+"""The recorded STAC cases whose features carry a `base_id`"""
+
+CMIP7_STAC_RECORDED_CASES = tuple(
+    case for case in STAC_RECORDED_CASES if "cmip7" in str(case.id)
+)
+"""The recorded STAC cases whose features do not"""
+
+
+@pytest.mark.parametrize("name, facade", CMIP6_STAC_RECORDED_CASES)
+def test_recorded_cmip6_stac_bundle_id_is_read_from_base_id(name, facade):
+    """CMIP6 STAC features carry the bundle id outright, so we read it
+
+    Recovering it from the feature id instead would work today, but only because a
+    CMIP6 feature id happens to be the bundle id with a version token on the end.
+    Reading `base_id` is not making that assumption.
+    """
+    raw = load(f"{name}-search")
+
+    documents = facade.parse_search_results(raw)
+
+    assert documents
+    assert [doc.id_project_specific for doc in documents] == [
+        feature["properties"]["base_id"] for feature in raw["features"]
+    ]
+
+
+@pytest.mark.parametrize("name, facade", CMIP7_STAC_RECORDED_CASES)
+def test_recorded_cmip7_stac_bundle_id_drops_the_version_token(name, facade):
+    """CMIP7 STAC features carry no `base_id`, so the bundle id is recovered
+
+    The recording is checked for the absence first: the day CMIP7 starts publishing a
+    `base_id`, this says so rather than quietly carrying on stripping ids.
+    """
+    raw = load(f"{name}-search")
+
+    documents = facade.parse_search_results(raw)
+
+    assert documents
+    for feature in raw["features"]:
+        assert "base_id" not in feature["properties"], (
+            "this recording carries a base_id, so it no longer has to be recovered "
+            "from the feature id"
+        )
+        assert re.fullmatch(r"v\d+", feature["id"].rsplit(".", 1)[-1]), (
+            "this feature id has no version token, so there is nothing to drop"
+        )
+
+    assert [doc.id_project_specific for doc in documents] == [
+        feature["id"].rsplit(".", 1)[0] for feature in raw["features"]
+    ]
+    # The document still remembers which edition it came from.
+    assert [doc.esgf_doc_id for doc in documents] == [
+        feature["id"] for feature in raw["features"]
+    ]
+
+
 @pytest.mark.parametrize("name, facade", RECORDED_CASES)
 def test_parse_facet_values_of_a_recorded_response(name, facade):
     """Test that we can read the facet values out of a response an API really sent"""
@@ -276,10 +381,6 @@ def test_recorded_facet_values_are_well_formed(name, facade):
         assert all(isinstance(value, str) and value for value in values), (
             f"{facet} was reported with a value which is not a non-empty string"
         )
-
-
-STAC_RECORDED_CASES = tuple(case for case in RECORDED_CASES if "stac" in str(case.id))
-"""The recorded cases whose API describes its facet values in a STAC collection"""
 
 
 @pytest.mark.parametrize("name, facade", STAC_RECORDED_CASES)

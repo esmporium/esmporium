@@ -22,12 +22,13 @@ from esmporium.query import QueryCMIP6, to_canonical
 from esmporium.search import (
     ESGF1_CMIP6_FACADE_PARAMETERS,
     ESGFNG_CMIP6_FACADE_PARAMETERS,
-    SINGLE_ROW_DOC_PARSER,
+    ESGFNGCMIP6ResultParser,
     NoAPIWouldAnswerError,
     SearchAPIESGF1Solr,
     SearchAPIESGFNGSTAC,
     SearchAPIFacade,
     SearchAPIRequestError,
+    SolrSingleRowResultParser,
     build_list_selector,
     check_query_values,
     fan_out,
@@ -79,13 +80,13 @@ def make_cmip6_facade(host, *, stac=False, attempts=1) -> SearchAPIFacade:
         return SearchAPIFacade(
             parameters=ESGFNG_CMIP6_FACADE_PARAMETERS,
             search_api=SearchAPIESGFNGSTAC(host, fast_retrying(attempts)),
-            doc_parser=SINGLE_ROW_DOC_PARSER,
+            result_parser=ESGFNGCMIP6ResultParser(),
         )
 
     return SearchAPIFacade(
         parameters=ESGF1_CMIP6_FACADE_PARAMETERS,
         search_api=SearchAPIESGF1Solr(host, fast_retrying(attempts)),
-        doc_parser=SINGLE_ROW_DOC_PARSER,
+        result_parser=SolrSingleRowResultParser(),
     )
 
 
@@ -158,7 +159,11 @@ def test_success_with_an_uncountable_body_records_none_results():
 def test_stac_post_records_its_method_and_body():
     api = make_cmip6_facade("search.example.io", stac=True)
 
-    (call,) = record(lambda r: httpx.Response(200, json={"numberMatched": 3}), [api])
+    (call,) = record(
+        # A real STAC answer always carries `features`, empty or not.
+        lambda r: httpx.Response(200, json={"numberMatched": 3, "features": []}),
+        [api],
+    )
 
     assert call.http_method == "POST"
     assert call.request_body is not None

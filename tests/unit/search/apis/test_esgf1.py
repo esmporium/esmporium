@@ -3,6 +3,9 @@ Test the ESGF1/Solr search API format
 
 These never touch the network. They pin the two halves of the API separately:
 given facet values, the request we build; given a response, what we read out of it.
+What a *result* means (its bundle id, its project, how many dataset rows it is) is
+not this layer's business either: that is the result parsers', tested in
+`tests/unit/search/test_result_parsers.py`.
 The facet values and facet names here are already the API parameter names,
 because translating canonical names into them is the facade's job, not this
 layer's (that translation is tested in `tests/unit/search/test_facade.py`).
@@ -17,7 +20,7 @@ import pytest
 from esmporium.search.apis import (
     LimitOutOfRangeError,
     NoFacetValuesReturnedError,
-    NoSearchResultNumberOfMatchesReturnedError,
+    NoSearchResultDocumentsError,
     SearchAPIESGF1Solr,
 )
 from esmporium.search.retry import build_transient_retrying
@@ -75,63 +78,80 @@ def test_build_search_request_accepts_the_ends_of_the_range():
         assert api().build_search_request({}, limit=limit).params["limit"] == limit
 
 
-@pytest.mark.parametrize(
-    "raw, exp",
-    (
-        pytest.param({"response": {"numFound": 3, "docs": []}}, 3, id="a-count"),
-        pytest.param({"response": {"numFound": 0, "docs": []}}, 0, id="no-matches"),
-    ),
-)
-def test_get_search_result_n_matches(raw, exp):
-    assert api().get_search_result_n_matches(raw) == exp
+def test_extract_result_documents_reads_the_records():
+    """A search answer keeps its records under `response.docs`"""
+    docs = [{"master_id": ["a"]}, {"master_id": ["b"]}]
+
+    assert api().extract_result_documents({"response": {"docs": docs}}) == docs
+
+
+def test_extract_result_documents_of_an_empty_search_is_empty():
+    """A search which matched nothing still answers with a `docs` list"""
+    raw = {"response": {"numFound": 0, "docs": []}}
+
+    assert api().extract_result_documents(raw) == []
 
 
 @pytest.mark.parametrize(
-    "raw, exp",
+    "raw",
     (
-        pytest.param(
-            {"response": {"docs": []}},
-            pytest.raises(
-                NoSearchResultNumberOfMatchesReturnedError,
-                match=re.escape(
-                    "This response does not report "
-                    "how many records matched the search. "
-                    "We expected to read the count from 'response.numFound', "
-                    "but 'numFound' is not in 'response', there is only: 'docs'"
-                ),
-            ),
-            id="no-count",
-        ),
-        pytest.param(
-            {},
-            pytest.raises(
-                NoSearchResultNumberOfMatchesReturnedError,
-                match=re.escape(
-                    "This response does not report "
-                    "how many records matched the search. "
-                    "We expected to read the count from 'response.numFound', "
-                    "but the response is empty."
-                ),
-            ),
-            id="nothing-we-recognise",
-        ),
-        pytest.param(
-            {"response": {"numFound": "3"}},
-            pytest.raises(
-                TypeError,
-                match=re.escape(
-                    "We expected to get an integer at 'response.numFound', "
-                    "but instead got '3'"
-                ),
-            ),
-            id="a-count-we-cannot-read",
-        ),
+        pytest.param({}, id="nothing-we-recognise"),
+        pytest.param({"response": {"numFound": 0}}, id="a-response-without-docs"),
+        pytest.param({"docs": []}, id="docs-in-the-wrong-place"),
     ),
 )
-def test_get_search_result_n_matches_with_no_count_raises(raw, exp):
-    """A response we cannot read a count out of is one we have not understood"""
-    with exp:
-        api().get_search_result_n_matches(raw)
+def test_extract_result_documents_without_docs_raises(raw):
+    """No `docs` at all is a response we do not understand, not an empty search"""
+    with pytest.raises(
+        NoSearchResultDocumentsError,
+        match=re.escape(
+            "This response does not carry the documents a search answers with. "
+            "We expected to read them from 'response.docs'"
+        ),
+    ):
+        api().extract_result_documents(raw)
+
+
+@pytest.mark.parametrize(
+    "value, exp",
+    (
+        pytest.param(["tas", "pr"], ("tas", "pr"), id="a-list"),
+        pytest.param(["tas"], ("tas",), id="solrs-usual-one-element-list"),
+        pytest.param("tas", ("tas",), id="a-bare-string"),
+        pytest.param(3, ("3",), id="an-int"),
+        pytest.param(1.5, ("1.5",), id="a-float"),
+        pytest.param(None, (), id="a-null"),
+        pytest.param(..., (), id="not-there-at-all"),
+    ),
+)
+def test_read_facet_list_reads_the_shapes_solr_writes(value, exp):
+    """Every shape Solr really writes a facet in is read as the values it holds"""
+    doc = {} if value is ... else {"variable_id": value}
+
+    assert api().read_facet_list(doc, "variable_id") == exp
+
+
+@pytest.mark.parametrize(
+    "value",
+    (
+        pytest.param({"nested": "value"}, id="a-bare-dict"),
+        pytest.param([{"nested": "value"}], id="a-dict-inside-a-list"),
+        pytest.param(["tas", {"nested": "value"}], id="one-bad-value-among-good-ones"),
+        pytest.param([["tas"]], id="a-nested-list"),
+    ),
+)
+def test_read_facet_list_of_something_we_do_not_recognise_raises(value):
+    """Anything else is not stringified into a value that looks real
+
+    A `dict` used to come back as its `str()`, which is a value nobody published.
+    Each value is checked, not just the shape around it, so one bad value inside an
+    otherwise readable list is caught too.
+    """
+    with pytest.raises(
+        NotImplementedError,
+        match=re.escape("We do not know how to read 'variable_id'"),
+    ):
+        api().read_facet_list({"variable_id": value}, "variable_id")
 
 
 def test_build_get_facet_values_request_names_the_facets_sorted():

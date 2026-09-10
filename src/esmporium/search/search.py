@@ -8,6 +8,7 @@ import json
 import logging
 import shlex
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -28,6 +29,11 @@ from esmporium.search.search_api_facade import (
 )
 
 logger = logging.getLogger(__name__)
+
+NMatchesReader = Callable[[dict[str, Any]], int]
+"""
+Reads how many records matched a search out of a raw response
+"""
 
 
 def get_url(api: SearchAPI, request: Request) -> str:
@@ -144,7 +150,9 @@ class SearchAPIRequestError(RuntimeError):
         )
 
 
-def _result_count_or_none(api: SearchAPI, raw: dict[str, Any]) -> int | None:
+def _result_count_or_none(
+    read_n_matches: NMatchesReader | None, raw: dict[str, Any]
+) -> int | None:
     """
     Read how many records a response reported, or `None` if it reported none
 
@@ -153,8 +161,8 @@ def _result_count_or_none(api: SearchAPI, raw: dict[str, Any]) -> int | None:
 
     Parameters
     ----------
-    api
-        The API the response came from (its generation knows how to read the count)
+    read_n_matches
+        Reads the count out of `raw`, or `None` if the caller cannot say how.
 
     raw
         The response to read
@@ -163,9 +171,13 @@ def _result_count_or_none(api: SearchAPI, raw: dict[str, Any]) -> int | None:
     -------
     :
         The number of records reported, or `None` if the response carries no count
+        (or if nothing that could read one was passed)
     """
+    if read_n_matches is None:
+        return None
+
     try:
-        return api.get_search_result_n_matches(raw)
+        return read_n_matches(raw)
     except NoSearchResultNumberOfMatchesReturnedError:
         return None
 
@@ -175,6 +187,7 @@ def fire(
     api: SearchAPI,
     request: Request,
     api_call_observer: SearchAPICallObserver | None = None,
+    read_n_matches: NMatchesReader | None = None,
 ) -> dict[str, Any]:
     """
     Send one request to one API, using that API's retry policy and timeout
@@ -194,6 +207,10 @@ def fire(
         Told about this call once it is done, on both the success and failure path.
         If `None` (the default), nothing is recorded.
         See [esmporium.search.health][] for how to build one.
+
+    read_n_matches
+        Reads how many records the answer says matched, for the observer to record.
+        If `None`, no count is recorded.
 
     Returns
     -------
@@ -280,7 +297,7 @@ def fire(
             success=True,
             response_code=response.status_code,
             error=None,
-            num_results=_result_count_or_none(api, raw),
+            num_results=_result_count_or_none(read_n_matches, raw),
             seconds=time.monotonic() - started,
         )
         return raw
@@ -460,7 +477,13 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
             request = facade.build_search_request(canonical, limit)
             host = facade.search_api.host
             try:
-                raw = fire(client, facade.search_api, request, api_call_observer)
+                raw = fire(
+                    client,
+                    facade.search_api,
+                    request,
+                    api_call_observer,
+                    read_n_matches=facade.get_n_matches,
+                )
             except SearchAPIRequestError as exc:
                 refusals[host] = CouldNotSearchError(host, cause=exc)
             else:
@@ -476,7 +499,7 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
                 # in higher-level functions to do queries over multiple projects (PR3).
                 parsed = facade.parse_search_results(raw)
                 datasets[host] = parsed
-                n_matches[host] = _result_count_or_none(facade.search_api, raw)
+                n_matches[host] = _result_count_or_none(facade.get_n_matches, raw)
                 if processor is not None:
                     processor(host, parsed)
                 if stop_at_first_result:

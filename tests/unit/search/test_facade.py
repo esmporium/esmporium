@@ -24,8 +24,8 @@ from esmporium.search import (
     ESGF1_CMIP6_FACADE_PARAMETERS,
     ESGFNG_CMIP6_FACADE_PARAMETERS,
     INBUILT_SEARCH_API_FACADE_STORE,
-    SINGLE_ROW_DOC_PARSER,
     ESGFNGCMIP6ParametersQueryStyle,
+    ESGFNGCMIP6ResultParser,
     LimitOutOfRangeError,
     OneProjectRequiredError,
     ProjectPrefixMismatchError,
@@ -34,6 +34,8 @@ from esmporium.search import (
     SearchAPIFacade,
     SearchAPIFacadeClassification,
     SearchAPIFacadeStore,
+    SolrSingleRowResultParser,
+    SolrVariableBundleResultParser,
     STACFacadeParameters,
     UnaskableFacetError,
     build_transient_retrying,
@@ -58,7 +60,7 @@ def api_facade_cmip6_esgf1(host="node.example") -> SearchAPIFacade:
     return SearchAPIFacade(
         parameters=ESGF1_CMIP6_FACADE_PARAMETERS,
         search_api=SearchAPIESGF1Solr(host, build_transient_retrying(1)),
-        doc_parser=SINGLE_ROW_DOC_PARSER,
+        result_parser=SolrSingleRowResultParser(),
     )
 
 
@@ -67,7 +69,7 @@ def api_facade_cmip6_esgfng(host="stac.example") -> SearchAPIFacade:
     return SearchAPIFacade(
         parameters=ESGFNG_CMIP6_FACADE_PARAMETERS,
         search_api=SearchAPIESGFNGSTAC(host, build_transient_retrying(1)),
-        doc_parser=SINGLE_ROW_DOC_PARSER,
+        result_parser=ESGFNGCMIP6ResultParser(),
     )
 
 
@@ -308,7 +310,7 @@ def test_stac_facade_project_to_collection_converter_is_used():
     facade = SearchAPIFacade(
         parameters=parameters,
         search_api=SearchAPIESGFNGSTAC("stac.example", build_transient_retrying(1)),
-        doc_parser=SINGLE_ROW_DOC_PARSER,
+        result_parser=ESGFNGCMIP6ResultParser(),
     )
     body = facade.build_search_request(CMIP6_CANONICALISED, limit=5).json_body
     clauses = body["filter"]["args"]
@@ -362,7 +364,7 @@ def a_store() -> SearchAPIFacadeStore:
                     search_api=SearchAPIESGF1Solr(
                         "host-a", build_transient_retrying(1)
                     ),
-                    doc_parser=SINGLE_ROW_DOC_PARSER,
+                    result_parser=SolrVariableBundleResultParser(),
                 ),
                 "CMIP5",
             ),

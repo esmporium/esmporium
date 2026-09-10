@@ -1,6 +1,6 @@
 {
   "context": {
-    "matched": 61
+    "matched": 64
   },
   "features": [
     {
@@ -605,7 +605,7 @@
       "type": "application/json"
     }
   ],
-  "numMatched": 61,
+  "numMatched": 64,
   "numReturned": 2,
   "type": "FeatureCollection"
 }

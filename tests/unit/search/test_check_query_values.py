@@ -14,9 +14,9 @@ from esmporium.query import QueryCMIP5, QueryCMIP6, to_canonical
 from esmporium.search import (
     ESGF1_CMIP6_FACADE_PARAMETERS,
     ESGFNG_CMIP6_FACADE_PARAMETERS,
-    SINGLE_ROW_DOC_PARSER,
     AllowedValues,
     CouldNotGetAllowedValuesError,
+    ESGFNGCMIP6ResultParser,
     FacetFinding,
     FindingKind,
     NoSourceWouldAnswerError,
@@ -25,6 +25,7 @@ from esmporium.search import (
     SearchAPIESGFNGSTAC,
     SearchAPIFacade,
     SelectorOfferedNoAPIFacadeError,
+    SolrSingleRowResultParser,
     allowed_values_from_api,
     check_query_values,
     check_query_values_low,
@@ -172,7 +173,7 @@ def solr_api(host="node.example"):
     return SearchAPIFacade(
         parameters=ESGF1_CMIP6_FACADE_PARAMETERS,
         search_api=SearchAPIESGF1Solr(host, once()),
-        doc_parser=SINGLE_ROW_DOC_PARSER,
+        result_parser=SolrSingleRowResultParser(),
     )
 
 
@@ -647,7 +648,7 @@ def test_a_facet_the_apis_query_style_cannot_express_is_not_asked_about():
     api = SearchAPIFacade(
         parameters=ESGFNG_CMIP6_FACADE_PARAMETERS,
         search_api=SearchAPIESGFNGSTAC("stac.example", once()),
-        doc_parser=SINGLE_ROW_DOC_PARSER,
+        result_parser=ESGFNGCMIP6ResultParser(),
     )
     canonical = canonical_cmip6(experiment_id="Historical")
     facets = facets_the_user_set(canonical)

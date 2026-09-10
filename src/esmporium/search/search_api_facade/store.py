@@ -6,7 +6,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, cast
 
 from tenacity import Retrying
 
@@ -16,18 +15,22 @@ from esmporium.search.apis import (
     SearchAPIESGF15BridgeSolr,
     SearchAPIESGFNGSTAC,
 )
-from esmporium.search.result_normalisation import SOLR_FORMAT_TAG, STAC_FORMAT_TAG
 from esmporium.search.retry import build_transient_retrying
 from esmporium.search.search_api_facade.core import SearchAPIFacade
-from esmporium.search.search_api_facade.doc_parsing import (
-    INBUILT_DOC_PARSER_STORE,
-)
 from esmporium.search.search_api_facade.parameters import (
     ESGF1_CMIP5_FACADE_PARAMETERS,
     ESGF1_CMIP6_FACADE_PARAMETERS,
     ESGF1_CMIP7_FACADE_PARAMETERS,
     ESGFNG_CMIP6_FACADE_PARAMETERS,
     ESGFNG_CMIP7_FACADE_PARAMETERS,
+    FacadeParametersProtocol,
+)
+from esmporium.search.search_api_facade.result_parsers import (
+    ESGFNGCMIP6ResultParser,
+    ESGFNGCMIP7ResultParser,
+    ResultParserProtocol,
+    SolrSingleRowResultParser,
+    SolrVariableBundleResultParser,
 )
 
 RetryingBuilder = Callable[[], Retrying]
@@ -36,6 +39,14 @@ Builds a retry policy
 
 Called once per API, so each API gets a policy of its own.
 """
+
+SearchAPIBuilder = Callable[[str, Retrying], SearchAPI]
+"""
+Builds a search API for a host, with a retry policy of its own
+"""
+# This does not use `type[SearchAPI]` because
+# [SearchAPI][esmporium.search.apis.SearchAPI] is a protocol,
+# and `type[<protocol>]` carries no constructor signature for a type checker to call.
 
 
 def build_default_retrying(attempts: int = 3) -> Retrying:
@@ -54,6 +65,33 @@ def build_default_retrying(attempts: int = 3) -> Retrying:
         policy allowing `attempts` attempts.
     """
     return build_transient_retrying(attempts)
+
+
+@dataclass(frozen=True)
+class FacadeDefinition:
+    """
+    Everything needed to build one facade, before it is built
+
+    This is a stepping stone inside
+    [SearchAPIFacadeStore.initialise_with_default_api_facades][(m).SearchAPIFacadeStore.initialise_with_default_api_facades]:
+    the pieces are picked project by project and endpoint by endpoint, then every
+    definition is turned into a facade in one place.
+    """
+
+    search_api_type: SearchAPIBuilder
+    """The search API class to build, called as `search_api_type(host, retrying)`."""
+
+    host: str
+    """The host to build it against."""
+
+    facade_parameters: FacadeParametersProtocol
+    """The parameters that name this project's facets for this API."""
+
+    result_parser: ResultParserProtocol
+    """The parser that reads this project's results from this endpoint."""
+
+    project: str
+    """The project the facade supports."""
 
 
 @dataclass(frozen=True)
@@ -225,13 +263,15 @@ class SearchAPIFacadeStore:
         # Urgh, intialisation code is the worst
         def create_facade_definition(  # noqa: PLR0912
             project: str, host: str, style: str
-        ) -> dict[str, Any]:
+        ) -> FacadeDefinition:
+            search_api_type: SearchAPIBuilder
+            facade_parameters: FacadeParametersProtocol
+            result_parser: ResultParserProtocol
+
             if project == "CMIP5":
                 if style in ("ESGF1", "ESGF15Bridge"):
                     facade_parameters = ESGF1_CMIP5_FACADE_PARAMETERS
-                    doc_parser = INBUILT_DOC_PARSER_STORE.get_doc_parser(
-                        project, SOLR_FORMAT_TAG
-                    )
+                    result_parser = SolrVariableBundleResultParser()
 
                     if style == "ESGF1":
                         search_api_type = SearchAPIESGF1Solr
@@ -241,14 +281,15 @@ class SearchAPIFacadeStore:
                         raise NotImplementedError(style)
 
                 else:
+                    # STAC serves no CMIP5 data, and we do not know the shape of a
+                    # CMIP5 STAC document, so there is deliberately no CMIP5 STAC
+                    # facade (and no CMIP5 STAC result parser to guess at its shape).
                     raise NotImplementedError(style)
 
             elif project == "CMIP6":
                 if style in ("ESGF1", "ESGF15Bridge"):
                     facade_parameters = ESGF1_CMIP6_FACADE_PARAMETERS
-                    doc_parser = INBUILT_DOC_PARSER_STORE.get_doc_parser(
-                        project, SOLR_FORMAT_TAG
-                    )
+                    result_parser = SolrSingleRowResultParser()
 
                     if style == "ESGF1":
                         search_api_type = SearchAPIESGF1Solr
@@ -260,9 +301,7 @@ class SearchAPIFacadeStore:
                 elif style == "ESGF-NG":
                     search_api_type = SearchAPIESGFNGSTAC
                     facade_parameters = ESGFNG_CMIP6_FACADE_PARAMETERS
-                    doc_parser = INBUILT_DOC_PARSER_STORE.get_doc_parser(
-                        project, STAC_FORMAT_TAG
-                    )
+                    result_parser = ESGFNGCMIP6ResultParser()
 
                 else:
                     raise NotImplementedError(style)
@@ -271,23 +310,17 @@ class SearchAPIFacadeStore:
                 if style == "ESGF1":
                     search_api_type = SearchAPIESGF1Solr
                     facade_parameters = ESGF1_CMIP7_FACADE_PARAMETERS
-                    doc_parser = INBUILT_DOC_PARSER_STORE.get_doc_parser(
-                        project, SOLR_FORMAT_TAG
-                    )
+                    result_parser = SolrSingleRowResultParser()
 
                 elif style == "ESGF15Bridge":
                     search_api_type = SearchAPIESGF15BridgeSolr
                     facade_parameters = ESGF1_CMIP7_FACADE_PARAMETERS
-                    doc_parser = INBUILT_DOC_PARSER_STORE.get_doc_parser(
-                        project, SOLR_FORMAT_TAG
-                    )
+                    result_parser = SolrSingleRowResultParser()
 
                 elif style == "ESGF-NG":
                     search_api_type = SearchAPIESGFNGSTAC
                     facade_parameters = ESGFNG_CMIP7_FACADE_PARAMETERS
-                    doc_parser = INBUILT_DOC_PARSER_STORE.get_doc_parser(
-                        project, STAC_FORMAT_TAG
-                    )
+                    result_parser = ESGFNGCMIP7ResultParser()
 
                 else:
                     raise NotImplementedError(style)
@@ -295,15 +328,13 @@ class SearchAPIFacadeStore:
             else:
                 raise NotImplementedError(project)
 
-            res = {
-                "search_api_type": search_api_type,
-                "host": host,
-                "facade_parameters": facade_parameters,
-                "doc_parser": doc_parser,
-                "project": project,
-            }
-
-            return res
+            return FacadeDefinition(
+                search_api_type=search_api_type,
+                host=host,
+                facade_parameters=facade_parameters,
+                result_parser=result_parser,
+                project=project,
+            )
 
         facade_definitions = [
             create_facade_definition(project, host, style)
@@ -344,20 +375,19 @@ class SearchAPIFacadeStore:
 
         classifications_l = []
         for facade_definition in facade_definitions:
-            search_api = cast(
-                "SearchAPI",
-                facade_definition["search_api_type"](
-                    host=facade_definition["host"], retrying=create_retrying()
-                ),
+            # A fresh retry policy per API:
+            # tenacity's Retrying carries per-run state.
+            search_api = facade_definition.search_api_type(
+                facade_definition.host, create_retrying()
             )
             classifications_l.append(
                 SearchAPIFacadeClassification(
                     SearchAPIFacade(
-                        parameters=facade_definition["facade_parameters"],
+                        parameters=facade_definition.facade_parameters,
                         search_api=search_api,
-                        doc_parser=facade_definition["doc_parser"],
+                        result_parser=facade_definition.result_parser,
                     ),
-                    project=facade_definition["project"],
+                    project=facade_definition.project,
                 )
             )
 

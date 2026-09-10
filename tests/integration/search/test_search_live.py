@@ -16,11 +16,11 @@ from esmporium.query import QueryCMIP5, QueryCMIP6, QueryCMIP7
 from esmporium.search import (
     ESGF1_CMIP6_FACADE_PARAMETERS,
     INBUILT_SEARCH_API_FACADE_STORE,
-    SINGLE_ROW_DOC_PARSER,
     NoAPIWouldAnswerError,
     ParsedDocument,
     SearchAPIESGF1Solr,
     SearchAPIFacade,
+    SolrSingleRowResultParser,
     build_list_selector,
     build_transient_retrying,
     search,
@@ -333,7 +333,7 @@ def test_aggregating_over_nodes_finds_more_than_one_node(client):
             search_api=SearchAPIESGF1Solr(
                 host, build_transient_retrying(2), distrib=False
             ),
-            doc_parser=SINGLE_ROW_DOC_PARSER,
+            result_parser=SolrSingleRowResultParser(),
         )
         for host in (
             "esgf.nci.org.au",

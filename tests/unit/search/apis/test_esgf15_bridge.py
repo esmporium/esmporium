@@ -2,8 +2,10 @@
 Test the ESGF1.5 bridge/Solr search API format
 
 The facet names are ESGF1's, and the response shape is Solr's, so the reading half
-is shared with `test_esgf1.py`. What differs is the encoding of a search request,
-which is what these pin. Facet values and names are the API's own parameter names;
+is shared with `test_esgf1.py` (and, for what a result means, with
+`tests/unit/search/test_result_parsers.py`).
+What differs is the encoding of a search request, which is what these pin.
+Facet values and names are the API's own parameter names;
 the canonical translation is the facade's job and is tested elsewhere.
 """
 
@@ -45,10 +47,6 @@ def test_build_search_request_ors_on_a_comma():
 def test_build_search_request_refuses_an_impossible_limit(limit):
     with pytest.raises(LimitOutOfRangeError):
         api().build_search_request({}, limit=limit)
-
-
-def test_get_search_result_n_matches_reads_the_solr_count():
-    assert api().get_search_result_n_matches({"response": {"numFound": 17}}) == 17
 
 
 def test_build_get_facet_values_request_names_the_facets_sorted():
