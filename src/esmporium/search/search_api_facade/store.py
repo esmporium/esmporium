@@ -31,9 +31,7 @@ from esmporium.search.search_api_facade.result_parsers import (
     ResultParserProtocol,
     SolrSingleRowResultParser,
     SolrVariableBundleResultParser,
-    stac_base_id,
     stac_east_n_matches,
-    stac_id_without_version,
     stac_west_n_matches,
 )
 
@@ -159,7 +157,6 @@ def get_default_facade_definition(project: str, host: str) -> FacadeDefinition: 
         elif host in esgfng_east_hosts:
             facade_parameters = ESGFNG_CMIP6_FACADE_PARAMETERS
             result_parser = ESGFNGCMIP6ResultParser(
-                read_id_project_specific=stac_base_id,
                 read_n_matches=stac_east_n_matches,
             )
             search_api_type = SearchAPIESGFNGSTAC
@@ -167,7 +164,6 @@ def get_default_facade_definition(project: str, host: str) -> FacadeDefinition: 
         elif host in esgfng_west_hosts:
             facade_parameters = ESGFNG_CMIP6_FACADE_PARAMETERS
             result_parser = ESGFNGCMIP6ResultParser(
-                read_id_project_specific=stac_id_without_version,
                 read_n_matches=stac_west_n_matches,
             )
             search_api_type = SearchAPIESGFNGSTAC
