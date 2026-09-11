@@ -16,3 +16,12 @@ dataset_uniqueness.py
 - Empty isn't always a bug. For STAC (CMIP7, west CMIP6 without base_id), the distinguishing token can live only in the feature id, which _normalise_stac doesn't read (it flattens properties only). So two genuinely-different STAC datasets can flatten to identical facets → a legitimate empty, not a workflow error. (For Solr it's different: _normalise_solr keeps master_id/id, so differing ids always show up — empty there really would be anomalous.)
 - The caller has the context to escalate well. The clash-resolution wrapper (the "which product?" flow — a future PR) is where "we found two datasets we can't tell apart and can't even explain why" should become a loud, user-facing error.
 - in stac normalise don't only want to get properties back, want to investigate every difference.
+
+search_api_facades/core.py
+- SearchAPIFacade result_parser docstring. May need to update doc string based on base_id which may not be true if issue raised?
+- _read_back()
+    # TODO: upgrade this facet-values reader's docstrings to the repository standards,
+    # and consider making it public alongside `parse_search_results`.
+
+known_facade_parameters.py
+- Remove ESGFNGCMIP5ParametersQueryStyle?

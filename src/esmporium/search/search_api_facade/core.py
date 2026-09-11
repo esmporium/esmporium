@@ -500,14 +500,15 @@ class SearchAPIFacade:
         facets: set[str],
     ) -> dict[str, Any]:
         """
-        Parse a facet-values response and translate its keys back
+        Parse a facet response, translating its keys from API names back to the names given in `facets`
 
-        `parse` reads `raw` keyed by the API parameter names.
-        This method asks `parse` about the API parameter names for `facets`,
-        then hands the answer back under the names they were asked for.
-        Any facets which were asked for but were not included in the output of `parse`
-        do not appear in the result: the caller must handle these drops.
-        """
+        `parse` reads `raw` and answers keyed by the API parameter names.
+        This method translates those keys back to the names given in `facets`,
+        so the caller reads the answer under the same names it asked with.
+
+        A facet named in `facets` but missing from `parse`'s output is dropped
+        silently: the caller must handle these drops.
+        """  # noqa: E501
         check_facets_askable(self.parameters.base_query_style, facets)
 
         api_name_lookup = self.parameters.get_mapping_to_api_facet_names(facets)

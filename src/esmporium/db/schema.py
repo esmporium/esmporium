@@ -533,10 +533,9 @@ class DatasetRawDoc(EsmporiumBase, table=True):
     id: int | None = Field(default=None, primary_key=True)
     """Surrogate key; assigned by the database"""
 
-    # TODO: Will need to change STAC to base_id, once west changes?
     esgf_doc_id: str = Field(unique=True, index=True)
     """
-    The source document's own ESGF id
+    The source document's own ESGF id (including version and data node)
 
     For Solr this is the record `id`, `<instance_id>|<data_node>`,
     so the data node can be recovered as `esgf_doc_id.rsplit("|", 1)[-1]`.

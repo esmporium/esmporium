@@ -415,6 +415,9 @@ class SearchAPIFacadeStore:
         :
             Initialised object
         """
+        # Hosts are (as of writing) ordered by number of results returned.
+        # We provide these default lists, but users may inject their own
+        # ranked hosts based on experience.
         facade_definitions = [
             get_default_facade_definition(project, host)
             for project, host in (
