@@ -22,6 +22,3 @@ search_api_facades/core.py
 - _read_back()
     # TODO: upgrade this facet-values reader's docstrings to the repository standards,
     # and consider making it public alongside `parse_search_results`.
-
-known_facade_parameters.py
-- Remove ESGFNGCMIP5ParametersQueryStyle?
