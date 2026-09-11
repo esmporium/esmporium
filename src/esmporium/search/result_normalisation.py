@@ -61,9 +61,6 @@ def _normalise_solr(raw: dict[str, Any]) -> dict[str, Any]:
     `{"product": ["output1"]}`. Each such list is unwrapped to its scalar; anything
     that is not a single-element list is left as-is.
 
-    Kept separate from [`_normalise_stac`][(m).] on purpose: the two search generations
-    are handled by independent code so neither is coupled to the other's shape.
-
     Parameters
     ----------
     raw
@@ -72,7 +69,7 @@ def _normalise_solr(raw: dict[str, Any]) -> dict[str, Any]:
     Returns
     -------
     :
-        The document's facets as a flat mapping of name to scalar (or list) value
+        The document's facet names with values mapped to scalar (or list)
     """
     return {
         key: value[0] if isinstance(value, list) and len(value) == 1 else value
@@ -80,6 +77,9 @@ def _normalise_solr(raw: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# TODO: return to this.
+# Only flattening by property removes some 'facets' which solr retains
+# But only need to be comparable to another STAC.
 def _normalise_stac(raw: dict[str, Any]) -> dict[str, Any]:
     """
     Flatten a STAC feature (ESGF-NG)
@@ -117,22 +117,13 @@ DEFAULT_NORMALISERS: Mapping[str, NormaliseFunc] = {
     STAC_FORMAT_TAG: _normalise_stac,
 }
 """
-The flattener for each search API we ship, keyed by its `raw_docs_format_tag`
-
-Passed as the default to [`normalise_stored_document`][(m).]. To handle a document from
-a search API you injected, pass your own mapping -- to keep ours as well as yours,
-merge: `{**DEFAULT_NORMALISERS, your_tag: your_flattener}`.
+The flattener for each known search API format, keyed by its `raw_docs_format_tag`
 """
 
 
 class UnknownRawDocFormatTagError(ValueError):
     """
     Raised when a stored raw doc's `raw_docs_format_tag` has no registered flattener
-
-    Every raw document is stored with the tag of the search API that produced it. If we
-    are asked to normalise one whose tag is not in the registry, we do not guess: either
-    the document came from an injected search API whose flattener was not supplied, or a
-    tag was stored that nothing can read.
     """
 
     def __init__(self, tag: str, normalisers: Mapping[str, NormaliseFunc]) -> None:
@@ -153,7 +144,7 @@ def normalise_stored_document(
     normalisers: Mapping[str, NormaliseFunc] = DEFAULT_NORMALISERS,
 ) -> NormalisedDocument:
     """
-    Flatten a stored raw search document, dispatching on its recorded format tag
+    Flatten a stored raw search document based on its recorded format tag
 
     Parameters
     ----------
@@ -161,14 +152,10 @@ def normalise_stored_document(
         One raw search document, already parsed from its stored JSON
 
     raw_docs_format_tag
-        The tag stored alongside the document, naming the format the producing search
-        API returned (see
-        [`DatasetRawDoc.raw_docs_format_tag`][esmporium.db.schema.DatasetRawDoc])
+        See [`DatasetRawDoc.raw_docs_format_tag`][esmporium.db.schema.DatasetRawDoc])
 
     normalisers
-        The flattener to use for each tag. Defaults to [`DEFAULT_NORMALISERS`][(m).],
-        the search APIs we ship; pass your own (merged with the default) to handle a
-        document from a search API you injected.
+        The flattener to use for each tag.
 
     Returns
     -------

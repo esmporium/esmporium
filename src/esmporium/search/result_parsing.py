@@ -105,12 +105,7 @@ class ParsedDocument:
     """See [`DatasetRawDoc.raw_json`][esmporium.db.schema.DatasetRawDoc.raw_json]."""
 
     raw_docs_format_tag: str
-    """
-    See [`SearchAPI`][esmporium.search.apis.SearchAPI.raw_docs_format_tag]
-
-    Stored on the raw-doc row so the right flattener can normalise it at load time
-    (see [`esmporium.search.normalise_stored_document`][]).
-    """
+    """See [`SearchAPI`][esmporium.search.apis.SearchAPI.raw_docs_format_tag]"""
 
 
 # Note: this shape will likely need to change once we want to link Datasets
