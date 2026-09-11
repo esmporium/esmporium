@@ -6,7 +6,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import cast
 
 from tenacity import Retrying
 
@@ -22,9 +21,18 @@ from esmporium.search.search_api_facade.parameters import (
     ESGF1_CMIP5_FACADE_PARAMETERS,
     ESGF1_CMIP6_FACADE_PARAMETERS,
     ESGF1_CMIP7_FACADE_PARAMETERS,
-    ESGFNG_CMIP5_FACADE_PARAMETERS,
     ESGFNG_CMIP6_FACADE_PARAMETERS,
     ESGFNG_CMIP7_FACADE_PARAMETERS,
+    FacadeParametersProtocol,
+)
+from esmporium.search.search_api_facade.result_parsers import (
+    ESGFNGCMIP6ResultParser,
+    ESGFNGCMIP7ResultParser,
+    ResultParserProtocol,
+    SolrSingleRowResultParser,
+    SolrVariableBundleResultParser,
+    stac_east_n_matches,
+    stac_west_n_matches,
 )
 
 RetryingBuilder = Callable[[], Retrying]
@@ -33,6 +41,14 @@ Builds a retry policy
 
 Called once per API, so each API gets a policy of its own.
 """
+
+SearchAPIBuilder = Callable[[str, Retrying], SearchAPI]
+"""
+Builds a search API for a host, with a retry policy of its own
+"""
+# This does not use `type[SearchAPI]` because
+# [SearchAPI][esmporium.search.apis.SearchAPI] is a protocol,
+# and `type[<protocol>]` carries no constructor signature for a type checker to call.
 
 
 def build_default_retrying(attempts: int = 3) -> Retrying:
@@ -54,6 +70,187 @@ def build_default_retrying(attempts: int = 3) -> Retrying:
 
 
 @dataclass(frozen=True)
+class FacadeDefinition:
+    """
+    Everything needed to build one facade, before it is built
+
+    This is a stepping stone inside
+    [SearchAPIFacadeStore.initialise_with_default_api_facades][(m).SearchAPIFacadeStore.initialise_with_default_api_facades]:
+    the pieces are picked project by project and endpoint by endpoint, then every
+    definition is turned into a facade in one place.
+    """
+
+    search_api_type: SearchAPIBuilder
+    """The search API class to build, called as `search_api_type(host, retrying)`."""
+
+    host: str
+    """The host to build it against."""
+
+    facade_parameters: FacadeParametersProtocol
+    """The parameters that name this project's facets for this API."""
+
+    result_parser: ResultParserProtocol
+    """The parser that reads this project's results from this endpoint."""
+
+    project: str
+    """The project the facade supports."""
+
+
+def get_default_facade_definition(project: str, host: str) -> FacadeDefinition:  # noqa: PLR0912, PLR0915
+    """
+    Get our default facade definition
+
+    For most hosts and projects, our default will work.
+    If we're wrong, get the facade definition and build the facade yourself.
+
+    Parameters
+    ----------
+    project
+        Project for which to get the facade definition
+
+    host
+        Host for which to get the facade definition
+
+    Returns
+    -------
+    :
+        Facade definition
+    """
+    solr_esgf1_hosts = (
+        "esg-dn1.nsc.liu.se",
+        "esgf.nci.org.au",
+        "esgf.ceda.ac.uk",
+        "esgf-data.dkrz.de",
+    )
+    solr_esgf15_bridge_hosts = ("esgf-node.ornl.gov",)
+    esgfng_east_hosts = ("search.east.esgf.io",)
+    esgfng_west_hosts = ("search.west.esgf.io",)
+
+    if project == "CMIP5":
+        if host in solr_esgf1_hosts:
+            facade_parameters = ESGF1_CMIP5_FACADE_PARAMETERS
+            result_parser = SolrVariableBundleResultParser()
+            search_api_type = SearchAPIESGF1Solr
+
+        elif host in solr_esgf15_bridge_hosts:
+            facade_parameters = ESGF1_CMIP5_FACADE_PARAMETERS
+            result_parser = SolrVariableBundleResultParser()
+            search_api_type = SearchAPIESGF15BridgeSolr
+
+        else:
+            # STAC serves no CMIP5 data, and we do not know the shape of a
+            # CMIP5 STAC document, so there is deliberately no CMIP5 STAC
+            # facade (and no CMIP5 STAC result parser to guess at its shape).
+            raise NotImplementedError(f"{project} {host}")
+
+    elif project == "CMIP6":
+        if host in solr_esgf1_hosts:
+            facade_parameters = ESGF1_CMIP6_FACADE_PARAMETERS
+            result_parser = SolrSingleRowResultParser()
+            search_api_type = SearchAPIESGF1Solr
+
+        elif host in solr_esgf15_bridge_hosts:
+            facade_parameters = ESGF1_CMIP5_FACADE_PARAMETERS
+            result_parser = SolrSingleRowResultParser()
+            search_api_type = SearchAPIESGF15BridgeSolr
+
+        elif host in esgfng_east_hosts:
+            facade_parameters = ESGFNG_CMIP6_FACADE_PARAMETERS
+            result_parser = ESGFNGCMIP6ResultParser(
+                read_n_matches=stac_east_n_matches,
+            )
+            search_api_type = SearchAPIESGFNGSTAC
+
+        elif host in esgfng_west_hosts:
+            facade_parameters = ESGFNG_CMIP6_FACADE_PARAMETERS
+            result_parser = ESGFNGCMIP6ResultParser(
+                read_n_matches=stac_west_n_matches,
+            )
+            search_api_type = SearchAPIESGFNGSTAC
+
+        else:
+            # STAC serves no CMIP5 data, and we do not know the shape of a
+            # CMIP5 STAC document, so there is deliberately no CMIP5 STAC
+            # facade (and no CMIP5 STAC result parser to guess at its shape).
+            raise NotImplementedError(f"{project} {host}")
+
+    elif project == "CMIP7":
+        if host in solr_esgf1_hosts:
+            facade_parameters = ESGF1_CMIP7_FACADE_PARAMETERS
+            result_parser = SolrSingleRowResultParser()
+            search_api_type = SearchAPIESGF1Solr
+
+        elif host in solr_esgf15_bridge_hosts:
+            facade_parameters = ESGF1_CMIP7_FACADE_PARAMETERS
+            result_parser = SolrSingleRowResultParser()
+            search_api_type = SearchAPIESGF15BridgeSolr
+
+        elif host in esgfng_east_hosts:
+            facade_parameters = ESGFNG_CMIP7_FACADE_PARAMETERS
+            result_parser = ESGFNGCMIP7ResultParser(
+                read_n_matches=stac_east_n_matches,
+            )
+            search_api_type = SearchAPIESGFNGSTAC
+
+        elif host in esgfng_west_hosts:
+            facade_parameters = ESGFNG_CMIP7_FACADE_PARAMETERS
+            result_parser = ESGFNGCMIP7ResultParser(
+                read_n_matches=stac_west_n_matches,
+            )
+            search_api_type = SearchAPIESGFNGSTAC
+
+        else:
+            # STAC serves no CMIP5 data, and we do not know the shape of a
+            # CMIP5 STAC document, so there is deliberately no CMIP5 STAC
+            # facade (and no CMIP5 STAC result parser to guess at its shape).
+            raise NotImplementedError(f"{project} {host}")
+
+    else:
+        raise NotImplementedError(project)
+
+    res = FacadeDefinition(
+        search_api_type=search_api_type,
+        host=host,
+        facade_parameters=facade_parameters,
+        result_parser=result_parser,
+        project=project,
+    )
+
+    return res
+
+
+def build_facade(
+    definition: FacadeDefinition,
+    create_retrying: RetryingBuilder,
+) -> SearchAPIFacade:
+    """
+    Build a facade from a given definition
+
+    Parameters
+    ----------
+    definition
+        Definition
+
+    create_retrying
+        Builds the retrying strategy to use with the search API
+
+    Returns
+    -------
+    :
+        Built facade instance
+    """
+    search_api = definition.search_api_type(definition.host, create_retrying())
+
+    res = SearchAPIFacade(
+        parameters=definition.facade_parameters,
+        search_api=search_api,
+        result_parser=definition.result_parser,
+    )
+
+    return res
+
+
+@dataclass(frozen=True)
 class SearchAPIFacadeClassification:
     """
     Classification of a search API facade
@@ -71,9 +268,9 @@ class SearchAPIFacadeClassification:
     Search API facade
     """
 
-    projects: tuple[str, ...]
+    project: str
     """
-    Projects which `facade` supports working with
+    Project which `facade` supports working with
     """
 
 
@@ -106,7 +303,7 @@ class SearchAPIFacadeStore:
         :
             API facades that can be used to search `project`.
         """
-        return [v.facade for v in self.classifications if project in v.projects]
+        return [v.facade for v in self.classifications if project == v.project]
 
     def get_api_facades_from_host(self, host: str) -> list[SearchAPIFacade]:
         """
@@ -163,14 +360,12 @@ class SearchAPIFacadeStore:
         matches = [
             v
             for v in self.classifications
-            if v.facade.search_api.host == host and project in v.projects
+            if v.facade.search_api.host == host and project == v.project
         ]
         if len(matches) < 1:
             host_projects: dict[str, list[str]] = {}
             for v in self.classifications:
-                host_projects.setdefault(v.facade.search_api.host, []).extend(
-                    v.projects
-                )
+                host_projects.setdefault(v.facade.search_api.host, []).append(v.project)
 
             supported_hosts_and_projects = "\n".join(
                 f"  - {host}: {projects}" for host, projects in host_projects.items()
@@ -187,7 +382,7 @@ class SearchAPIFacadeStore:
                 (
                     f"facade host={v.facade.search_api.host!r}, "
                     f"facade API type={type(v.facade.search_api).__name__!r}, "
-                    f"supported projects={v.projects!r}"
+                    f"supported project={v.project!r}"
                 )
                 for v in matches
             ]
@@ -202,7 +397,8 @@ class SearchAPIFacadeStore:
 
     @classmethod
     def initialise_with_default_api_facades(
-        cls, create_retrying: RetryingBuilder = build_default_retrying
+        cls,
+        create_retrying: RetryingBuilder = build_default_retrying,
     ) -> SearchAPIFacadeStore:
         """
         Initialise with our default API facade set and ordering
@@ -219,140 +415,55 @@ class SearchAPIFacadeStore:
         :
             Initialised object
         """
-        classifications_l = []
-
-        # There are probably clearer ways to do this.
-        # One for another day.
-        cmip5_facades = (
-            (
-                ESGF1_CMIP5_FACADE_PARAMETERS,
-                SearchAPIESGF1Solr,
-                "esg-dn1.nsc.liu.se",
-            ),
-            (
-                ESGF1_CMIP5_FACADE_PARAMETERS,
-                SearchAPIESGF1Solr,
-                "esgf.nci.org.au",
-            ),
-            (
-                ESGF1_CMIP5_FACADE_PARAMETERS,
-                # Currently assuming that ESGF1.5 bridge
-                # can use ESGF1 parameters.
-                SearchAPIESGF15BridgeSolr,
-                "esgf-node.ornl.gov",
-            ),
-            (
-                ESGF1_CMIP5_FACADE_PARAMETERS,
-                SearchAPIESGF1Solr,
-                "esgf.ceda.ac.uk",
-            ),
-            (
-                ESGF1_CMIP5_FACADE_PARAMETERS,
-                SearchAPIESGF1Solr,
-                "esgf-data.dkrz.de",
-            ),
-            (
-                ESGFNG_CMIP5_FACADE_PARAMETERS,
-                SearchAPIESGFNGSTAC,
-                "search.east.esgf.io",
-            ),
-            (
-                ESGFNG_CMIP5_FACADE_PARAMETERS,
-                SearchAPIESGFNGSTAC,
-                "search.west.esgf.io",
-            ),
-        )
-
-        cmip6_facades = (
-            (
-                ESGF1_CMIP6_FACADE_PARAMETERS,
-                SearchAPIESGF1Solr,
-                "esg-dn1.nsc.liu.se",
-            ),
-            (
-                ESGF1_CMIP6_FACADE_PARAMETERS,
-                SearchAPIESGF1Solr,
-                "esgf.nci.org.au",
-            ),
-            (
-                ESGF1_CMIP6_FACADE_PARAMETERS,
-                # Currently assuming that ESGF1.5 bridge
-                # can use ESGF1 parameters.
-                SearchAPIESGF15BridgeSolr,
-                "esgf-node.ornl.gov",
-            ),
-            (
-                ESGF1_CMIP6_FACADE_PARAMETERS,
-                SearchAPIESGF1Solr,
-                "esgf.ceda.ac.uk",
-            ),
-            (
-                ESGF1_CMIP6_FACADE_PARAMETERS,
-                SearchAPIESGF1Solr,
-                "esgf-data.dkrz.de",
-            ),
-            (
-                ESGFNG_CMIP6_FACADE_PARAMETERS,
-                SearchAPIESGFNGSTAC,
-                "search.east.esgf.io",
-            ),
-            (
-                ESGFNG_CMIP6_FACADE_PARAMETERS,
-                SearchAPIESGFNGSTAC,
-                "search.west.esgf.io",
-            ),
-        )
-
-        cmip7_facades = (
-            (
-                ESGFNG_CMIP7_FACADE_PARAMETERS,
-                SearchAPIESGFNGSTAC,
-                "search.east.esgf.io",
-            ),
-            (
-                ESGFNG_CMIP7_FACADE_PARAMETERS,
-                SearchAPIESGFNGSTAC,
-                "search.west.esgf.io",
-            ),
-            (
-                ESGF1_CMIP7_FACADE_PARAMETERS,
-                SearchAPIESGF1Solr,
-                "esgf.nci.org.au",
-            ),
-            (
-                ESGF1_CMIP7_FACADE_PARAMETERS,
-                SearchAPIESGF1Solr,
-                "esgf-data.dkrz.de",
-            ),
-        )
-
-        # To add CMIP6Plus support in future:
-        # add a `cmip6plus_facades` block here
-        # (its own STAC query style with a `cmip6plus` prefix would be needed,
-        # as ESGFNG_CMIP6_FACADE_PARAMETERS is tied to the `cmip6` collection),
-        # classify it against `("CMIP6Plus",)`
-        # in the loop below,
-        # and add "CMIP6Plus" to DEFAULT_SEARCH_API_FACADES_BY_PROJECT.
-        for projects, facade_definitions in (
-            (("CMIP5",), cmip5_facades),
-            (("CMIP6",), cmip6_facades),
-            (("CMIP7",), cmip7_facades),
-        ):
-            for facade_parameters, search_api_type, host in facade_definitions:
-                # A fresh retry policy per API:
-                # tenacity's Retrying carries per-run state.
-                search_api = cast(
-                    "SearchAPI", search_api_type(host=host, retrying=create_retrying())
-                )
-                classifications_l.append(
-                    SearchAPIFacadeClassification(
-                        SearchAPIFacade(
-                            parameters=facade_parameters,
-                            search_api=search_api,
-                        ),
-                        projects=projects,
+        # Hosts are (as of writing) ordered by number of results returned.
+        # We provide these default lists, but users may inject their own
+        # ranked hosts based on experience.
+        facade_definitions = [
+            get_default_facade_definition(project, host)
+            for project, host in (
+                *(
+                    ("CMIP5", host)
+                    for host in (
+                        "esg-dn1.nsc.liu.se",
+                        "esgf.nci.org.au",
+                        "esgf-node.ornl.gov",
+                        "esgf.ceda.ac.uk",
+                        "esgf-data.dkrz.de",
                     )
+                ),
+                *(
+                    ("CMIP6", host)
+                    for host in (
+                        "esg-dn1.nsc.liu.se",
+                        "esgf.nci.org.au",
+                        "esgf-node.ornl.gov",
+                        "esgf.ceda.ac.uk",
+                        "esgf-data.dkrz.de",
+                        "search.east.esgf.io",
+                        "search.west.esgf.io",
+                    )
+                ),
+                *(
+                    ("CMIP7", host)
+                    for host in (
+                        "search.east.esgf.io",
+                        "search.west.esgf.io",
+                        "esgf.nci.org.au",
+                        "esgf-data.dkrz.de",
+                    )
+                ),
+            )
+        ]
+
+        classifications_l = []
+        for facade_definition in facade_definitions:
+            facade = build_facade(facade_definition, create_retrying)
+            classifications_l.append(
+                SearchAPIFacadeClassification(
+                    facade,
+                    project=facade_definition.project,
                 )
+            )
 
         res = cls(classifications=tuple(classifications_l))
 

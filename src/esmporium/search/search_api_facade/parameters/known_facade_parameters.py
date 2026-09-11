@@ -495,52 +495,6 @@ class STACFacadeParameters(BaseModel):
         return facet_values
 
 
-class ESGFNGCMIP5ParametersQueryStyle(BaseModel):
-    """CMIP5 facet values under their ESGF-NG parameter names"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    model: Annotated[FacetValues, QueryFacet("model")] = ()
-    """See [Dataset.model][esmporium.db.schema.Dataset.model]."""
-
-    institute: Annotated[FacetValues, QueryFacet("institution")] = ()
-    """See [Dataset.institution][esmporium.db.schema.Dataset.institution]."""
-
-    experiment: Annotated[FacetValues, QueryFacet("experiment")] = ()
-    """See [Dataset.experiment][esmporium.db.schema.Dataset.experiment]."""
-
-    variable: Annotated[FacetValues, QueryFacet("variable")] = ()
-    """See [Dataset.variable][esmporium.db.schema.Dataset.variable]."""
-
-    ensemble: Annotated[FacetValues, QueryFacet("variant_label")] = ()
-    """See [Dataset.variant_label][esmporium.db.schema.Dataset.variant_label]."""
-
-    time_frequency: Annotated[FacetValues, QueryFacet("reporting_interval")] = ()
-    """See [Dataset.reporting_interval][esmporium.db.schema.Dataset.reporting_interval]."""  # noqa: E501
-
-    cmor_table: Annotated[FacetValues, QueryFacet("processing_id")] = ()
-    """See [Dataset.processing_id][esmporium.db.schema.Dataset.processing_id]."""
-
-    realm: Annotated[FacetValues, QueryFacet("realm")] = ()
-    """See [Dataset.realm][esmporium.query.canonical_query.QueryCanonical.realm]."""
-
-    product: Annotated[FacetValues, QueryFacet(None)] = ()
-    """See [QueryCMIP5.product][esmporium.query.known_queries.QueryCMIP5.product]."""
-
-    other_terms: FacetValuesByName = {}
-    """See [Query.other_terms][esmporium.query.known_queries.Query.other_terms]."""
-
-    source_query: SourceQuery = None
-    """See [Query.source_query][esmporium.query.known_queries.Query.source_query]."""
-
-
-ESGFNG_CMIP5_FACADE_PARAMETERS = STACFacadeParameters(
-    base_query_style=ESGFNGCMIP5ParametersQueryStyle,
-    prefix="cmip5",
-)
-"""Parameters for CMIP5 with an ESGF-NG API"""
-
-
 class ESGFNGCMIP6ParametersQueryStyle(BaseModel):
     """CMIP6 facet values under their ESGF-NG parameter names"""
 

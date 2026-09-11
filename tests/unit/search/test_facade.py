@@ -20,10 +20,12 @@ from esmporium.query import (
     to_canonical,
 )
 from esmporium.search import (
+    ESGF1_CMIP5_FACADE_PARAMETERS,
     ESGF1_CMIP6_FACADE_PARAMETERS,
     ESGFNG_CMIP6_FACADE_PARAMETERS,
     INBUILT_SEARCH_API_FACADE_STORE,
     ESGFNGCMIP6ParametersQueryStyle,
+    ESGFNGCMIP6ResultParser,
     LimitOutOfRangeError,
     OneProjectRequiredError,
     ProjectPrefixMismatchError,
@@ -32,10 +34,13 @@ from esmporium.search import (
     SearchAPIFacade,
     SearchAPIFacadeClassification,
     SearchAPIFacadeStore,
+    SolrSingleRowResultParser,
+    SolrVariableBundleResultParser,
     STACFacadeParameters,
     UnaskableFacetError,
     build_transient_retrying,
     identity_string,
+    stac_east_n_matches,
 )
 
 # This file is where at least some of the tests in PR2.2 should be added.
@@ -56,6 +61,7 @@ def api_facade_cmip6_esgf1(host="node.example") -> SearchAPIFacade:
     return SearchAPIFacade(
         parameters=ESGF1_CMIP6_FACADE_PARAMETERS,
         search_api=SearchAPIESGF1Solr(host, build_transient_retrying(1)),
+        result_parser=SolrSingleRowResultParser(),
     )
 
 
@@ -64,6 +70,9 @@ def api_facade_cmip6_esgfng(host="stac.example") -> SearchAPIFacade:
     return SearchAPIFacade(
         parameters=ESGFNG_CMIP6_FACADE_PARAMETERS,
         search_api=SearchAPIESGFNGSTAC(host, build_transient_retrying(1)),
+        result_parser=ESGFNGCMIP6ResultParser(
+            read_n_matches=stac_east_n_matches,
+        ),
     )
 
 
@@ -304,6 +313,9 @@ def test_stac_facade_project_to_collection_converter_is_used():
     facade = SearchAPIFacade(
         parameters=parameters,
         search_api=SearchAPIESGFNGSTAC("stac.example", build_transient_retrying(1)),
+        result_parser=ESGFNGCMIP6ResultParser(
+            read_n_matches=stac_east_n_matches,
+        ),
     )
     body = facade.build_search_request(CMIP6_CANONICALISED, limit=5).json_body
     clauses = body["filter"]["args"]
@@ -352,11 +364,17 @@ def a_store() -> SearchAPIFacadeStore:
     return SearchAPIFacadeStore(
         classifications=(
             SearchAPIFacadeClassification(
-                api_facade_cmip6_esgf1("host-a"), ("CMIP5", "CMIP6")
+                SearchAPIFacade(
+                    parameters=ESGF1_CMIP5_FACADE_PARAMETERS,
+                    search_api=SearchAPIESGF1Solr(
+                        "host-a", build_transient_retrying(1)
+                    ),
+                    result_parser=SolrVariableBundleResultParser(),
+                ),
+                "CMIP5",
             ),
-            SearchAPIFacadeClassification(
-                api_facade_cmip6_esgfng("host-b"), ("CMIP6",)
-            ),
+            SearchAPIFacadeClassification(api_facade_cmip6_esgf1("host-a"), "CMIP6"),
+            SearchAPIFacadeClassification(api_facade_cmip6_esgfng("host-b"), "CMIP6"),
         )
     )
 
@@ -372,14 +390,18 @@ def test_store_gets_facades_for_a_project():
 def test_store_gets_facades_from_a_host():
     facades = a_store().get_api_facades_from_host("host-a")
 
-    assert [f.search_api.host for f in facades] == ["host-a"]
+    assert [f.search_api.host for f in facades] == ["host-a", "host-a"]
+    assert set(v.parameters.base_query_style for v in facades) == {
+        ESGF1_CMIP5_FACADE_PARAMETERS.base_query_style,
+        ESGF1_CMIP6_FACADE_PARAMETERS.base_query_style,
+    }
 
 
 def test_store_gets_the_one_facade_for_a_project_from_a_host():
     facade = a_store().get_api_facade_for_project_from_host("CMIP5", "host-a")
 
     assert facade.search_api.host == "host-a"
-    assert facade.parameters is ESGF1_CMIP6_FACADE_PARAMETERS
+    assert facade.parameters is ESGF1_CMIP5_FACADE_PARAMETERS
 
 
 def test_store_get_for_a_project_from_a_host_that_has_no_such_pairing_raises():
@@ -399,8 +421,8 @@ def test_store_get_for_a_project_from_a_host_that_has_no_such_pairing_raises():
 def test_store_get_for_an_ambiguous_pairing_is_an_assertion_error():
     store = SearchAPIFacadeStore(
         classifications=(
-            SearchAPIFacadeClassification(api_facade_cmip6_esgf1("dup"), ("CMIP6",)),
-            SearchAPIFacadeClassification(api_facade_cmip6_esgfng("dup"), ("CMIP6",)),
+            SearchAPIFacadeClassification(api_facade_cmip6_esgf1("dup"), "CMIP6"),
+            SearchAPIFacadeClassification(api_facade_cmip6_esgfng("dup"), "CMIP6"),
         )
     )
     with pytest.raises(
@@ -411,14 +433,14 @@ def test_store_get_for_an_ambiguous_pairing_is_an_assertion_error():
             + '"'
             + re.escape(
                 "facade host='dup', facade API type='SearchAPIESGF1Solr', "
-                "supported projects=('CMIP6',)"
+                "supported project='CMIP6'"
             )
             + '"'
             + ", "
             + '"'
             + re.escape(
                 "facade host='dup', facade API type='SearchAPIESGFNGSTAC', "
-                "supported projects=('CMIP6',)"
+                "supported project='CMIP6'"
             )
             + '"'
             + re.escape("]. matches=")

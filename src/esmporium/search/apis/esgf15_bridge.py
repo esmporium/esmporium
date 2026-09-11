@@ -12,13 +12,16 @@ from typing import Any
 from tenacity import Retrying
 
 from esmporium.search.apis.esgf1 import (
-    get_solr_search_result_n_matches,
+    solr_extract_result_documents,
     solr_facet_values,
+    solr_read_facet_as_string,
+    solr_read_facet_list_as_strings,
 )
 from esmporium.search.apis.protocol import (
     LimitOutOfRangeError,
 )
 from esmporium.search.apis.request import Request
+from esmporium.search.result_normalisation import SOLR_FORMAT_TAG
 
 
 @dataclass(frozen=True)
@@ -35,6 +38,9 @@ class SearchAPIESGF15BridgeSolr:
 
     retrying: Retrying
     """See [SearchAPI.retrying][esmporium.search.apis.SearchAPI.retrying]."""
+
+    raw_docs_format_tag: str = SOLR_FORMAT_TAG
+    """See [SearchAPI.raw_docs_format_tag][esmporium.search.apis.SearchAPI.raw_docs_format_tag]."""  # noqa: E501
 
     timeout: float = 30.0
     """See [SearchAPI.timeout][esmporium.search.apis.SearchAPI.timeout]."""
@@ -75,12 +81,6 @@ class SearchAPIESGF15BridgeSolr:
 
         return Request("GET", "/esgf-1-5-bridge/", params=params)
 
-    def get_search_result_n_matches(self, raw: dict[str, Any]) -> int:
-        """
-        See [SearchAPI.get_search_result_n_matches][esmporium.search.apis.SearchAPI.get_search_result_n_matches].
-        """  # noqa: E501
-        return get_solr_search_result_n_matches(raw)
-
     def build_get_facet_values_for_project_request(
         self, facets: set[str], project: str
     ) -> Request:
@@ -116,3 +116,21 @@ class SearchAPIESGF15BridgeSolr:
         # ESGF1.5 (like ESGF1) always enumerates its facet values;
         # it never describes their form.
         return {}
+
+    def extract_result_documents(self, raw: dict[str, Any]) -> list[dict[str, Any]]:
+        """
+        See [SearchAPI.extract_result_documents][esmporium.search.apis.SearchAPI.extract_result_documents].
+        """  # noqa: E501
+        return solr_extract_result_documents(raw)
+
+    def read_facet(self, doc: dict[str, Any], api_field: str) -> str | None:
+        """
+        See [SearchAPI.read_facet][esmporium.search.apis.SearchAPI.read_facet].
+        """
+        return solr_read_facet_as_string(doc, api_field)
+
+    def read_facet_list(self, doc: dict[str, Any], api_field: str) -> tuple[str, ...]:
+        """
+        See [SearchAPI.read_facet_list][esmporium.search.apis.SearchAPI.read_facet_list].
+        """  # noqa: E501
+        return solr_read_facet_list_as_strings(doc, api_field)

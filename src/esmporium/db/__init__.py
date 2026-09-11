@@ -7,10 +7,25 @@ This should be the only layer which touches the local databases directly.
 
 from __future__ import annotations
 
+from esmporium.db.dataset_uniqueness import (
+    MISSING,
+    facet_differences,
+)
+from esmporium.db.results_to_database import (
+    UnhandledDatasetClashError,
+    build_result_processor,
+    ingest_parsed_documents,
+    save_dataset,
+)
 from esmporium.db.schema import (
     DATASET_FACET_COLUMNS,
     METADATA,
+    DataNode,
     Dataset,
+    DatasetRawDoc,
+    DatasetVersion,
+    DatasetVersionDataNodeLink,
+    RawDocVersionLink,
     SearchAPICallRecord,
 )
 from esmporium.db.search_health import (
@@ -25,12 +40,23 @@ from esmporium.db.search_health import (
 __all__ = [
     "DATASET_FACET_COLUMNS",
     "METADATA",
+    "MISSING",
+    "DataNode",
     "Dataset",
+    "DatasetRawDoc",
+    "DatasetVersion",
+    "DatasetVersionDataNodeLink",
     "HostHealth",
     "HostRanker",
+    "RawDocVersionLink",
     "SearchAPICallRecord",
+    "UnhandledDatasetClashError",
     "aggregate_host_health",
     "build_health_selector",
+    "build_result_processor",
+    "facet_differences",
     "get_median_response_time_for_ranking",
+    "ingest_parsed_documents",
     "record_search_api_calls",
+    "save_dataset",
 ]

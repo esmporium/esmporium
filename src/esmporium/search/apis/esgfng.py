@@ -14,10 +14,13 @@ from tenacity import Retrying
 from esmporium.search.apis.protocol import (
     LimitOutOfRangeError,
     NoFacetValuesReturnedError,
-    NoSearchResultNumberOfMatchesReturnedError,
+    NoSearchResultDocumentsError,
     UncompilableFacetPatternError,
+    single_facet_value_or_none,
 )
 from esmporium.search.apis.request import Request
+from esmporium.search.result_normalisation import STAC_FORMAT_TAG
+from esmporium.search.result_parsing import DataNodeInfo
 
 
 # In future, `aggregations` could be used to return value counts per facet value.
@@ -61,8 +64,9 @@ def stac_summary_values(raw: dict[str, Any], facets: set[str]) -> dict[str, set[
     for api_name, summary in raw["summaries"].items():
         # This match is deliberately exact (case-sensitive). We only ever build
         # lowercase-prefixed names (`cmip7:variable_id`), and both ESGF-NG
-        # deployments key their summaries the same way today, so exact matching
-        # works. Do not "fix" this by case-folding the keys: these collections
+        # deployments (east and west) key their summaries the same way today,
+        # so exact matching works.
+        # Do not "fix" this by case-folding the keys: these collections
         # really do treat case as significant -- east's CMIP6Plus, for one,
         # carries both `cmip6plus:Conventions` and `cmip6plus:conventions` as
         # separate keys, so lowering every key would collapse the two and
@@ -154,6 +158,177 @@ def stac_summary_patterns(
     return res
 
 
+def stac_extract_result_documents(raw: dict[str, Any]) -> list[dict[str, Any]]:
+    """
+    Get the response documents from a raw STAC response
+
+    Parameters
+    ----------
+    raw
+        Raw STAC response to parse
+
+    Returns
+    -------
+    :
+        Extracted response documents
+
+    Raises
+    ------
+    NoSearchResultDocumentsError
+        No search result documents are included in `raw`
+    """
+    if "features" not in raw:
+        raise NoSearchResultDocumentsError(raw, "features")
+
+    features: list[dict[str, Any]] = raw["features"]
+
+    return list(features)
+
+
+def stac_read_facet_list_as_strings(
+    feature: dict[str, Any], api_field: str
+) -> tuple[str, ...]:
+    """
+    Read a facet from a STAC feature (document) as a tuple of strings
+
+    Parameters
+    ----------
+    feature
+        Feature (i.e. document) from which to read the facet
+
+    api_field
+        Facet (i.e. field in the API response) to read
+
+    Returns
+    -------
+    :
+        The value of `api_field`, cast to a tuple of strings
+
+    Raises
+    ------
+    NotImplementedError
+        The value we found is not one we can safely cast to a tuple of strings
+    """
+    # `properties` is where a STAC feature keeps its facets,
+    # so a feature without it is not one we can read at all.
+    # So we try to get its value and let that fail loudly if it's not there.
+    values = feature["properties"].get(api_field)
+    if values is None:
+        return ()
+
+    if not isinstance(values, list):
+        values = [values]
+
+    return tuple(stac_facet_value_as_string(value, api_field) for value in values)
+
+
+def stac_facet_value_as_string(value: Any, api_field: str) -> str:
+    """
+    Cast a single value read from a STAC feature (document) to a string
+
+    Parameters
+    ----------
+    value
+        Value to cast
+
+    api_field
+        Facet (i.e. field in the API response) `value` was read from
+
+        Only used for error messages.
+
+    Returns
+    -------
+    :
+        `value`, cast to a string
+
+    Raises
+    ------
+    NotImplementedError
+        `value` is not one we can safely cast to a string
+
+        Casting anything else would put a value in our database
+        that nobody published,
+        e.g. a `dict` would come back as `"{'a': 1}"`.
+    """
+    if isinstance(value, (str, int, float)):
+        return str(value)
+
+    msg = (
+        f"We do not know how to read {api_field!r} out of a STAC record: "
+        f"expected a string, an int, a float or nothing, got {value!r}"
+    )
+    raise NotImplementedError(msg)
+
+
+def stac_read_facet_as_string(feature: dict[str, Any], api_field: str) -> str | None:
+    """
+    Read a facet from a STAC feature (document) as a single string
+
+    Parameters
+    ----------
+    feature
+        Feature (i.e. document) from which to read the facet
+
+    api_field
+        Facet (i.e. field in the API response) to read
+
+    Returns
+    -------
+    :
+        The value of `api_field`, cast to a single string
+
+    Raises
+    ------
+    MultipleFacetValuesError
+        In the doc, `api_field` maps to more than one value
+    """
+    return single_facet_value_or_none(
+        stac_read_facet_list_as_strings(feature, api_field), api_field
+    )
+
+
+def stac_nodes(feature: dict[str, Any]) -> tuple[DataNodeInfo, ...]:
+    """
+    Get the distinct data nodes a STAC feature's assets are hosted on
+
+    Parameters
+    ----------
+    feature
+        Feature (i.e. document) from which to read the data nodes
+
+    Returns
+    -------
+    :
+        The distinct data nodes `feature`'s assets are hosted on
+
+        A feature with no assets is hosted nowhere,
+        so it has no data nodes.
+
+    Raises
+    ------
+    KeyError
+        One of `feature`'s assets does not say which node hosts it
+
+        Something is hosting it and we cannot see what,
+        which means the response is not the shape we expect,
+        so we fail loudly rather than quietly dropping the node.
+    """
+    hosts: list[str] = []
+    # No assets at all is fine: nothing is hosting this, so there is no node to report.
+    for asset in feature.get("assets", {}).values():
+        # `alternate:name` (STAC alternate-assets extension) is the canonical data-node
+        # identity, matching Solr's `data_node` (e.g. `ceda.ac.uk`).
+        # Deliberately do NOT read `href` here:
+        # `href` is the file-download URL (e.g. `dap.ceda.ac.uk`),
+        # a different concept from the data node,
+        # reserved for a future file-access step.
+        host = asset["alternate:name"]
+        if host not in hosts:
+            hosts.append(host)
+
+    return tuple(DataNodeInfo(host) for host in hosts)
+
+
 @dataclass(frozen=True)
 class SearchAPIESGFNGSTAC:
     """
@@ -168,6 +343,9 @@ class SearchAPIESGFNGSTAC:
 
     retrying: Retrying
     """See [SearchAPI.retrying][esmporium.search.apis.SearchAPI.retrying]."""
+
+    raw_docs_format_tag: str = STAC_FORMAT_TAG
+    """See [SearchAPI.raw_docs_format_tag][esmporium.search.apis.SearchAPI.raw_docs_format_tag]."""  # noqa: E501
 
     timeout: float = 30.0
     """See [SearchAPI.timeout][esmporium.search.apis.SearchAPI.timeout]."""
@@ -218,37 +396,6 @@ class SearchAPIESGFNGSTAC:
 
         return Request("POST", "/search", json_body=json_body)
 
-    def get_search_result_n_matches(self, raw: dict[str, Any]) -> int:
-        """
-        See [SearchAPI.get_search_result_n_matches][esmporium.search.apis.SearchAPI.get_search_result_n_matches].
-        """  # noqa: E501
-        # The two ESGF-NG deployments disagree on where the total lives:
-        # east reports `numberMatched` (the STAC spelling),
-        # west reports `numMatched` and `context.matched`.
-        # We try everything, starting with the correct (STAC) spelling.
-        context = raw.get("context")
-        candidates = (
-            ("numberMatched", raw.get("numberMatched")),
-            ("numMatched", raw.get("numMatched")),
-            (
-                "context.matched",
-                context.get("matched") if isinstance(context, dict) else None,
-            ),
-        )
-        for loc, total in candidates:
-            if isinstance(total, int):
-                return total
-
-            elif total is not None:
-                msg = (
-                    f"We expected to get an integer at {loc}, but instead got {total!r}"
-                )
-                raise TypeError(msg)
-
-        raise NoSearchResultNumberOfMatchesReturnedError(
-            raw, tuple(loc for loc, _ in candidates)
-        )
-
     def build_get_facet_values_for_project_request(
         self, facets: set[str], project: str
     ) -> Request:
@@ -280,3 +427,21 @@ class SearchAPIESGFNGSTAC:
         See [SearchAPI.parse_facet_patterns][esmporium.search.apis.SearchAPI.parse_facet_patterns].
         """  # noqa: E501
         return stac_summary_patterns(raw, facets)
+
+    def extract_result_documents(self, raw: dict[str, Any]) -> list[dict[str, Any]]:
+        """
+        See [SearchAPI.extract_result_documents][esmporium.search.apis.SearchAPI.extract_result_documents].
+        """  # noqa: E501
+        return stac_extract_result_documents(raw)
+
+    def read_facet(self, doc: dict[str, Any], api_field: str) -> str | None:
+        """
+        See [SearchAPI.read_facet][esmporium.search.apis.SearchAPI.read_facet].
+        """
+        return stac_read_facet_as_string(doc, api_field)
+
+    def read_facet_list(self, doc: dict[str, Any], api_field: str) -> tuple[str, ...]:
+        """
+        See [SearchAPI.read_facet_list][esmporium.search.apis.SearchAPI.read_facet_list].
+        """  # noqa: E501
+        return stac_read_facet_list_as_strings(doc, api_field)
