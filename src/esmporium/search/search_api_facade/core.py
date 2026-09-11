@@ -215,6 +215,9 @@ class SearchAPIFacade:
     The search API for which we are providing a facade
     """
 
+    # TODO: This docstring we may need to update based on
+    # potential updates to esgf-ng east/west issues
+    # https://github.com/ESGF/esgf-roadmap/issues/203
     result_parser: ResultParserProtocol
     """
     The parser that reads this facade's search results
@@ -222,8 +225,8 @@ class SearchAPIFacade:
     What a result looks like can be a function of its project
     and the endpoint that answered
     (e.g. a CMIP5 Solr record bundles many variables;
-    a CMIP6 STAC feature writes its bundle id
-    and its project somewhere a CMIP7 one does not),
+    a CMIP6 STAC feature writes its its project somewhere a
+    CMIP7 one does not),
     which is why the parser is chosen for this pairing
     rather than derived from either half alone;
     see [esmporium.search.search_api_facade.result_parsers][].
