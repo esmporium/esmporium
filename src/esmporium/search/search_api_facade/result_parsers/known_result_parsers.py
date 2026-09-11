@@ -19,7 +19,6 @@ from esmporium.search.result_parsing import (
     ParsedDocument,
 )
 from esmporium.search.search_api_facade.result_parsers.protocol import (
-    IdProjectSpecificReader,
     NMatchesReader,
     get_single_value_columns_from_doc,
 )
@@ -505,55 +504,6 @@ class SolrVariableBundleResultParser:
         )
 
 
-def stac_base_id(feature: dict[str, Any]) -> str:
-    """
-    Read the bundle id a STAC feature publishes as `base_id`
-
-    This is the same value Solr writes as `master_id`. Where a deployment publishes it,
-    reading it means assuming nothing about the shape of the feature id itself.
-
-    Parameters
-    ----------
-    feature
-        Feature (i.e. document) from which to read the bundle id
-
-    Returns
-    -------
-    :
-        The bundle's native id
-
-    Raises
-    ------
-    KeyError
-        `feature` has no `base_id`, i.e. this deployment does not publish one
-    """
-    res: str = feature["properties"]["base_id"]
-
-    return res
-
-
-def stac_id_without_version(feature: dict[str, Any]) -> str:
-    """
-    Recover the bundle id of a STAC feature which does not publish one
-
-    The feature id is the bundle id with the version token on the end, so dropping the
-    token recovers it (see [strip_version][(m).]).
-
-    Parameters
-    ----------
-    feature
-        Feature (i.e. document) from which to read the bundle id
-
-    Returns
-    -------
-    :
-        The bundle's native id
-    """
-    feature_id: str = feature["id"]
-
-    return strip_version(feature_id)
-
-
 def stac_parsed_document(
     feature: dict[str, Any],
     api: SearchAPI,
@@ -604,22 +554,9 @@ class ESGFNGCMIP6ResultParser:
 
     Reading CMIP6 is not the same on both ESGF-NG deployments:
 
-    - east publishes the bundle id as `base_id` (the same value Solr writes as
-      `master_id`), west does not, so [read_id_project_specific][(c).] says which
-      deployment this parser is for
     - east's features carry no `project` property at all, so the project is read from
       `cmip6:mip_era`, which both deployments do carry
       (this may be a temporary workaround, let's see if the APIs are updated)
-    """
-
-    read_id_project_specific: IdProjectSpecificReader
-    """
-    Reads the bundle id out of one of this deployment's features
-
-    Deliberately has no default, for the same reason as [read_n_matches][(c).]: east
-    publishes a `base_id` and west does not
-    (see [stac_base_id][(m).] and [stac_id_without_version][(m).]),
-    so whoever builds a parser has to say which deployment it is for.
     """
 
     read_n_matches: NMatchesReader
@@ -683,7 +620,7 @@ class ESGFNGCMIP6ResultParser:
 
     def get_id_project_specific(self, feature: dict[str, Any]) -> str:
         """
-        Read the bundle id of a CMIP6 STAC feature
+        Read the project specific id of a CMIP6 STAC feature
 
         Parameters
         ----------
@@ -695,7 +632,9 @@ class ESGFNGCMIP6ResultParser:
         :
             The bundle's native id
         """
-        return self.read_id_project_specific(feature)
+        res: str = feature["properties"]["title"]
+
+        return res
 
 
 @dataclass(frozen=True)
@@ -706,11 +645,6 @@ class ESGFNGCMIP7ResultParser:
     The two differences from [ESGFNGCMIP6ResultParser][(m).] are exactly why the parsers
     are split by project:
 
-    - a CMIP7 feature has no `base_id`,
-      so the bundle id has to be recovered
-      by dropping the version token off the end of the feature id
-      (see [strip_version][(m).]).
-      (This may be a temporary workaround, let's see if the APIs are updated.)
     - the project is written as a plain `project` property
     """
 
@@ -773,7 +707,7 @@ class ESGFNGCMIP7ResultParser:
 
     def get_id_project_specific(self, feature: dict[str, Any]) -> str:
         """
-        Read the bundle id of a CMIP7 STAC feature
+        Read the project specific id of a CMIP7 STAC feature
 
         Parameters
         ----------
@@ -785,60 +719,6 @@ class ESGFNGCMIP7ResultParser:
         :
             The bundle's native id, i.e. the feature id without its version token
         """
-        return stac_id_without_version(feature)
+        res: str = feature["properties"]["title"]
 
-
-def is_version_token(token: str) -> bool:
-    """
-    Check whether a `.`-separated segment of an id is a version token
-
-    A version token is written as `v` followed by digits, e.g. `v20200623`.
-    `isdigit()` on the tail after the `v` requires at least one digit,
-    so a bare `v` is not mistaken for a version.
-
-    Parameters
-    ----------
-    token
-        The segment to check
-
-    Returns
-    -------
-    :
-        `True` if `token` is a version token, `False` otherwise
-
-    Examples
-    --------
-    >>> is_version_token("v20200623")
-    True
-    >>> is_version_token("v")
-    False
-    """
-    return token.startswith("v") and token[1:].isdigit()
-
-
-def strip_version(native_id: str) -> str:
-    """
-    Drop a trailing `.vYYYYMMDD` token so different versions can share a dataset id
-
-    Parameters
-    ----------
-    native_id
-        The id to strip
-
-    Returns
-    -------
-    :
-        `native_id` without its version token, or unchanged if it has none
-
-    Examples
-    --------
-    >>> strip_version("CMIP7.CMIP.MIROC.tas.v20200623")
-    'CMIP7.CMIP.MIROC.tas'
-    >>> strip_version("CMIP7.CMIP.MIROC.tas")
-    'CMIP7.CMIP.MIROC.tas'
-    """
-    parts = native_id.split(".")
-    if parts and is_version_token(parts[-1]):
-        return ".".join(parts[:-1])
-
-    return native_id
+        return res

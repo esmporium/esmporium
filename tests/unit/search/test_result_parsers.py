@@ -37,9 +37,7 @@ from esmporium.search import (
     SolrSingleRowResultParser,
     SolrVariableBundleResultParser,
     build_transient_retrying,
-    stac_base_id,
     stac_east_n_matches,
-    stac_id_without_version,
     stac_west_n_matches,
 )
 
@@ -48,12 +46,10 @@ def esgfng_cmip6_parser(east: bool = True) -> ESGFNGCMIP6ResultParser:
     """A CMIP6 ESGF-NG parser for one deployment or the other"""
     if east:
         return ESGFNGCMIP6ResultParser(
-            read_id_project_specific=stac_base_id,
             read_n_matches=stac_east_n_matches,
         )
 
     return ESGFNGCMIP6ResultParser(
-        read_id_project_specific=stac_id_without_version,
         read_n_matches=stac_west_n_matches,
     )
 
@@ -150,122 +146,13 @@ def stac_feature(parameters, row: DatasetFacets, feature_id: str, **prop_overrid
     }
 
 
-def test_cmip6_stac_bundle_id_is_read_from_base_id():
-    """CMIP6 features say what their bundle id is, so we do not infer one
-
-    The `base_id` here deliberately disagrees with "the feature id minus its version
-    token", so a parser inferring the id instead of reading it fails this.
-    """
-    feature = stac_feature(
-        ESGFNG_CMIP6_FACADE_PARAMETERS,
-        CMIP6_ROW,
-        "CMIP6.something.else.entirely.v20200623",
-        base_id=CMIP6_ROW.id_project_specific,
-        **{"cmip6:mip_era": "CMIP6"},
-    )
-
-    (document,) = esgfng_cmip6_parser(east=True).parse_search_results(
-        {"features": [feature]},
-        api=stac_api(),
-        facade_parameters=ESGFNG_CMIP6_FACADE_PARAMETERS,
-    )
-
-    assert document.id_project_specific == CMIP6_ROW.id_project_specific
-    # The edition it actually came from is still remembered.
-    assert document.esgf_doc_id == "CMIP6.something.else.entirely.v20200623"
-
-
-def test_cmip6_stac_bundle_id_on_west_is_recovered_from_the_feature_id():
-    """West publishes no `base_id` for CMIP6, so the same parser recovers the id
-
-    The feature here carries a `base_id` that disagrees with the feature id, which west
-    never sends: it is here so that a parser reading `base_id` when it was told not to
-    fails this rather than passing by luck.
-    """
-    feature = stac_feature(
-        ESGFNG_CMIP6_FACADE_PARAMETERS,
-        CMIP6_ROW,
-        f"{CMIP6_ROW.id_project_specific}.v20200623",
-        base_id="CMIP6.something.else.entirely",
-        **{"cmip6:mip_era": "CMIP6"},
-    )
-
-    (document,) = esgfng_cmip6_parser(east=False).parse_search_results(
-        {"features": [feature]},
-        api=stac_api(),
-        facade_parameters=ESGFNG_CMIP6_FACADE_PARAMETERS,
-    )
-
-    assert document.id_project_specific == CMIP6_ROW.id_project_specific
-
-
-def test_cmip6_stac_on_east_needs_a_base_id():
-    """East is read as publishing a `base_id`, so a feature without one is a failure
-
-    Quietly falling back to stripping the feature id would hide east changing shape.
-    """
-    feature = stac_feature(
-        ESGFNG_CMIP6_FACADE_PARAMETERS,
-        CMIP6_ROW,
-        f"{CMIP6_ROW.id_project_specific}.v20200623",
-        **{"cmip6:mip_era": "CMIP6"},
-    )
-
-    with pytest.raises(KeyError, match="base_id"):
-        esgfng_cmip6_parser(east=True).parse_search_results(
-            {"features": [feature]},
-            api=stac_api(),
-            facade_parameters=ESGFNG_CMIP6_FACADE_PARAMETERS,
-        )
-
-
-def test_cmip7_stac_bundle_id_drops_the_version_token():
-    """CMIP7 features carry no `base_id`, so the bundle id is recovered from the id"""
-    feature = stac_feature(
-        ESGFNG_CMIP7_FACADE_PARAMETERS,
-        CMIP7_ROW,
-        f"{CMIP7_ROW.id_project_specific}.v20200623",
-        project="CMIP7",
-    )
-
-    (document,) = ESGFNGCMIP7ResultParser(
-        read_n_matches=stac_east_n_matches
-    ).parse_search_results(
-        {"features": [feature]},
-        api=stac_api(),
-        facade_parameters=ESGFNG_CMIP7_FACADE_PARAMETERS,
-    )
-
-    assert document.id_project_specific == CMIP7_ROW.id_project_specific
-
-
-def test_cmip7_stac_bundle_id_of_an_id_with_no_version_is_left_alone():
-    """Only a real version token is dropped, so a bare `v` is not mistaken for one"""
-    feature = stac_feature(
-        ESGFNG_CMIP7_FACADE_PARAMETERS,
-        CMIP7_ROW,
-        f"{CMIP7_ROW.id_project_specific}.v",
-        project="CMIP7",
-    )
-
-    (document,) = ESGFNGCMIP7ResultParser(
-        read_n_matches=stac_east_n_matches
-    ).parse_search_results(
-        {"features": [feature]},
-        api=stac_api(),
-        facade_parameters=ESGFNG_CMIP7_FACADE_PARAMETERS,
-    )
-
-    assert document.id_project_specific == f"{CMIP7_ROW.id_project_specific}.v"
-
-
 def test_cmip6_stac_project_is_read_from_mip_era():
     """CMIP6 features have no `project` property, so `cmip6:mip_era` is the project"""
     feature = stac_feature(
         ESGFNG_CMIP6_FACADE_PARAMETERS,
         CMIP6_ROW,
         f"{CMIP6_ROW.id_project_specific}.v20200623",
-        base_id=CMIP6_ROW.id_project_specific,
+        title=CMIP6_ROW.id_project_specific,
         **{"cmip6:mip_era": "CMIP6"},
     )
 
@@ -282,6 +169,7 @@ def test_cmip7_stac_project_is_read_from_the_project_property():
         ESGFNG_CMIP7_FACADE_PARAMETERS,
         CMIP7_ROW,
         f"{CMIP7_ROW.id_project_specific}.v20200623",
+        title=CMIP7_ROW.id_project_specific,
         project="CMIP7",
     )
 
@@ -320,7 +208,7 @@ def test_a_stac_feature_with_no_project_raises(parser, parameters, feature, api_
         parameters,
         row,
         f"{row.id_project_specific}.v20200623",
-        base_id=row.id_project_specific,
+        title=row.id_project_specific,
     )
 
     with pytest.raises(

@@ -26,16 +26,6 @@ Where that is written can be an endpoint's own choice rather than the format's, 
 is why this is something a result parser is given rather than something it knows.
 """
 
-IdProjectSpecificReader = Callable[[dict[str, Any]], str]
-"""
-Reads the bundle id (see
-[`DatasetFacets.id_project_specific`][esmporium.search.result_parsing.DatasetFacets])
-out of one result document
-
-As with [NMatchesReader][(m).], where that is written can be an endpoint's own choice:
-one ESGF-NG deployment publishes it outright, the other does not.
-"""
-
 
 def get_single_value_columns_from_doc(
     doc: dict[str, Any],

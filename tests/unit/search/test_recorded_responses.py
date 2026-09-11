@@ -51,9 +51,7 @@ from esmporium.search import (
     SolrVariableBundleResultParser,
     build_transient_retrying,
     get_mapping_to_query_style_facet_names,
-    stac_base_id,
     stac_east_n_matches,
-    stac_id_without_version,
     stac_west_n_matches,
 )
 
@@ -149,7 +147,6 @@ RECORDED_CASES = (
             ESGFNG_CMIP6_FACADE_PARAMETERS,
             SearchAPIESGFNGSTAC,
             ESGFNGCMIP6ResultParser(
-                read_id_project_specific=stac_base_id,
                 read_n_matches=stac_east_n_matches,
             ),
         ),
@@ -161,7 +158,6 @@ RECORDED_CASES = (
             ESGFNG_CMIP6_FACADE_PARAMETERS,
             SearchAPIESGFNGSTAC,
             ESGFNGCMIP6ResultParser(
-                read_id_project_specific=stac_id_without_version,
                 read_n_matches=stac_west_n_matches,
             ),
         ),
