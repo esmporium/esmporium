@@ -16,7 +16,7 @@ from esmporium.search import (
     ESGFNG_CMIP6_FACADE_PARAMETERS,
     AllowedValues,
     CouldNotGetAllowedValuesError,
-    ESGFNGCMIP6ResultParser,
+    ESGFNGResultParser,
     FacetFinding,
     FindingKind,
     NoSourceWouldAnswerError,
@@ -649,7 +649,7 @@ def test_a_facet_the_apis_query_style_cannot_express_is_not_asked_about():
     api = SearchAPIFacade(
         parameters=ESGFNG_CMIP6_FACADE_PARAMETERS,
         search_api=SearchAPIESGFNGSTAC("stac.example", once()),
-        result_parser=ESGFNGCMIP6ResultParser(
+        result_parser=ESGFNGResultParser(
             read_n_matches=stac_east_n_matches,
         ),
     )

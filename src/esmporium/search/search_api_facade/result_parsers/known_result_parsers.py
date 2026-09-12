@@ -548,15 +548,9 @@ def stac_parsed_document(
 
 
 @dataclass(frozen=True)
-class ESGFNGCMIP6ResultParser:
+class ESGFNGResultParser:
     """
-    Read CMIP6 results from the ESGF-NG STAC API
-
-    Reading CMIP6 is not the same on both ESGF-NG deployments:
-
-    - east's features carry no `project` property at all, so the project is read from
-      `cmip6:mip_era`, which both deployments do carry
-      (this may be a temporary workaround, let's see if the APIs are updated)
+    Read results from the ESGF-NG STAC API
     """
 
     read_n_matches: NMatchesReader
@@ -610,9 +604,9 @@ class ESGFNGCMIP6ResultParser:
         """  # noqa: E501
         base = {
             "id_project_specific": self.get_id_project_specific(doc),
-            "project": _read_required_facet(
-                doc, api, "cmip6:mip_era", doc_id=doc["id"]
-            ),
+            # TODO: add something like NoSearchResultNumberOfMatchesReturnedError
+            # but for general API look ups
+            "project": doc["collection"],
         }
         row = _single_row(doc, api, facade_parameters, base=base)
 
@@ -632,93 +626,8 @@ class ESGFNGCMIP6ResultParser:
         :
             The bundle's native id
         """
-        res: str = feature["properties"]["title"]
-
-        return res
-
-
-@dataclass(frozen=True)
-class ESGFNGCMIP7ResultParser:
-    """
-    Read CMIP7 results from the ESGF-NG STAC API
-
-    The two differences from [ESGFNGCMIP6ResultParser][(m).] are exactly why the parsers
-    are split by project:
-
-    - the project is written as a plain `project` property
-    """
-
-    read_n_matches: NMatchesReader
-    """
-    Reads how many records matched a search out of one of this endpoint's responses
-
-    Deliberately has no default: east and west should answer the same way and do not
-    (see [stac_east_n_matches][(m).] and [stac_west_n_matches][(m).]), so whoever builds
-    a parser has to say which deployment it is for rather than getting a reader that
-    quietly tries every spelling. If the two ever agree, this can go and the count can
-    move back onto the search API, where a format-level concern belongs.
-    """
-
-    def get_n_matches(self, raw: dict[str, Any]) -> int:
-        """
-        See [ResultParserProtocol.get_n_matches][esmporium.search.search_api_facade.result_parsers.ResultParserProtocol.get_n_matches].
-        """  # noqa: E501
-        return self.read_n_matches(raw)
-
-    def parse_search_results(
-        self,
-        raw: dict[str, Any],
-        *,
-        api: SearchAPI,
-        facade_parameters: FacadeParametersProtocol,
-    ) -> tuple[ParsedDocument, ...]:
-        """
-        See [ResultParserProtocol.parse_search_results][esmporium.search.search_api_facade.result_parsers.ResultParserProtocol.parse_search_results].
-        """  # noqa: E501
-        return tuple(
-            stac_parsed_document(
-                feature,
-                api,
-                id_project_specific=self.get_id_project_specific(feature),
-                datasets=self.get_dataset_rows(
-                    feature, api=api, facade_parameters=facade_parameters
-                ),
-            )
-            for feature in api.extract_result_documents(raw)
-        )
-
-    def get_dataset_rows(
-        self,
-        doc: dict[str, Any],
-        *,
-        api: SearchAPI,
-        facade_parameters: FacadeParametersProtocol,
-    ) -> tuple[DatasetFacets, ...]:
-        """
-        See [ResultParserProtocol.get_dataset_rows][esmporium.search.search_api_facade.result_parsers.ResultParserProtocol.get_dataset_rows].
-        """  # noqa: E501
-        base = {
-            "id_project_specific": self.get_id_project_specific(doc),
-            "project": _read_required_facet(doc, api, "project", doc_id=doc["id"]),
-        }
-        row = _single_row(doc, api, facade_parameters, base=base)
-
-        return (row,)
-
-    def get_id_project_specific(self, feature: dict[str, Any]) -> str:
-        """
-        Read the project specific id of a CMIP7 STAC feature
-
-        Parameters
-        ----------
-        feature
-            The feature to read
-
-        Returns
-        -------
-        :
-            The bundle's native id, i.e. the feature id without its version token
-        """
+        # TODO: add something like NoSearchResultNumberOfMatchesReturnedError
+        # but for general API look ups
         res: str = feature["properties"]["title"]
 
         return res

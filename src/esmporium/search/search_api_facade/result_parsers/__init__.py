@@ -14,8 +14,7 @@ also leaves the search API classes speaking only for their response format
 """
 
 from esmporium.search.search_api_facade.result_parsers.known_result_parsers import (
-    ESGFNGCMIP6ResultParser,
-    ESGFNGCMIP7ResultParser,
+    ESGFNGResultParser,
     MissingResultFieldError,
     SolrSingleRowResultParser,
     SolrVariableBundleResultParser,
@@ -29,8 +28,7 @@ from esmporium.search.search_api_facade.result_parsers.protocol import (
 )
 
 __all__ = [
-    "ESGFNGCMIP6ResultParser",
-    "ESGFNGCMIP7ResultParser",
+    "ESGFNGResultParser",
     "MissingResultFieldError",
     "NMatchesReader",
     "ResultParserProtocol",

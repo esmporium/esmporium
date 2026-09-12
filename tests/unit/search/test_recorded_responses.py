@@ -41,8 +41,7 @@ from esmporium.search import (
     ESGFNG_CMIP6_FACADE_PARAMETERS,
     ESGFNG_CMIP7_FACADE_PARAMETERS,
     DatasetFacets,
-    ESGFNGCMIP6ResultParser,
-    ESGFNGCMIP7ResultParser,
+    ESGFNGResultParser,
     SearchAPIESGF1Solr,
     SearchAPIESGF15BridgeSolr,
     SearchAPIESGFNGSTAC,
@@ -146,7 +145,7 @@ RECORDED_CASES = (
         facade(
             ESGFNG_CMIP6_FACADE_PARAMETERS,
             SearchAPIESGFNGSTAC,
-            ESGFNGCMIP6ResultParser(
+            ESGFNGResultParser(
                 read_n_matches=stac_east_n_matches,
             ),
         ),
@@ -157,7 +156,7 @@ RECORDED_CASES = (
         facade(
             ESGFNG_CMIP6_FACADE_PARAMETERS,
             SearchAPIESGFNGSTAC,
-            ESGFNGCMIP6ResultParser(
+            ESGFNGResultParser(
                 read_n_matches=stac_west_n_matches,
             ),
         ),
@@ -168,7 +167,7 @@ RECORDED_CASES = (
         facade(
             ESGFNG_CMIP7_FACADE_PARAMETERS,
             SearchAPIESGFNGSTAC,
-            ESGFNGCMIP7ResultParser(read_n_matches=stac_east_n_matches),
+            ESGFNGResultParser(read_n_matches=stac_east_n_matches),
         ),
         id="esgf-ng-stac-cmip7-east",
     ),
@@ -177,7 +176,7 @@ RECORDED_CASES = (
         facade(
             ESGFNG_CMIP7_FACADE_PARAMETERS,
             SearchAPIESGFNGSTAC,
-            ESGFNGCMIP7ResultParser(read_n_matches=stac_west_n_matches),
+            ESGFNGResultParser(read_n_matches=stac_west_n_matches),
         ),
         id="esgf-ng-stac-cmip7-west",
     ),

@@ -61,8 +61,7 @@ from esmporium.search.search_api_facade.parameters import (
     identity_string,
 )
 from esmporium.search.search_api_facade.result_parsers import (
-    ESGFNGCMIP6ResultParser,
-    ESGFNGCMIP7ResultParser,
+    ESGFNGResultParser,
     MissingResultFieldError,
     NMatchesReader,
     ResultParserProtocol,
@@ -103,9 +102,8 @@ __all__ = [
     "ESGF1CMIP6ParametersQueryStyle",
     "ESGF1CMIP7ParametersQueryStyle",
     "ESGFNGCMIP6ParametersQueryStyle",
-    "ESGFNGCMIP6ResultParser",
     "ESGFNGCMIP7ParametersQueryStyle",
-    "ESGFNGCMIP7ResultParser",
+    "ESGFNGResultParser",
     "FacadeDefinition",
     "FacadeParametersProtocol",
     "MissingResultFieldError",
