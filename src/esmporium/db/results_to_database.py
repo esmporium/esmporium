@@ -4,7 +4,7 @@ Writing search results into the database
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
@@ -164,21 +164,49 @@ def build_result_processor(session: Session) -> ResultProcessor:
     return processor
 
 
+class _SurrogateKeyRow(Protocol):
+    """
+    A row whose surrogate `id` is assigned by the database when the row is flushed.
+    """
+
+    id: int | None
+
+
+def _flushed_id(row: _SurrogateKeyRow) -> int:
+    """
+    Get the database-assigned id of a row we have already flushed
+
+    Tables declare `id: int | None`, following sqlalchemy's convention.
+    However, in many cases, we need to make sure that we have an `int`, not `None`.
+    This helps us do that narrowing consistently.
+    """
+    if row.id is None:
+        msg = (
+            f"{type(row).__name__} has no id, so it was never flushed into the "
+            "session. Every row-creating helper here must flush before its id is used."
+        )
+        raise RuntimeError(msg)
+
+    return row.id
+
+
 def _ingest_document(session: Session, parsed: ParsedDocument) -> None:
     """Write one parsed document: its datasets, editions, nodes, raw doc and links."""
     datasets = [_get_or_create_dataset(session, facets) for facets in parsed.datasets]
     dataset_versions = [
-        _upsert_version(session, dataset.id, parsed) for dataset in datasets
+        _upsert_version(session, _flushed_id(dataset), parsed) for dataset in datasets
     ]
 
     nodes = [_get_or_create_node(session, node.data_node) for node in parsed.nodes]
     for version in dataset_versions:
         for node in nodes:
-            _get_or_create_version_node_link(session, version.id, node.id)
+            _get_or_create_version_node_link(
+                session, _flushed_id(version), _flushed_id(node)
+            )
 
     raw_doc = _get_or_create_raw_doc(session, parsed)
     for version in dataset_versions:
-        _get_or_create_link(session, raw_doc.id, version.id)
+        _get_or_create_link(session, _flushed_id(raw_doc), _flushed_id(version))
 
 
 def _get_or_create_dataset(session: Session, facets: DatasetFacets) -> Dataset:
@@ -206,7 +234,7 @@ def _get_or_create_dataset(session: Session, facets: DatasetFacets) -> Dataset:
 
 
 def _upsert_version(
-    session: Session, dataset_id: int | None, parsed: ParsedDocument
+    session: Session, dataset_id: int, parsed: ParsedDocument
 ) -> DatasetVersion:
     """Insert this dataset's edition, or refresh its snapshot flags if seen before."""
     existing = session.exec(
@@ -248,7 +276,7 @@ def _get_or_create_node(session: Session, data_node: str) -> DataNode:
 
 
 def _get_or_create_version_node_link(
-    session: Session, dataset_version_id: int | None, data_node_id: int | None
+    session: Session, dataset_version_id: int, data_node_id: int
 ) -> DatasetVersionDataNodeLink:
     """Link an edition to a data node, once."""
     existing = session.exec(
@@ -287,7 +315,7 @@ def _get_or_create_raw_doc(session: Session, parsed: ParsedDocument) -> DatasetR
 
 
 def _get_or_create_link(
-    session: Session, raw_doc_id: int | None, dataset_version_id: int | None
+    session: Session, raw_doc_id: int, dataset_version_id: int
 ) -> RawDocVersionLink:
     """Link a raw document to an edition, once."""
     existing = session.exec(
@@ -300,7 +328,8 @@ def _get_or_create_link(
         return existing
 
     link = RawDocVersionLink(
-        raw_doc_id=raw_doc_id, dataset_version_id=dataset_version_id
+        raw_doc_id=raw_doc_id,
+        dataset_version_id=dataset_version_id,
     )
     session.add(link)
     session.flush()

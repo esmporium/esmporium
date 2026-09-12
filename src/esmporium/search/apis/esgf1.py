@@ -129,7 +129,7 @@ def solr_extract_result_documents(raw: dict[str, Any]) -> list[dict[str, Any]]:
     if not isinstance(docs, list):
         raise NoSearchResultDocumentsError(raw, "response.docs")
 
-    res: list[dict[str, Any]] = list(docs)
+    res: list[dict[str, Any]] = list(docs)  # ty: ignore invalid-assignment
 
     return res
 
