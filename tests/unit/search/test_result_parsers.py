@@ -27,8 +27,7 @@ from esmporium.search import (
     ESGFNG_CMIP6_FACADE_PARAMETERS,
     ESGFNG_CMIP7_FACADE_PARAMETERS,
     DatasetFacets,
-    ESGFNGCMIP6ResultParser,
-    ESGFNGCMIP7ResultParser,
+    ESGFNGResultParser,
     MissingResultFieldError,
     MultipleFacetValuesError,
     NoSearchResultNumberOfMatchesReturnedError,
@@ -36,20 +35,25 @@ from esmporium.search import (
     SearchAPIESGFNGSTAC,
     SolrSingleRowResultParser,
     SolrVariableBundleResultParser,
+    UnreadableResponseError,
     build_transient_retrying,
     stac_east_n_matches,
     stac_west_n_matches,
 )
 
 
-def esgfng_cmip6_parser(east: bool = True) -> ESGFNGCMIP6ResultParser:
-    """A CMIP6 ESGF-NG parser for one deployment or the other"""
+def esgfng_parser(east: bool = True) -> ESGFNGResultParser:
+    """An ESGF-NG parser for one deployment or the other
+
+    One parser serves every project on this API: what differs between the
+    deployments is only where each writes its match count.
+    """
     if east:
-        return ESGFNGCMIP6ResultParser(
+        return ESGFNGResultParser(
             read_n_matches=stac_east_n_matches,
         )
 
-    return ESGFNGCMIP6ResultParser(
+    return ESGFNGResultParser(
         read_n_matches=stac_west_n_matches,
     )
 
@@ -123,11 +127,15 @@ def solr_doc(parameters, row: DatasetFacets, **overrides) -> dict:
     return {**doc, **overrides}
 
 
-def stac_feature(parameters, row: DatasetFacets, feature_id: str, **prop_overrides):
-    """Build a STAC feature which should parse back to `row`
-
-    The project is left to the caller: where it is written is the very thing the two
-    ESGF-NG parsers disagree about.
+def stac_feature(
+    parameters,
+    row: DatasetFacets,
+    feature_id: str,
+    collection: str | None = None,
+    **prop_overrides,
+):
+    """
+    Build a STAC feature which should parse back to `row`
     """
     props: dict = {
         "version": "20200623",
@@ -139,70 +147,44 @@ def stac_feature(parameters, row: DatasetFacets, feature_id: str, **prop_overrid
         if value is not None:
             props[api_field] = value
 
-    return {
+    res = {
         "id": feature_id,
         "properties": {**props, **prop_overrides},
         "assets": {"data": {"alternate:name": "node.example"}},
     }
+    if collection is not None:
+        res["collection"] = collection
+
+    return res
 
 
-def test_cmip6_stac_project_is_read_from_mip_era():
-    """CMIP6 features have no `project` property, so `cmip6:mip_era` is the project"""
+def test_stac_project_is_read_from_collection():
     feature = stac_feature(
         ESGFNG_CMIP6_FACADE_PARAMETERS,
         CMIP6_ROW,
         f"{CMIP6_ROW.id_project_specific}.v20200623",
         title=CMIP6_ROW.id_project_specific,
-        **{"cmip6:mip_era": "CMIP6"},
+        collection="CMIP6",
     )
 
-    (row,) = esgfng_cmip6_parser().get_dataset_rows(
+    (row,) = esgfng_parser().get_dataset_rows(
         feature, api=stac_api(), facade_parameters=ESGFNG_CMIP6_FACADE_PARAMETERS
     )
 
     assert row == CMIP6_ROW
 
 
-def test_cmip7_stac_project_is_read_from_the_project_property():
-    """CMIP7 features write the project plainly, so that is what is read"""
-    feature = stac_feature(
-        ESGFNG_CMIP7_FACADE_PARAMETERS,
-        CMIP7_ROW,
-        f"{CMIP7_ROW.id_project_specific}.v20200623",
-        title=CMIP7_ROW.id_project_specific,
-        project="CMIP7",
-    )
-
-    (row,) = ESGFNGCMIP7ResultParser(
-        read_n_matches=stac_east_n_matches
-    ).get_dataset_rows(
-        feature, api=stac_api(), facade_parameters=ESGFNG_CMIP7_FACADE_PARAMETERS
-    )
-
-    assert row == CMIP7_ROW
-
-
 @pytest.mark.parametrize(
-    "parser, parameters, feature, api_field",
+    "parameters, feature",
     (
-        pytest.param(
-            esgfng_cmip6_parser(),
-            ESGFNG_CMIP6_FACADE_PARAMETERS,
-            "cmip6",
-            "cmip6:mip_era",
-            id="cmip6-stac",
-        ),
-        pytest.param(
-            ESGFNGCMIP7ResultParser(read_n_matches=stac_east_n_matches),
-            ESGFNG_CMIP7_FACADE_PARAMETERS,
-            "cmip7",
-            "project",
-            id="cmip7-stac",
-        ),
+        pytest.param(ESGFNG_CMIP6_FACADE_PARAMETERS, "cmip6", id="cmip6-stac"),
+        pytest.param(ESGFNG_CMIP7_FACADE_PARAMETERS, "cmip7", id="cmip7-stac"),
     ),
 )
-def test_a_stac_feature_with_no_project_raises(parser, parameters, feature, api_field):
-    """A row we cannot say the project of is not one we can quietly store"""
+def test_a_stac_feature_with_no_project_raises(parameters, feature):
+    """
+    A row we cannot say the project of is not one we can quietly store
+    """
     row = CMIP6_ROW if feature == "cmip6" else CMIP7_ROW
     doc = stac_feature(
         parameters,
@@ -212,10 +194,39 @@ def test_a_stac_feature_with_no_project_raises(parser, parameters, feature, api_
     )
 
     with pytest.raises(
-        MissingResultFieldError,
-        match=re.escape(f"carries no value for {api_field!r}"),
+        UnreadableResponseError,
+        match=re.escape(
+            "This response does not carry the project this record belongs to. "
+            "We expected to read the project this record belongs to from "
+            "'collection', but 'collection' is not in the response's top level, "
+            "there is only: 'assets', 'id', 'properties'. This response came from "
+            "SearchAPIESGFNGSTAC at https://search.example.io."
+        ),
     ):
-        parser.get_dataset_rows(doc, api=stac_api(), facade_parameters=parameters)
+        esgfng_parser().get_dataset_rows(
+            doc, api=stac_api(), facade_parameters=parameters
+        )
+
+
+def test_a_stac_feature_with_no_title_raises():
+    doc = stac_feature(
+        ESGFNG_CMIP6_FACADE_PARAMETERS,
+        CMIP6_ROW,
+        f"{CMIP6_ROW.id_project_specific}.v20200623",
+        collection="CMIP6",
+    )
+
+    with pytest.raises(
+        UnreadableResponseError,
+        match=re.escape(
+            "This response does not carry the project specific id. "
+            "We expected to read the project specific id from 'properties.title', "
+            "but 'title' is not in 'properties', there is only: "
+        ),
+    ):
+        esgfng_parser().get_dataset_rows(
+            doc, api=stac_api(), facade_parameters=ESGFNG_CMIP6_FACADE_PARAMETERS
+        )
 
 
 def test_a_solr_record_with_no_project_raises():
@@ -464,17 +475,10 @@ def test_stac_n_matches_with_no_count_raises(read_n_matches, raw, exp):
         read_n_matches(raw)
 
 
-@pytest.mark.parametrize(
-    "parser",
-    (
-        pytest.param(esgfng_cmip6_parser(east=False), id="cmip6"),
-        pytest.param(
-            ESGFNGCMIP7ResultParser(read_n_matches=stac_west_n_matches), id="cmip7"
-        ),
-    ),
-)
-def test_a_stac_parser_reads_the_count_with_the_reader_it_was_given(parser):
-    """Whichever project it parses, the parser counts the way its deployment does"""
+def test_a_stac_parser_reads_the_count_with_the_reader_it_was_given():
+    """The parser counts the way its deployment does, not the way STAC says to"""
+    parser = esgfng_parser(east=False)
+
     assert parser.get_n_matches({"numMatched": 7, "features": []}) == 7
 
     with pytest.raises(NoSearchResultNumberOfMatchesReturnedError):

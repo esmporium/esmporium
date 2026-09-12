@@ -34,7 +34,7 @@ from esmporium.search import (
     STAC_FORMAT_TAG,
     DataNodeInfo,
     DatasetFacets,
-    ESGFNGCMIP7ResultParser,
+    ESGFNGResultParser,
     ParsedDocument,
     SearchAPIESGF1Solr,
     SearchAPIESGFNGSTAC,
@@ -192,7 +192,7 @@ def test_ingest_stac_cmip7_writes_one_dataset_per_document(engine):
     facade = _facade(
         ESGFNG_CMIP7_FACADE_PARAMETERS,
         SearchAPIESGFNGSTAC,
-        ESGFNGCMIP7ResultParser(read_n_matches=stac_east_n_matches),
+        ESGFNGResultParser(read_n_matches=stac_east_n_matches),
     )
     documents = facade.parse_search_results(_load("esgf-ng-stac-cmip7-east-search"))
 
@@ -217,7 +217,7 @@ def test_ingest_stamps_each_raw_doc_with_its_raw_docs_format_tag(engine):
     stac = _facade(
         ESGFNG_CMIP7_FACADE_PARAMETERS,
         SearchAPIESGFNGSTAC,
-        ESGFNGCMIP7ResultParser(read_n_matches=stac_east_n_matches),
+        ESGFNGResultParser(read_n_matches=stac_east_n_matches),
     )
 
     with Session(engine) as session:

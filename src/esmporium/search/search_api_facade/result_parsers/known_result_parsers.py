@@ -12,6 +12,8 @@ from esmporium.search.apis.esgf1 import extract_one_element_list
 from esmporium.search.apis.esgfng import stac_nodes
 from esmporium.search.apis.protocol import (
     NoSearchResultNumberOfMatchesReturnedError,
+    describe_search_api,
+    read_response_path,
 )
 from esmporium.search.result_parsing import (
     DataNodeInfo,
@@ -269,7 +271,7 @@ def stac_west_n_matches(raw: dict[str, Any]) -> int:
     )
 
 
-def solr_id_project_specific(doc: dict[str, Any]) -> str:
+def solr_id_project_specific(doc: dict[str, Any], api: SearchAPI) -> str:
     """
     Read the bundle id of a Solr record
 
@@ -278,12 +280,26 @@ def solr_id_project_specific(doc: dict[str, Any]) -> str:
     doc
         The record to read
 
+    api
+        The search API the record came from
+
+        Only used to say who answered if the id is not there.
+
     Returns
     -------
     :
         The bundle's native id
+
+    Raises
+    ------
+    UnreadableResponseError
+        `doc` does not carry a bundle id
     """
-    res: str = extract_one_element_list(doc["master_id"])
+    res: str = extract_one_element_list(
+        read_response_path(
+            doc, "master_id", what="the bundle id", context=describe_search_api(api)
+        )
+    )
 
     return res
 
@@ -309,15 +325,31 @@ def solr_parsed_document(
     -------
     :
         The pieces of `doc` that we store
+
+    Raises
+    ------
+    UnreadableResponseError
+        `doc` does not carry one of the fields every record has to have
     """
+
+    def read(path: str, what: str) -> Any:
+        """Read one of the fields we cannot build a `ParsedDocument` without"""
+        return extract_one_element_list(
+            read_response_path(doc, path, what=what, context=describe_search_api(api))
+        )
+
     return ParsedDocument(
-        id_project_specific=solr_id_project_specific(doc),
+        id_project_specific=solr_id_project_specific(doc, api),
         datasets=datasets,
-        version=str(extract_one_element_list(doc["version"])),
-        is_latest=bool(extract_one_element_list(doc["latest"])),
-        retracted=bool(extract_one_element_list(doc["retracted"])),
-        nodes=(DataNodeInfo(data_node=extract_one_element_list(doc["data_node"])),),
-        esgf_doc_id=extract_one_element_list(doc["id"]),
+        version=str(read("version", "the version of this record")),
+        is_latest=bool(read("latest", "whether this is the latest version")),
+        retracted=bool(read("retracted", "whether this record is retracted")),
+        nodes=(
+            DataNodeInfo(
+                data_node=read("data_node", "the data node hosting this record")
+            ),
+        ),
+        esgf_doc_id=read("id", "this record's id"),
         raw_json=json.dumps(doc),
         raw_docs_format_tag=api.raw_docs_format_tag,
     )
@@ -353,7 +385,7 @@ def solr_base_columns(
     MissingResultFieldError
         `doc` does not say which project it belongs to
     """
-    id_project_specific = solr_id_project_specific(doc)
+    id_project_specific = solr_id_project_specific(doc, api)
     # Solr carries the project as a facet like any other,
     # so its name comes from the same mapping as every other column's.
     project_field = facade_parameters.get_mapping_to_api_facet_names({"project"})[
@@ -531,32 +563,36 @@ def stac_parsed_document(
     -------
     :
         Parsed document
+
+    Raises
+    ------
+    UnreadableResponseError
+        `feature` does not carry one of the fields every feature has to have
     """
-    props: dict[str, Any] = feature["properties"]
+
+    def read(path: str, what: str) -> Any:
+        """Read one of the fields we cannot build a `ParsedDocument` without"""
+        return read_response_path(
+            feature, path, what=what, context=describe_search_api(api)
+        )
 
     return ParsedDocument(
         id_project_specific=id_project_specific,
         datasets=datasets,
-        version=props["version"],
-        is_latest=props["latest"],
-        retracted=props["retracted"],
-        nodes=stac_nodes(feature),
-        esgf_doc_id=feature["id"],
+        version=read("properties.version", "the version of this record"),
+        is_latest=read("properties.latest", "whether this is the latest version"),
+        retracted=read("properties.retracted", "whether this record is retracted"),
+        nodes=stac_nodes(feature, api=api),
+        esgf_doc_id=read("id", "this record's id"),
         raw_json=json.dumps(feature),
         raw_docs_format_tag=api.raw_docs_format_tag,
     )
 
 
 @dataclass(frozen=True)
-class ESGFNGCMIP6ResultParser:
+class ESGFNGResultParser:
     """
-    Read CMIP6 results from the ESGF-NG STAC API
-
-    Reading CMIP6 is not the same on both ESGF-NG deployments:
-
-    - east's features carry no `project` property at all, so the project is read from
-      `cmip6:mip_era`, which both deployments do carry
-      (this may be a temporary workaround, let's see if the APIs are updated)
+    Read results from the ESGF-NG STAC API
     """
 
     read_n_matches: NMatchesReader
@@ -590,7 +626,7 @@ class ESGFNGCMIP6ResultParser:
             stac_parsed_document(
                 feature,
                 api,
-                id_project_specific=self.get_id_project_specific(feature),
+                id_project_specific=self.get_id_project_specific(feature, api),
                 datasets=self.get_dataset_rows(
                     feature, api=api, facade_parameters=facade_parameters
                 ),
@@ -607,118 +643,53 @@ class ESGFNGCMIP6ResultParser:
     ) -> tuple[DatasetFacets, ...]:
         """
         See [ResultParserProtocol.get_dataset_rows][esmporium.search.search_api_facade.result_parsers.ResultParserProtocol.get_dataset_rows].
+
+        The project is read from the feature's `collection` key,
+        following the advice given in
+        [esgf-roadmap#203](https://github.com/ESGF/esgf-roadmap/issues/203#issuecomment-5631161411).
         """  # noqa: E501
         base = {
-            "id_project_specific": self.get_id_project_specific(doc),
-            "project": _read_required_facet(
-                doc, api, "cmip6:mip_era", doc_id=doc["id"]
+            "id_project_specific": self.get_id_project_specific(doc, api),
+            "project": read_response_path(
+                doc,
+                "collection",
+                what="the project this record belongs to",
+                context=describe_search_api(api),
             ),
         }
         row = _single_row(doc, api, facade_parameters, base=base)
 
         return (row,)
 
-    def get_id_project_specific(self, feature: dict[str, Any]) -> str:
+    def get_id_project_specific(self, feature: dict[str, Any], api: SearchAPI) -> str:
         """
-        Read the project specific id of a CMIP6 STAC feature
+        Read the project specific id of a STAC feature
 
         Parameters
         ----------
         feature
             The feature to read
 
-        Returns
-        -------
-        :
-            The bundle's native id
-        """
-        res: str = feature["properties"]["title"]
+        api
+            The search API the feature came from
 
-        return res
-
-
-@dataclass(frozen=True)
-class ESGFNGCMIP7ResultParser:
-    """
-    Read CMIP7 results from the ESGF-NG STAC API
-
-    The two differences from [ESGFNGCMIP6ResultParser][(m).] are exactly why the parsers
-    are split by project:
-
-    - the project is written as a plain `project` property
-    """
-
-    read_n_matches: NMatchesReader
-    """
-    Reads how many records matched a search out of one of this endpoint's responses
-
-    Deliberately has no default: east and west should answer the same way and do not
-    (see [stac_east_n_matches][(m).] and [stac_west_n_matches][(m).]), so whoever builds
-    a parser has to say which deployment it is for rather than getting a reader that
-    quietly tries every spelling. If the two ever agree, this can go and the count can
-    move back onto the search API, where a format-level concern belongs.
-    """
-
-    def get_n_matches(self, raw: dict[str, Any]) -> int:
-        """
-        See [ResultParserProtocol.get_n_matches][esmporium.search.search_api_facade.result_parsers.ResultParserProtocol.get_n_matches].
-        """  # noqa: E501
-        return self.read_n_matches(raw)
-
-    def parse_search_results(
-        self,
-        raw: dict[str, Any],
-        *,
-        api: SearchAPI,
-        facade_parameters: FacadeParametersProtocol,
-    ) -> tuple[ParsedDocument, ...]:
-        """
-        See [ResultParserProtocol.parse_search_results][esmporium.search.search_api_facade.result_parsers.ResultParserProtocol.parse_search_results].
-        """  # noqa: E501
-        return tuple(
-            stac_parsed_document(
-                feature,
-                api,
-                id_project_specific=self.get_id_project_specific(feature),
-                datasets=self.get_dataset_rows(
-                    feature, api=api, facade_parameters=facade_parameters
-                ),
-            )
-            for feature in api.extract_result_documents(raw)
-        )
-
-    def get_dataset_rows(
-        self,
-        doc: dict[str, Any],
-        *,
-        api: SearchAPI,
-        facade_parameters: FacadeParametersProtocol,
-    ) -> tuple[DatasetFacets, ...]:
-        """
-        See [ResultParserProtocol.get_dataset_rows][esmporium.search.search_api_facade.result_parsers.ResultParserProtocol.get_dataset_rows].
-        """  # noqa: E501
-        base = {
-            "id_project_specific": self.get_id_project_specific(doc),
-            "project": _read_required_facet(doc, api, "project", doc_id=doc["id"]),
-        }
-        row = _single_row(doc, api, facade_parameters, base=base)
-
-        return (row,)
-
-    def get_id_project_specific(self, feature: dict[str, Any]) -> str:
-        """
-        Read the project specific id of a CMIP7 STAC feature
-
-        Parameters
-        ----------
-        feature
-            The feature to read
+            Only used to say who answered if the id is not there.
 
         Returns
         -------
         :
             The bundle's native id, i.e. the feature id without its version token
+
+        Raises
+        ------
+        UnreadableResponseError
+            `feature` does not carry a project specific id
         """
-        res: str = feature["properties"]["title"]
+        res: str = read_response_path(
+            feature,
+            "properties.title",
+            what="the project specific id",
+            context=describe_search_api(api),
+        )
 
         return res

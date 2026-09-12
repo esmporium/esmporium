@@ -69,13 +69,21 @@ def solr_facet_values(raw: dict[str, Any], facets: set[str]) -> dict[str, set[st
     NoFacetValuesReturnedError
         `raw` enumerates nothing at all
     """
-    fields = raw.get("facet_counts", {}).get("facet_fields", {})
-    if not fields:
+    facet_counts = raw.get("facet_counts")
+    fields = (
+        facet_counts.get("facet_fields") if isinstance(facet_counts, Mapping) else None
+    )
+    if not fields or not isinstance(fields, Mapping):
         raise NoFacetValuesReturnedError(raw, "facet_counts.facet_fields")
 
     res: dict[str, set[str]] = {}
     for api_name, flat in fields.items():
         if api_name in facets:
+            if not isinstance(flat, list):
+                raise NoFacetValuesReturnedError(
+                    raw, f"facet_counts.facet_fields.{api_name}"
+                )
+
             # Parse the API's funny list into the facet values
             res[api_name] = set(flat[0::2])
 
@@ -117,9 +125,13 @@ def solr_extract_result_documents(raw: dict[str, Any]) -> list[dict[str, Any]]:
     if not isinstance(response, dict) or "docs" not in response:
         raise NoSearchResultDocumentsError(raw, "response.docs")
 
-    docs: list[dict[str, Any]] = response["docs"]
+    docs = response["docs"]
+    if not isinstance(docs, list):
+        raise NoSearchResultDocumentsError(raw, "response.docs")
 
-    return list(docs)
+    res: list[dict[str, Any]] = list(docs)  # ty: ignore invalid-assignment
+
+    return res
 
 
 def solr_read_facet_list_as_strings(

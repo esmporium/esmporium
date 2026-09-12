@@ -22,7 +22,7 @@ from esmporium.query import QueryCMIP6, to_canonical
 from esmporium.search import (
     ESGF1_CMIP6_FACADE_PARAMETERS,
     ESGFNG_CMIP6_FACADE_PARAMETERS,
-    ESGFNGCMIP6ResultParser,
+    ESGFNGResultParser,
     NoAPIWouldAnswerError,
     SearchAPIESGF1Solr,
     SearchAPIESGFNGSTAC,
@@ -81,7 +81,7 @@ def make_cmip6_facade(host, *, stac=False, attempts=1) -> SearchAPIFacade:
         return SearchAPIFacade(
             parameters=ESGFNG_CMIP6_FACADE_PARAMETERS,
             search_api=SearchAPIESGFNGSTAC(host, fast_retrying(attempts)),
-            result_parser=ESGFNGCMIP6ResultParser(
+            result_parser=ESGFNGResultParser(
                 read_n_matches=stac_east_n_matches,
             ),
         )

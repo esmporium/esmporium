@@ -16,7 +16,8 @@ from esmporium.search import (
     ESGFNG_CMIP6_FACADE_PARAMETERS,
     AllowedValues,
     CouldNotGetAllowedValuesError,
-    ESGFNGCMIP6ResultParser,
+    CouldNotUseAllowedValuesError,
+    ESGFNGResultParser,
     FacetFinding,
     FindingKind,
     NoSourceWouldAnswerError,
@@ -227,6 +228,30 @@ def test_a_node_which_never_answers_raises():
         allowed_values_from_api(
             solr_api("down.example"), refuses, canonical, {"experiment"}
         )
+
+
+def test_a_node_which_answers_unreadably_refuses_rather_than_exploding():
+    """
+    An answer we cannot read is this source refusing, not the whole check failing
+
+    The caller pools several sources
+    so one of them replying with a body we do not understand
+    has to come back as that source's refusal.
+    It should not crash the checking of other index nodes.
+    """
+    canonical = canonical_cmip6(experiment_id="historical")
+    # A 200 whose body says nothing about facets at all.
+    odd = client_for(lambda request: httpx.Response(200, json={"unexpected": "shape"}))
+
+    with pytest.raises(
+        CouldNotUseAllowedValuesError,
+        match=re.escape("answered our request for facet values"),
+    ) as excinfo:
+        allowed_values_from_api(solr_api("odd.example"), odd, canonical, {"experiment"})
+
+    # It is still a refusal, so the caller which pools refusals keeps working.
+    assert isinstance(excinfo.value, CouldNotGetAllowedValuesError)
+    assert "We asked: https://odd.example" in str(excinfo.value)
 
 
 # A variant_label pattern of the shape the STAC collection summaries really carry:
@@ -649,7 +674,7 @@ def test_a_facet_the_apis_query_style_cannot_express_is_not_asked_about():
     api = SearchAPIFacade(
         parameters=ESGFNG_CMIP6_FACADE_PARAMETERS,
         search_api=SearchAPIESGFNGSTAC("stac.example", once()),
-        result_parser=ESGFNGCMIP6ResultParser(
+        result_parser=ESGFNGResultParser(
             read_n_matches=stac_east_n_matches,
         ),
     )

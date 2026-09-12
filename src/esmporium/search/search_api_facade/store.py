@@ -26,8 +26,7 @@ from esmporium.search.search_api_facade.parameters import (
     FacadeParametersProtocol,
 )
 from esmporium.search.search_api_facade.result_parsers import (
-    ESGFNGCMIP6ResultParser,
-    ESGFNGCMIP7ResultParser,
+    ESGFNGResultParser,
     ResultParserProtocol,
     SolrSingleRowResultParser,
     SolrVariableBundleResultParser,
@@ -126,6 +125,10 @@ def get_default_facade_definition(project: str, host: str) -> FacadeDefinition: 
     esgfng_east_hosts = ("search.east.esgf.io",)
     esgfng_west_hosts = ("search.west.esgf.io",)
 
+    # Have to declare these here, so that mypy doesn't complain later on.
+    facade_parameters: FacadeParametersProtocol
+    result_parser: ResultParserProtocol
+    search_api_type: SearchAPIBuilder
     if project == "CMIP5":
         if host in solr_esgf1_hosts:
             facade_parameters = ESGF1_CMIP5_FACADE_PARAMETERS
@@ -156,22 +159,21 @@ def get_default_facade_definition(project: str, host: str) -> FacadeDefinition: 
 
         elif host in esgfng_east_hosts:
             facade_parameters = ESGFNG_CMIP6_FACADE_PARAMETERS
-            result_parser = ESGFNGCMIP6ResultParser(
+            result_parser = ESGFNGResultParser(
                 read_n_matches=stac_east_n_matches,
             )
             search_api_type = SearchAPIESGFNGSTAC
 
         elif host in esgfng_west_hosts:
             facade_parameters = ESGFNG_CMIP6_FACADE_PARAMETERS
-            result_parser = ESGFNGCMIP6ResultParser(
+            result_parser = ESGFNGResultParser(
                 read_n_matches=stac_west_n_matches,
             )
             search_api_type = SearchAPIESGFNGSTAC
 
         else:
-            # STAC serves no CMIP5 data, and we do not know the shape of a
-            # CMIP5 STAC document, so there is deliberately no CMIP5 STAC
-            # facade (and no CMIP5 STAC result parser to guess at its shape).
+            # We have no facade for this project on this host: we do not know
+            # which search API it speaks, so there is nothing to guess with.
             raise NotImplementedError(f"{project} {host}")
 
     elif project == "CMIP7":
@@ -187,22 +189,21 @@ def get_default_facade_definition(project: str, host: str) -> FacadeDefinition: 
 
         elif host in esgfng_east_hosts:
             facade_parameters = ESGFNG_CMIP7_FACADE_PARAMETERS
-            result_parser = ESGFNGCMIP7ResultParser(
+            result_parser = ESGFNGResultParser(
                 read_n_matches=stac_east_n_matches,
             )
             search_api_type = SearchAPIESGFNGSTAC
 
         elif host in esgfng_west_hosts:
             facade_parameters = ESGFNG_CMIP7_FACADE_PARAMETERS
-            result_parser = ESGFNGCMIP7ResultParser(
+            result_parser = ESGFNGResultParser(
                 read_n_matches=stac_west_n_matches,
             )
             search_api_type = SearchAPIESGFNGSTAC
 
         else:
-            # STAC serves no CMIP5 data, and we do not know the shape of a
-            # CMIP5 STAC document, so there is deliberately no CMIP5 STAC
-            # facade (and no CMIP5 STAC result parser to guess at its shape).
+            # We have no facade for this project on this host: we do not know
+            # which search API it speaks, so there is nothing to guess with.
             raise NotImplementedError(f"{project} {host}")
 
     else:
