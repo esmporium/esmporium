@@ -125,6 +125,10 @@ def get_default_facade_definition(project: str, host: str) -> FacadeDefinition: 
     esgfng_east_hosts = ("search.east.esgf.io",)
     esgfng_west_hosts = ("search.west.esgf.io",)
 
+    # Have to declare these here, so that mypy doesn't complain later on.
+    facade_parameters: FacadeParametersProtocol
+    result_parser: ResultParserProtocol
+    search_api_type: SearchAPIBuilder
     if project == "CMIP5":
         if host in solr_esgf1_hosts:
             facade_parameters = ESGF1_CMIP5_FACADE_PARAMETERS
