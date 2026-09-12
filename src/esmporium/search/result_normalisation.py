@@ -29,6 +29,8 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import Any, TypeAlias
 
+from esmporium.search.apis.protocol import UnreadableResponseError
+
 SOLR_FORMAT_TAG = "solr"
 """The `raw_docs_format_tag` of our Solr search APIs (ESGF1 and the ESGF-1.5 bridge)."""
 
@@ -37,6 +39,40 @@ STAC_FORMAT_TAG = "stac"
 
 NormaliseFunc = Callable[[dict[str, Any]], dict[str, Any]]
 """Flattens one raw document into `{facet_name: value}`. Keyed by `raw_docs_format_tag`."""  # noqa: E501
+
+
+def _unreadable_stored_document(
+    raw: Any, path: str, what: str
+) -> UnreadableResponseError:
+    """
+    Build the error for a stored document we cannot read
+
+    Parameters
+    ----------
+    raw
+        The stored document we could not read
+
+    path
+        Where in `raw` we looked, as a dot-separated path
+
+    what
+        What we were trying to read
+
+    Returns
+    -------
+    :
+        The error to raise
+    """
+    lead = "This stored raw document is not shaped the way its format tag says it is."
+    return UnreadableResponseError(
+        # A document which is not a mapping cannot be reported on as one, so it is
+        # wrapped in order to be shown at all.
+        dict(raw) if isinstance(raw, Mapping) else {"document": raw},
+        path,
+        what=what,
+        lead=lead,
+    )
+
 
 NormalisedDocument: TypeAlias = dict[str, Any]
 """
@@ -70,7 +106,18 @@ def _normalise_solr(raw: dict[str, Any]) -> dict[str, Any]:
     -------
     :
         The document's facet names with values mapped to scalar (or list)
+
+    Raises
+    ------
+    UnreadableResponseError
+        `raw` is not keyed by facet name at all,
+        so there is nothing here to flatten
     """
+    if not isinstance(raw, Mapping):
+        raise _unreadable_stored_document(
+            raw, "document", "the facets of this document"
+        )
+
     return {
         key: value[0] if isinstance(value, list) and len(value) == 1 else value
         for key, value in raw.items()
@@ -103,7 +150,16 @@ def _normalise_stac(raw: dict[str, Any]) -> dict[str, Any]:
         The feature's facets as a flat mapping of unprefixed name to scalar (or list)
         value
     """
-    properties = raw.get("properties", {})
+    # A stored feature with no `properties` at all has no facets.
+    # This is a different thing from a feature whose `properties` is not a mapping.
+    # The first is an empty document,
+    # the second (`properties` is not a mapping) is one we cannot read.
+    properties = raw.get("properties", {}) if isinstance(raw, Mapping) else None
+    if not isinstance(properties, Mapping):
+        raise _unreadable_stored_document(
+            raw, "properties", "the facets of this document"
+        )
+
     flat: dict[str, Any] = {}
     for key, value in properties.items():
         name = key.split(":", 1)[1] if ":" in key else key  # drop any `cmipN:` prefix

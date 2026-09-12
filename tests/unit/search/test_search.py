@@ -21,6 +21,7 @@ from esmporium.query import QueryCMIP6
 from esmporium.search import (
     ESGF1_CMIP6_FACADE_PARAMETERS,
     ESGFNG_CMIP6_FACADE_PARAMETERS,
+    CouldNotUseSearchResultsError,
     ESGFNGResultParser,
     NoAPIWouldAnswerError,
     SearchAPIESGF1Solr,
@@ -271,6 +272,64 @@ def test_search_skips_a_node_that_does_not_answer():
     # The node which was passed over is kept, with what it said.
     assert set(outcome.refusals) == {"host-a"}
     assert "host-a" in str(outcome.refusals["host-a"])
+
+
+def test_search_skips_a_node_whose_answer_we_cannot_read():
+    """
+    A node answering in a shape we do not understand must not sink the search
+
+    This is the whole point of parsing per host: `host-a` replies 200 with a
+    document that carries no `master_id`, which is a real answer we simply cannot
+    read. `host-b`'s perfectly good answer has to survive that.
+    """
+
+    def handler(request):
+        if request.url.host == "host-a":
+            # A 200, with a document missing a field every Solr record has.
+            return httpx.Response(
+                200,
+                json={"response": {"numFound": 1, "docs": [{"id": ["no-master-id"]}]}},
+            )
+
+        return solr_response(4)
+
+    selector = build_list_selector(
+        [make_facade_cmip6_esgf1("host-a"), make_facade_cmip6_esgf1("host-b")]
+    )
+
+    outcome = search(
+        QUERY_CMIP6, selector, client=client_for(handler), stop_at_first_result=False
+    )
+
+    assert list(outcome.datasets) == ["host-b"]
+    assert outcome.n_matches["host-b"] == 4
+
+    refusal = outcome.refusals["host-a"]
+    assert isinstance(refusal, CouldNotUseSearchResultsError)
+    # The refusal says the host answered, says what we could not read in it,
+    # and says what to send again to see it for yourself.
+    assert "answered our search request with something we could not read" in str(
+        refusal
+    )
+    assert "the bundle id" in str(refusal)
+    assert "We asked: https://host-a/esg-search/search." in str(refusal)
+
+
+def test_search_raises_when_no_node_answers_readably():
+    """Every node refusing is still every node refusing, however they refused"""
+
+    def handler(request):
+        return httpx.Response(
+            200, json={"response": {"numFound": 1, "docs": [{"id": ["no-master-id"]}]}}
+        )
+
+    selector = build_list_selector([make_facade_cmip6_esgf1("host-a")])
+
+    with pytest.raises(
+        NoAPIWouldAnswerError,
+        match="host-a answered our search request with something we could not read",
+    ):
+        search(QUERY_CMIP6, selector, client=client_for(handler))
 
 
 def test_search_with_no_endpoint_to_try_raises():

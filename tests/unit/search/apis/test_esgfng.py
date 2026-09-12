@@ -23,6 +23,7 @@ from esmporium.search.apis import (
     NoSearchResultDocumentsError,
     SearchAPIESGFNGSTAC,
     UncompilableFacetPatternError,
+    UnreadableResponseError,
 )
 from esmporium.search.apis.esgfng import stac_nodes
 from esmporium.search.result_parsing import DataNodeInfo
@@ -116,7 +117,17 @@ def test_read_facet_list_reads_a_features_properties():
 
 def test_read_facet_list_of_a_feature_with_no_properties_raises():
     """A feature with no `properties` is one we cannot read at all"""
-    with pytest.raises(KeyError, match="properties"):
+    with pytest.raises(
+        UnreadableResponseError,
+        match=re.escape(
+            "This response does not carry the facets of this record "
+            "('cmip6:variable_id' in particular). We expected to read the facets "
+            "of this record ('cmip6:variable_id' in particular) from "
+            "'properties', but 'properties' is not in the response's top level, "
+            "there is only: 'id'. This response came from SearchAPIESGFNGSTAC at "
+            "https://search.example.io."
+        ),
+    ):
         api().read_facet_list({"id": "a"}, "cmip6:variable_id")
 
 
@@ -159,7 +170,8 @@ def test_nodes_reads_the_distinct_hosts_of_a_features_assets():
             },
             "two.nc": {"alternate:name": "ceda.ac.uk"},
             "three.nc": {"alternate:name": "esgf.nci.org.au"},
-        }
+        },
+        "id": "feature.id.v20220508",
     }
 
     assert stac_nodes(feature) == (
@@ -174,9 +186,26 @@ def test_nodes_of_an_asset_which_does_not_say_where_it_is_hosted_raises():
     Quietly dropping the node would leave us reporting a dataset as available from
     fewer places than it really is.
     """
-    feature = {"assets": {"one.nc": {"href": "https://dap.ceda.ac.uk"}}}
+    feature = {
+        "assets": {"one.nc": {"href": "https://dap.ceda.ac.uk"}},
+        "id": "feature_id",
+    }
 
-    with pytest.raises(KeyError, match="alternate:name"):
+    # Asset names are filenames, so they carry dots:
+    # the message has to name the asset
+    # without pretending its name is a path we walked down.
+    with pytest.raises(
+        UnreadableResponseError,
+        match=re.escape(
+            "In the following, `response` refers to the ['assets']['one.nc'] path "
+            "in the API response's 'feature_id' feature. "
+            "The information provided for the 'one.nc' asset of 'feature_id' "
+            "does not specify the data node.  "
+            "We expected to read the data node from 'alternate:name', "
+            "but 'alternate:name' is not in the response's top level, "
+            "there is only: 'href'. "
+        ),
+    ):
         stac_nodes(feature)
 
 

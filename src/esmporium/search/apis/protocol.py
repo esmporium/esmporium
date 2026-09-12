@@ -134,6 +134,188 @@ def _explain_why_we_could_not_read(
     return f"but: {'; '.join(explanations)}."
 
 
+class UnreadableResponseError(ValueError):
+    """
+    Raised when we cannot read a value we need out of a search API's response
+
+    This is the general case of
+    "we looked somewhere in a response and it was not there".
+    Reading a response is guesswork about someone else's format,
+    so the message says all four things a reader needs:
+    what we wanted, where we looked, what was there instead, and where to report it.
+
+    Prefer this to a bare `KeyError`.
+    A `KeyError` names one key and nothing else,
+    which tells whoever hits it neither which API answered nor what the API did send.
+
+    Subclasses exist for the cases we hit often enough to name.
+    """
+
+    def __init__(
+        self,
+        raw: dict[str, Any],
+        expected_at: str | tuple[str, ...],
+        *,
+        what: str,
+        lead: str | None = None,
+        context: str | None = None,
+    ) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        raw
+            The response we could not read the value out of
+
+        expected_at
+            Where in `raw` we looked, each one a dot-separated path
+
+            Some APIs write a value in more than one place,
+            in which case pass every path we looked at
+            and the error will report on all of them.
+
+        what
+            What we were trying to read, e.g. `"the bundle id"`
+
+            This is written to follow on from "We expected to read ",
+            so phrase it as a noun.
+
+        lead
+            The opening sentence, if the default does not fit
+
+            The default says "This response does not carry `what`."
+            Pass this to say it differently,
+            e.g. for something that is not a live response.
+
+        context
+            Anything else which helps whoever reads this reproduce it,
+            e.g. which API answered and the URL we asked
+
+            Pass it wherever it is cheaply to hand;
+            it is what turns a bug report into one we can act on.
+            Written as its own sentence(s), so punctuate it as such.
+        """
+        self.raw = raw
+        self.expected_at = (
+            (expected_at,) if isinstance(expected_at, str) else expected_at
+        )
+        self.what = what
+        self.context = context
+
+        super().__init__(
+            f"{lead if lead is not None else f'This response does not carry {what}.'} "
+            f"We expected to read {what} from "
+            f"{_describe_where_we_looked(self.expected_at)}, "
+            f"{_explain_why_we_could_not_read(raw, self.expected_at)}"
+            f"{f' {context}' if context else ''} "
+            # Every one of these ends with how to report it.
+            # A response we do not understand is either an API that has changed
+            # or an assumption of ours that was never right,
+            # so we need to go and check.
+            "If the API really has changed shape, this is a bug in esmporium: "
+            "please raise an issue at "
+            "https://github.com/esmporium/esmporium/issues "
+            "quoting the message above."
+        )
+
+
+def read_response_path(
+    raw: Mapping[str, Any],
+    path: str,
+    *,
+    what: str,
+    lead: str | None = None,
+    context: str | None = None,
+) -> Any:
+    """
+    Read a value out of a response, failing with a useful message if it is not there
+
+    Use this instead of subscripting a response directly.
+    `doc["collection"]` tells whoever hits it only `KeyError: 'collection'`;
+    this says which API answered, what we wanted `collection` for,
+    and which keys the response did carry.
+
+    Parameters
+    ----------
+    raw
+        The response (or one document out of one) to read
+
+    path
+        Where to look, as a dot-separated path, e.g. `"properties.title"`
+
+        Dot-separated because that is the notation the error message speaks:
+        a path which runs out half way is reported at the level it ran out.
+        A key which itself contains a dot therefore cannot be spelled here
+        (STAC asset names are filenames, for one):
+        read from the enclosing object instead of pathing down to it.
+
+    what
+        What we are trying to read, e.g. `"the bundle id"`
+
+        See [UnreadableResponseError][(m).].
+
+    lead
+        The error's opening sentence, if the default does not fit
+
+        See [UnreadableResponseError][(m).].
+
+    context
+        Anything else which helps reproduce the failure
+
+        See [UnreadableResponseError][(m).].
+
+    Returns
+    -------
+    :
+        The value at `path`
+
+        No promise is made about its type:
+        an API which writes the wrong sort of thing at the right key
+        is a different problem from this one.
+        Types are the caller's to check.
+
+    Raises
+    ------
+    UnreadableResponseError
+        `path` cannot be walked all the way down in `raw`
+    """
+    current: Any = raw
+    for part in path.split("."):
+        if not isinstance(current, Mapping) or part not in current:
+            raise UnreadableResponseError(
+                # `raw` is typed as a Mapping so that any document can be passed,
+                # but the error reports on a plain dict, so make it one.
+                dict(raw),
+                path,
+                what=what,
+                lead=lead,
+                context=context,
+            )
+
+        current = current[part]
+
+    return current
+
+
+def describe_search_api(api: SearchAPI) -> str:
+    """
+    Say which API a response came from, for an error message
+
+    Parameters
+    ----------
+    api
+        The API which answered
+
+    Returns
+    -------
+    :
+        A sentence naming the API,
+        suitable for the `context` of an [UnreadableResponseError][(m).]
+    """
+    return f"This response came from {type(api).__name__} at {api.scheme}://{api.host}."
+
+
 class LimitOutOfRangeError(ValueError):
     """
     Raised when a page size is one a search API will not accept
@@ -163,12 +345,17 @@ class LimitOutOfRangeError(ValueError):
         )
 
 
-class NoSearchResultNumberOfMatchesReturnedError(ValueError):
+class NoSearchResultNumberOfMatchesReturnedError(UnreadableResponseError):
     """
     Raised when a search response does not say how many records matched a search
     """
 
-    def __init__(self, raw: dict[str, Any], expected_at: str | tuple[str, ...]) -> None:
+    def __init__(
+        self,
+        raw: dict[str, Any],
+        expected_at: str | tuple[str, ...],
+        context: str | None = None,
+    ) -> None:
         """
         Initialise the error
 
@@ -183,21 +370,22 @@ class NoSearchResultNumberOfMatchesReturnedError(ValueError):
             Some APIs report the count in more than one place,
             in which case pass every path we looked at
             and the error will report on all of them.
+
+        context
+            Anything else which helps reproduce the failure
+
+            See [UnreadableResponseError][(m).].
         """
-        self.raw = raw
-        self.expected_at = (
-            (expected_at,) if isinstance(expected_at, str) else expected_at
-        )
-
         super().__init__(
-            "This response does not report how many records matched the search. "
-            "We expected to read the count from "
-            f"{_describe_where_we_looked(self.expected_at)}, "
-            f"{_explain_why_we_could_not_read(raw, self.expected_at)}"
+            raw,
+            expected_at,
+            what="the count",
+            lead=("This response does not report how many records matched the search."),
+            context=context,
         )
 
 
-class NoSearchResultDocumentsError(ValueError):
+class NoSearchResultDocumentsError(UnreadableResponseError):
     """
     Raised when a search response does not carry the documents it should
 
@@ -208,7 +396,12 @@ class NoSearchResultDocumentsError(ValueError):
     Hence, if we look and can't find the search results we expect, we raise loudly.
     """
 
-    def __init__(self, raw: dict[str, Any], expected_at: str | tuple[str, ...]) -> None:
+    def __init__(
+        self,
+        raw: dict[str, Any],
+        expected_at: str | tuple[str, ...],
+        context: str | None = None,
+    ) -> None:
         """
         Initialise the error
 
@@ -219,21 +412,22 @@ class NoSearchResultDocumentsError(ValueError):
 
         expected_at
             Where in `raw` we looked for the documents
+
+        context
+            Anything else which helps reproduce the failure
+
+            See [UnreadableResponseError][(m).].
         """
-        self.raw = raw
-        self.expected_at = (
-            (expected_at,) if isinstance(expected_at, str) else expected_at
-        )
-
         super().__init__(
-            "This response does not carry the documents a search answers with. "
-            "We expected to read them from "
-            f"{_describe_where_we_looked(self.expected_at)}, "
-            f"{_explain_why_we_could_not_read(raw, self.expected_at)}"
+            raw,
+            expected_at,
+            what="them",
+            lead="This response does not carry the documents a search answers with.",
+            context=context,
         )
 
 
-class NoFacetValuesReturnedError(ValueError):
+class NoFacetValuesReturnedError(UnreadableResponseError):
     """
     Raised when a response does not enumerate facet values at all
 
@@ -241,7 +435,12 @@ class NoFacetValuesReturnedError(ValueError):
     but if we expect to get facet values and don't, we want to be loud about it.
     """
 
-    def __init__(self, raw: dict[str, Any], expected_at: str | tuple[str, ...]) -> None:
+    def __init__(
+        self,
+        raw: dict[str, Any],
+        expected_at: str | tuple[str, ...],
+        context: str | None = None,
+    ) -> None:
         """
         Initialise the error
 
@@ -256,17 +455,18 @@ class NoFacetValuesReturnedError(ValueError):
             Some APIs enumerate their facet values in more than one place,
             in which case pass every path we looked at
             and the error will report on all of them.
-        """
-        self.raw = raw
-        self.expected_at = (
-            (expected_at,) if isinstance(expected_at, str) else expected_at
-        )
 
+        context
+            Anything else which helps reproduce the failure
+
+            See [UnreadableResponseError][(m).].
+        """
         super().__init__(
-            "This response does not report facet values. "
-            "We expected to read the facet values from "
-            f"{_describe_where_we_looked(self.expected_at)}, "
-            f"{_explain_why_we_could_not_read(raw, self.expected_at)}"
+            raw,
+            expected_at,
+            what="the facet values",
+            lead="This response does not report facet values.",
+            context=context,
         )
 
 

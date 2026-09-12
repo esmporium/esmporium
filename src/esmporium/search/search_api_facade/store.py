@@ -168,9 +168,8 @@ def get_default_facade_definition(project: str, host: str) -> FacadeDefinition: 
             search_api_type = SearchAPIESGFNGSTAC
 
         else:
-            # STAC serves no CMIP5 data, and we do not know the shape of a
-            # CMIP5 STAC document, so there is deliberately no CMIP5 STAC
-            # facade (and no CMIP5 STAC result parser to guess at its shape).
+            # We have no facade for this project on this host: we do not know
+            # which search API it speaks, so there is nothing to guess with.
             raise NotImplementedError(f"{project} {host}")
 
     elif project == "CMIP7":
@@ -199,9 +198,8 @@ def get_default_facade_definition(project: str, host: str) -> FacadeDefinition: 
             search_api_type = SearchAPIESGFNGSTAC
 
         else:
-            # STAC serves no CMIP5 data, and we do not know the shape of a
-            # CMIP5 STAC document, so there is deliberately no CMIP5 STAC
-            # facade (and no CMIP5 STAC result parser to guess at its shape).
+            # We have no facade for this project on this host: we do not know
+            # which search API it speaks, so there is nothing to guess with.
             raise NotImplementedError(f"{project} {host}")
 
     else:

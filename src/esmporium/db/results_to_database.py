@@ -49,14 +49,15 @@ class UnhandledDatasetClashError(Exception):
             **{column: getattr(dataset, column) for column in DATASET_FACET_COLUMNS},
         }
         super().__init__(
-            "Two datasets are identical across every column our model records"
-            f"({identity!r}), so our dataset model cannot tell them apart. This clash"
-            "is not handled: the data differs in a facet we do not model. Please raise"
-            "an issue at https://github.com/esmporium/esmporium/issues to discuss your"
-            "use case, quoting the identity above. To find the differing facet exactly,"
-            "flatten the clashing datasets' raw documents with "
+            "Two datasets are identical across every column our model records "
+            f"({identity!r}), so our dataset model cannot tell them apart. "
+            "This clash is not handled: the data differs in a facet we do not "
+            "model. Please raise an issue at "
+            "https://github.com/esmporium/esmporium/issues to discuss your use "
+            "case, quoting the identity above. To find the differing facet "
+            "exactly, flatten the clashing datasets' raw documents with "
             "esmporium.search.normalise_stored_document and compare them with "
-            "esmporium.db.dataset_uniqueness.facet_differences, and quote that"
+            "esmporium.db.dataset_uniqueness.facet_differences, and quote that "
             "difference in the issue too."
         )
 

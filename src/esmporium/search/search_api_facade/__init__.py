@@ -14,7 +14,7 @@ with a *search API*
 e.g. [SearchAPIESGF1Solr][esmporium.search.apis.SearchAPIESGF1Solr])
 and a *result parser*
 (how this project's answers are written by this endpoint,
-e.g. [ESGFNGCMIP6ResultParser][(m).ESGFNGCMIP6ResultParser];
+e.g. [ESGFNGResultParser][(m).ESGFNGResultParser];
 see [esmporium.search.search_api_facade.result_parsers][] for further explanation).
 The facade parameters are the facade's concern:
 it is the facade which turns a canonical query into the names

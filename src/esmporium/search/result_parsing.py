@@ -3,7 +3,7 @@ The shape result parsers must produce for the `db` layer to store
 
 This is project and search API agnostic. The known result
 parsers and translations are defined in
-[esmporium.search.search_api_facade.result_parsers][known_result_parsers]
+[esmporium.search.search_api_facade.result_parsers][]
 """
 
 from __future__ import annotations

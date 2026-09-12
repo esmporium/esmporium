@@ -18,6 +18,7 @@ from esmporium.search.apis import (
     NoSearchResultNumberOfMatchesReturnedError,
     Request,
     SearchAPI,
+    UnreadableResponseError,
 )
 from esmporium.search.health import SearchAPICall, SearchAPICallObserver
 from esmporium.search.result_parsing import ParsedDocument, ResultProcessor
@@ -336,6 +337,56 @@ class CouldNotSearchError(RuntimeError):
         super().__init__(message)
 
 
+class CouldNotUseSearchResultsError(CouldNotSearchError):
+    """
+    Raised when an API answers a search with something we cannot read
+
+    A [CouldNotSearchError][(m).],
+    because from the caller's point of view the outcome is the same:
+    this host has given us no results.
+    A distinct kind, because the host did answer:
+    what failed was our reading of it, so the cause is an
+    [UnreadableResponseError][esmporium.search.apis.UnreadableResponseError]
+    saying which key we could not find rather than a transport failure.
+    """
+
+    def __init__(
+        self,
+        host: str,
+        cause: Exception,
+        url: str | None = None,
+    ) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        host
+            The host whose answer we could not read
+
+        cause
+            What we could not read, kept on `cause` for callers to inspect
+
+        url
+            The URL we asked, if we know it
+
+            Folded into the message so a report of this carries
+            what someone would need to ask the same question again.
+        """
+        # Deliberately not `super().__init__`: `CouldNotSearchError` says the host
+        # did not answer, and this one did.
+        RuntimeError.__init__(
+            self,
+            f"{host} answered our search request with something we could not read "
+            f"({cause})"
+            f"{f' We asked: {url}.' if url else ''} "
+            "So it has given us no results.",
+        )
+        self.host = host
+        self.cause = cause
+        self.url = url
+
+
 class NoAPIWouldAnswerError(RuntimeError):
     """
     Raised when every API we searched refused to answer
@@ -492,13 +543,22 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
                 # only support searching a single project at a time. If either of those
                 # assumptions changed, this would break. We will have to be more careful
                 # in higher-level functions to do queries over multiple projects (PR3).
-                parsed = facade.parse_search_results(raw)
-                datasets[host] = parsed
-                n_matches[host] = _result_count_or_none(facade.get_n_matches, raw)
-                if processor is not None:
-                    processor(host, parsed)
-                if stop_at_first_result:
-                    break
+                try:
+                    parsed = facade.parse_search_results(raw)
+                except UnreadableResponseError as exc:
+                    refusals[host] = CouldNotUseSearchResultsError(
+                        host,
+                        cause=exc,
+                        url=get_url(facade.search_api, request),
+                    )
+                else:
+                    datasets[host] = parsed
+                    n_matches[host] = _result_count_or_none(facade.get_n_matches, raw)
+                    if processor is not None:
+                        processor(host, parsed)
+
+                    if stop_at_first_result:
+                        break
 
             attempt += 1
 

@@ -30,8 +30,12 @@ from esmporium.query import (
     facet_spec,
     to_canonical,
 )
+from esmporium.search.apis import (
+    UncompilableFacetPatternError,
+    UnreadableResponseError,
+)
 from esmporium.search.health import SearchAPICallObserver
-from esmporium.search.search import SearchAPIRequestError, fire
+from esmporium.search.search import SearchAPIRequestError, fire, get_url
 from esmporium.search.search_api_facade import (
     DEFAULT_SELECTOR,
     SearchAPIFacade,
@@ -353,7 +357,7 @@ class CouldNotGetAllowedValuesError(RuntimeError):
     Raised when a source cannot tell us what the allowed values are
     """
 
-    def __init__(self, description: str) -> None:
+    def __init__(self, description: str, cause: Exception | None = None) -> None:
         """
         Initialise the error
 
@@ -361,12 +365,68 @@ class CouldNotGetAllowedValuesError(RuntimeError):
         ----------
         description
             Where we were trying to get allowed values from
+
+        cause
+            What went wrong, if we know it
+
+            Folded into the message so that a refusal can say *why*,
+            and kept on `cause` for callers to inspect.
         """
         self.description = description
-        super().__init__(
-            f"{description} did not answer our request for facet values, "
-            "so we have nothing to check this query against."
+        self.cause = cause
+        if cause is None:
+            message = (
+                f"{description} did not answer our request for facet values, "
+                "so we have nothing to check this query against."
+            )
+        else:
+            message = (
+                f"{description} did not answer our request for facet values "
+                f"({cause}), so we have nothing to check this query against."
+            )
+        super().__init__(message)
+
+
+class CouldNotUseAllowedValuesError(CouldNotGetAllowedValuesError):
+    """
+    Raised when a source answers about facet values with something we cannot read
+
+    A [CouldNotGetAllowedValuesError][(m).]
+    because the outcome for the caller is the same:
+    this source has told us nothing we can check against.
+    A distinct kind because the source did answer: what failed was our reading of it.
+    """
+
+    def __init__(self, description: str, cause: Exception, url: str | None = None):
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        description
+            Where we were trying to get allowed values from
+
+        cause
+            What we could not read, kept on `cause` for callers to inspect
+
+        url
+            The URL we asked, if we know it
+
+            Folded into the message so a report of this carries
+            what someone would need to ask the same question again.
+        """
+        # Deliberately not `super().__init__`: the parent says the source did not
+        # answer, and this one did.
+        RuntimeError.__init__(
+            self,
+            f"{description} answered our request for facet values with something "
+            f"we could not read ({cause})."
+            f"{f' We asked: {url}.' if url else ''} "
+            "So we have nothing to check this query against.",
         )
+        self.description = description
+        self.cause = cause
+        self.url = url
 
 
 def allowed_values_from_api(
@@ -409,7 +469,8 @@ def allowed_values_from_api(
     Raises
     ------
     CouldNotGetAllowedValuesError
-        Allowed value information could not be retrieved from `facade.search_api`
+        Allowed value information could not be retrieved from `facade.search_api`,
+        either because it did not answer or because we could not read its answer.
     """
     askable = facade.askable_facets(facets)
 
@@ -426,10 +487,17 @@ def allowed_values_from_api(
     except SearchAPIRequestError as exc:
         raise CouldNotGetAllowedValuesError(facade.search_api.host) from exc
 
-    return AllowedValues(
-        values=facade.parse_facet_values(raw, askable),
-        patterns=facade.parse_facet_patterns(raw, askable),
-    )
+    try:
+        return AllowedValues(
+            values=facade.parse_facet_values(raw, askable),
+            patterns=facade.parse_facet_patterns(raw, askable),
+        )
+    except (UnreadableResponseError, UncompilableFacetPatternError) as exc:
+        raise CouldNotUseAllowedValuesError(
+            facade.search_api.host,
+            cause=exc,
+            url=get_url(facade.search_api, request),
+        ) from exc
 
 
 class NoSourceWouldAnswerError(RuntimeError):
