@@ -345,13 +345,18 @@ def stac_nodes(
     Raises
     ------
     UnreadableResponseError
-        One of `feature`'s assets does not say which node hosts it
+        `feature` does not carry an id.
+
+        One of `feature`'s assets does not say which node hosts it.
 
         Something is hosting it and we cannot see what,
         which means the response is not the shape we expect,
         so we fail loudly rather than quietly dropping the node.
     """
     context = describe_search_api(api) if api is not None else None
+    feature_id = read_response_path(
+        feature, "id", what="this record's id", context=context
+    )
 
     hosts: list[str] = []
     # No assets at all is fine: nothing is hosting this, so there is no node to report.
@@ -371,10 +376,10 @@ def stac_nodes(
             what="the data node",
             context=context,
             lead=(
-                f"In the following, `response` refers to the ['assets']['{name}'] path "
-                f"in the API response's {feature['id']!r} feature. "
-                f"The information provided for the {name!r} asset of {feature['id']!r} "
-                "does not specify the data node. "
+                f"In the following, `response` refers to the ['assets'][{name!r}] "
+                f"path in the API response's {feature_id!r} feature. "
+                f"The information provided for the {name!r} asset of {feature_id!r} "
+                "does not specify the data node."
             ),
         )
         if host not in hosts:

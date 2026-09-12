@@ -643,6 +643,10 @@ class ESGFNGResultParser:
     ) -> tuple[DatasetFacets, ...]:
         """
         See [ResultParserProtocol.get_dataset_rows][esmporium.search.search_api_facade.result_parsers.ResultParserProtocol.get_dataset_rows].
+
+        The project is read from the feature's `collection` key,
+        following the advice given in
+        [esgf-roadmap#203](https://github.com/ESGF/esgf-roadmap/issues/203#issuecomment-5631161411).
         """  # noqa: E501
         base = {
             "id_project_specific": self.get_id_project_specific(doc, api),

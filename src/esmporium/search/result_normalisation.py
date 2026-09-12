@@ -149,6 +149,12 @@ def _normalise_stac(raw: dict[str, Any]) -> dict[str, Any]:
     :
         The feature's facets as a flat mapping of unprefixed name to scalar (or list)
         value
+
+    Raises
+    ------
+    UnreadableResponseError
+        `raw`'s facets are not keyed by facet name,
+        so there is nothing here to flatten
     """
     # A stored feature with no `properties` at all has no facets.
     # This is a different thing from a feature whose `properties` is not a mapping.

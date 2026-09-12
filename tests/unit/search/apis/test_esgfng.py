@@ -200,10 +200,27 @@ def test_nodes_of_an_asset_which_does_not_say_where_it_is_hosted_raises():
             "In the following, `response` refers to the ['assets']['one.nc'] path "
             "in the API response's 'feature_id' feature. "
             "The information provided for the 'one.nc' asset of 'feature_id' "
-            "does not specify the data node.  "
+            "does not specify the data node. "
             "We expected to read the data node from 'alternate:name', "
             "but 'alternate:name' is not in the response's top level, "
             "there is only: 'href'. "
+        ),
+    ):
+        stac_nodes(feature)
+
+
+def test_nodes_of_a_feature_with_no_id_raises():
+    """
+    A feature which cannot say what it is is not one we can report on
+    """
+    feature = {"assets": {"one.nc": {"alternate:name": "ceda.ac.uk"}}}
+
+    with pytest.raises(
+        UnreadableResponseError,
+        match=re.escape(
+            "This response does not carry this record's id. We expected to read "
+            "this record's id from 'id', but 'id' is not in the response's top "
+            "level, there is only: 'assets'."
         ),
     ):
         stac_nodes(feature)

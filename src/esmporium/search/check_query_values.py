@@ -415,14 +415,14 @@ class CouldNotUseAllowedValuesError(CouldNotGetAllowedValuesError):
             Folded into the message so a report of this carries
             what someone would need to ask the same question again.
         """
-        # Deliberately not `super().__init__`: the parent says the source did not
-        # answer, and this one did.
+        # Deliberately not `super().__init__`:
+        # the parent says the source did not answer, and this one did.
         RuntimeError.__init__(
             self,
             f"{description} answered our request for facet values with something "
-            f"we could not read ({cause})."
-            f"{f' We asked: {url}.' if url else ''} "
-            "So we have nothing to check this query against.",
+            f"we could not read ({cause}), so we have nothing to check this query "
+            "against."
+            f"{f' We asked: {url}.' if url else ''}",
         )
         self.description = description
         self.cause = cause

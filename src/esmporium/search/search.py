@@ -378,9 +378,8 @@ class CouldNotUseSearchResultsError(CouldNotSearchError):
         RuntimeError.__init__(
             self,
             f"{host} answered our search request with something we could not read "
-            f"({cause})"
-            f"{f' We asked: {url}.' if url else ''} "
-            "So it has given us no results.",
+            f"({cause}), so it has given us no results."
+            f"{f' We asked: {url}.' if url else ''}",
         )
         self.host = host
         self.cause = cause
