@@ -95,7 +95,7 @@ Integration tests:
 - [x] Are there any integration tests here? Feels like maybe just unit tests if we are only performing live tests on a single host?
     - ZN: yep no integration tests for this. The functionality is nice to have, not something we need to make bullet proof. Also setting up an integration test that was more than just running a bunch of searches then using this selector would be hard, and this simple integration test is very expensive to run and of very little value.
 
-## PR2, in progress
+## PR2, see https://github.com/esmporium/esmporium/pull/25
 
 Converting search results into Datasets
 
