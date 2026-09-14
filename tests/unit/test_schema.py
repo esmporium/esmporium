@@ -22,7 +22,7 @@ from esmporium.db import (
     save_dataset,
 )
 from esmporium.db.schema import DATASET_IDENTITY_INDEX
-from esmporium.search import DatasetFacets
+from esmporium.search import SOLR_FORMAT_TAG, DatasetFacets
 
 VALID_DATASET_KWARGS = {
     # No `id`: it is a surrogate integer the database assigns.
@@ -193,8 +193,78 @@ def test_identical_all_columns_raises_clash(engine):
         save_dataset(session, Dataset(**cmip5_shape))
         session.commit()
 
-        with pytest.raises(UnhandledDatasetClashError):
+        with pytest.raises(UnhandledDatasetClashError) as excinfo:
             save_dataset(session, Dataset(**cmip5_shape))
+
+    # No raw doc was given, so there is nothing to diff
+    assert excinfo.value.differences is None
+
+
+def _save_with_raw_doc(session: Session, dataset: Dataset, raw_doc: DatasetRawDoc):
+    """Save a dataset with a version and a raw doc linked to it"""
+    save_dataset(session, dataset)
+    version = DatasetVersion(
+        dataset_id=dataset.id, version="20200101", is_latest=True, retracted=False
+    )
+    session.add_all([version, raw_doc])
+    session.flush()
+    session.add(RawDocVersionLink(raw_doc_id=raw_doc.id, dataset_version_id=version.id))
+    session.commit()
+
+
+def test_clash_reports_facets_that_differ_in_raw_docs(engine):
+    """
+    A clash diffs the raw docs, pointing at the facet our model is missing
+
+    Here, the data differs by a facet we don't model
+    which also isn't in `id_project_specific`
+    (like CORDEX's driving model could).
+    """
+    with Session(engine) as session:
+        _save_with_raw_doc(
+            session,
+            Dataset(**VALID_DATASET_KWARGS),
+            DatasetRawDoc(
+                esgf_doc_id="doc-a",
+                raw_json='{"driving_source_id": ["MPI-ESM"], "variable": ["tas"]}',
+                raw_docs_format_tag=SOLR_FORMAT_TAG,
+            ),
+        )
+
+        new_raw_doc = DatasetRawDoc(
+            esgf_doc_id="doc-b",
+            raw_json='{"driving_source_id": ["CNRM-CM6"], "variable": ["tas"]}',
+            raw_docs_format_tag=SOLR_FORMAT_TAG,
+        )
+        with pytest.raises(UnhandledDatasetClashError) as excinfo:
+            save_dataset(session, Dataset(**VALID_DATASET_KWARGS), raw_doc=new_raw_doc)
+
+    assert excinfo.value.differences == {
+        "driving_source_id": {"stored: doc-a": "MPI-ESM", "new: doc-b": "CNRM-CM6"}
+    }
+    assert "driving_source_id" in str(excinfo.value)
+
+
+def test_clash_with_unknown_raw_doc_format_tag_still_raises_clash(engine):
+    """
+    A raw doc we can't normalise must not hide the clash itself
+    """
+    with Session(engine) as session:
+        _save_with_raw_doc(
+            session,
+            Dataset(**VALID_DATASET_KWARGS),
+            DatasetRawDoc(
+                esgf_doc_id="doc-a", raw_json="{}", raw_docs_format_tag="acme-format"
+            ),
+        )
+
+        new_raw_doc = DatasetRawDoc(
+            esgf_doc_id="doc-b", raw_json="{}", raw_docs_format_tag="acme-format"
+        )
+        with pytest.raises(UnhandledDatasetClashError) as excinfo:
+            save_dataset(session, Dataset(**VALID_DATASET_KWARGS), raw_doc=new_raw_doc)
+
+    assert excinfo.value.differences is None
 
 
 def test_identity_index_name_matches_constant():
@@ -336,7 +406,7 @@ def test_facet_columns_are_not_nullable(engine, column):
 # cannot be duplicated. Foreign keys are NOT exercised here: SQLite does not enforce
 # them without `PRAGMA foreign_keys=ON`, which we do not set, so these tests use plain
 # integer ids and assert only the uniqueness rules. The end-to-end behaviour over real
-# rows is covered in `tests/unit/db/test_find_facet_clash_from_database.py`.
+# rows is covered in `tests/integration/db/test_find_facet_clash_from_database.py`.
 
 
 def _version(dataset_id: int, version: str) -> DatasetVersion:

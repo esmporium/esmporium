@@ -9,7 +9,11 @@ for CMIP6, and (for CMIP7) things like `activity_id`, `region` or the branding l
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Hashable
+from typing import Any, TypeVar
+
+K = TypeVar("K", bound=Hashable)
+"""Type of the keys that identify each entry passed to `facet_differences`"""
 
 
 class _Missing:
@@ -30,8 +34,8 @@ Keeping this as a class means we get uniqueness by identity plus a friendly repr
 
 
 def facet_differences(
-    normalised_info: tuple[tuple[int, dict[str, Any]], ...],
-) -> dict[str, dict[int, Any]]:
+    normalised_info: tuple[tuple[K, dict[str, Any]], ...],
+) -> dict[str, dict[K, Any]]:
     """
     Find all the facets that explain why datasets differ
 
@@ -43,24 +47,25 @@ def facet_differences(
     Parameters
     ----------
     normalised_info
-        One entry per dataset in the clash. Each is a tuple of the dataset's id
-        [`Dataset.id`][esmporium.db.schema.Dataset] and
-        its normalised facets, as produced by
+        One entry per dataset (or raw document) in the clash.
+        Each is a tuple of a key identifying the entry
+        (e.g. the dataset's [`Dataset.id`][esmporium.db.schema.Dataset])
+        and its normalised facets, as produced by
         [`esmporium.search.normalise_stored_document`][].
 
     Returns
     -------
     :
-        `{facet_name: {id: value}}` for each facet the datasets do not all agree on,
-        with one entry per dataset id (its value, or [`MISSING`][(m).] if its document
+        `{facet_name: {key: value}}` for each facet the entries do not all agree on,
+        with one entry per key (its value, or [`MISSING`][(m).] if its document
         lacks the facet). Empty if the datasets agree on every facet -- meaning nothing
         in the raw documents explains their `id_project_specific` difference.
 
     Raises
     ------
     ValueError
-        The same dataset id appears more than once in `normalised_info`, so results
-        keyed by id would be ambiguous.
+        The same key appears more than once in `normalised_info`, so results
+        keyed by it would be ambiguous.
 
     Examples
     --------
@@ -69,11 +74,12 @@ def facet_differences(
     ... )
     {'product': {201545: 'output1', 103137: 'output2'}}
     """
-    ids = [dataset_id for dataset_id, _ in normalised_info]
-    if len(ids) != len(set(ids)):
+    keys = [key for key, _ in normalised_info]
+    if len(keys) != len(set(keys)):
         msg = (
-            "Every dataset id in normalised_info must be unique, but at least one is "
-            f"repeated: {ids}. Results are keyed by id, so duplicates are ambiguous."
+            "Every key in normalised_info must be unique, but at least one is "
+            f"repeated: {keys}. Results are keyed by these, "
+            "so duplicates are ambiguous."
         )
         raise ValueError(msg)
 
@@ -81,14 +87,13 @@ def facet_differences(
         *(facets.keys() for _, facets in normalised_info)
     )
 
-    differences: dict[str, dict[int, Any]] = {}
+    differences: dict[str, dict[K, Any]] = {}
     for name in all_facet_names:
-        values_by_id = {
-            dataset_id: facets.get(name, MISSING)
-            for dataset_id, facets in normalised_info
+        values_by_key = {
+            key: facets.get(name, MISSING) for key, facets in normalised_info
         }
-        distinct_values = list(values_by_id.values())
+        distinct_values = list(values_by_key.values())
         if any(value != distinct_values[0] for value in distinct_values[1:]):
-            differences[name] = values_by_id
+            differences[name] = values_by_key
 
     return differences

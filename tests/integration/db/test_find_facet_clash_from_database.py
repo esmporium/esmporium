@@ -1,4 +1,3 @@
-# @Claude: move this to an integration test
 """
 Identify a facet clash from documents already stored in the database.
 
@@ -24,6 +23,7 @@ from esmporium.db import (
     RawDocVersionLink,
     facet_differences,
     ingest_parsed_documents,
+    migrate,
 )
 from esmporium.search import (
     SOLR_FORMAT_TAG,
@@ -93,7 +93,8 @@ def _bundle_document(product: str) -> ParsedDocument:
 
 @pytest.fixture
 def populated(engine):
-    """An engine whose database holds both products, written by the real ingest path."""
+    """A migrated database holding both products, written by the real ingest path."""
+    migrate.upgrade_to_head(engine)
     with Session(engine) as session:
         ingest_parsed_documents(
             session, [_bundle_document("output1"), _bundle_document("output2")]

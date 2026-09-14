@@ -192,6 +192,10 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Undo this migration"""
+    # Drop the hand-written identity index first,
+    # before the batch block rebuilds the `dataset` table
+    # and restores the old single-column unique constraint.
+    op.drop_index("dataset_uniqueness_idx", table_name="dataset")
     with op.batch_alter_table("dataset", schema=None) as batch_op:
         batch_op.drop_index(batch_op.f("ix_dataset_id_project_specific"))
         batch_op.create_unique_constraint(
