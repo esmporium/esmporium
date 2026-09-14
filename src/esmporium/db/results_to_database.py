@@ -94,6 +94,10 @@ def save_dataset(session: Session, dataset: Dataset) -> Dataset:
     except IntegrityError as exc:
         savepoint.rollback()
         if DATASET_IDENTITY_INDEX in str(exc.orig):
+            # @Claude is there a sensible way to get the raw docs
+            # for this dataset and the clash that's already in the database
+            # so we can call facet_differences
+            # as part of building UnhandledDatasetClashError?
             raise UnhandledDatasetClashError(dataset) from exc
         raise
     else:

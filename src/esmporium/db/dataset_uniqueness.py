@@ -11,15 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
-# TODO Zeb: can delete the below comment if makes sense?
-# Alternatively can make inline rather than a class if a parameter returning "<absent>"
-# is not a real risk
 
-
-# A sentinel, not the string "<absent>": a unique object can never equal a real facet
-# value (a facet that genuinely held "<absent>" would otherwise be mistaken for
-# missing), while the `__repr__` keeps it readable in output. That is the whole reason
-# it is a class -- uniqueness by identity plus a friendly repr -- so it is kept, shrunk.
 class _Missing:
     __slots__ = ()
 
@@ -28,7 +20,13 @@ class _Missing:
 
 
 MISSING = _Missing()
-"""Marks a dataset whose document lacks a facet that others in the comparison carry."""
+"""
+Marks a dataset whose document lacks a facet that others in the comparison carry.
+
+We make this a unique object so it can never accidentally match a real facet value
+(e.g. we would never accidentally match a facet whose actual value was "<absent>").
+Keeping this as a class means we get uniqueness by identity plus a friendly repr.
+"""
 
 
 def facet_differences(
