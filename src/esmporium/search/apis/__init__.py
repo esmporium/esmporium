@@ -21,6 +21,9 @@ from esmporium.search.apis.protocol import (
     NoSearchResultNumberOfMatchesReturnedError,
     SearchAPI,
     UncompilableFacetPatternError,
+    UnreadableResponseError,
+    describe_search_api,
+    read_response_path,
     single_facet_value_or_none,
 )
 from esmporium.search.apis.request import Request
@@ -37,5 +40,8 @@ __all__ = [
     "SearchAPIESGF15BridgeSolr",
     "SearchAPIESGFNGSTAC",
     "UncompilableFacetPatternError",
+    "UnreadableResponseError",
+    "describe_search_api",
+    "read_response_path",
     "single_facet_value_or_none",
 ]

@@ -25,7 +25,7 @@ from esmporium.search import (
     ESGFNG_CMIP6_FACADE_PARAMETERS,
     INBUILT_SEARCH_API_FACADE_STORE,
     ESGFNGCMIP6ParametersQueryStyle,
-    ESGFNGCMIP6ResultParser,
+    ESGFNGResultParser,
     LimitOutOfRangeError,
     OneProjectRequiredError,
     ProjectPrefixMismatchError,
@@ -70,7 +70,7 @@ def api_facade_cmip6_esgfng(host="stac.example") -> SearchAPIFacade:
     return SearchAPIFacade(
         parameters=ESGFNG_CMIP6_FACADE_PARAMETERS,
         search_api=SearchAPIESGFNGSTAC(host, build_transient_retrying(1)),
-        result_parser=ESGFNGCMIP6ResultParser(
+        result_parser=ESGFNGResultParser(
             read_n_matches=stac_east_n_matches,
         ),
     )
@@ -313,7 +313,7 @@ def test_stac_facade_project_to_collection_converter_is_used():
     facade = SearchAPIFacade(
         parameters=parameters,
         search_api=SearchAPIESGFNGSTAC("stac.example", build_transient_retrying(1)),
-        result_parser=ESGFNGCMIP6ResultParser(
+        result_parser=ESGFNGResultParser(
             read_n_matches=stac_east_n_matches,
         ),
     )

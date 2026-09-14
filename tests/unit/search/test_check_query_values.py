@@ -16,10 +16,12 @@ from esmporium.search import (
     ESGFNG_CMIP6_FACADE_PARAMETERS,
     AllowedValues,
     CouldNotGetAllowedValuesError,
-    ESGFNGCMIP6ResultParser,
+    CouldNotGetAllowedValuesResponseError,
+    CouldNotUseAllowedValuesError,
+    ESGFNGResultParser,
     FacetFinding,
     FindingKind,
-    NoSourceWouldAnswerError,
+    NoAPIAnsweredError,
     NotAFacetOfTheQueryError,
     SearchAPIESGF1Solr,
     SearchAPIESGFNGSTAC,
@@ -223,10 +225,37 @@ def test_a_node_which_never_answers_raises():
     canonical = canonical_cmip6(experiment_id="historical")
     refuses = client_for(lambda request: httpx.Response(503))
 
-    with pytest.raises(CouldNotGetAllowedValuesError, match=re.escape("down.example")):
+    with pytest.raises(
+        CouldNotGetAllowedValuesResponseError, match=re.escape("down.example")
+    ):
         allowed_values_from_api(
             solr_api("down.example"), refuses, canonical, {"experiment"}
         )
+
+
+def test_a_node_which_answers_unreadably_is_a_failure_rather_than_an_explosion():
+    """
+    An answer we cannot read is a failure of this facade, not of the whole check
+
+    The caller pools several facades
+    so one of them not replying or replying with a body we do not understand
+    has to come back as that facade's failure.
+    It should not crash the checking of other facades.
+    """
+    canonical = canonical_cmip6(experiment_id="historical")
+    # A 200 whose body says nothing about facets at all.
+    odd = client_for(lambda request: httpx.Response(200, json={"unexpected": "shape"}))
+
+    with pytest.raises(
+        CouldNotUseAllowedValuesError,
+        match=re.escape("answered our request for facet values"),
+    ) as excinfo:
+        allowed_values_from_api(solr_api("odd.example"), odd, canonical, {"experiment"})
+
+    # It is still a failure to get values
+    # so users can use this 'catch all' error/check if they want
+    assert isinstance(excinfo.value, CouldNotGetAllowedValuesError)
+    assert "We asked: https://odd.example" in str(excinfo.value)
 
 
 # A variant_label pattern of the shape the STAC collection summaries really carry:
@@ -348,7 +377,7 @@ def test_high_routes_through_the_selector_to_the_api():
 
 def test_high_moves_on_to_the_next_api_when_one_will_not_answer():
     """
-    Test that one endpoint refusing is not the end of the check
+    Test that one endpoint failing is not the end of the check
 
     This is what `search` does, and for the same reason:
     the nodes mirror one another closely enough that the next one along
@@ -369,8 +398,11 @@ def test_high_moves_on_to_the_next_api_when_one_will_not_answer():
         FacetFinding("experiment", "Historical", "case", ("historical",)),
     )
     # The node which would not answer is kept too, with what it said.
-    assert set(outcome.refusals) == {"down.example"}
-    assert "down.example" in str(outcome.refusals["down.example"])
+    assert set(outcome.failures) == {"down.example"}
+    assert isinstance(
+        outcome.failures["down.example"], CouldNotGetAllowedValuesResponseError
+    )
+    assert "down.example" in str(outcome.failures["down.example"])
 
 
 def test_high_asks_every_api_when_told_not_to_stop_at_the_first():
@@ -403,8 +435,8 @@ def test_high_asks_every_api_when_told_not_to_stop_at_the_first():
     assert finding.kind is FindingKind.UNKNOWN
 
 
-def test_high_keeps_the_answers_it_got_when_only_some_apis_refuse():
-    """A refusal alongside an answer is reported alongside it, not raised."""
+def test_high_keeps_the_answers_it_got_when_only_some_apis_fail():
+    """A failure alongside an answer is reported alongside it, not raised."""
     handler = by_host({"up.example": facet_values_from(["historical"])})
 
     outcome = check_query_values(
@@ -415,18 +447,18 @@ def test_high_keeps_the_answers_it_got_when_only_some_apis_refuse():
     )
 
     assert set(outcome.reports) == {"up.example"}
-    assert set(outcome.refusals) == {"down.example"}
+    assert set(outcome.failures) == {"down.example"}
 
 
-def test_high_raises_with_every_refusal_when_no_api_answers():
+def test_high_raises_with_every_failure_when_no_api_answers():
     """
-    Test that a refusal from all of them is an error naming all of them
+    Test that a failure from all of them is an error naming all of them
 
     Working through the endpoints must not turn "nobody would tell us" into
-    "we checked and it was fine". Which endpoints refused is the interesting
-    part, so every refusal is carried, not just the last.
+    "we checked and it was fine". Which endpoints failed is the interesting
+    part, so every failure is carried, not just the last.
     """
-    with pytest.raises(NoSourceWouldAnswerError) as excinfo:
+    with pytest.raises(NoAPIAnsweredError) as excinfo:
         check_query_values(
             QueryCMIP6(experiment_id="Historical"),
             selector=selector_yielding(
@@ -435,12 +467,15 @@ def test_high_raises_with_every_refusal_when_no_api_answers():
             client=client_for(lambda request: httpx.Response(503)),
         )
 
-    assert excinfo.value.described == ("first.example", "last.example")
+    assert [failure.description for failure in excinfo.value.failures] == [
+        "first.example",
+        "last.example",
+    ]
     assert "first.example" in str(excinfo.value)
     assert "last.example" in str(excinfo.value)
     assert all(
-        isinstance(refusal, CouldNotGetAllowedValuesError)
-        for refusal in excinfo.value.refusals
+        isinstance(failure, CouldNotGetAllowedValuesResponseError)
+        for failure in excinfo.value.failures
     )
 
 
@@ -649,7 +684,7 @@ def test_a_facet_the_apis_query_style_cannot_express_is_not_asked_about():
     api = SearchAPIFacade(
         parameters=ESGFNG_CMIP6_FACADE_PARAMETERS,
         search_api=SearchAPIESGFNGSTAC("stac.example", once()),
-        result_parser=ESGFNGCMIP6ResultParser(
+        result_parser=ESGFNGResultParser(
             read_n_matches=stac_east_n_matches,
         ),
     )

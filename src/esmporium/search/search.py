@@ -9,7 +9,7 @@ import logging
 import shlex
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
@@ -18,6 +18,7 @@ from esmporium.search.apis import (
     NoSearchResultNumberOfMatchesReturnedError,
     Request,
     SearchAPI,
+    UnreadableResponseError,
 )
 from esmporium.search.health import SearchAPICall, SearchAPICallObserver
 from esmporium.search.result_parsing import ParsedDocument, ResultProcessor
@@ -27,6 +28,9 @@ from esmporium.search.search_api_facade import (
     SearchAPIFacadeSelector,
     SelectorOfferedNoAPIFacadeError,
 )
+
+if TYPE_CHECKING:
+    from esmporium.search.check_query_values import CouldNotGetAllowedValuesError
 
 logger = logging.getLogger(__name__)
 
@@ -305,7 +309,38 @@ def fire(
 
 class CouldNotSearchError(RuntimeError):
     """
-    Raised when one API will not answer a search
+    Raised when one API gives us no results for a search
+
+    This is deliberately vague.
+    Generally, a subclass of this error provides more specific detail e.g.
+    [CouldNotGetSearchResponseError][(m).] means the API did not answer
+    and [CouldNotUseSearchResultsError][(m).] means it answered
+    with something we could not read.
+    """
+
+    def __init__(self, message: str, host: str, cause: Exception | None) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        message
+            The message which says why we have no results
+
+        host
+            The host which gave us no results
+
+        cause
+            What went wrong, if we know it, kept on `cause` for callers to inspect
+        """
+        super().__init__(message)
+        self.host = host
+        self.cause = cause
+
+
+class CouldNotGetSearchResponseError(CouldNotSearchError):
+    """
+    Raised when an API does not answer a search
     """
 
     def __init__(self, host: str, cause: Exception | None = None) -> None:
@@ -318,51 +353,101 @@ class CouldNotSearchError(RuntimeError):
             The host which did not answer
 
         cause
-            What went wrong, if we know it. Folded into the message so that a
-            refusal can say *why*, and kept on `cause` for callers to inspect
+            What went wrong, if we know it
+
+            Folded into the message so that the failure can say *why*,
+            and kept on `cause` for callers to inspect.
         """
-        self.host = host
-        self.cause = cause
-        if cause is None:
-            message = (
-                f"{host} did not answer our search request, "
-                "so it has given us no results."
-            )
-        else:
-            message = (
-                f"{host} did not answer our search request ({cause}), "
-                "so it has given us no results."
-            )
-        super().__init__(message)
+        why = "" if cause is None else f" ({cause})"
+        super().__init__(
+            f"{host} did not answer our search request{why}, "
+            "so it has given us no results.",
+            host=host,
+            cause=cause,
+        )
 
 
-class NoAPIWouldAnswerError(RuntimeError):
+class CouldNotUseSearchResultsError(CouldNotSearchError):
     """
-    Raised when every API we searched refused to answer
+    Raised when an API answers a search with something we cannot read
+
+    Unlike [CouldNotGetSearchResponseError][(m).], the host did answer:
+    what failed was our reading of it, so the cause is an
+    [UnreadableResponseError][esmporium.search.apis.UnreadableResponseError]
+    saying which key we could not find rather than a transport failure.
     """
 
-    def __init__(self, refusals: tuple[CouldNotSearchError, ...]) -> None:
+    def __init__(
+        self,
+        host: str,
+        cause: Exception,
+        url: str | None = None,
+    ) -> None:
         """
         Initialise the error
 
         Parameters
         ----------
-        refusals
-            What each API said, in the order they were asked
+        host
+            The host whose answer we could not read
+
+        cause
+            What we could not read, kept on `cause` for callers to inspect
+
+        url
+            The URL we asked, if we know it
+
+            Folded into the message so a report of this carries
+            what someone would need to ask the same question again.
         """
-        self.refusals = refusals
-        self.hosts = tuple(refusal.host for refusal in refusals)
-        asked = "\n".join(f"  - {refusal}" for refusal in refusals)
         super().__init__(
-            f"Searched {len(refusals)} API(s) and none of them answered, "
-            f"so we have no results to give you:\n{asked}"
+            f"{host} answered our search request with something we could not read "
+            f"({cause}), so it has given us no results."
+            f"{f' We asked: {url}.' if url else ''}",
+            host=host,
+            cause=cause,
+        )
+        self.url = url
+
+
+class NoAPIAnsweredError(RuntimeError):
+    """
+    Raised when every API we asked failed to give us anything we could use
+
+    "Failed" covers an API not answering and an API answering
+    with something we could not read: `failures` says which it was for each API.
+
+    Should carry all of the failures rather than only the last,
+    because which APIs failed, and how, is the interesting part:
+    one node being down says nothing, all of them being down says a lot,
+    and only the whole list tells you which it was.
+    """
+
+    def __init__(
+        self,
+        failures: tuple[CouldNotSearchError, ...]
+        | tuple[CouldNotGetAllowedValuesError, ...],
+    ) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        failures
+            Why each API gave us nothing we could use, in the order they were asked
+        """
+        self.failures = failures
+        asked = "\n".join(f"  - {failure}" for failure in failures)
+        super().__init__(
+            f"Asked {len(failures)} API(s) and none of them gave us anything "
+            f"we could use:\n{asked}"
         )
 
 
 @dataclass(frozen=True)
 class SearchOutcome:
     """
-    What came of a search: the datasets found, how many matched, and who refused
+    What came of a search: the datasets found, how many matched, and what failed
 
     We deliberately do not carry the raw JSON here.
     Each host's raw documents are kept on the parsed `ParsedDocument.raw_json`,
@@ -384,8 +469,8 @@ class SearchOutcome:
     """
     # TODO: consider raising if we can't get the number of matches in future.
 
-    refusals: dict[str, CouldNotSearchError]
-    """What each endpoint which did not answer said, keyed by host"""
+    failures: dict[str, CouldNotSearchError]
+    """Reasons we failed to get allowed search results, keyed by host"""
 
 
 def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection seams
@@ -454,14 +539,15 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
     SelectorOfferedNoAPIFacadeError
         `selector` had no facade to offer for this query at all
 
-    NoAPIWouldAnswerError
-        The selector offered at least one endpoint and none of them answered
+    NoAPIAnsweredError
+        The selector offered at least one endpoint
+        and none of them gave us results we could use
     """
     canonical = to_canonical(query)
 
     datasets: dict[str, tuple[ParsedDocument, ...]] = {}
     n_matches: dict[str, int | None] = {}
-    refusals: dict[str, CouldNotSearchError] = {}
+    failures: dict[str, CouldNotSearchError] = {}
 
     owns_client = client is None
     client = client if client is not None else httpx.Client(follow_redirects=True)
@@ -483,7 +569,7 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
                     read_n_matches=facade.get_n_matches,
                 )
             except SearchAPIRequestError as exc:
-                refusals[host] = CouldNotSearchError(host, cause=exc)
+                failures[host] = CouldNotGetSearchResponseError(host, cause=exc)
             else:
                 # The facade knows this host's format and project, so it turns the raw
                 # answer into datasets here, the moment it arrives.
@@ -498,13 +584,22 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
                 # If either of those assumptions changed, this would break.
                 # We will have to be more careful in higher-level functions
                 # to do queries over multiple projects (PR3).
-                parsed = facade.parse_search_results(raw)
-                datasets[host] = parsed
-                n_matches[host] = _result_count_or_none(facade.get_n_matches, raw)
-                if processor is not None:
-                    processor(host, parsed)
-                if stop_at_first_result:
-                    break
+                try:
+                    parsed = facade.parse_search_results(raw)
+                except UnreadableResponseError as exc:
+                    failures[host] = CouldNotUseSearchResultsError(
+                        host,
+                        cause=exc,
+                        url=get_url(facade.search_api, request),
+                    )
+                else:
+                    datasets[host] = parsed
+                    n_matches[host] = _result_count_or_none(facade.get_n_matches, raw)
+                    if processor is not None:
+                        processor(host, parsed)
+
+                    if stop_at_first_result:
+                        break
 
             attempt += 1
 
@@ -515,7 +610,7 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
     if not asked_someone:
         raise SelectorOfferedNoAPIFacadeError(canonical, selector)
 
-    if not datasets and refusals:
-        raise NoAPIWouldAnswerError(tuple(refusals.values()))
+    if not datasets and failures:
+        raise NoAPIAnsweredError(tuple(failures.values()))
 
-    return SearchOutcome(datasets, n_matches, refusals)
+    return SearchOutcome(datasets, n_matches, failures)

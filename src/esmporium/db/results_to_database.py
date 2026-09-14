@@ -327,6 +327,16 @@ def build_result_processor(
 class _SurrogateKeyRow(Protocol):
     """
     A row whose surrogate `id` is assigned by the database when the row is flushed.
+
+    In this context, flushed means writing results to the database
+    (effectively, it's a bit more complicated than this in reality,
+    but this is near enough for our own mental model).
+    This is the step that converts IDs set by the database from `None`
+    to an actual value.
+
+    This class represents a database row whose id value may be `int` or `None`,
+    but we expect to become `int` only
+    once the row has been written to the database (i.e. flushed).
     """
 
     id: int | None

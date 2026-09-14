@@ -15,7 +15,10 @@ from esmporium.search.apis.protocol import (
     LimitOutOfRangeError,
     NoFacetValuesReturnedError,
     NoSearchResultDocumentsError,
+    SearchAPI,
     UncompilableFacetPatternError,
+    describe_search_api,
+    read_response_path,
     single_facet_value_or_none,
 )
 from esmporium.search.apis.request import Request
@@ -55,13 +58,12 @@ def stac_summary_values(raw: dict[str, Any], facets: set[str]) -> dict[str, set[
         `raw` summarises nothing at all,
         so this deployment cannot tell us anything about any facet.
     """
-    # An empty block is as useless to us as a missing one:
-    # either way this deployment has told us nothing it knows.
-    if not raw.get("summaries"):
+    summaries = raw.get("summaries")
+    if not summaries or not isinstance(summaries, Mapping):
         raise NoFacetValuesReturnedError(raw, "summaries")
 
     res: dict[str, set[str]] = {}
-    for api_name, summary in raw["summaries"].items():
+    for api_name, summary in summaries.items():
         # This match is deliberately exact (case-sensitive). We only ever build
         # lowercase-prefixed names (`cmip7:variable_id`), and both ESGF-NG
         # deployments (east and west) key their summaries the same way today,
@@ -136,13 +138,12 @@ def stac_summary_patterns(
         A pattern specified for a given facet name
         is not able to be compiled as a regular expression.
     """
-    # An empty block is as useless to us as a missing one:
-    # either way this deployment has told us nothing it knows.
-    if not raw.get("summaries"):
+    summaries = raw.get("summaries")
+    if not summaries or not isinstance(summaries, Mapping):
         raise NoFacetValuesReturnedError(raw, "summaries")
 
     res: dict[str, re.Pattern[str]] = {}
-    for api_name, summary in raw["summaries"].items():
+    for api_name, summary in summaries.items():
         # Exact, case-sensitive match, for the reasons in `stac_summary_values`.
         if api_name in facets:
             if not isinstance(summary, str):
@@ -186,7 +187,7 @@ def stac_extract_result_documents(raw: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def stac_read_facet_list_as_strings(
-    feature: dict[str, Any], api_field: str
+    feature: dict[str, Any], api_field: str, context: str | None = None
 ) -> tuple[str, ...]:
     """
     Read a facet from a STAC feature (document) as a tuple of strings
@@ -199,20 +200,39 @@ def stac_read_facet_list_as_strings(
     api_field
         Facet (i.e. field in the API response) to read
 
+    context
+        Anything which helps reproduce a feature we cannot read
+
+        See
+        [UnreadableResponseError][esmporium.search.apis.UnreadableResponseError].
+
     Returns
     -------
     :
         The value of `api_field`, cast to a tuple of strings
 
+        A feature which carries no `api_field` reads as no values at all:
+        an absent facet is a normal thing for a record to have.
+
     Raises
     ------
+    UnreadableResponseError
+        `feature` carries no `properties` at all
+
     NotImplementedError
         The value we found is not one we can safely cast to a tuple of strings
     """
     # `properties` is where a STAC feature keeps its facets,
     # so a feature without it is not one we can read at all.
-    # So we try to get its value and let that fail loudly if it's not there.
-    values = feature["properties"].get(api_field)
+    # The facet itself is read tolerantly on top of that: a record simply
+    # not carrying `api_field` is normal and reads as no values.
+    properties = read_response_path(
+        feature,
+        "properties",
+        what=f"the facets of this record ({api_field!r} in particular)",
+        context=context,
+    )
+    values = properties.get(api_field)
     if values is None:
         return ()
 
@@ -260,7 +280,9 @@ def stac_facet_value_as_string(value: Any, api_field: str) -> str:
     raise NotImplementedError(msg)
 
 
-def stac_read_facet_as_string(feature: dict[str, Any], api_field: str) -> str | None:
+def stac_read_facet_as_string(
+    feature: dict[str, Any], api_field: str, context: str | None = None
+) -> str | None:
     """
     Read a facet from a STAC feature (document) as a single string
 
@@ -272,6 +294,12 @@ def stac_read_facet_as_string(feature: dict[str, Any], api_field: str) -> str | 
     api_field
         Facet (i.e. field in the API response) to read
 
+    context
+        Anything which helps reproduce a feature we cannot read
+
+        See
+        [UnreadableResponseError][esmporium.search.apis.UnreadableResponseError].
+
     Returns
     -------
     :
@@ -279,15 +307,20 @@ def stac_read_facet_as_string(feature: dict[str, Any], api_field: str) -> str | 
 
     Raises
     ------
+    UnreadableResponseError
+        `feature` carries no `properties` at all
+
     MultipleFacetValuesError
         In the doc, `api_field` maps to more than one value
     """
     return single_facet_value_or_none(
-        stac_read_facet_list_as_strings(feature, api_field), api_field
+        stac_read_facet_list_as_strings(feature, api_field, context), api_field
     )
 
 
-def stac_nodes(feature: dict[str, Any]) -> tuple[DataNodeInfo, ...]:
+def stac_nodes(
+    feature: dict[str, Any], api: SearchAPI | None = None
+) -> tuple[DataNodeInfo, ...]:
     """
     Get the distinct data nodes a STAC feature's assets are hosted on
 
@@ -295,6 +328,11 @@ def stac_nodes(feature: dict[str, Any]) -> tuple[DataNodeInfo, ...]:
     ----------
     feature
         Feature (i.e. document) from which to read the data nodes
+
+    api
+        The search API the feature came from
+
+        Only used to say who answered if an asset cannot be read.
 
     Returns
     -------
@@ -306,23 +344,44 @@ def stac_nodes(feature: dict[str, Any]) -> tuple[DataNodeInfo, ...]:
 
     Raises
     ------
-    KeyError
-        One of `feature`'s assets does not say which node hosts it
+    UnreadableResponseError
+        `feature` does not carry an id.
+
+        One of `feature`'s assets does not say which node hosts it.
 
         Something is hosting it and we cannot see what,
         which means the response is not the shape we expect,
         so we fail loudly rather than quietly dropping the node.
     """
+    context = describe_search_api(api) if api is not None else None
+    feature_id = read_response_path(
+        feature, "id", what="this record's id", context=context
+    )
+
     hosts: list[str] = []
     # No assets at all is fine: nothing is hosting this, so there is no node to report.
-    for asset in feature.get("assets", {}).values():
+    for name, asset in feature.get("assets", {}).items():
         # `alternate:name` (STAC alternate-assets extension) is the canonical data-node
         # identity, matching Solr's `data_node` (e.g. `ceda.ac.uk`).
         # Deliberately do NOT read `href` here:
         # `href` is the file-download URL (e.g. `dap.ceda.ac.uk`),
         # a different concept from the data node,
         # reserved for a future file-access step.
-        host = asset["alternate:name"]
+        # Read from the asset, not down a path from the feature
+        # because asset names are filenames,
+        # so they contain dots and cannot be spelled as a path segment here.
+        host = read_response_path(
+            asset,
+            "alternate:name",
+            what="the data node",
+            context=context,
+            lead=(
+                f"In the following, `response` refers to the ['assets'][{name!r}] "
+                f"path in the API response's {feature_id!r} feature. "
+                f"The information provided for the {name!r} asset of {feature_id!r} "
+                "does not specify the data node."
+            ),
+        )
         if host not in hosts:
             hosts.append(host)
 
@@ -438,10 +497,12 @@ class SearchAPIESGFNGSTAC:
         """
         See [SearchAPI.read_facet][esmporium.search.apis.SearchAPI.read_facet].
         """
-        return stac_read_facet_as_string(doc, api_field)
+        return stac_read_facet_as_string(doc, api_field, describe_search_api(self))
 
     def read_facet_list(self, doc: dict[str, Any], api_field: str) -> tuple[str, ...]:
         """
         See [SearchAPI.read_facet_list][esmporium.search.apis.SearchAPI.read_facet_list].
         """  # noqa: E501
-        return stac_read_facet_list_as_strings(doc, api_field)
+        return stac_read_facet_list_as_strings(
+            doc, api_field, describe_search_api(self)
+        )
