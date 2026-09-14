@@ -361,7 +361,7 @@ class CouldNotGetAllowedValuesError(RuntimeError):
     """
     Raised when a source cannot tell us what the allowed values are
 
-    This is deliberately vauge.
+    This is deliberately vague.
     Generally, a subclass of this error provides more specific detail e.g.
     [CouldNotGetAllowedValuesResponseError][(m).] means the source did not answer
     and [CouldNotUseAllowedValuesError][(m).] means it answered

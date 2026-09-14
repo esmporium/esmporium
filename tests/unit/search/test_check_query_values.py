@@ -235,12 +235,12 @@ def test_a_node_which_never_answers_raises():
 
 def test_a_node_which_answers_unreadably_is_a_failure_rather_than_an_explosion():
     """
-    An answer we cannot read is a failure of this source, not of the whole check
+    An answer we cannot read is a failure of this facade, not of the whole check
 
-    The caller pools several sources
-    so one of them replying with a body we do not understand
-    has to come back as that source's failure.
-    It should not crash the checking of other index nodes.
+    The caller pools several facades
+    so one of them not replying or replying with a body we do not understand
+    has to come back as that facade's failure.
+    It should not crash the checking of other facades.
     """
     canonical = canonical_cmip6(experiment_id="historical")
     # A 200 whose body says nothing about facets at all.

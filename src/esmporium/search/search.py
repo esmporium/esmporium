@@ -311,7 +311,7 @@ class CouldNotSearchError(RuntimeError):
     """
     Raised when one API gives us no results for a search
 
-    This is deliberately vauge.
+    This is deliberately vague.
     Generally, a subclass of this error provides more specific detail e.g.
     [CouldNotGetSearchResponseError][(m).] means the API did not answer
     and [CouldNotUseSearchResultsError][(m).] means it answered
