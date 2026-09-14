@@ -22,3 +22,13 @@ search_api_facades/core.py
 - _read_back()
     # TODO: upgrade this facet-values reader's docstrings to the repository standards,
     # and consider making it public alongside `parse_search_results`.
+
+
+result_normalisation.py()
+- _normalise_stac()
+    finds under 'properties'
+
+
+test_results_round_trip.py
+- Not relevant fully anymore
+- Getting Claude to trim

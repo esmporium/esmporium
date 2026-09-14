@@ -338,7 +338,7 @@ def test_facet_columns_are_not_nullable(engine, column):
 # cannot be duplicated. Foreign keys are NOT exercised here: SQLite does not enforce
 # them without `PRAGMA foreign_keys=ON`, which we do not set, so these tests use plain
 # integer ids and assert only the uniqueness rules. The end-to-end behaviour over real
-# rows is covered in `tests/unit/db/test_results_round_trip.py`.
+# rows is covered in `tests/unit/db/test_find_facet_clash_from_database.py`.
 
 
 def _version(dataset_id: int, version: str) -> DatasetVersion:

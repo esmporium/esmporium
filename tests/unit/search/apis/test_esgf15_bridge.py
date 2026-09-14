@@ -1,12 +1,5 @@
 """
 Test the ESGF1.5 bridge/Solr search API format
-
-The facet names are ESGF1's, and the response shape is Solr's, so the reading half
-is shared with `test_esgf1.py` (and, for what a result means, with
-`tests/unit/search/test_result_parsers.py`).
-What differs is the encoding of a search request, which is what these pin.
-Facet values and names are the API's own parameter names;
-the canonical translation is the facade's job and is tested elsewhere.
 """
 
 from __future__ import annotations

@@ -4,11 +4,6 @@ A runnable example of the search step: QueryCMIP{5,6,7} -> ESGF -> rows -> query
 This walks the whole path end to end: search live ESGF, save the results, then query
 those saved rows straight back out of the database.
 
-Everything that does the work now lives in `esmporium.search` and `esmporium.db`;
-this is only a hand-run example of calling it. Logging is turned up to `DEBUG` so
-that the URL- and `curl`-equivalent of each request (and the process/thread it went
-out on) are printed as the search runs.
-
 It shows two opt-in seams that hang off `search()`:
 
 - an `api_call_observer` that records every request into a throwaway SQLite database
@@ -20,8 +15,6 @@ Finally, once the rows are stored, it queries the database directly to show that
 saved `Dataset` rows are now just ordinary rows you can filter -- e.g. "give me only
 the CMIP5 datasets", or "give me CMIP5 and CMIP7 together" -- with no memory of which
 search or API they came from.
-
-Run it:  uv run python scripts/search_cmipx.py
 """
 
 from __future__ import annotations
@@ -65,10 +58,6 @@ EXAMPLE_CMIP7 = QueryCMIP7(
 def print_datasets_by_project(session: Session, projects: tuple[str, ...]) -> None:
     """
     Query the saved rows back out, filtered to a set of projects
-
-    This is the "load it back out" half of the demo: the rows are now just `Dataset`
-    rows, so getting "only CMIP5" or "CMIP5 and CMIP7 together" is an ordinary `WHERE
-    project IN (...)` -- nothing here knows or cares which search or API produced them.
 
     Parameters
     ----------

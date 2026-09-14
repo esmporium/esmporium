@@ -10,20 +10,6 @@ The recordings go stale.
 That is the trade: they will not notice an API changing shape until they are
 refreshed. Refresh them with `uv run python scripts/record_search_responses.py`
 and read the diff.
-
-Two kinds of recording are read here,
-because a search API facade answers two kinds of question:
-how to do searches
-(the total a search matched, via `get_n_matches`,
-and the datasets a search returned, via `parse_search_results`)
-and which values a facet has (`parse_facet_values`).
-
-Everything is read through the facade.
-The count in particular is *not* keyed the same way by every endpoint --
-ESGF-NG east and west speak the same format and still disagree about where it lives --
-so it is the facade's result parser, picked per project and endpoint, which reads it.
-The wiring is covered on its own, with mocked responses we wrote, in
-`test_search.py` and `test_check_query_values.py`.
 """
 
 from __future__ import annotations
@@ -284,6 +270,7 @@ STAC_RECORDED_CASES = tuple(case for case in RECORDED_CASES if "stac" in str(cas
 """The recorded cases whose API describes its facet values in a STAC collection"""
 
 
+# TODO: this test likely changing following PR #31
 @pytest.mark.parametrize("name, facade", RECORDED_CASES)
 def test_recorded_rows_carry_the_project_they_were_asked_for(name, facade):
     """Every dataset row says which project it belongs to, and says the right one
@@ -301,6 +288,7 @@ def test_recorded_rows_carry_the_project_they_were_asked_for(name, facade):
     assert {row.project for doc in documents for row in doc.datasets} == {expected}
 
 
+# TODO: this test likely changing following PR #31
 BASE_ID_RECORDED_CASES = tuple(
     case for case in STAC_RECORDED_CASES if str(case.id) == "esgf-ng-stac-cmip6-east"
 )
@@ -311,12 +299,14 @@ Only east's CMIP6 collection publishes one: west's CMIP6 features do not, and ne
 deployment publishes one for CMIP7.
 """
 
+# TODO: this test likely changing following PR #31
 RECOVERED_ID_RECORDED_CASES = tuple(
     case for case in STAC_RECORDED_CASES if case not in BASE_ID_RECORDED_CASES
 )
 """The recorded STAC cases whose bundle id has to be recovered from the feature id"""
 
 
+# TODO: this test likely changing following PR #31
 @pytest.mark.parametrize("name, facade", BASE_ID_RECORDED_CASES)
 def test_recorded_stac_bundle_id_is_read_from_base_id(name, facade):
     """Where a deployment carries the bundle id outright, we read it
@@ -335,6 +325,7 @@ def test_recorded_stac_bundle_id_is_read_from_base_id(name, facade):
     ]
 
 
+# TODO: this test likely changing following PR #31
 @pytest.mark.parametrize("name, facade", RECOVERED_ID_RECORDED_CASES)
 def test_recorded_stac_bundle_id_drops_the_version_token(name, facade):
     """Where it carries no `base_id`, the bundle id is recovered from the feature id

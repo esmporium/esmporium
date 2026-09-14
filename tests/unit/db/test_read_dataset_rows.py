@@ -1,17 +1,5 @@
 """
-Parsing a controlled search document into savable `DatasetFacets`, end to end
-
-These tests start from tiny hand-fabricated documents we own, *not* recorded live
-responses (which drift whenever they are re-recorded). Each one builds a document in a
-search API's own field names out of an expected
-[`DatasetFacets`][esmporium.search.result_parsing.DatasetFacets], parses it back with
-[`SearchAPIFacade.read_dataset_rows`][esmporium.search.search_api_facade.SearchAPIFacade.read_dataset_rows],
-and checks that (a) the rows come back exactly as expected and (b) they actually save as
-`Dataset` rows.
-
-Together with `test_dataset_facets_mirror_dataset_columns` (in `test_schema.py`) this is
-the guard the plan called for: change `Dataset` without matching the parsing and either
-the parity test fails by name, or the save here fails on the missing column.
+Parse a search document into a dataset row, and check the row saves to the database.
 """
 
 from __future__ import annotations
@@ -43,17 +31,7 @@ def _facade(parameters, search_api_cls, result_parser) -> SearchAPIFacade:
 
 
 def _solr_doc(facade: SearchAPIFacade, *rows: DatasetFacets) -> dict:
-    """Build a Solr document (facets as single-element lists) for the expected rows.
-
-    Every scalar facet is shared across the rows; `variable` is the multi-valued axis a
-    CMIP5 bundle explodes over, so it becomes a list of each row's variable. Field names
-    come from the facade's own mapping, so the document is in exactly the API names
-    `read_dataset_rows` reads back. A facet the project does not model (CMIP5's
-    `grid_label`) has no mapping, so it is simply omitted.
-
-    `master_id` is written by hand because it is not a facet: it is where a Solr record
-    keeps its bundle id, which the result parser reads for itself.
-    """
+    """Build a Solr document (facets as single-element lists) for the expected rows."""
     first = rows[0]
     scalar_columns = set(DatasetFacets.model_fields) - {
         "id_project_specific",
@@ -148,13 +126,6 @@ def test_solr_cmip5_bundle_explodes_into_saved_rows(engine):
 
 
 def test_dataset_facets_requires_every_non_optional_facet():
-    """A row missing a required facet fails loudly at construction, in `search`.
-
-    This is the typed-model upgrade over the old bare dict: the omission is caught here,
-    naming the field, rather than surfacing as a NOT NULL error at commit time. Every
-    facet must be supplied -- including `grid_label`, which has no default: a parser
-    must state it, passing `None` for a project with no grid (CMIP5), so a forgotten
-    grid is a loud error here rather than a silent `NULL`.
-    """
+    """A row missing a required facet fails loudly at construction, in `search`."""
     with pytest.raises(ValidationError):
         DatasetFacets(id_project_specific="native.id", project="CMIP6")  # rest missing

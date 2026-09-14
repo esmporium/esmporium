@@ -2,7 +2,7 @@
 Tests for flattening a stored raw search document into `{facet_name: value}`.
 
 `normalise_stored_document` dispatches on the `raw_docs_format_tag` recorded with each
-document (no shape sniffing): the tag names the format, and a registry maps it to the
+document: the tag names the format, and a registry maps it to the
 flattener. The default registry covers the search APIs we ship; it is injectable so a
 user who bypasses our facade can supply the flattener for their own tag, and an unknown
 tag raises rather than guessing. The difference-reporting these feed is tested in

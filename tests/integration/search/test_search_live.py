@@ -465,7 +465,7 @@ def test_search_ors_within_a_facet(client, api, make_query):
 # Eventually also will have higher level wrappers for more sophisticated
 # search logic -> i.e. Malte's search example.
 
-
+# TODO: some of this will change following PR #31
 # --- Raw ESGF-NG east/west shape assumptions ---------------------------------
 #
 # Our STAC result parsing leans on a few differences between the two ESGF-NG
