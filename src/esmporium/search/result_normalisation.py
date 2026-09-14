@@ -1,15 +1,17 @@
 """
 Flattening a stored raw search document into `{facet_name: value}`
 
-This is a rare, off-the-write-path diagnostic.
-It only runs when a dataset clash is observed at load time and we need to explain,
-from the raw JSON we stored at ingest,
-which facet distinguishes two datasets our model considers identical
+This is a rare thing to need.
+It is currently only used when we need to explain, from raw JSON,
+which facet distinguishes datasets our model considers identical
 (see [`esmporium.db.dataset_uniqueness.facet_differences`][]).
+For example, when saving a dataset clashes with one already stored
+(see [`esmporium.db.save_dataset`][])
+or when datasets our model cannot tell apart are loaded.
 
-It runs long after the search, with no live
-[`SearchAPI`][esmporium.search.apis.SearchAPI] in scope,
-so it cannot ask the API how to read its own format.
+It is currently used by the database layer, possibly long after the search,
+so there is no live [`SearchAPI`][esmporium.search.apis.SearchAPI] in scope
+and it cannot ask the API how to read its own format.
 Instead each raw doc should be stored with a `raw_docs_format_tag`.
 This string allows [`normalise_stored_document`][(m).] to dispatch to the right parser
 on that tag through a registry of per-format flatteners.
@@ -81,6 +83,9 @@ def _normalise_solr(raw: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# TODO: return to this.
+# Only flattening by property removes some 'facets' which solr retains
+# But only need to be comparable to another STAC.
 def _normalise_stac(raw: dict[str, Any]) -> dict[str, Any]:
     """
     Flatten a STAC feature (ESGF-NG)

@@ -1,10 +1,22 @@
 """
 Identify the facets which make datasets unique, even if they look identical to us
 
-When datasets share every column our [`Dataset`][esmporium.db.schema.Dataset] model
-records but have different `id_project_specific` values, they are distinguished by some
-project-specific facet we do not model as a column: `product` for CMIP5, `activity_id`
-for CMIP6, and (for CMIP7) things like `activity_id`, `region` or the branding labels.
+For example,
+when datasets share every facet column our [`Dataset`][esmporium.db.schema.Dataset]
+model records but have different `id_project_specific` values,
+they are usually distinguished by some project-specific facet
+we do not model as a column:
+e.g. `product` for CMIP5, `activity_id` for CMIP6, and
+(for CMIP7) things like `activity_id`, `region` or the branding labels.
+Our model stores these as separate datasets,
+but a query on our columns alone cannot tell them apart.
+
+When datasets share every column, `id_project_specific` included, our model cannot
+store them separately at all (see
+[`UnhandledDatasetClashError`][esmporium.db.UnhandledDatasetClashError]).
+This is data of a shape we did not expect: it differs in a facet
+that appears neither in our columns nor in `id_project_specific`.
+Diffing the raw documents shows which facet our model is missing.
 """
 
 from __future__ import annotations
@@ -39,10 +51,9 @@ def facet_differences(
     """
     Find all the facets that explain why datasets differ
 
-    Given the normalised facets of two or more datasets that our model considers
-    identical (same values in every column we record, yet different
-    `id_project_specific`), this reports every facet on which they do not all agree,
-    keyed back to the datasets it came from.
+    Given the normalised facets of two or more datasets (or raw documents)
+    this reports every facet on which they do not all agree,
+    keyed back to the entries they came from.
 
     Parameters
     ----------
@@ -57,9 +68,9 @@ def facet_differences(
     -------
     :
         `{facet_name: {key: value}}` for each facet the entries do not all agree on,
-        with one entry per key (its value, or [`MISSING`][(m).] if its document
-        lacks the facet). Empty if the datasets agree on every facet -- meaning nothing
-        in the raw documents explains their `id_project_specific` difference.
+        with one entry per key
+        (its value, or [`MISSING`][(m).] if its document lacks the facet).
+        Empty if the entries agree on every facet.
 
     Raises
     ------
