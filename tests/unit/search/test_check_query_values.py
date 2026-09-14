@@ -252,8 +252,8 @@ def test_a_node_which_answers_unreadably_is_a_failure_rather_than_an_explosion()
     ) as excinfo:
         allowed_values_from_api(solr_api("odd.example"), odd, canonical, {"experiment"})
 
-    # It is still a failure to get values, so the caller which pools failures keeps
-    # working.
+    # It is still a failure to get values
+    # so users can use this 'catch all' error/check if they want
     assert isinstance(excinfo.value, CouldNotGetAllowedValuesError)
     assert "We asked: https://odd.example" in str(excinfo.value)
 
