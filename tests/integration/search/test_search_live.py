@@ -228,12 +228,12 @@ def search_or_skip(skip_or_fail):
     """
     Get a function which searches one live node, skipping if that node will not answer
 
-    A node which failed in any other way, e.g. by answering with something we could
-    not read, fails the test instead (see `skip_or_fail`).
+    A node which failed in any other way,
+    e.g. by answering with something we could not read,
+    fails the test instead.
 
     The function takes `(query, api, client, limit, observer=None)`.
-    If `observer` is given it is passed through to `search`, so a caller can
-    assert on the search-API health recorded for the call.
+    If `observer` is given it is passed through to `search`.
     """
 
     def search_one(query, api, client, limit, observer=None):
@@ -257,7 +257,8 @@ def search_or_skip(skip_or_fail):
 
 @pytest.mark.parametrize("api, query", LIVE_CASES)
 def test_search_returns_results(client, api, query, recorded, search_or_skip):
-    """A query we expect to match something comes back with matches
+    """
+    A query we expect to match something comes back with matches
 
     Also checks that the search-API health was recorded: one row per attempt (a
     healthy node answers first try, but a flaky one may be retried), all for this

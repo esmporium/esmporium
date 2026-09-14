@@ -60,26 +60,26 @@ def skip_or_fail() -> Callable[..., NoReturn]:
     """
     Get a function which turns every endpoint failing into a skip or a failure
 
-    Call it with the failures carried by the error saying nobody answered
-    (e.g. `NoAPIAnsweredError.failures`),
-    the failure type meaning "the endpoint did not answer",
+    Call it with an iterable of failures
+    (e.g. those carried by an error saying nobody answered
+    e.g. `NoAPIAnsweredError.failures`),
+    the failure type to skip,
     and the reason to skip with.
 
-    An endpoint which did not answer is down or unwell,
-    which says nothing about the behaviour under test, so if that is every failure,
-    the test skips.
+    For example, an endpoint which did not answer is down or unwell,
+    which says nothing about the behaviour under test,
+    so if that is every failure, the test skips.
     Any other failure fails the test.
-    The one we know of is an endpoint answering with something we could not read,
-    which is exactly the change in response shape the live tests exist to notice.
-    Failing on anything but "did not answer" (rather than on "could not read" alone)
+
+    Failing on anything but certain exceptions
     means a kind of failure we add later fails loudly instead of quietly skipping.
     """
 
     def check(
-        failures: Iterable[Exception], *, did_not_answer: type[Exception], reason: str
+        failures: Iterable[Exception], *, skippable: type[Exception], reason: str
     ) -> NoReturn:
         other_failures = [
-            failure for failure in failures if not isinstance(failure, did_not_answer)
+            failure for failure in failures if not isinstance(failure, skippable)
         ]
         if other_failures:
             pytest.fail(
