@@ -100,12 +100,17 @@ def print_health(session: Session) -> None:
 
 def main() -> None:
     """Search each example query, save datasets as they arrive, then print a summary."""
-    logging.basicConfig(
-        level=logging.DEBUG,
-        format=(
-            "%(asctime)s %(levelname)s p=%(process)d t=%(thread)d %(name)s %(message)s"
-        ),
+    logger = logging.getLogger("esmporium")
+    logger.setLevel(logging.DEBUG)
+
+    logger.propagate = False
+
+    console_handler = logging.StreamHandler()
+    formatter = logging.Formatter(
+        "%(asctime)s %(levelname)s p=%(process)d t=%(thread)d %(name)s %(message)s"
     )
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
 
     # A throwaway database, migrated to the current schema, just for this demo.
     with tempfile.TemporaryDirectory() as tmp:
