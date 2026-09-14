@@ -66,8 +66,8 @@ def _counts(session: Session) -> dict[str, int]:
     }
 
 
-def test_ingest_cmip5_writes_one_edition_per_dataset(engine):
-    """Each CMIP5 bundle explodes into many variables, each its own dataset+edition."""
+def test_ingest_cmip5_writes_one_version_per_dataset(engine):
+    """Each CMIP5 bundle explodes into many variables, each its own dataset+version."""
     facade = _facade(
         ESGF1_CMIP5_FACADE_PARAMETERS,
         SearchAPIESGF1Solr,
@@ -82,10 +82,10 @@ def test_ingest_cmip5_writes_one_edition_per_dataset(engine):
         counts = _counts(session)
 
     assert counts["datasets"] == expected_rows > len(documents)
-    # A version belongs to a single dataset, so there is one edition per variable.
+    # A version belongs to a single dataset, so there is one version per variable.
     assert counts["versions"] == expected_rows
     # The raw document is per bundle (per source doc), but it links to every one of that
-    # bundle's per-variable editions.
+    # bundle's per-variable versions.
     assert counts["raw_docs"] == len(documents)
     assert counts["links"] == expected_rows
 
@@ -148,8 +148,79 @@ def test_ingest_propagates_a_dataset_clash(engine):
     ]
 
     with Session(engine) as session:
-        with pytest.raises(UnhandledDatasetClashError):
+        with pytest.raises(UnhandledDatasetClashError) as excinfo:
             ingest_parsed_documents(session, clashing)
+
+    # The raw docs are passed through and found for the stored dataset
+    # (despite its grid_label being NULL rather than ''),
+    # but they are identical so no facet explains the clash.
+    assert excinfo.value.differences == {}
+
+
+@pytest.mark.parametrize(
+    "ingest",
+    (
+        pytest.param(ingest_parsed_documents, id="ingest_parsed_documents"),
+        pytest.param(
+            lambda session, documents, normalisers: build_result_processor(
+                session, normalisers
+            )("node.example", tuple(documents)),
+            id="build_result_processor",
+        ),
+    ),
+)
+def test_injected_normalisers_reach_clash_diagnosis(engine, ingest):
+    """
+    A user's normalisers, passed to an ingest entry point, are used to diagnose a clash
+
+    Without them, documents with the user's own `raw_docs_format_tag`
+    could not be normalised, so the clash could not say which facets differ.
+    """
+
+    def custom_document(grid_label: str | None, driving_model: str) -> ParsedDocument:
+        return ParsedDocument(
+            id_project_specific="my.native.id",
+            datasets=(
+                DatasetFacets(
+                    id_project_specific="my.native.id",
+                    project="CORDEX",
+                    model="M",
+                    institution="INST",
+                    experiment="historical",
+                    variant_label="r1i1p1f1",
+                    variable="tas",
+                    reporting_interval="mon",
+                    grid_label=grid_label,
+                    processing_id="Amon",
+                ),
+            ),
+            version="20200101",
+            is_latest=True,
+            retracted=False,
+            nodes=(DataNodeInfo("node.example"),),
+            esgf_doc_id=f"my.native.id|{driving_model}",
+            raw_json=json.dumps({"blob": f"driving_model={driving_model}"}),
+            raw_docs_format_tag="acme-format",
+        )
+
+    # NULL vs '' grid_label gets past the get-or-create lookup
+    # but clashes on the identity index.
+    clashing = [custom_document(None, "MPI-ESM"), custom_document("", "CNRM-CM6")]
+    normalisers = {
+        **DEFAULT_NORMALISERS,
+        "acme-format": lambda doc: dict([doc["blob"].split("=", 1)]),
+    }
+
+    with Session(engine) as session:
+        with pytest.raises(UnhandledDatasetClashError) as excinfo:
+            ingest(session, clashing, normalisers)
+
+    assert excinfo.value.differences == {
+        "driving_model": {
+            "stored: my.native.id|MPI-ESM": "MPI-ESM",
+            "new: my.native.id|CNRM-CM6": "CNRM-CM6",
+        }
+    }
 
 
 def test_result_processor_commits_each_host(engine):

@@ -22,12 +22,10 @@ from esmporium.db import (
     save_dataset,
 )
 from esmporium.db.schema import DATASET_IDENTITY_INDEX
-from esmporium.search import DatasetFacets
+from esmporium.search import SOLR_FORMAT_TAG, DatasetFacets
 
 VALID_DATASET_KWARGS = {
-    # No `id`: it is a surrogate integer the database assigns. The row's real identity
-    # is *every descriptive column* — `id_project_specific` plus all nine facets —
-    # enforced by the `uq_dataset_identity` index (see `Dataset.__table_args__`).
+    # No `id`: it is a surrogate integer the database assigns.
     "id_project_specific": (
         "cmip5.output1.BCC.bcc-csm1-1.rcp45.mon.atmos.Amon.r1i1p1_tas"
     ),
@@ -119,10 +117,10 @@ def test_round_trip(engine):
         assert isinstance(getattr(retrieved, column), column_type)
 
 
-# A dataset's identity is every column except the surrogate `id`: the ESGF-side
-# `id_project_specific` plus all of "our columns" (the nine facets). The three tests
-# below cover the three ways two datasets can relate on that identity, splitting our
-# columns from the ESGF column.
+# A dataset's identity is every column except the surrogate `id`:
+# the ESGF-side `id_project_specific` plus all of "our columns" (the nine facets).
+# The three tests below cover the three ways two datasets can relate on that identity,
+# splitting our columns from the ESGF column.
 
 
 def test_same_id_project_specific_differ_on_our_column_is_allowed(engine):
@@ -195,8 +193,78 @@ def test_identical_all_columns_raises_clash(engine):
         save_dataset(session, Dataset(**cmip5_shape))
         session.commit()
 
-        with pytest.raises(UnhandledDatasetClashError):
+        with pytest.raises(UnhandledDatasetClashError) as excinfo:
             save_dataset(session, Dataset(**cmip5_shape))
+
+    # No raw doc was given, so there is nothing to diff
+    assert excinfo.value.differences is None
+
+
+def _save_with_raw_doc(session: Session, dataset: Dataset, raw_doc: DatasetRawDoc):
+    """Save a dataset with a version and a raw doc linked to it"""
+    save_dataset(session, dataset)
+    version = DatasetVersion(
+        dataset_id=dataset.id, version="20200101", is_latest=True, retracted=False
+    )
+    session.add_all([version, raw_doc])
+    session.flush()
+    session.add(RawDocVersionLink(raw_doc_id=raw_doc.id, dataset_version_id=version.id))
+    session.commit()
+
+
+def test_clash_reports_facets_that_differ_in_raw_docs(engine):
+    """
+    A clash diffs the raw docs, pointing at the facet our model is missing
+
+    Here, the data differs by a facet we don't model
+    which also isn't in `id_project_specific`
+    (like CORDEX's driving model could).
+    """
+    with Session(engine) as session:
+        _save_with_raw_doc(
+            session,
+            Dataset(**VALID_DATASET_KWARGS),
+            DatasetRawDoc(
+                esgf_doc_id="doc-a",
+                raw_json='{"driving_source_id": ["MPI-ESM"], "variable": ["tas"]}',
+                raw_docs_format_tag=SOLR_FORMAT_TAG,
+            ),
+        )
+
+        new_raw_doc = DatasetRawDoc(
+            esgf_doc_id="doc-b",
+            raw_json='{"driving_source_id": ["CNRM-CM6"], "variable": ["tas"]}',
+            raw_docs_format_tag=SOLR_FORMAT_TAG,
+        )
+        with pytest.raises(UnhandledDatasetClashError) as excinfo:
+            save_dataset(session, Dataset(**VALID_DATASET_KWARGS), raw_doc=new_raw_doc)
+
+    assert excinfo.value.differences == {
+        "driving_source_id": {"stored: doc-a": "MPI-ESM", "new: doc-b": "CNRM-CM6"}
+    }
+    assert "driving_source_id" in str(excinfo.value)
+
+
+def test_clash_with_unknown_raw_doc_format_tag_still_raises_clash(engine):
+    """
+    A raw doc we can't normalise must not hide the clash itself
+    """
+    with Session(engine) as session:
+        _save_with_raw_doc(
+            session,
+            Dataset(**VALID_DATASET_KWARGS),
+            DatasetRawDoc(
+                esgf_doc_id="doc-a", raw_json="{}", raw_docs_format_tag="acme-format"
+            ),
+        )
+
+        new_raw_doc = DatasetRawDoc(
+            esgf_doc_id="doc-b", raw_json="{}", raw_docs_format_tag="acme-format"
+        )
+        with pytest.raises(UnhandledDatasetClashError) as excinfo:
+            save_dataset(session, Dataset(**VALID_DATASET_KWARGS), raw_doc=new_raw_doc)
+
+    assert excinfo.value.differences is None
 
 
 def test_identity_index_name_matches_constant():
@@ -338,7 +406,7 @@ def test_facet_columns_are_not_nullable(engine, column):
 # cannot be duplicated. Foreign keys are NOT exercised here: SQLite does not enforce
 # them without `PRAGMA foreign_keys=ON`, which we do not set, so these tests use plain
 # integer ids and assert only the uniqueness rules. The end-to-end behaviour over real
-# rows is covered in `tests/unit/db/test_find_facet_clash_from_database.py`.
+# rows is covered in `tests/integration/db/test_find_facet_clash_from_database.py`.
 
 
 def _version(dataset_id: int, version: str) -> DatasetVersion:
@@ -351,8 +419,8 @@ def _version(dataset_id: int, version: str) -> DatasetVersion:
     )
 
 
-def test_edition_is_unique_per_dataset_and_version(engine):
-    """One edition per `(dataset_id, version)`; a second identical pair is refused."""
+def test_version_is_unique_per_dataset_and_version_string(engine):
+    """One version per `(dataset_id, version)`; a second identical pair is refused."""
     with Session(engine) as session:
         dataset = Dataset(**VALID_DATASET_KWARGS)
         session.add(dataset)
@@ -397,8 +465,8 @@ def test_data_node_is_unique(engine):
             session.commit()
 
 
-def test_edition_node_link_pair_is_unique(engine):
-    """The same (edition, node) link twice is refused, so recording it again reuses."""
+def test_version_node_link_pair_is_unique(engine):
+    """The same (version, node) link twice is refused, so recording it again reuses."""
     with Session(engine) as session:
         session.add(DatasetVersionDataNodeLink(dataset_version_id=1, data_node_id=1))
         session.commit()
@@ -408,8 +476,8 @@ def test_edition_node_link_pair_is_unique(engine):
             session.commit()
 
 
-def test_edition_node_link_is_many_to_many(engine):
-    """A node hosts many editions, an edition many nodes: (1,1) (1,2) (2,1) coexist."""
+def test_version_node_link_is_many_to_many(engine):
+    """A node hosts many versions, a version many nodes: (1,1) (1,2) (2,1) coexist."""
     with Session(engine) as session:
         session.add(DatasetVersionDataNodeLink(dataset_version_id=1, data_node_id=1))
         session.add(DatasetVersionDataNodeLink(dataset_version_id=1, data_node_id=2))
@@ -442,8 +510,8 @@ def test_raw_doc_esgf_id_is_unique(engine):
             session.commit()
 
 
-def test_raw_doc_edition_link_pair_is_unique(engine):
-    """One (document, edition) pair; linking the same document to it twice is a dupe."""
+def test_raw_doc_version_link_pair_is_unique(engine):
+    """One (document, version) pair; linking the same document to it twice is a dupe."""
     with Session(engine) as session:
         session.add(RawDocVersionLink(raw_doc_id=1, dataset_version_id=1))
         session.commit()
@@ -453,8 +521,8 @@ def test_raw_doc_edition_link_pair_is_unique(engine):
             session.commit()
 
 
-def test_one_document_can_describe_many_editions(engine):
-    """A CMIP5 document bundles many per-variable editions: one raw_doc, many links."""
+def test_one_document_can_describe_many_versions(engine):
+    """A CMIP5 document bundles many per-variable versions: one raw_doc, many links."""
     with Session(engine) as session:
         session.add(RawDocVersionLink(raw_doc_id=1, dataset_version_id=1))
         session.add(RawDocVersionLink(raw_doc_id=1, dataset_version_id=2))

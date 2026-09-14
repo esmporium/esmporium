@@ -119,7 +119,7 @@ def solr_extract_result_documents(raw: dict[str, Any]) -> list[dict[str, Any]]:
 
     docs: list[dict[str, Any]] = response["docs"]
 
-    return list(docs)
+    return docs
 
 
 def solr_read_facet_list_as_strings(

@@ -390,9 +390,10 @@ class SearchAPI(Protocol):
         Stamped onto every stored document
         (see [`DatasetRawDoc.raw_docs_format_tag`][esmporium.db.schema.DatasetRawDoc])
         so that, the right flattener can be picked to normalise
-        it without a live API in scope (see
-        [`esmporium.search.normalise_stored_document`][]). APIs that return the same
-        format share a tag: our two Solr APIs both use
+        it without a live API in scope
+        (see [`esmporium.search.normalise_stored_document`][]).
+        APIs that return the same format (for the purposes of normalisation)
+        share a tag, e.g. our two Solr APIs both use
         [`SOLR_FORMAT_TAG`][esmporium.search.result_normalisation.SOLR_FORMAT_TAG].
         """
         ...
