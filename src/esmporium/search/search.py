@@ -364,11 +364,11 @@ class SearchOutcome:
     """
     What came of a search: the datasets found, how many matched, and who refused
 
-    We deliberately do not carry the raw JSON here. Each host's raw documents are kept
-    on the parsed `ParsedDocument.raw_json` (and persisted verbatim by the `db` layer),
-    so re-exposing the whole response envelope would be redundant. The one envelope
-    value worth keeping, the total number of records that matched, is surfaced
-    explicitly as `n_matches`.
+    We deliberately do not carry the raw JSON here.
+    Each host's raw documents are kept on the parsed `ParsedDocument.raw_json`,
+    so re-exposing the whole response envelope would be redundant.
+    The one envelope value worth keeping, the total number of records that matched,
+    is surfaced explicitly as `n_matches`.
     """
 
     datasets: dict[str, tuple[ParsedDocument, ...]]
@@ -378,9 +378,11 @@ class SearchOutcome:
     """
     How many records each endpoint reported matched the search, keyed by host
 
-    This is the total matched, which can exceed the number of documents returned in one
-    page. `None` for an endpoint whose response carried no count we could read.
+    This is the total matched,
+    which can exceed the number of documents returned in one page.
+    `None` for an endpoint whose response carried no count we could read.
     """
+    # TODO: consider raising if we can't get the number of matches in future.
 
     refusals: dict[str, CouldNotSearchError]
     """What each endpoint which did not answer said, keyed by host"""
@@ -434,17 +436,18 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
         See [esmporium.search.health][] for how to build one.
 
     processor
-        Called with `(host, parsed_documents)` as soon as each endpoint answers, so its
-        results can be acted on (e.g. saved) the moment they arrive rather than at the
-        end. If `None` (the default), the parsed documents are still collected into the
-        returned outcome, just not handed anywhere. See
-        [`esmporium.db.build_result_processor`][] for the database-saving one.
+        Called with `(host, parsed_documents)` as soon as each endpoint answers,
+        so its results can be acted on (e.g. saved) the moment they arrive
+        rather than at the end.
+        If `None` (the default),
+        the parsed documents are still collected into the returned outcome,
+        they are just not handed anywhere.
+        See [`esmporium.db.build_result_processor`][] for the database-saving one.
 
     Returns
     -------
     :
-        The datasets each endpoint answered with, how many each reported matched,
-        and what each endpoint which did not answer said, all keyed by host
+        Results of the search
 
     Raises
     ------
@@ -483,15 +486,18 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
                 refusals[host] = CouldNotSearchError(host, cause=exc)
             else:
                 # The facade knows this host's format and project, so it turns the raw
-                # answer into datasets here, the moment it arrives. Note: if the
-                # selector offers the same host twice, the second answer simply replaces
-                # the first here. That is wasteful, because we run the query again, but
-                # it is not wrong: the answers are for the same query from the same
-                # host, so either will do. This way of handling results is only safe
-                # because we only handle a single query in this function and our facades
-                # only support searching a single project at a time. If either of those
-                # assumptions changed, this would break. We will have to be more careful
-                # in higher-level functions to do queries over multiple projects (PR3).
+                # answer into datasets here, the moment it arrives.
+                # Note: if the selector offers the same host twice,
+                # the second answer simply replaces the first here.
+                # That is wasteful, because we run the query again, but it is not wrong:
+                # the answers are for the same query from the same host,
+                # so either will do.
+                # This way of handling results is only safe
+                # because we only handle a single query in this function
+                # and our facades only support searching a single project at a time.
+                # If either of those assumptions changed, this would break.
+                # We will have to be more careful in higher-level functions
+                # to do queries over multiple projects (PR3).
                 parsed = facade.parse_search_results(raw)
                 datasets[host] = parsed
                 n_matches[host] = _result_count_or_none(facade.get_n_matches, raw)

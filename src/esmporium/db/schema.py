@@ -93,7 +93,7 @@ Come back to this doc string
 # the problem is much more complicated than a warning at commit time can cover,
 # so we will deal with it as we go.
 # Some notes on things we'll need to deal with:
-# - clashes on import
+# - clashes on import (covered now I think by UnhandledDatasetClashError)
 #   - if we import data that has a clash on import, we want to warn the user
 #     and ideally explain to them why there is a clash
 #     based on looking at project-specific metadata (or raw JSON or something)
@@ -145,24 +145,14 @@ class Dataset(EsmporiumBase, table=True):
     model_config = {"validate_assignment": True}
 
     # The row's real identity is *every descriptive column*, not the surrogate `id`.
-    # `id` is a meaningless integer; this unique index is what actually decides whether
-    # two records are the same dataset or two different ones. Two rows are "the same"
-    # only when they agree on the native id (`id_project_specific`) AND all of our
-    # facets; differing on any single column (a different variable, a different
-    # grid_label, ...) makes them two legitimately distinct datasets.
+    # `id` is a meaningless integer.
+    # This unique index is what actually decides
+    # whether two records are the same dataset or two different ones.
     #
-    # It covers every column except `id` — the native id plus the nine facets — so:
-    # - two CMIP5 variables share a `master_id` but differ in `variable`   -> allowed;
-    # - two CMIP5 products / two CMIP6 activity_ids share all our facets but differ in
-    #   `id_project_specific`                                              -> allowed;
-    # - two rows identical in all of these                                 -> rejected.
-    #
-    # `grid_label` is wrapped in `coalesce(grid_label, '')` because it is NULL for
-    # CMIP5, and SQLite treats NULLs as distinct in a plain UNIQUE, which would let two
-    # otherwise-identical CMIP5 rows slip through. A unique *index* (not a UNIQUE
-    # constraint) is used because only an index may contain an expression.
-    # See `esmporium.db.results_to_database.save_dataset`, which turns the resulting
-    # IntegrityError into an `UnhandledDatasetClashError`.
+    # `grid_label` is wrapped in `coalesce(grid_label, '')` because it can be NULL
+    # and SQLite treats NULLs as distinct in a plain UNIQUE.
+    # A unique *index* (not a UNIQUE constraint)
+    # is used because only an index may contain an expression.
     __table_args__ = (
         Index(
             DATASET_IDENTITY_INDEX,
@@ -180,30 +170,12 @@ class Dataset(EsmporiumBase, table=True):
         ),
     )
 
-    # The "validate at parse time, fail where the record is read" goal that once lived
-    # here as a TODO (split the facets into a non-table base model) is now met by
-    # `DatasetFacets` (esmporium.search.result_parsing): the facade parses each record
-    # into that validated model, and `db` then builds a `Dataset` from it. A malformed
-    # record therefore fails in `search`, naming the field at fault, rather than as a
-    # far-away IntegrityError at commit time.
-
     id: int | None = Field(default=None, primary_key=True)
     """
     Surrogate key; assigned by the database
 
-    Deliberately meaningless. It exists only to give versions and other tables a
-    short, stable value to point at. It carries no facet information, so it never
-    decides whether two records are "the same dataset" — that job belongs to the
-    identity index over every descriptive column, declared in `__table_args__`.
-
-    This used to be a string built from the facet columns. That was abandoned
-    because it omitted project-specific facets such as CMIP5's `product`, so two
-    genuinely different datasets (`output1` vs `output2`) collapsed onto one key.
-    See [`id_project_specific`][esmporium.db.schema.Dataset.id_project_specific].
-
-    Version and data-node information are not part of this identity; they live in
-    [`DatasetVersion`][esmporium.db.schema.DatasetVersion] and
-    [`DataNode`][esmporium.db.schema.DataNode].
+    Deliberately meaningless.
+    It exists only to give versions and other tables a short, stable value to point at.
     """
 
     id_project_specific: str = Field(index=True)
@@ -281,8 +253,7 @@ class Dataset(EsmporiumBase, table=True):
     For example, `mon`, `yr`, `3hr`, `monC`
     """
 
-    # TODO: make sure test that pokes at this null handling and coalesce
-    grid_label: str | None = None
+    grid_label: str | None
     """
     The label of the grid on which the dataset is reported
 
@@ -291,7 +262,7 @@ class Dataset(EsmporiumBase, table=True):
 
     For example, `gn`, `gr`, `g115`
 
-    CMIP5 has no concept of grid_label, hence it can be NULL
+    CMIP5 has no concept of grid_label, hence this can be `None`
     """
 
     processing_id: str
@@ -411,9 +382,7 @@ class DatasetVersion(EsmporiumBase, table=True):
     """
     The [`Dataset`][esmporium.db.schema.Dataset] this is an edition of
 
-    A real one-to-many: one dataset has many editions, one per `version`. For CMIP5,
-    where a bundle is split into one `Dataset` per variable, each of those per-variable
-    datasets gets its own edition row here (many rows per bundle, keyed on the dataset).
+    A real one-to-many: one dataset has many editions, one per `version`.
     """
 
     version: str
@@ -421,19 +390,22 @@ class DatasetVersion(EsmporiumBase, table=True):
     The version string, as ESGF reports it
 
     Usually a date, e.g. `20200623`.
-    Note that CMIP5 replicas can carry inconsistent version strings across nodes
-    (a date on one node, `1` on another),
-    so this is not always comparable across data nodes.
     """
+    # Note that CMIP5 replicas can carry inconsistent version strings across nodes
+    # (a date on one node, `1` on another),
+    # so this is not always comparable across data nodes.
 
     is_latest: bool
     """
     Whether this was the latest edition when we searched
 
-    A snapshot: ESGF flips this to `False` when a newer edition is published,
+    This is a snapshot:
+    ESGF flips this to `False` when a newer edition is published,
     so a re-search may need to update it.
-    "Latest among the editions we hold" can always be recomputed from these rows.
     """
+    # Note: "Latest among the editions we hold"
+    # can always be recomputed from these rows.
+    # We don't have functionality for that yet.
 
     retracted: bool
     """
@@ -446,12 +418,6 @@ class DatasetVersion(EsmporiumBase, table=True):
 class DataNode(EsmporiumBase, table=True):
     """
     A data node that hosts data
-
-    There are only a handful of data nodes across ESGF, so this table holds one row per
-    *distinct* node rather than one per (edition, node). Editions reach their nodes
-    through the
-    [`DatasetVersionDataNodeLink`][esmporium.db.schema.DatasetVersionDataNodeLink]
-    many-to-many join: a node hosts many editions, and an edition lives on many nodes.
     """
 
     # See the note on `Dataset.model_config`.
@@ -466,10 +432,11 @@ class DataNode(EsmporiumBase, table=True):
 
 class DatasetVersionDataNodeLink(EsmporiumBase, table=True):
     """
-    A many-to-many link between an edition and a data node
+    A many-to-many link between a dataset version and a data node
 
-    Each row is one (edition, node) pair: this edition is hosted on this node. The pair
-    is unique, so recording the same edition on the same node twice reuses the row.
+    Each row is one (version, node) pair: this version is hosted on this node.
+    The pair is unique,
+    so recording the same version on the same node twice reuses the row.
     See [`DataNode`][esmporium.db.schema.DataNode].
     """
 
@@ -481,14 +448,14 @@ class DatasetVersionDataNodeLink(EsmporiumBase, table=True):
 
     dataset_version_id: int = Field(foreign_key="datasetversion.id", index=True)
     """
-    The edition hosted on the node
+    The version hosted on the node
 
     See [`DatasetVersion`][esmporium.db.schema.DatasetVersion].
     """
 
     data_node_id: int = Field(foreign_key="datanode.id", index=True)
     """
-    The node hosting the edition
+    The node hosting the version
 
     See [`DataNode`][esmporium.db.schema.DataNode].
     """
@@ -504,12 +471,11 @@ class DatasetRawDoc(EsmporiumBase, table=True):
     so nothing a record carried is lost to our column choices.
     One row per distinct source document, deduplicated by `esgf_doc_id`.
 
-    The raw document relates to editions through
-    [`RawDocVersionLink`][esmporium.db.schema.RawDocVersionLink] (many-to-many). One
-    document can describe several editions — a single CMIP5 document bundles many
-    variables, each of which is now its own `Dataset` and so its own edition, and this
-    one document links to all of them. An edition can also be described by several
-    documents (Solr returns one per node).
+    The raw document relates to version through
+    [`RawDocVersionLink`][esmporium.db.schema.RawDocVersionLink] (many-to-many).
+    One document can describe several version (e.g. CMIP5's raw documents).
+    A version can also be described by several documents (e.g. CMIP6 Solr's documents).
+    Hence this is many-to-many.
     """
 
     # See the note on `Dataset.model_config`.
@@ -520,11 +486,8 @@ class DatasetRawDoc(EsmporiumBase, table=True):
 
     esgf_doc_id: str = Field(unique=True, index=True)
     """
-    The source document's own ESGF id (including version and data node)
+    The source document's own ESGF id
 
-    For Solr this is the record `id`, `<instance_id>|<data_node>`,
-    so the data node can be recovered as `esgf_doc_id.rsplit("|", 1)[-1]`.
-    For STAC it is the feature `id`.
     Unique, so re-ingesting the same document reuses this row
     rather than duplicating the JSON.
     """
@@ -536,12 +499,11 @@ class DatasetRawDoc(EsmporiumBase, table=True):
     """
     Names the format of `raw_json`, stamped by the search API that returned it
 
-    Recorded for use in [`esmporium.search.normalise_stored_document`][] to
-    normalise the raw_json in the event of a
+    Recorded for use elsewhere, most notably in
+    [`esmporium.search.normalise_stored_document`][]
+    to normalise the raw_json in the event of a
     [`Dataset`][esmporium.db.schema.Dataset] row clash on all columns except
     `id_project_specific`.
-
-    Known tags are "solr" and "stac".
     """
 
     retrieved_at: datetime.datetime = Field(default_factory=_utcnow)
@@ -552,12 +514,14 @@ class RawDocVersionLink(EsmporiumBase, table=True):
     """
     A many-to-many link between a raw document and an edition
 
-    See [`DatasetRawDoc`][esmporium.db.schema.DatasetRawDoc]: an edition can be
-    described by several documents (one per node), and one document can describe several
-    editions (a CMIP5 document bundles many per-variable editions).
+    See [`DatasetRawDoc`][esmporium.db.schema.DatasetRawDoc]:
+    a version can be described by several documents (e.g. one doc per node),
+    and one document can describe several versions
+    (a CMIP5 document bundles many per-variable versions).
 
-    Each row is one (document, edition) pair. The pair is unique, so linking the same
-    document to the same edition twice reuses the row rather than duplicating it.
+    Each row is one (document, version) pair.
+    The pair is unique, so linking the same document to the same edition twice
+    reuses the row rather than duplicating it.
     """
 
     # See the note on `Dataset.model_config`.
@@ -575,7 +539,7 @@ class RawDocVersionLink(EsmporiumBase, table=True):
 
     dataset_version_id: int = Field(foreign_key="datasetversion.id", index=True)
     """
-    The edition the document describes
+    The version the document describes
 
     See [`DatasetVersion`][esmporium.db.schema.DatasetVersion].
     """
