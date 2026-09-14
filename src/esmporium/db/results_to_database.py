@@ -65,12 +65,6 @@ def save_dataset(session: Session, dataset: Dataset) -> Dataset:
     """
     Add a dataset, turning an identity clash into a clear error
 
-    The add is flushed inside a savepoint so the clash surfaces here, at the call
-    site, rather than at a later `commit` far from the dataset that caused it. On a
-    clash the savepoint is rolled back, so `session` stays usable and any other work
-    already staged in it is left intact; the caller still controls the outer
-    transaction (nothing is committed here).
-
     Parameters
     ----------
     session
@@ -151,7 +145,6 @@ def build_result_processor(session: Session) -> ResultProcessor:
         [`ResultProcessor`][esmporium.search.result_parsing.ResultProcessor].
     """
 
-    # TODO: remove search_host?
     def processor(
         search_host: str, parsed_documents: tuple[ParsedDocument, ...]
     ) -> None:
