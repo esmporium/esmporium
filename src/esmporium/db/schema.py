@@ -207,29 +207,14 @@ class Dataset(EsmporiumBase, table=True):
     """
 
     id_project_specific: str = Field(index=True)
-    # TODO: update doc string - agree that wording should be clarified
-    # I think we're just asserting this rather than knowing it. I feel like we'll end up
-    # with something more robust if we're more careful about this assumption and instead
-    # build on the assumption that the project specific IDs we get from ESGF will be
-    # unique, but that there is no way to parse useful information out of them (we
-    # need to go back to the raw docs or something more informative to get that)
     """
     Identifier of the dataset in the project's language (its native id)
 
-    This is the fully-qualified ESGF-side id, and it carries every project-specific
-    facet — including ones our generic columns do not model, such as CMIP5's
-    `product`. As part of the identity index (see `__table_args__`) it is what keeps
-    two products (`cmip5.output1...` vs `cmip5.output2...`) as two distinct rows
-    instead of colliding.
+    On its own, this column may not be unique.
+    For example, CMIP5 uses project specific IDs that apply to multiple variables.
 
-    On its own this column is NOT unique. For CMIP6 and CMIP7 it comes straight from
-    ESGF's version- and node-independent id (`master_id`, or the STAC feature's
-    version-free id), which already includes the variable, so it is one-to-one with
-    our rows. For CMIP5 it is the `master_id`, which does NOT include a variable: a
-    CMIP5 ESGF dataset bundles many variables, so every per-variable row we derive
-    from it shares the same `master_id` (`tas` and `pr` legitimately carry the same
-    value). It is indexed so that "have we seen this ESGF dataset before?" stays a
-    cheap lookup without loading project-specific tables.
+    It is indexed so that "have we seen this ESGF dataset before?"
+    stays a cheap lookup without loading project-specific tables.
     """
 
     project: str
