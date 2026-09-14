@@ -419,8 +419,8 @@ def _version(dataset_id: int, version: str) -> DatasetVersion:
     )
 
 
-def test_edition_is_unique_per_dataset_and_version(engine):
-    """One edition per `(dataset_id, version)`; a second identical pair is refused."""
+def test_version_is_unique_per_dataset_and_version_string(engine):
+    """One version per `(dataset_id, version)`; a second identical pair is refused."""
     with Session(engine) as session:
         dataset = Dataset(**VALID_DATASET_KWARGS)
         session.add(dataset)
@@ -465,8 +465,8 @@ def test_data_node_is_unique(engine):
             session.commit()
 
 
-def test_edition_node_link_pair_is_unique(engine):
-    """The same (edition, node) link twice is refused, so recording it again reuses."""
+def test_version_node_link_pair_is_unique(engine):
+    """The same (version, node) link twice is refused, so recording it again reuses."""
     with Session(engine) as session:
         session.add(DatasetVersionDataNodeLink(dataset_version_id=1, data_node_id=1))
         session.commit()
@@ -476,8 +476,8 @@ def test_edition_node_link_pair_is_unique(engine):
             session.commit()
 
 
-def test_edition_node_link_is_many_to_many(engine):
-    """A node hosts many editions, an edition many nodes: (1,1) (1,2) (2,1) coexist."""
+def test_version_node_link_is_many_to_many(engine):
+    """A node hosts many versions, a version many nodes: (1,1) (1,2) (2,1) coexist."""
     with Session(engine) as session:
         session.add(DatasetVersionDataNodeLink(dataset_version_id=1, data_node_id=1))
         session.add(DatasetVersionDataNodeLink(dataset_version_id=1, data_node_id=2))
@@ -510,8 +510,8 @@ def test_raw_doc_esgf_id_is_unique(engine):
             session.commit()
 
 
-def test_raw_doc_edition_link_pair_is_unique(engine):
-    """One (document, edition) pair; linking the same document to it twice is a dupe."""
+def test_raw_doc_version_link_pair_is_unique(engine):
+    """One (document, version) pair; linking the same document to it twice is a dupe."""
     with Session(engine) as session:
         session.add(RawDocVersionLink(raw_doc_id=1, dataset_version_id=1))
         session.commit()
@@ -521,8 +521,8 @@ def test_raw_doc_edition_link_pair_is_unique(engine):
             session.commit()
 
 
-def test_one_document_can_describe_many_editions(engine):
-    """A CMIP5 document bundles many per-variable editions: one raw_doc, many links."""
+def test_one_document_can_describe_many_versions(engine):
+    """A CMIP5 document bundles many per-variable versions: one raw_doc, many links."""
     with Session(engine) as session:
         session.add(RawDocVersionLink(raw_doc_id=1, dataset_version_id=1))
         session.add(RawDocVersionLink(raw_doc_id=1, dataset_version_id=2))

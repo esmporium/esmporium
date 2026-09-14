@@ -232,8 +232,8 @@ def test_parse_search_results_are_well_formed(name, facade):
 
 
 @pytest.mark.parametrize("name, facade", CMIP5_RECORDED_CASES)
-def test_cmip5_document_explodes_into_variables_sharing_one_edition(name, facade):
-    """A CMIP5 record bundles many variables that share one bundle id and edition"""
+def test_cmip5_document_explodes_into_variables_sharing_one_version(name, facade):
+    """A CMIP5 record bundles many variables that share one bundle id and version"""
     raw = load(f"{name}-search")
 
     documents = facade.parse_search_results(raw)
@@ -347,7 +347,7 @@ def test_recorded_stac_bundle_id_drops_the_version_token(name, facade):
     assert [doc.id_project_specific for doc in documents] == [
         feature["id"].rsplit(".", 1)[0] for feature in raw["features"]
     ]
-    # The document still remembers which edition it came from.
+    # The document still remembers which version it came from.
     assert [doc.esgf_doc_id for doc in documents] == [
         feature["id"] for feature in raw["features"]
     ]

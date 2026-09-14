@@ -363,7 +363,7 @@ class DatasetVersion(EsmporiumBase, table=True):
 
     A dataset can be published more than once over time
     (a rerun, a fix, or more variables added).
-    Each such edition is a row here, dated by its `version`.
+    Each such version is a row here, dated by its `version` string.
     """
 
     # See the note on `Dataset.model_config`: this catches a bad *value* at
@@ -380,9 +380,9 @@ class DatasetVersion(EsmporiumBase, table=True):
 
     dataset_id: int = Field(foreign_key="dataset.id", index=True)
     """
-    The [`Dataset`][esmporium.db.schema.Dataset] this is an edition of
+    The [`Dataset`][esmporium.db.schema.Dataset] this is a version of
 
-    A real one-to-many: one dataset has many editions, one per `version`.
+    A real one-to-many: one dataset has many versions, one per `version` string.
     """
 
     version: str
@@ -397,19 +397,19 @@ class DatasetVersion(EsmporiumBase, table=True):
 
     is_latest: bool
     """
-    Whether this was the latest edition when we searched
+    Whether this was the latest version when we searched
 
     This is a snapshot:
-    ESGF flips this to `False` when a newer edition is published,
+    ESGF flips this to `False` when a newer version is published,
     so a re-search may need to update it.
     """
-    # Note: "Latest among the editions we hold"
+    # Note: "Latest among the versions we hold"
     # can always be recomputed from these rows.
     # We don't have functionality for that yet.
 
     retracted: bool
     """
-    Whether this edition was retracted when we searched
+    Whether this version was retracted when we searched
 
     Also a snapshot; a retraction can happen after we recorded the row.
     """
@@ -512,7 +512,7 @@ class DatasetRawDoc(EsmporiumBase, table=True):
 
 class RawDocVersionLink(EsmporiumBase, table=True):
     """
-    A many-to-many link between a raw document and an edition
+    A many-to-many link between a raw document and a version
 
     See [`DatasetRawDoc`][esmporium.db.schema.DatasetRawDoc]:
     a version can be described by several documents (e.g. one doc per node),
@@ -520,7 +520,7 @@ class RawDocVersionLink(EsmporiumBase, table=True):
     (a CMIP5 document bundles many per-variable versions).
 
     Each row is one (document, version) pair.
-    The pair is unique, so linking the same document to the same edition twice
+    The pair is unique, so linking the same document to the same version twice
     reuses the row rather than duplicating it.
     """
 

@@ -66,8 +66,8 @@ def _counts(session: Session) -> dict[str, int]:
     }
 
 
-def test_ingest_cmip5_writes_one_edition_per_dataset(engine):
-    """Each CMIP5 bundle explodes into many variables, each its own dataset+edition."""
+def test_ingest_cmip5_writes_one_version_per_dataset(engine):
+    """Each CMIP5 bundle explodes into many variables, each its own dataset+version."""
     facade = _facade(
         ESGF1_CMIP5_FACADE_PARAMETERS,
         SearchAPIESGF1Solr,
@@ -82,10 +82,10 @@ def test_ingest_cmip5_writes_one_edition_per_dataset(engine):
         counts = _counts(session)
 
     assert counts["datasets"] == expected_rows > len(documents)
-    # A version belongs to a single dataset, so there is one edition per variable.
+    # A version belongs to a single dataset, so there is one version per variable.
     assert counts["versions"] == expected_rows
     # The raw document is per bundle (per source doc), but it links to every one of that
-    # bundle's per-variable editions.
+    # bundle's per-variable versions.
     assert counts["raw_docs"] == len(documents)
     assert counts["links"] == expected_rows
 

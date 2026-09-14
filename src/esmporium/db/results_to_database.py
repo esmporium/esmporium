@@ -329,7 +329,7 @@ def _ingest_document(
     parsed: ParsedDocument,
     normalisers: Mapping[str, NormaliseFunc],
 ) -> None:
-    """Write one parsed document: its datasets, editions, nodes, raw doc and links."""
+    """Write one parsed document: its datasets, versions, nodes, raw doc and links."""
     datasets = [
         _get_or_create_dataset(session, facets, parsed, normalisers)
         for facets in parsed.datasets
@@ -389,7 +389,7 @@ def _get_or_create_dataset(
 def _upsert_version(
     session: Session, dataset_id: int | None, parsed: ParsedDocument
 ) -> DatasetVersion:
-    """Insert this dataset's edition, or refresh its snapshot flags if seen before."""
+    """Insert this dataset's version, or refresh its snapshot flags if seen before."""
     existing = session.exec(
         select(DatasetVersion).where(
             DatasetVersion.dataset_id == dataset_id,
@@ -431,7 +431,7 @@ def _get_or_create_node(session: Session, data_node: str) -> DataNode:
 def _get_or_create_version_node_link(
     session: Session, dataset_version_id: int | None, data_node_id: int | None
 ) -> DatasetVersionDataNodeLink:
-    """Link an edition to a data node, once."""
+    """Link a version to a data node, once."""
     existing = session.exec(
         select(DatasetVersionDataNodeLink).where(
             DatasetVersionDataNodeLink.dataset_version_id == dataset_version_id,
@@ -475,7 +475,7 @@ def _build_raw_doc(parsed: ParsedDocument) -> DatasetRawDoc:
 def _get_or_create_link(
     session: Session, raw_doc_id: int | None, dataset_version_id: int | None
 ) -> RawDocVersionLink:
-    """Link a raw document to an edition, once."""
+    """Link a raw document to a version, once."""
     existing = session.exec(
         select(RawDocVersionLink).where(
             RawDocVersionLink.raw_doc_id == raw_doc_id,
