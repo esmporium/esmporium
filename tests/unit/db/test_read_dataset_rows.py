@@ -52,7 +52,7 @@ def _solr_doc(facade: SearchAPIFacade, *rows: DatasetFacets) -> dict:
     `grid_label`) has no mapping, so it is simply omitted.
 
     `master_id` is written by hand because it is not a facet: it is where a Solr record
-    keeps its bundle id, which the result parser reads for itself.
+    keeps its project specific id, which the result parser reads for itself.
     """
     first = rows[0]
     scalar_columns = set(DatasetFacets.model_fields) - {

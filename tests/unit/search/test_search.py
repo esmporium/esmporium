@@ -21,9 +21,10 @@ from esmporium.query import QueryCMIP6
 from esmporium.search import (
     ESGF1_CMIP6_FACADE_PARAMETERS,
     ESGFNG_CMIP6_FACADE_PARAMETERS,
+    CouldNotGetSearchResponseError,
     CouldNotUseSearchResultsError,
     ESGFNGResultParser,
-    NoAPIWouldAnswerError,
+    NoAPIAnsweredError,
     SearchAPIESGF1Solr,
     SearchAPIESGFNGSTAC,
     SearchAPIFacade,
@@ -87,7 +88,7 @@ def test_search_parses_the_answer_on_success():
     # The body carries no docs, so there are no datasets, but the count is still read.
     assert outcome.datasets == {"host": ()}
     assert outcome.n_matches == {"host": 3}
-    assert outcome.refusals == {}
+    assert outcome.failures == {}
 
 
 def test_search_uses_the_apis_own_timeout():
@@ -116,7 +117,7 @@ def test_search_raises_on_a_client_error_without_retrying():
 
     selector = build_list_selector([make_facade_cmip6_esgf1("host", attempts=3)])
 
-    with pytest.raises(NoAPIWouldAnswerError, match="host"):
+    with pytest.raises(NoAPIAnsweredError, match="host"):
         search(QUERY_CMIP6, selector, client=client_for(handler))
 
     assert calls == 1
@@ -133,7 +134,7 @@ def test_search_retries_a_transient_failure_then_gives_up():
 
     selector = build_list_selector([make_facade_cmip6_esgf1("host", attempts=3)])
 
-    with pytest.raises(NoAPIWouldAnswerError, match="host"):
+    with pytest.raises(NoAPIAnsweredError, match="host"):
         search(QUERY_CMIP6, selector, client=client_for(handler))
 
     assert calls == 3
@@ -167,7 +168,7 @@ def test_search_raises_when_the_body_is_not_json():
 
     selector = build_list_selector([make_facade_cmip6_esgf1("host", attempts=3)])
 
-    with pytest.raises(NoAPIWouldAnswerError, match="host"):
+    with pytest.raises(NoAPIAnsweredError, match="host"):
         search(QUERY_CMIP6, selector, client=client_for(handler))
 
     assert calls == 1, "an unreadable body is not a transient failure"
@@ -189,8 +190,8 @@ def test_search_stops_at_the_first_answer_by_default():
 
     assert list(outcome.datasets) == ["host-a"]
     assert outcome.n_matches["host-a"] == 5
-    # host-b was never asked, so it did not refuse either.
-    assert outcome.refusals == {}
+    # host-b was never asked, so it did not fail either.
+    assert outcome.failures == {}
 
 
 def test_search_aggregates_every_node_when_asked_to():
@@ -230,7 +231,7 @@ def test_search_hands_each_answer_to_the_processor():
         assert parsed == outcome.datasets[host]
 
 
-def test_search_does_not_call_the_processor_for_a_refusal():
+def test_search_does_not_call_the_processor_for_a_failure():
     """A host that does not answer is never handed to the processor"""
     calls: list[str] = []
 
@@ -270,8 +271,9 @@ def test_search_skips_a_node_that_does_not_answer():
     assert list(outcome.datasets) == ["host-b"]
     assert outcome.n_matches["host-b"] == 4
     # The node which was passed over is kept, with what it said.
-    assert set(outcome.refusals) == {"host-a"}
-    assert "host-a" in str(outcome.refusals["host-a"])
+    assert set(outcome.failures) == {"host-a"}
+    assert isinstance(outcome.failures["host-a"], CouldNotGetSearchResponseError)
+    assert "host-a" in str(outcome.failures["host-a"])
 
 
 def test_search_skips_a_node_whose_answer_we_cannot_read():
@@ -304,19 +306,19 @@ def test_search_skips_a_node_whose_answer_we_cannot_read():
     assert list(outcome.datasets) == ["host-b"]
     assert outcome.n_matches["host-b"] == 4
 
-    refusal = outcome.refusals["host-a"]
-    assert isinstance(refusal, CouldNotUseSearchResultsError)
-    # The refusal says the host answered, says what we could not read in it,
+    failure = outcome.failures["host-a"]
+    assert isinstance(failure, CouldNotUseSearchResultsError)
+    # The failure says the host answered, says what we could not read in it,
     # and says what to send again to see it for yourself.
     assert "answered our search request with something we could not read" in str(
-        refusal
+        failure
     )
-    assert "the bundle id" in str(refusal)
-    assert "We asked: https://host-a/esg-search/search." in str(refusal)
+    assert "the project specific id" in str(failure)
+    assert "We asked: https://host-a/esg-search/search." in str(failure)
 
 
 def test_search_raises_when_no_node_answers_readably():
-    """Every node refusing is still every node refusing, however they refused"""
+    """Every node failing is still every node failing, however they failed"""
 
     def handler(request):
         return httpx.Response(
@@ -326,7 +328,7 @@ def test_search_raises_when_no_node_answers_readably():
     selector = build_list_selector([make_facade_cmip6_esgf1("host-a")])
 
     with pytest.raises(
-        NoAPIWouldAnswerError,
+        NoAPIAnsweredError,
         match="host-a answered our search request with something we could not read",
     ):
         search(QUERY_CMIP6, selector, client=client_for(handler))

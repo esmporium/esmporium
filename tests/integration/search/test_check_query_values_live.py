@@ -10,9 +10,10 @@ import pytest
 
 from esmporium.query import QueryCMIP5, QueryCMIP6, QueryCMIP7, QueryProtocol
 from esmporium.search import (
+    CouldNotGetAllowedValuesResponseError,
     FacetFinding,
     FindingKind,
-    NoSourceWouldAnswerError,
+    NoAPIAnsweredError,
     ValueReport,
     check_query_values,
 )
@@ -20,28 +21,39 @@ from esmporium.search import (
 pytestmark = pytest.mark.hits_esgf_search_api
 
 
-def only_report(query: QueryProtocol, observer=None) -> ValueReport:
+@pytest.fixture
+def only_report(skip_or_fail):
     """
-    Check a query and pull out the one report, or skip if no endpoint answered
+    Get a function which checks a query and pulls out the one report
 
     These tests ask about the values one API holds, so they take the default
     `stop_at_first_result=True` and there is exactly one report to read.
 
-    A node being down says nothing about the checker,
-    so it is a skip rather than a failure.
+    If no endpoint answered, the test skips, because a node being down says nothing
+    about the checker. An endpoint which failed in any other way, e.g. by answering
+    with something we could not read, fails the test instead (see `skip_or_fail`).
 
+    The function takes `(query, observer=None)`.
     If `observer` is given it is passed through to `check_query_values`, so a
     caller can assert on the search-API health recorded for the call.
     """
-    try:
-        outcome = check_query_values(query, api_call_observer=observer)
-    except NoSourceWouldAnswerError:
-        pytest.skip("no endpoint answered today, so there is nothing to assert")
 
-    reports = outcome.reports
-    assert len(reports) == 1, f"expected one report, got {sorted(reports)}"
+    def check_one(query: QueryProtocol, observer=None) -> ValueReport:
+        try:
+            outcome = check_query_values(query, api_call_observer=observer)
+        except NoAPIAnsweredError as exc:
+            skip_or_fail(
+                exc.failures,
+                did_not_answer=CouldNotGetAllowedValuesResponseError,
+                reason="no endpoint answered today, so there is nothing to assert",
+            )
 
-    return next(iter(reports.values()))
+        reports = outcome.reports
+        assert len(reports) == 1, f"expected one report, got {sorted(reports)}"
+
+        return next(iter(reports.values()))
+
+    return check_one
 
 
 def finding_for(report: ValueReport, facet: str) -> FacetFinding:
@@ -74,7 +86,7 @@ def finding_for(report: ValueReport, facet: str) -> FacetFinding:
     return matches[0]
 
 
-def test_cmip5_experiment_typo_is_matched_to_the_real_spelling():
+def test_cmip5_experiment_typo_is_matched_to_the_real_spelling(only_report):
     report = only_report(QueryCMIP5(experiment="abrupt-4xco2", variable="tas"))
 
     finding = finding_for(report, "experiment")
@@ -83,7 +95,9 @@ def test_cmip5_experiment_typo_is_matched_to_the_real_spelling():
     assert "abrupt4xCO2" in finding.suggestions
 
 
-def test_cmip6_experiment_case_slip_is_matched_to_the_real_spelling(recorded):
+def test_cmip6_experiment_case_slip_is_matched_to_the_real_spelling(
+    recorded, only_report
+):
     """
     With additional test recording search API health
 
@@ -116,7 +130,7 @@ def test_cmip6_experiment_case_slip_is_matched_to_the_real_spelling(recorded):
     assert calls[-1].success is True
 
 
-def test_cmip7_experiment_typo_is_matched_against_the_apis_own_values():
+def test_cmip7_experiment_typo_is_matched_against_the_apis_own_values(only_report):
     report = only_report(
         QueryCMIP7(
             # Missing the CO2 suffix
@@ -130,7 +144,7 @@ def test_cmip7_experiment_typo_is_matched_against_the_apis_own_values():
     assert "abrupt-4xCO2" in finding.suggestions
 
 
-def test_cmip6_variant_label_typo_is_flagged_against_the_published_values():
+def test_cmip6_variant_label_typo_is_flagged_against_the_published_values(only_report):
     report = only_report(
         QueryCMIP6(experiment_id="historical", variant_label="r1i1pf1")
     )
@@ -140,7 +154,7 @@ def test_cmip6_variant_label_typo_is_flagged_against_the_published_values():
     assert finding.kind in (FindingKind.TYPO, FindingKind.UNKNOWN)
 
 
-def test_cmip7_variant_label_bad_form_is_matched_against_the_apis_pattern():
+def test_cmip7_variant_label_bad_form_is_matched_against_the_apis_pattern(only_report):
     report = only_report(
         QueryCMIP7(experiment_id="historical", variant_label="r1i1pf1")
     )
@@ -153,7 +167,7 @@ def test_cmip7_variant_label_bad_form_is_matched_against_the_apis_pattern():
     assert not re.compile(pattern).fullmatch("r1i1pf1")
 
 
-def test_cmip7_well_formed_variant_label_passes_silently():
+def test_cmip7_well_formed_variant_label_passes_silently(only_report):
     report = only_report(
         QueryCMIP7(
             experiment_id="historical",

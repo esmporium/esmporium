@@ -44,10 +44,10 @@ class MissingResultFieldError(ValueError):
         Parameters
         ----------
         api_field
-            The field name we read, in the API's own vocabulary
+            The field name we wanted to read, in the API's own vocabulary
 
         doc_id
-            An id for the document we read it from, so the offender can be looked up
+            An id for the document we read it from
         """
         self.api_field = api_field
         self.doc_id = doc_id
@@ -273,7 +273,7 @@ def stac_west_n_matches(raw: dict[str, Any]) -> int:
 
 def solr_id_project_specific(doc: dict[str, Any], api: SearchAPI) -> str:
     """
-    Read the bundle id of a Solr record
+    Read the project specific id of a Solr record
 
     Parameters
     ----------
@@ -288,16 +288,19 @@ def solr_id_project_specific(doc: dict[str, Any], api: SearchAPI) -> str:
     Returns
     -------
     :
-        The bundle's native id
+        The project specific id
 
     Raises
     ------
     UnreadableResponseError
-        `doc` does not carry a bundle id
+        `doc` does not carry a project specific id
     """
     res: str = extract_one_element_list(
         read_response_path(
-            doc, "master_id", what="the bundle id", context=describe_search_api(api)
+            doc,
+            "master_id",
+            what="the project specific id",
+            context=describe_search_api(api),
         )
     )
 
@@ -319,7 +322,7 @@ def solr_parsed_document(
         The search API the record came from, which names the format of `doc`
 
     datasets
-        The dataset rows this record maps to, read by the calling parser
+        The dataset rows this record maps to
 
     Returns
     -------
@@ -361,7 +364,7 @@ def solr_base_columns(
     """
     Read the dataset columns a Solr parser works out for itself
 
-    These are the bundle id and the project:
+    These are the project specific id and the project:
     the rest of the columns are read generically from the facet name mapping.
 
     Parameters
@@ -378,7 +381,7 @@ def solr_base_columns(
     Returns
     -------
     :
-        The bundle id and the project
+        The project specific id and the project
 
     Raises
     ------
@@ -398,9 +401,6 @@ def solr_base_columns(
             doc,
             api,
             project_field,
-            # The bundle id names the offender if the project cannot be read:
-            # it is what we have read already,
-            # and it identifies the record well.
             doc_id=id_project_specific,
         ),
     }
@@ -554,10 +554,10 @@ def stac_parsed_document(
         The search API the feature came from, which names the format of `feature`
 
     id_project_specific
-        The bundle's native id, read by the calling parser
+        The project specific id
 
     datasets
-        The dataset rows this feature maps to, read by the calling parser
+        The dataset rows this feature maps to
 
     Returns
     -------
@@ -678,7 +678,7 @@ class ESGFNGResultParser:
         Returns
         -------
         :
-            The bundle's native id, i.e. the feature id without its version token
+            The project specific id, read from `properties.title`
 
         Raises
         ------

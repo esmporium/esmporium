@@ -35,7 +35,12 @@ from esmporium.search.apis import (
     UnreadableResponseError,
 )
 from esmporium.search.health import SearchAPICallObserver
-from esmporium.search.search import SearchAPIRequestError, fire, get_url
+from esmporium.search.search import (
+    NoAPIAnsweredError,
+    SearchAPIRequestError,
+    fire,
+    get_url,
+)
 from esmporium.search.search_api_facade import (
     DEFAULT_SELECTOR,
     SearchAPIFacade,
@@ -355,6 +360,37 @@ class AllowedValues:
 class CouldNotGetAllowedValuesError(RuntimeError):
     """
     Raised when a source cannot tell us what the allowed values are
+
+    This is deliberately vauge.
+    Generally, a subclass of this error provides more specific detail e.g.
+    [CouldNotGetAllowedValuesResponseError][(m).] means the source did not answer
+    and [CouldNotUseAllowedValuesError][(m).] means it answered
+    with something we could not read.
+    """
+
+    def __init__(self, message: str, description: str, cause: Exception | None) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        message
+            The message, which the subclass writes to say why we have no values
+
+        description
+            Where we were trying to get allowed values from
+
+        cause
+            What went wrong, if we know it, kept on `cause` for callers to inspect
+        """
+        super().__init__(message)
+        self.description = description
+        self.cause = cause
+
+
+class CouldNotGetAllowedValuesResponseError(CouldNotGetAllowedValuesError):
+    """
+    Raised when a source does not answer our request for facet values
     """
 
     def __init__(self, description: str, cause: Exception | None = None) -> None:
@@ -369,32 +405,24 @@ class CouldNotGetAllowedValuesError(RuntimeError):
         cause
             What went wrong, if we know it
 
-            Folded into the message so that a refusal can say *why*,
+            Folded into the message so that the failure can say *why*,
             and kept on `cause` for callers to inspect.
         """
-        self.description = description
-        self.cause = cause
-        if cause is None:
-            message = (
-                f"{description} did not answer our request for facet values, "
-                "so we have nothing to check this query against."
-            )
-        else:
-            message = (
-                f"{description} did not answer our request for facet values "
-                f"({cause}), so we have nothing to check this query against."
-            )
-        super().__init__(message)
+        why = "" if cause is None else f" ({cause})"
+        super().__init__(
+            f"{description} did not answer our request for facet values{why}, "
+            "so we have nothing to check this query against.",
+            description=description,
+            cause=cause,
+        )
 
 
 class CouldNotUseAllowedValuesError(CouldNotGetAllowedValuesError):
     """
     Raised when a source answers about facet values with something we cannot read
 
-    A [CouldNotGetAllowedValuesError][(m).]
-    because the outcome for the caller is the same:
-    this source has told us nothing we can check against.
-    A distinct kind because the source did answer: what failed was our reading of it.
+    Unlike [CouldNotGetAllowedValuesResponseError][(m).], the source did answer:
+    what failed was our reading of it.
     """
 
     def __init__(self, description: str, cause: Exception, url: str | None = None):
@@ -415,17 +443,14 @@ class CouldNotUseAllowedValuesError(CouldNotGetAllowedValuesError):
             Folded into the message so a report of this carries
             what someone would need to ask the same question again.
         """
-        # Deliberately not `super().__init__`:
-        # the parent says the source did not answer, and this one did.
-        RuntimeError.__init__(
-            self,
+        super().__init__(
             f"{description} answered our request for facet values with something "
             f"we could not read ({cause}), so we have nothing to check this query "
             "against."
             f"{f' We asked: {url}.' if url else ''}",
+            description=description,
+            cause=cause,
         )
-        self.description = description
-        self.cause = cause
         self.url = url
 
 
@@ -468,9 +493,11 @@ def allowed_values_from_api(
 
     Raises
     ------
-    CouldNotGetAllowedValuesError
-        Allowed value information could not be retrieved from `facade.search_api`,
-        either because it did not answer or because we could not read its answer.
+    CouldNotGetAllowedValuesResponseError
+        `facade.search_api` did not answer
+
+    CouldNotUseAllowedValuesError
+        `facade.search_api` answered with something we could not read
     """
     askable = facade.askable_facets(facets)
 
@@ -485,7 +512,7 @@ def allowed_values_from_api(
             read_n_matches=facade.get_n_matches,
         )
     except SearchAPIRequestError as exc:
-        raise CouldNotGetAllowedValuesError(facade.search_api.host) from exc
+        raise CouldNotGetAllowedValuesResponseError(facade.search_api.host) from exc
 
     try:
         return AllowedValues(
@@ -500,34 +527,6 @@ def allowed_values_from_api(
         ) from exc
 
 
-class NoSourceWouldAnswerError(RuntimeError):
-    """
-    Raised when every source we asked refused to say what the allowed values are
-
-    Carries all of the refusals rather than only the last,
-    because which endpoints refused is the interesting part:
-    one node being down says nothing, all of them being down says a lot,
-    and only the whole list tells you which it was.
-    """
-
-    def __init__(self, refusals: tuple[CouldNotGetAllowedValuesError, ...]) -> None:
-        """
-        Initialise the error
-
-        Parameters
-        ----------
-        refusals
-            What each source said, in the order they were asked
-        """
-        self.refusals = refusals
-        self.described = tuple(refusal.description for refusal in refusals)
-        asked = "\n".join(f"  - {refusal}" for refusal in refusals)
-        super().__init__(
-            f"Asked {len(refusals)} source(s) for facet values and none answered, "
-            f"so we have nothing to check this query against:\n{asked}"
-        )
-
-
 @dataclass(frozen=True)
 class ValueCheckOutcome:
     """
@@ -537,8 +536,8 @@ class ValueCheckOutcome:
     reports: dict[str, ValueReport]
     """What each API which answered said about the query, keyed by host"""
 
-    refusals: dict[str, CouldNotGetAllowedValuesError]
-    """What each API which would not answer said, keyed by host"""
+    failures: dict[str, CouldNotGetAllowedValuesError]
+    """Reasons we failed to get allowed values, keyed by host"""
 
 
 def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberate injection seams
@@ -595,7 +594,7 @@ def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberat
     -------
     :
         What each API which answered said about the query's values,
-        and what each API which would not answer said,
+        and why each API which gave us no allowed values gave us none,
         both keyed by host
 
     Raises
@@ -604,14 +603,15 @@ def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberat
         `selector` had no API facade to offer for this query,
         so there was nobody to ask
 
-    NoSourceWouldAnswerError
-        The selector offered at least one API and none of them answered
+    NoAPIAnsweredError
+        The selector offered at least one API
+        and none of them gave us facet values we could use
     """
     canonical = to_canonical(query)
     facets = facets_the_user_set(canonical)
 
     reports: dict[str, ValueReport] = {}
-    refusals: dict[str, CouldNotGetAllowedValuesError] = {}
+    failures: dict[str, CouldNotGetAllowedValuesError] = {}
 
     owns_client = client is None
     client = client if client is not None else httpx.Client(follow_redirects=True)
@@ -628,7 +628,7 @@ def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberat
                     facade, client, canonical, facets, api_call_observer
                 )
             except CouldNotGetAllowedValuesError as exc:
-                refusals[host] = exc
+                failures[host] = exc
             else:
                 # Note: if the selector offers the same host twice,
                 # the second report simply replaces the first here.
@@ -649,10 +649,10 @@ def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberat
     if not asked_someone:
         raise SelectorOfferedNoAPIFacadeError(canonical, selector)
 
-    if not reports and refusals:
-        raise NoSourceWouldAnswerError(tuple(refusals.values()))
+    if not reports and failures:
+        raise NoAPIAnsweredError(tuple(failures.values()))
 
-    return ValueCheckOutcome(reports, refusals)
+    return ValueCheckOutcome(reports, failures)
 
 
 def check_against_patterns(

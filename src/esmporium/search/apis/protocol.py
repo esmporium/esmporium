@@ -176,7 +176,7 @@ class UnreadableResponseError(ValueError):
             and the error will report on all of them.
 
         what
-            What we were trying to read, e.g. `"the bundle id"`
+            What we were trying to read, e.g. `"the project specific id"`
 
             This is written to follow on from "We expected to read ",
             so phrase it as a noun.
@@ -251,7 +251,7 @@ def read_response_path(
         read from the enclosing object instead of pathing down to it.
 
     what
-        What we are trying to read, e.g. `"the bundle id"`
+        What we are trying to read, e.g. `"the project specific id"`
 
         See [UnreadableResponseError][(m).].
 

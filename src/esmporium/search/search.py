@@ -9,7 +9,7 @@ import logging
 import shlex
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
@@ -28,6 +28,9 @@ from esmporium.search.search_api_facade import (
     SearchAPIFacadeSelector,
     SelectorOfferedNoAPIFacadeError,
 )
+
+if TYPE_CHECKING:
+    from esmporium.search.check_query_values import CouldNotGetAllowedValuesError
 
 logger = logging.getLogger(__name__)
 
@@ -306,7 +309,38 @@ def fire(
 
 class CouldNotSearchError(RuntimeError):
     """
-    Raised when one API will not answer a search
+    Raised when one API gives us no results for a search
+
+    This is deliberately vauge.
+    Generally, a subclass of this error provides more specific detail e.g.
+    [CouldNotGetSearchResponseError][(m).] means the API did not answer
+    and [CouldNotUseSearchResultsError][(m).] means it answered
+    with something we could not read.
+    """
+
+    def __init__(self, message: str, host: str, cause: Exception | None) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        message
+            The message which says why we have no results
+
+        host
+            The host which gave us no results
+
+        cause
+            What went wrong, if we know it, kept on `cause` for callers to inspect
+        """
+        super().__init__(message)
+        self.host = host
+        self.cause = cause
+
+
+class CouldNotGetSearchResponseError(CouldNotSearchError):
+    """
+    Raised when an API does not answer a search
     """
 
     def __init__(self, host: str, cause: Exception | None = None) -> None:
@@ -319,32 +353,25 @@ class CouldNotSearchError(RuntimeError):
             The host which did not answer
 
         cause
-            What went wrong, if we know it. Folded into the message so that a
-            refusal can say *why*, and kept on `cause` for callers to inspect
+            What went wrong, if we know it
+
+            Folded into the message so that the failure can say *why*,
+            and kept on `cause` for callers to inspect.
         """
-        self.host = host
-        self.cause = cause
-        if cause is None:
-            message = (
-                f"{host} did not answer our search request, "
-                "so it has given us no results."
-            )
-        else:
-            message = (
-                f"{host} did not answer our search request ({cause}), "
-                "so it has given us no results."
-            )
-        super().__init__(message)
+        why = "" if cause is None else f" ({cause})"
+        super().__init__(
+            f"{host} did not answer our search request{why}, "
+            "so it has given us no results.",
+            host=host,
+            cause=cause,
+        )
 
 
 class CouldNotUseSearchResultsError(CouldNotSearchError):
     """
     Raised when an API answers a search with something we cannot read
 
-    A [CouldNotSearchError][(m).],
-    because from the caller's point of view the outcome is the same:
-    this host has given us no results.
-    A distinct kind, because the host did answer:
+    Unlike [CouldNotGetSearchResponseError][(m).], the host did answer:
     what failed was our reading of it, so the cause is an
     [UnreadableResponseError][esmporium.search.apis.UnreadableResponseError]
     saying which key we could not find rather than a transport failure.
@@ -373,46 +400,54 @@ class CouldNotUseSearchResultsError(CouldNotSearchError):
             Folded into the message so a report of this carries
             what someone would need to ask the same question again.
         """
-        # Deliberately not `super().__init__`: `CouldNotSearchError` says the host
-        # did not answer, and this one did.
-        RuntimeError.__init__(
-            self,
+        super().__init__(
             f"{host} answered our search request with something we could not read "
             f"({cause}), so it has given us no results."
             f"{f' We asked: {url}.' if url else ''}",
+            host=host,
+            cause=cause,
         )
-        self.host = host
-        self.cause = cause
         self.url = url
 
 
-class NoAPIWouldAnswerError(RuntimeError):
+class NoAPIAnsweredError(RuntimeError):
     """
-    Raised when every API we searched refused to answer
+    Raised when every API we asked failed to give us anything we could use
+
+    "Failed" covers an API not answering and an API answering
+    with something we could not read: `failures` says which it was for each API.
+
+    Should carry all of the failures rather than only the last,
+    because which APIs failed, and how, is the interesting part:
+    one node being down says nothing, all of them being down says a lot,
+    and only the whole list tells you which it was.
     """
 
-    def __init__(self, refusals: tuple[CouldNotSearchError, ...]) -> None:
+    def __init__(
+        self,
+        failures: tuple[CouldNotSearchError, ...]
+        | tuple[CouldNotGetAllowedValuesError, ...],
+    ) -> None:
         """
         Initialise the error
 
         Parameters
         ----------
-        refusals
-            What each API said, in the order they were asked
+        failures
+            Why each API gave us nothing we could use, in the order they were asked
         """
-        self.refusals = refusals
-        self.hosts = tuple(refusal.host for refusal in refusals)
-        asked = "\n".join(f"  - {refusal}" for refusal in refusals)
+        self.failures = failures
+        asked = "\n".join(f"  - {failure}" for failure in failures)
         super().__init__(
-            f"Searched {len(refusals)} API(s) and none of them answered, "
-            f"so we have no results to give you:\n{asked}"
+            f"Asked {len(failures)} API(s) and none of them gave us anything "
+            f"we could use:\n{asked}"
         )
 
 
 @dataclass(frozen=True)
 class SearchOutcome:
     """
-    What came of a search: the datasets found, how many matched, and who refused
+    What came of a search: the datasets found, how many matched, and what failed
 
     We deliberately do not carry the raw JSON here. Each host's raw documents are kept
     on the parsed `ParsedDocument.raw_json` (and persisted verbatim by the `db` layer),
@@ -432,8 +467,8 @@ class SearchOutcome:
     page. `None` for an endpoint whose response carried no count we could read.
     """
 
-    refusals: dict[str, CouldNotSearchError]
-    """What each endpoint which did not answer said, keyed by host"""
+    failures: dict[str, CouldNotSearchError]
+    """Reasons we failed to get allowed search results, keyed by host"""
 
 
 def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection seams
@@ -494,21 +529,22 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
     -------
     :
         The datasets each endpoint answered with, how many each reported matched,
-        and what each endpoint which did not answer said, all keyed by host
+        and why each endpoint which gave us no results gave us none, all keyed by host
 
     Raises
     ------
     SelectorOfferedNoAPIFacadeError
         `selector` had no facade to offer for this query at all
 
-    NoAPIWouldAnswerError
-        The selector offered at least one endpoint and none of them answered
+    NoAPIAnsweredError
+        The selector offered at least one endpoint
+        and none of them gave us results we could use
     """
     canonical = to_canonical(query)
 
     datasets: dict[str, tuple[ParsedDocument, ...]] = {}
     n_matches: dict[str, int | None] = {}
-    refusals: dict[str, CouldNotSearchError] = {}
+    failures: dict[str, CouldNotSearchError] = {}
 
     owns_client = client is None
     client = client if client is not None else httpx.Client(follow_redirects=True)
@@ -530,7 +566,7 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
                     read_n_matches=facade.get_n_matches,
                 )
             except SearchAPIRequestError as exc:
-                refusals[host] = CouldNotSearchError(host, cause=exc)
+                failures[host] = CouldNotGetSearchResponseError(host, cause=exc)
             else:
                 # The facade knows this host's format and project, so it turns the raw
                 # answer into datasets here, the moment it arrives. Note: if the
@@ -545,7 +581,7 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
                 try:
                     parsed = facade.parse_search_results(raw)
                 except UnreadableResponseError as exc:
-                    refusals[host] = CouldNotUseSearchResultsError(
+                    failures[host] = CouldNotUseSearchResultsError(
                         host,
                         cause=exc,
                         url=get_url(facade.search_api, request),
@@ -568,7 +604,7 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
     if not asked_someone:
         raise SelectorOfferedNoAPIFacadeError(canonical, selector)
 
-    if not datasets and refusals:
-        raise NoAPIWouldAnswerError(tuple(refusals.values()))
+    if not datasets and failures:
+        raise NoAPIAnsweredError(tuple(failures.values()))
 
-    return SearchOutcome(datasets, n_matches, refusals)
+    return SearchOutcome(datasets, n_matches, failures)

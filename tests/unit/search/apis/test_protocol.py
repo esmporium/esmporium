@@ -71,11 +71,11 @@ def test_a_missing_nested_key_is_reported_at_the_level_it_ran_out():
     with pytest.raises(
         UnreadableResponseError,
         match=re.escape(
-            "We expected to read the bundle id from 'properties.title', but "
+            "We expected to read the project specific id from 'properties.title', but "
             "'title' is not in 'properties', there is only: 'latest', 'version'."
         ),
     ):
-        read_response_path(FEATURE, "properties.title", what="the bundle id")
+        read_response_path(FEATURE, "properties.title", what="the project specific id")
 
 
 def test_a_path_which_runs_into_something_that_is_not_a_mapping_says_so():
@@ -86,7 +86,7 @@ def test_a_path_which_runs_into_something_that_is_not_a_mapping_says_so():
             "'title' is not in 'id', we found 'an-id' rather than keys at this path"
         ),
     ):
-        read_response_path(FEATURE, "id.title", what="the bundle id")
+        read_response_path(FEATURE, "id.title", what="the project specific id")
 
 
 def test_an_empty_response_says_it_is_empty():

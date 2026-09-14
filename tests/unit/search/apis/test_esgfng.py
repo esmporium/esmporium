@@ -6,8 +6,8 @@ These pin the request we build from facet values and the reading of a collection
 both under the API's own parameter names: the caller (the facade) is assumed to have
 already put each property under its collection prefix, and named the collection.
 
-What a *result* means (its bundle id, its project, where this deployment writes the
-match count) is the result parsers' business, tested in
+What a *result* means (its project specific id, its project, where this deployment
+writes the match count) is the result parsers' business, tested in
 `tests/unit/search/test_result_parsers.py`.
 """
 

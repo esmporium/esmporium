@@ -6,8 +6,8 @@ wrote ourselves. What they pin is the half of result reading that varies with th
 *project and endpoint* rather than with the response format -- which is exactly why
 these parsers exist:
 
-- where the bundle id is written (CMIP6 STAC says it outright, CMIP7 STAC does not)
-- where the project is written (a Solr facet, `cmip6:mip_era`, a `project` property)
+- where the project specific id is written
+- where the project is written (a Solr facet, a top-level STAC `collection` key)
 - how many dataset rows one document maps to
 - where the endpoint puts the number of records that matched
 
@@ -107,8 +107,8 @@ def facet_fields(parameters):
 def solr_doc(parameters, row: DatasetFacets, **overrides) -> dict:
     """Build a Solr record which should parse back to `row`
 
-    Solr writes its facets as single-element lists at the top level, its bundle id as
-    `master_id` and its project as a facet like any other.
+    Solr writes its facets as single-element lists at the top level, its project
+    specific id as `master_id` and its project as a facet like any other.
     """
     doc = {
         "master_id": [row.id_project_specific],

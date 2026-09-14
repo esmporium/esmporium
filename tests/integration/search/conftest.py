@@ -18,7 +18,8 @@ from esmporium.db import SearchAPICallRecord, record_search_api_calls
 from esmporium.db.migrate import upgrade_to_head
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Iterable, Iterator
+    from typing import NoReturn
 
     from sqlalchemy import Engine
 
@@ -52,3 +53,40 @@ def recorded(engine: Engine) -> Iterator[Recorded]:
             )
 
     yield observer, read_calls
+
+
+@pytest.fixture
+def skip_or_fail() -> Callable[..., NoReturn]:
+    """
+    Get a function which turns every endpoint failing into a skip or a failure
+
+    Call it with the failures carried by the error saying nobody answered
+    (e.g. `NoAPIAnsweredError.failures`),
+    the failure type meaning "the endpoint did not answer",
+    and the reason to skip with.
+
+    An endpoint which did not answer is down or unwell,
+    which says nothing about the behaviour under test, so if that is every failure,
+    the test skips.
+    Any other failure fails the test.
+    The one we know of is an endpoint answering with something we could not read,
+    which is exactly the change in response shape the live tests exist to notice.
+    Failing on anything but "did not answer" (rather than on "could not read" alone)
+    means a kind of failure we add later fails loudly instead of quietly skipping.
+    """
+
+    def check(
+        failures: Iterable[Exception], *, did_not_answer: type[Exception], reason: str
+    ) -> NoReturn:
+        other_failures = [
+            failure for failure in failures if not isinstance(failure, did_not_answer)
+        ]
+        if other_failures:
+            pytest.fail(
+                "\n".join(str(failure) for failure in other_failures),
+                pytrace=False,
+            )
+
+        pytest.skip(reason)
+
+    return check
