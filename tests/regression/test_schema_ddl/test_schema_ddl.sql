@@ -36,6 +36,26 @@ CREATE TABLE datasetrawdoc (
 
 CREATE UNIQUE INDEX ix_datasetrawdoc_esgf_doc_id ON datasetrawdoc (esgf_doc_id);
 
+CREATE TABLE searchapicallrecord (
+	id INTEGER NOT NULL,
+	created_at DATETIME NOT NULL,
+	host VARCHAR NOT NULL,
+	http_method VARCHAR NOT NULL,
+	url VARCHAR NOT NULL,
+	request_body VARCHAR,
+	response_code INTEGER,
+	success BOOLEAN NOT NULL,
+	error VARCHAR,
+	num_results INTEGER,
+	response_time_seconds FLOAT NOT NULL,
+	attempt_number INTEGER NOT NULL,
+	CONSTRAINT pk_searchapicallrecord PRIMARY KEY (id)
+);
+
+CREATE INDEX ix_searchapicallrecord_created_at ON searchapicallrecord (created_at);
+
+CREATE INDEX ix_searchapicallrecord_host ON searchapicallrecord (host);
+
 CREATE TABLE datasetversion (
 	id INTEGER NOT NULL,
 	dataset_id INTEGER NOT NULL,
@@ -76,23 +96,3 @@ CREATE TABLE rawdocversionlink (
 CREATE INDEX ix_rawdocversionlink_dataset_version_id ON rawdocversionlink (dataset_version_id);
 
 CREATE INDEX ix_rawdocversionlink_raw_doc_id ON rawdocversionlink (raw_doc_id);
-
-CREATE TABLE searchapicallrecord (
-	id INTEGER NOT NULL,
-	created_at DATETIME NOT NULL,
-	host VARCHAR NOT NULL,
-	http_method VARCHAR NOT NULL,
-	url VARCHAR NOT NULL,
-	request_body VARCHAR,
-	response_code INTEGER,
-	success BOOLEAN NOT NULL,
-	error VARCHAR,
-	num_results INTEGER,
-	response_time_seconds FLOAT NOT NULL,
-	attempt_number INTEGER NOT NULL,
-	CONSTRAINT pk_searchapicallrecord PRIMARY KEY (id)
-);
-
-CREATE INDEX ix_searchapicallrecord_created_at ON searchapicallrecord (created_at);
-
-CREATE INDEX ix_searchapicallrecord_host ON searchapicallrecord (host);
