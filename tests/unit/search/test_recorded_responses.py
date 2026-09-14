@@ -124,9 +124,6 @@ RECORDED_CASES = (
         ),
         id="esgf15-bridge-cmip6",
     ),
-    # Each ESGF-NG case names the deployment its recording came from,
-    # because that is what the parsers are told apart by:
-    # the readers below are the ones the store gives a facade for that host.
     pytest.param(
         "esgf-ng-stac-cmip6-east",
         facade(

@@ -1,3 +1,4 @@
+# @Claude: move this to an integration test
 """
 Identify a facet clash from documents already stored in the database.
 
@@ -42,7 +43,7 @@ PROCESSING = "Amon"
 VARIABLES = ("tas", "rlut")
 DATA_NODE = "esgf.ceda.ac.uk"
 
-# id_proejct_specific, varying by product
+# id_project_specific, varying by product
 MASTER = {
     "output1": "cmip5.output1.CMCC.CMCC-CM.piControl.mon.atmos.Amon.r1i1p1",
     "output2": "cmip5.output2.CMCC.CMCC-CM.piControl.mon.atmos.Amon.r1i1p1",

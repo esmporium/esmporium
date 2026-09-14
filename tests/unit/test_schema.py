@@ -25,9 +25,7 @@ from esmporium.db.schema import DATASET_IDENTITY_INDEX
 from esmporium.search import DatasetFacets
 
 VALID_DATASET_KWARGS = {
-    # No `id`: it is a surrogate integer the database assigns. The row's real identity
-    # is *every descriptive column* — `id_project_specific` plus all nine facets —
-    # enforced by the `uq_dataset_identity` index (see `Dataset.__table_args__`).
+    # No `id`: it is a surrogate integer the database assigns.
     "id_project_specific": (
         "cmip5.output1.BCC.bcc-csm1-1.rcp45.mon.atmos.Amon.r1i1p1_tas"
     ),
@@ -119,10 +117,10 @@ def test_round_trip(engine):
         assert isinstance(getattr(retrieved, column), column_type)
 
 
-# A dataset's identity is every column except the surrogate `id`: the ESGF-side
-# `id_project_specific` plus all of "our columns" (the nine facets). The three tests
-# below cover the three ways two datasets can relate on that identity, splitting our
-# columns from the ESGF column.
+# A dataset's identity is every column except the surrogate `id`:
+# the ESGF-side `id_project_specific` plus all of "our columns" (the nine facets).
+# The three tests below cover the three ways two datasets can relate on that identity,
+# splitting our columns from the ESGF column.
 
 
 def test_same_id_project_specific_differ_on_our_column_is_allowed(engine):
