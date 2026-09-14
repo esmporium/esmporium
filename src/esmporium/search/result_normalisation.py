@@ -1,27 +1,32 @@
 """
 Flattening a stored raw search document into `{facet_name: value}`
 
-This is a rare, off-the-write-path diagnostic. It only runs when a dataset clash is
-observed at load time and we need to explain, from the raw JSON we stored at ingest,
-which facet distinguishes two datasets our model considers identical (see
-[`esmporium.db.dataset_uniqueness.facet_differences`][]).
+This is a rare thing to need.
+It is currently only used when we need to explain, from raw JSON,
+which facet distinguishes datasets our model considers identical
+(see [`esmporium.db.dataset_uniqueness.facet_differences`][]).
+For example, when saving a dataset clashes with one already stored
+(see [`esmporium.db.save_dataset`][])
+or when datasets our model cannot tell apart are loaded.
 
-It runs long after the search, with no live
-[`SearchAPI`][esmporium.search.apis.SearchAPI] in scope, so it cannot ask the API how to
-read its own format. Instead each raw doc is stored with a `raw_docs_format_tag` -- a
-small string the producing search API stamps on it at ingest (see
-[`SearchAPI.raw_docs_format_tag`][esmporium.search.apis.SearchAPI]) -- and
-[`normalise_stored_document`][(m).] dispatches on that tag through a registry of
-per-format flatteners. No shape sniffing: the format is recorded, not guessed.
+It is currently used by the database layer, possibly long after the search,
+so there is no live [`SearchAPI`][esmporium.search.apis.SearchAPI] in scope
+and it cannot ask the API how to read its own format.
+Instead each raw doc should be stored with a `raw_docs_format_tag`.
+This string allows [`normalise_stored_document`][(m).] to dispatch to the right parser
+on that tag through a registry of per-format flatteners.
 
-The registry ([`DEFAULT_NORMALISERS`][(m).]) covers the search APIs we ship. It is a
-parameter, so a user who bypasses our facade with their own search API can inject the
-flattener for their own tag; a tag with no registered flattener raises
+The registry ([`DEFAULT_NORMALISERS`][(m).]) covers the search APIs we ship.
+It is a parameter, so a user who bypasses our facade with their own search API
+can inject the flattener for their own tag.
+A tag with no registered flattener raises
 [`UnknownRawDocFormatTagError`][(m).] rather than guessing.
 
-Living here (in `search`) rather than in `db` keeps the format knowledge out of the
-database layer: `db` may import `search`, never the reverse, so `db.facet_differences`
-receives an already-flat mapping and never has to know which search API produced it.
+Living here (in `search`) rather than in `db`
+keeps the format knowledge out of the database layer:
+`db` may import `search`, never the reverse,
+so `db.facet_differences` receives an already-flat mapping
+and never has to know which search API produced it.
 """
 
 from __future__ import annotations
@@ -77,7 +82,8 @@ def _unreadable_stored_document(
 NormalisedDocument: TypeAlias = dict[str, Any]
 """
 Normalised document
-In this context, "normalised" means that we convert to a basic mapping
+
+In this context, "normalised" means a basic mapping
 from facet names to the values that they take
 (removing any project/API prefixes and ensuring that values
 are lists if multi-valued, single values otherwise).

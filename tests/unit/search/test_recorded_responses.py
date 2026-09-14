@@ -10,20 +10,6 @@ The recordings go stale.
 That is the trade: they will not notice an API changing shape until they are
 refreshed. Refresh them with `uv run python scripts/record_search_responses.py`
 and read the diff.
-
-Two kinds of recording are read here,
-because a search API facade answers two kinds of question:
-how to do searches
-(the total a search matched, via `get_n_matches`,
-and the datasets a search returned, via `parse_search_results`)
-and which values a facet has (`parse_facet_values`).
-
-Everything is read through the facade.
-The count in particular is *not* keyed the same way by every endpoint --
-ESGF-NG east and west speak the same format and still disagree about where it lives --
-so it is the facade's result parser, picked per project and endpoint, which reads it.
-The wiring is covered on its own, with mocked responses we wrote, in
-`test_search.py` and `test_check_query_values.py`.
 """
 
 from __future__ import annotations
@@ -137,9 +123,6 @@ RECORDED_CASES = (
         ),
         id="esgf15-bridge-cmip6",
     ),
-    # Each ESGF-NG case names the deployment its recording came from,
-    # because that is what the parsers are told apart by:
-    # the readers below are the ones the store gives a facade for that host.
     pytest.param(
         "esgf-ng-stac-cmip6-east",
         facade(
@@ -248,8 +231,8 @@ def test_parse_search_results_are_well_formed(name, facade):
 
 
 @pytest.mark.parametrize("name, facade", CMIP5_RECORDED_CASES)
-def test_cmip5_document_explodes_into_variables_sharing_one_edition(name, facade):
-    """A CMIP5 record bundles many variables sharing one project specific id and edition"""  # noqa: E501
+def test_cmip5_document_explodes_into_variables_sharing_one_version(name, facade):
+    """A CMIP5 record bundles many variables sharing one project specific id and version"""  # noqa: E501
     raw = load(f"{name}-search")
 
     documents = facade.parse_search_results(raw)
@@ -311,7 +294,7 @@ def test_recorded_stac_id_project_specific_is_read_from_title(name, facade):
     assert [doc.id_project_specific for doc in documents] == [
         feature["properties"]["title"] for feature in raw["features"]
     ]
-    # The document still remembers which edition it came from.
+    # The document still remembers which version it came from.
     assert [doc.esgf_doc_id for doc in documents] == [
         feature["id"] for feature in raw["features"]
     ]

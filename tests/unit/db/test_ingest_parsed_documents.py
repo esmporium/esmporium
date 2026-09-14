@@ -1,11 +1,5 @@
 """
 Ingesting parsed search documents into the database
-
-The round-trip test (`test_results_round_trip.py`) hand-builds rows to prove the schema
-survives a save. This one drives the real path instead: it parses recorded search
-responses with the facade, then writes them with `ingest_parsed_documents` /
-`build_result_processor`, exactly as `search()` will. It stays offline -- the responses
-are recordings, not live calls.
 """
 
 from __future__ import annotations
@@ -72,8 +66,8 @@ def _counts(session: Session) -> dict[str, int]:
     }
 
 
-def test_ingest_cmip5_writes_one_edition_per_dataset(engine):
-    """Each CMIP5 bundle explodes into many variables, each its own dataset+edition."""
+def test_ingest_cmip5_writes_one_version_per_dataset(engine):
+    """Each CMIP5 bundle explodes into many variables, each its own dataset+version."""
     facade = _facade(
         ESGF1_CMIP5_FACADE_PARAMETERS,
         SearchAPIESGF1Solr,
@@ -88,10 +82,10 @@ def test_ingest_cmip5_writes_one_edition_per_dataset(engine):
         counts = _counts(session)
 
     assert counts["datasets"] == expected_rows > len(documents)
-    # A version belongs to a single dataset, so there is one edition per variable.
+    # A version belongs to a single dataset, so there is one version per variable.
     assert counts["versions"] == expected_rows
     # The raw document is per bundle (per source doc), but it links to every one of that
-    # bundle's per-variable editions.
+    # bundle's per-variable versions.
     assert counts["raw_docs"] == len(documents)
     assert counts["links"] == expected_rows
 
@@ -118,18 +112,7 @@ def test_reingesting_the_same_documents_is_idempotent(engine):
 
 
 def test_ingest_propagates_a_dataset_clash(engine):
-    """A dataset clash surfacing mid-ingest is raised, not swallowed on the write path.
-
-    Two *identical* documents are idempotently merged onto one `Dataset` (see
-    `test_reingesting_the_same_documents_is_idempotent`), so a clash is not simply "the
-    same dataset twice". It arises when two datasets are the same under the identity
-    index yet the get-or-create lookup cannot see them as equal, and with our columns
-    the one such case is `grid_label`: the index compares `coalesce(grid_label, '')`, so
-    a document reporting no grid as `None` and another reporting it as `""` are one
-    dataset to the index but two to the lookup. That is exactly the coalesce edge the
-    index exists to catch. This pins that when it fires, `ingest_parsed_documents` lets
-    the `UnhandledDatasetClashError` out rather than hiding it behind the savepoint.
-    """
+    """A dataset clash surfacing mid-ingest is raised, not swallowed on the write path."""  # noqa E508
 
     def cmip5_document(grid_label: str | None, esgf_doc_id: str) -> ParsedDocument:
         return ParsedDocument(
@@ -165,8 +148,79 @@ def test_ingest_propagates_a_dataset_clash(engine):
     ]
 
     with Session(engine) as session:
-        with pytest.raises(UnhandledDatasetClashError):
+        with pytest.raises(UnhandledDatasetClashError) as excinfo:
             ingest_parsed_documents(session, clashing)
+
+    # The raw docs are passed through and found for the stored dataset
+    # (despite its grid_label being NULL rather than ''),
+    # but they are identical so no facet explains the clash.
+    assert excinfo.value.differences == {}
+
+
+@pytest.mark.parametrize(
+    "ingest",
+    (
+        pytest.param(ingest_parsed_documents, id="ingest_parsed_documents"),
+        pytest.param(
+            lambda session, documents, normalisers: build_result_processor(
+                session, normalisers
+            )("node.example", tuple(documents)),
+            id="build_result_processor",
+        ),
+    ),
+)
+def test_injected_normalisers_reach_clash_diagnosis(engine, ingest):
+    """
+    A user's normalisers, passed to an ingest entry point, are used to diagnose a clash
+
+    Without them, documents with the user's own `raw_docs_format_tag`
+    could not be normalised, so the clash could not say which facets differ.
+    """
+
+    def custom_document(grid_label: str | None, driving_model: str) -> ParsedDocument:
+        return ParsedDocument(
+            id_project_specific="my.native.id",
+            datasets=(
+                DatasetFacets(
+                    id_project_specific="my.native.id",
+                    project="CORDEX",
+                    model="M",
+                    institution="INST",
+                    experiment="historical",
+                    variant_label="r1i1p1f1",
+                    variable="tas",
+                    reporting_interval="mon",
+                    grid_label=grid_label,
+                    processing_id="Amon",
+                ),
+            ),
+            version="20200101",
+            is_latest=True,
+            retracted=False,
+            nodes=(DataNodeInfo("node.example"),),
+            esgf_doc_id=f"my.native.id|{driving_model}",
+            raw_json=json.dumps({"blob": f"driving_model={driving_model}"}),
+            raw_docs_format_tag="acme-format",
+        )
+
+    # NULL vs '' grid_label gets past the get-or-create lookup
+    # but clashes on the identity index.
+    clashing = [custom_document(None, "MPI-ESM"), custom_document("", "CNRM-CM6")]
+    normalisers = {
+        **DEFAULT_NORMALISERS,
+        "acme-format": lambda doc: dict([doc["blob"].split("=", 1)]),
+    }
+
+    with Session(engine) as session:
+        with pytest.raises(UnhandledDatasetClashError) as excinfo:
+            ingest(session, clashing, normalisers)
+
+    assert excinfo.value.differences == {
+        "driving_model": {
+            "stored: my.native.id|MPI-ESM": "MPI-ESM",
+            "new: my.native.id|CNRM-CM6": "CNRM-CM6",
+        }
+    }
 
 
 def test_result_processor_commits_each_host(engine):
@@ -188,7 +242,6 @@ def test_result_processor_commits_each_host(engine):
 
 
 def test_ingest_stac_cmip7_writes_one_dataset_per_document(engine):
-    """A STAC CMIP7 document maps to one dataset row, ingested via the processor."""
     facade = _facade(
         ESGFNG_CMIP7_FACADE_PARAMETERS,
         SearchAPIESGFNGSTAC,
@@ -204,7 +257,7 @@ def test_ingest_stac_cmip7_writes_one_dataset_per_document(engine):
 
 
 def test_ingest_stamps_each_raw_doc_with_its_raw_docs_format_tag(engine):
-    """The producing API's tag is stored on every raw doc, ready for load-time reads.
+    """The producing API's tag is stored on every raw doc.
 
     Solr and STAC ingests are checked together so the tag really tracks the API that
     parsed the response rather than a constant.
@@ -240,9 +293,9 @@ def test_bypassing_user_must_inject_a_normaliser_for_their_tag(engine):
 
     Our facade and search API are built so a user can bypass them with their own. When
     they do, their documents are stored under their own `raw_docs_format_tag`, and
-    reading
-    those back at load time needs the flattener for that tag: the default registry does
-    not know it, so normalisation raises until the user injects their own.
+    reading those back at load time needs the flattener for that tag: the default
+    registry does not know it, so normalisation raises until the user injects
+    their own.
     """
     custom = ParsedDocument(
         id_project_specific="my.native.id",

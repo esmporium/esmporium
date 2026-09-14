@@ -371,7 +371,7 @@ class SearchAPIFacade:
             This facade's query style cannot express one of `facets`,
             so this response was never going to answer the question
         """
-        return self._read_back(self.search_api.parse_facet_values, raw, facets)
+        return self.read_back(self.search_api.parse_facet_values, raw, facets)
 
     def parse_facet_patterns(
         self, raw: dict[str, Any], facets: set[str]
@@ -412,7 +412,7 @@ class SearchAPIFacade:
         UnaskableFacetError
             This facade's query style cannot express one of `facets`
         """
-        return self._read_back(self.search_api.parse_facet_patterns, raw, facets)
+        return self.read_back(self.search_api.parse_facet_patterns, raw, facets)
 
     def get_n_matches(self, raw: dict[str, Any]) -> int:
         """
@@ -487,9 +487,7 @@ class SearchAPIFacade:
             doc, api=self.search_api, facade_parameters=self.parameters
         )
 
-    # TODO: upgrade this facet-values reader's docstrings to the repository standards,
-    # and consider making it public alongside `parse_search_results`.
-    def _read_back(
+    def read_back(
         self,
         parse: Callable[[dict[str, Any], set[str]], dict[str, Any]],
         raw: dict[str, Any],
@@ -498,12 +496,29 @@ class SearchAPIFacade:
         """
         Parse a facet response, translating its keys from API names back to the names given in `facets`
 
-        `parse` reads `raw` and answers keyed by the API parameter names.
+        `parse` reads `raw` and gives answers keyed by the API parameter names.
         This method translates those keys back to the names given in `facets`,
         so the caller reads the answer under the same names it asked with.
 
         A facet named in `facets` but missing from `parse`'s output is dropped
         silently: the caller must handle these drops.
+
+        Parameters
+        ----------
+        parse
+            Function with which to read `raw`
+
+        raw
+            Raw object to read
+
+        facets
+            Facets to retrieve
+            (this function is responsible for figuring out the API names that correspond to the names in `facets`).
+
+        Returns
+        -------
+        :
+            The parsed response, using keys defined by `facets` rather than raw API keys where possible
         """  # noqa: E501
         check_facets_askable(self.parameters.base_query_style, facets)
 

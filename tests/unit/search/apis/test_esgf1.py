@@ -1,14 +1,5 @@
 """
 Test the ESGF1/Solr search API format
-
-These never touch the network. They pin the two halves of the API separately:
-given facet values, the request we build; given a response, what we read out of it.
-What a *result* means (its project specific id, its project, how many dataset rows it
-is) is not this layer's business either: that is the result parsers', tested in
-`tests/unit/search/test_result_parsers.py`.
-The facet values and facet names here are already the API parameter names,
-because translating canonical names into them is the facade's job, not this
-layer's (that translation is tested in `tests/unit/search/test_facade.py`).
 """
 
 from __future__ import annotations
@@ -125,7 +116,6 @@ def test_extract_result_documents_without_docs_raises(raw):
     ),
 )
 def test_read_facet_list_reads_the_shapes_solr_writes(value, exp):
-    """Every shape Solr really writes a facet in is read as the values it holds"""
     doc = {} if value is ... else {"variable_id": value}
 
     assert api().read_facet_list(doc, "variable_id") == exp
