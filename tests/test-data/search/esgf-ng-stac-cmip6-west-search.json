@@ -1,0 +1,378 @@
+{
+  "context": {
+    "matched": 113
+  },
+  "features": [
+    {
+      "assets": {
+        "tas_Amon_IPSL-CM5A2-INCA_historical_r1i1p1f1_gr_185001-201412.nc": {
+          "alternate:name": "esgf.ipsl.fr",
+          "cmip6:tracking_id": "hdl:21.14100/ab81ba87-7074-4423-b89f-89e80df7e9be",
+          "created": "2024-04-08T03:38:02Z",
+          "description": "HTTPServer Link",
+          "file:checksum": "122030e33fba16936057d502cb2ca53463b270516df318e5a6c1ba8931b16c9ecc2e",
+          "file:local_path": "CMIP6/CMIP/IPSL/IPSL-CM5A2-INCA/historical/r1i1p1f1/Amon/tas/gr/v20240619/tas_Amon_IPSL-CM5A2-INCA_historical_r1i1p1f1_gr_185001-201412.nc",
+          "file:size": 43727593,
+          "href": "https://esgf.ipsl.fr/fileServer/esg_ipsl/CMIP6/CMIP/IPSL/IPSL-CM5A2-INCA/historical/r1i1p1f1/Amon/tas/gr/v20240619/tas_Amon_IPSL-CM5A2-INCA_historical_r1i1p1f1_gr_185001-201412.nc",
+          "protocol": "https",
+          "roles": [
+            "data"
+          ],
+          "title": null,
+          "type": "application/netcdf",
+          "updated": "2024-04-08T03:38:02Z"
+        }
+      },
+      "bbox": [
+        -180.0,
+        -90.0,
+        176.25,
+        90.0
+      ],
+      "collection": "CMIP6",
+      "geometry": {
+        "coordinates": [
+          [
+            [
+              -180.0,
+              -90.0
+            ],
+            [
+              176.25,
+              -90.0
+            ],
+            [
+              176.25,
+              90.0
+            ],
+            [
+              -180.0,
+              90.0
+            ],
+            [
+              -180.0,
+              -90.0
+            ]
+          ]
+        ],
+        "type": "Polygon"
+      },
+      "id": "CMIP6.CMIP.IPSL.IPSL-CM5A2-INCA.historical.r1i1p1f1.Amon.tas.gr.v20240619",
+      "links": [
+        {
+          "href": "https://discovery.east.esgf.io/collections/CMIP6/items/CMIP6.CMIP.IPSL.IPSL-CM5A2-INCA.historical.r1i1p1f1.Amon.tas.gr.v20240619",
+          "rel": "self",
+          "title": null,
+          "type": "application/json"
+        },
+        {
+          "href": "https://discovery.east.esgf.io/collections/CMIP6",
+          "rel": "parent",
+          "title": null,
+          "type": "application/json"
+        },
+        {
+          "href": "https://discovery.east.esgf.io/collections/CMIP6",
+          "rel": "collection",
+          "title": null,
+          "type": "application/json"
+        },
+        {
+          "href": "https://discovery.east.esgf.io/collections",
+          "rel": "root",
+          "title": null,
+          "type": "application/json"
+        },
+        {
+          "href": "http://cera-www.dkrz.de/WDCC/meta/CMIP6/CMIP6.CMIP.IPSL.IPSL-CM5A2-INCA.historical.r1i1p1f1.Amon.tas.gr.v20240619.json",
+          "rel": "cite-as",
+          "title": null,
+          "type": "application/json"
+        }
+      ],
+      "properties": {
+        "access": [
+          "HTTPServer"
+        ],
+        "cmip6:activity_id": [
+          "CMIP"
+        ],
+        "cmip6:data_specs_version": "01.00.28",
+        "cmip6:experiment": "all-forcing simulation of the recent past",
+        "cmip6:experiment_id": "historical",
+        "cmip6:frequency": "mon",
+        "cmip6:grid_label": "gr",
+        "cmip6:institution_id": "IPSL",
+        "cmip6:member_id": "r1i1p1f1",
+        "cmip6:mip_era": "CMIP6",
+        "cmip6:nominal_resolution": "500 km",
+        "cmip6:pid": "hdl:21.14100/62e5579e-9a57-32e4-b13f-c5bdc7c5bdcb",
+        "cmip6:product": "model-output",
+        "cmip6:realm": [
+          "atmos"
+        ],
+        "cmip6:source_id": "IPSL-CM5A2-INCA",
+        "cmip6:source_type": [
+          "AOGCM",
+          "BGC"
+        ],
+        "cmip6:sub_experiment_id": "none",
+        "cmip6:table_id": "Amon",
+        "cmip6:variable_cf_standard_name": "air_temperature",
+        "cmip6:variable_id": "tas",
+        "cmip6:variable_long_name": "Near-Surface Air Temperature",
+        "cmip6:variable_units": "K",
+        "cmip6:variant_label": "r1i1p1f1",
+        "constellation": null,
+        "created": "2026-08-18T12:55:18.572907Z",
+        "datetime": null,
+        "description": null,
+        "end_datetime": "1970-01-01T16:43:45Z",
+        "gsd": null,
+        "instruments": null,
+        "latest": true,
+        "license": null,
+        "mission": null,
+        "platform": null,
+        "project": "CMIP6",
+        "providers": null,
+        "retracted": false,
+        "size": 43727593,
+        "start_datetime": "1970-01-01T00:00:00Z",
+        "title": "CMIP6.CMIP.IPSL.IPSL-CM5A2-INCA.historical.r1i1p1f1.Amon.tas.gr",
+        "updated": "2026-08-18T12:55:18.572907Z",
+        "version": "20240619"
+      },
+      "stac_extensions": [
+        "https://esgf.github.io/stac-transaction-api/cmip6/v2.0.2/schema.json",
+        "https://stac-extensions.github.io/alternate-assets/v1.2.0/schema.json",
+        "https://stac-extensions.github.io/file/v2.1.0/schema.json"
+      ],
+      "stac_version": "1.1.0",
+      "type": "Feature"
+    },
+    {
+      "assets": {
+        "tas_Amon_IPSL-CM6A-LR_historical_r10i1p1f1_gr_185001-201412.nc": {
+          "alternate:name": "esgf.ipsl.fr",
+          "cmip6:tracking_id": "hdl:21.14100/73b9d5f7-02af-424d-b209-bd6e9b470c16",
+          "created": "2018-09-03T15:43:49Z",
+          "description": "HTTPServer Link",
+          "file:checksum": "1220fbe1c8dfbfa4370f99983238930117500eaa3ae494f55b5daf15b54b3817eb52",
+          "file:local_path": "CMIP6/CMIP/IPSL/IPSL-CM6A-LR/historical/r10i1p1f1/Amon/tas/gr/v20180803/tas_Amon_IPSL-CM6A-LR_historical_r10i1p1f1_gr_185001-201412.nc",
+          "file:size": 95368240,
+          "href": "https://esgf.ipsl.fr/fileServer/esg_ipsl/CMIP6/CMIP/IPSL/IPSL-CM6A-LR/historical/r10i1p1f1/Amon/tas/gr/v20180803/tas_Amon_IPSL-CM6A-LR_historical_r10i1p1f1_gr_185001-201412.nc",
+          "protocol": "https",
+          "roles": [
+            "data"
+          ],
+          "title": null,
+          "type": "application/netcdf",
+          "updated": "2018-09-03T15:43:49Z"
+        }
+      },
+      "bbox": [
+        -180.0,
+        -90.0,
+        177.5,
+        90.0
+      ],
+      "collection": "CMIP6",
+      "geometry": {
+        "coordinates": [
+          [
+            [
+              -180.0,
+              -90.0
+            ],
+            [
+              177.5,
+              -90.0
+            ],
+            [
+              177.5,
+              90.0
+            ],
+            [
+              -180.0,
+              90.0
+            ],
+            [
+              -180.0,
+              -90.0
+            ]
+          ]
+        ],
+        "type": "Polygon"
+      },
+      "id": "CMIP6.CMIP.IPSL.IPSL-CM6A-LR.historical.r10i1p1f1.Amon.tas.gr.v20180803",
+      "links": [
+        {
+          "href": "https://discovery.east.esgf.io/collections/CMIP6/items/CMIP6.CMIP.IPSL.IPSL-CM6A-LR.historical.r10i1p1f1.Amon.tas.gr.v20180803",
+          "rel": "self",
+          "title": null,
+          "type": "application/json"
+        },
+        {
+          "href": "https://discovery.east.esgf.io/collections/CMIP6",
+          "rel": "parent",
+          "title": null,
+          "type": "application/json"
+        },
+        {
+          "href": "https://discovery.east.esgf.io/collections/CMIP6",
+          "rel": "collection",
+          "title": null,
+          "type": "application/json"
+        },
+        {
+          "href": "https://discovery.east.esgf.io/collections",
+          "rel": "root",
+          "title": null,
+          "type": "application/json"
+        },
+        {
+          "href": "http://cera-www.dkrz.de/WDCC/meta/CMIP6/CMIP6.CMIP.IPSL.IPSL-CM6A-LR.historical.r10i1p1f1.Amon.tas.gr.v20180803.json",
+          "rel": "cite-as",
+          "title": null,
+          "type": "application/json"
+        }
+      ],
+      "properties": {
+        "access": [
+          "HTTPServer"
+        ],
+        "cmip6:activity_id": [
+          "CMIP"
+        ],
+        "cmip6:data_specs_version": "01.00.21",
+        "cmip6:experiment": "all-forcing simulation of the recent past",
+        "cmip6:experiment_id": "historical",
+        "cmip6:frequency": "mon",
+        "cmip6:grid_label": "gr",
+        "cmip6:institution_id": "IPSL",
+        "cmip6:member_id": "r10i1p1f1",
+        "cmip6:mip_era": "CMIP6",
+        "cmip6:nominal_resolution": "250 km",
+        "cmip6:pid": "hdl:21.14100/3a2d5baa-d28a-32c5-b79d-cee66d634d8b",
+        "cmip6:product": "model-output",
+        "cmip6:realm": [
+          "atmos"
+        ],
+        "cmip6:source_id": "IPSL-CM6A-LR",
+        "cmip6:source_type": [
+          "AOGCM",
+          "BGC"
+        ],
+        "cmip6:sub_experiment_id": "none",
+        "cmip6:table_id": "Amon",
+        "cmip6:variable_cf_standard_name": "air_temperature",
+        "cmip6:variable_id": "tas",
+        "cmip6:variable_long_name": "Near-Surface Air Temperature",
+        "cmip6:variable_units": "K",
+        "cmip6:variant_label": "r10i1p1f1",
+        "constellation": null,
+        "created": "2026-08-19T14:55:57.119413Z",
+        "datetime": null,
+        "description": null,
+        "end_datetime": "1970-01-01T16:44:25Z",
+        "gsd": null,
+        "instruments": null,
+        "latest": true,
+        "license": null,
+        "mission": null,
+        "platform": null,
+        "project": "CMIP6",
+        "providers": null,
+        "retracted": false,
+        "size": 95368240,
+        "start_datetime": "1970-01-01T00:00:00Z",
+        "title": "CMIP6.CMIP.IPSL.IPSL-CM6A-LR.historical.r10i1p1f1.Amon.tas.gr",
+        "updated": "2026-08-19T14:55:57.119413Z",
+        "version": "20180803"
+      },
+      "stac_extensions": [
+        "https://esgf.github.io/stac-transaction-api/cmip6/v2.0.2/schema.json",
+        "https://stac-extensions.github.io/alternate-assets/v1.2.0/schema.json",
+        "https://stac-extensions.github.io/file/v2.1.0/schema.json"
+      ],
+      "stac_version": "1.1.0",
+      "type": "Feature"
+    }
+  ],
+  "links": [
+    {
+      "body": {
+        "filter": {
+          "args": [
+            {
+              "args": [
+                {
+                  "property": "collection"
+                },
+                [
+                  "CMIP6"
+                ]
+              ],
+              "op": "in"
+            },
+            {
+              "args": [
+                {
+                  "property": "cmip6:experiment_id"
+                },
+                [
+                  "historical"
+                ]
+              ],
+              "op": "in"
+            },
+            {
+              "args": [
+                {
+                  "property": "cmip6:variable_id"
+                },
+                [
+                  "tas"
+                ]
+              ],
+              "op": "in"
+            },
+            {
+              "args": [
+                {
+                  "property": "cmip6:frequency"
+                },
+                [
+                  "mon"
+                ]
+              ],
+              "op": "in"
+            }
+          ],
+          "op": "and"
+        },
+        "filter-lang": "cql2-json",
+        "limit": 2,
+        "token": "Q01JUDYuQ01JUC5JUFNMLklQU0wtQ002QS1MUi5oaXN0b3JpY2FsLnIxMGkxcDFmMS5BbW9uLnRhcy5nci52MjAxODA4MDM"
+      },
+      "href": "https://search.west.esgf.io/search",
+      "method": "POST",
+      "rel": "next",
+      "type": "application/json"
+    },
+    {
+      "href": "https://search.west.esgf.io/",
+      "rel": "root",
+      "type": "application/json"
+    },
+    {
+      "href": "https://search.west.esgf.io/search",
+      "rel": "self",
+      "type": "application/json"
+    }
+  ],
+  "numMatched": 113,
+  "numReturned": 2,
+  "type": "FeatureCollection"
+}

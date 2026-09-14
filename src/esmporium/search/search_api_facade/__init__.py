@@ -11,7 +11,11 @@ A facade pairs *facade parameters*
 e.g. [ESGF1_CMIP6_FACADE_PARAMETERS][(m).ESGF1_CMIP6_FACADE_PARAMETERS])
 with a *search API*
 (the format spoken by a family of endpoints,
-e.g. [SearchAPIESGF1Solr][esmporium.search.apis.SearchAPIESGF1Solr]).
+e.g. [SearchAPIESGF1Solr][esmporium.search.apis.SearchAPIESGF1Solr])
+and a *result parser*
+(how this project's answers are written by this endpoint,
+e.g. [ESGFNGCMIP6ResultParser][(m).ESGFNGCMIP6ResultParser];
+see [esmporium.search.search_api_facade.result_parsers][] for further explanation).
 The facade parameters are the facade's concern:
 it is the facade which turns a canonical query into the names
 and shapes a search API speaks,
@@ -41,14 +45,12 @@ from esmporium.search.search_api_facade.parameters import (
     ESGF1_CMIP5_FACADE_PARAMETERS,
     ESGF1_CMIP6_FACADE_PARAMETERS,
     ESGF1_CMIP7_FACADE_PARAMETERS,
-    ESGFNG_CMIP5_FACADE_PARAMETERS,
     ESGFNG_CMIP6_FACADE_PARAMETERS,
     ESGFNG_CMIP7_FACADE_PARAMETERS,
     DirectMappingFacadeParameters,
     ESGF1CMIP5ParametersQueryStyle,
     ESGF1CMIP6ParametersQueryStyle,
     ESGF1CMIP7ParametersQueryStyle,
-    ESGFNGCMIP5ParametersQueryStyle,
     ESGFNGCMIP6ParametersQueryStyle,
     ESGFNGCMIP7ParametersQueryStyle,
     FacadeParametersProtocol,
@@ -57,6 +59,18 @@ from esmporium.search.search_api_facade.parameters import (
     STACFacadeParameters,
     get_mapping_to_query_style_facet_names,
     identity_string,
+)
+from esmporium.search.search_api_facade.result_parsers import (
+    ESGFNGCMIP6ResultParser,
+    ESGFNGCMIP7ResultParser,
+    MissingResultFieldError,
+    NMatchesReader,
+    ResultParserProtocol,
+    SolrSingleRowResultParser,
+    SolrVariableBundleResultParser,
+    get_single_value_columns_from_doc,
+    stac_east_n_matches,
+    stac_west_n_matches,
 )
 from esmporium.search.search_api_facade.selectors import (
     DEFAULT_SEARCH_API_FACADES_BY_PROJECT,
@@ -68,6 +82,7 @@ from esmporium.search.search_api_facade.selectors import (
 )
 from esmporium.search.search_api_facade.store import (
     INBUILT_SEARCH_API_FACADE_STORE,
+    FacadeDefinition,
     RetryingBuilder,
     SearchAPIFacadeClassification,
     SearchAPIFacadeStore,
@@ -80,7 +95,6 @@ __all__ = [
     "ESGF1_CMIP5_FACADE_PARAMETERS",
     "ESGF1_CMIP6_FACADE_PARAMETERS",
     "ESGF1_CMIP7_FACADE_PARAMETERS",
-    "ESGFNG_CMIP5_FACADE_PARAMETERS",
     "ESGFNG_CMIP6_FACADE_PARAMETERS",
     "ESGFNG_CMIP7_FACADE_PARAMETERS",
     "INBUILT_SEARCH_API_FACADE_STORE",
@@ -88,12 +102,17 @@ __all__ = [
     "ESGF1CMIP5ParametersQueryStyle",
     "ESGF1CMIP6ParametersQueryStyle",
     "ESGF1CMIP7ParametersQueryStyle",
-    "ESGFNGCMIP5ParametersQueryStyle",
     "ESGFNGCMIP6ParametersQueryStyle",
+    "ESGFNGCMIP6ResultParser",
     "ESGFNGCMIP7ParametersQueryStyle",
+    "ESGFNGCMIP7ResultParser",
+    "FacadeDefinition",
     "FacadeParametersProtocol",
+    "MissingResultFieldError",
+    "NMatchesReader",
     "OneProjectRequiredError",
     "ProjectPrefixMismatchError",
+    "ResultParserProtocol",
     "RetryingBuilder",
     "STACFacadeParameters",
     "SearchAPIFacade",
@@ -101,6 +120,8 @@ __all__ = [
     "SearchAPIFacadeSelector",
     "SearchAPIFacadeStore",
     "SelectorOfferedNoAPIFacadeError",
+    "SolrSingleRowResultParser",
+    "SolrVariableBundleResultParser",
     "UnaskableFacetError",
     "build_default_retrying",
     "build_list_selector",
@@ -108,6 +129,9 @@ __all__ = [
     "check_facets_askable",
     "check_facets_expressible",
     "get_mapping_to_query_style_facet_names",
+    "get_single_value_columns_from_doc",
     "get_unexpressible_facets",
     "identity_string",
+    "stac_east_n_matches",
+    "stac_west_n_matches",
 ]

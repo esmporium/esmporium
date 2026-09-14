@@ -1,0 +1,236 @@
+"""
+Add tables to support dataset result parsing
+
+Revision ID: d7075cc48700
+Revises: dbb859b30d89
+Create Date: 2026-09-14 14:04:52.500128
+
+"""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+
+import sqlalchemy as sa
+
+# SQLModel's string columns autogenerate as `sqlmodel.sql.sqltypes.AutoString`,
+# so migration scripts need this importable even though it looks unused.
+# The submodule is imported explicitly (rather than just `import sqlmodel`)
+# so that type checkers can see where `AutoString` comes from.
+import sqlmodel.sql.sqltypes
+from alembic import op
+
+revision: str = "d7075cc48700"
+down_revision: str | None = "dbb859b30d89"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
+
+
+def upgrade() -> None:
+    """Apply this migration"""
+    op.create_table(
+        "datanode",
+        sa.Column("id", sa.Integer(), nullable=False),
+        sa.Column("data_node", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+        sa.PrimaryKeyConstraint("id", name=op.f("pk_datanode")),
+    )
+    with op.batch_alter_table("datanode", schema=None) as batch_op:
+        batch_op.create_index(
+            batch_op.f("ix_datanode_data_node"), ["data_node"], unique=True
+        )
+
+    op.create_table(
+        "datasetrawdoc",
+        sa.Column("id", sa.Integer(), nullable=False),
+        sa.Column("esgf_doc_id", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+        sa.Column("raw_json", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+        sa.Column(
+            "raw_docs_format_tag", sqlmodel.sql.sqltypes.AutoString(), nullable=False
+        ),
+        sa.Column("retrieved_at", sa.DateTime(), nullable=False),
+        sa.PrimaryKeyConstraint("id", name=op.f("pk_datasetrawdoc")),
+    )
+    with op.batch_alter_table("datasetrawdoc", schema=None) as batch_op:
+        batch_op.create_index(
+            batch_op.f("ix_datasetrawdoc_esgf_doc_id"), ["esgf_doc_id"], unique=True
+        )
+
+    op.create_table(
+        "datasetversion",
+        sa.Column("id", sa.Integer(), nullable=False),
+        sa.Column("dataset_id", sa.Integer(), nullable=False),
+        sa.Column("version", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+        sa.Column("is_latest", sa.Boolean(), nullable=False),
+        sa.Column("retracted", sa.Boolean(), nullable=False),
+        sa.ForeignKeyConstraint(
+            ["dataset_id"],
+            ["dataset.id"],
+            name=op.f("fk_datasetversion_dataset_id_dataset"),
+        ),
+        sa.PrimaryKeyConstraint("id", name=op.f("pk_datasetversion")),
+        sa.UniqueConstraint(
+            "dataset_id", "version", name=op.f("uq_datasetversion_dataset_id_version")
+        ),
+    )
+    with op.batch_alter_table("datasetversion", schema=None) as batch_op:
+        batch_op.create_index(
+            batch_op.f("ix_datasetversion_dataset_id"), ["dataset_id"], unique=False
+        )
+
+    op.create_table(
+        "datasetversiondatanodelink",
+        sa.Column("id", sa.Integer(), nullable=False),
+        sa.Column("dataset_version_id", sa.Integer(), nullable=False),
+        sa.Column("data_node_id", sa.Integer(), nullable=False),
+        sa.ForeignKeyConstraint(
+            ["data_node_id"],
+            ["datanode.id"],
+            name=op.f("fk_datasetversiondatanodelink_data_node_id_datanode"),
+        ),
+        sa.ForeignKeyConstraint(
+            ["dataset_version_id"],
+            ["datasetversion.id"],
+            name=op.f(
+                "fk_datasetversiondatanodelink_dataset_version_id_datasetversion"
+            ),
+        ),
+        sa.PrimaryKeyConstraint("id", name=op.f("pk_datasetversiondatanodelink")),
+        sa.UniqueConstraint(
+            "dataset_version_id",
+            "data_node_id",
+            name=op.f("uq_datasetversiondatanodelink_dataset_version_id_data_node_id"),
+        ),
+    )
+    with op.batch_alter_table("datasetversiondatanodelink", schema=None) as batch_op:
+        batch_op.create_index(
+            batch_op.f("ix_datasetversiondatanodelink_data_node_id"),
+            ["data_node_id"],
+            unique=False,
+        )
+        batch_op.create_index(
+            batch_op.f("ix_datasetversiondatanodelink_dataset_version_id"),
+            ["dataset_version_id"],
+            unique=False,
+        )
+
+    op.create_table(
+        "rawdocversionlink",
+        sa.Column("id", sa.Integer(), nullable=False),
+        sa.Column("raw_doc_id", sa.Integer(), nullable=False),
+        sa.Column("dataset_version_id", sa.Integer(), nullable=False),
+        sa.ForeignKeyConstraint(
+            ["dataset_version_id"],
+            ["datasetversion.id"],
+            name=op.f("fk_rawdocversionlink_dataset_version_id_datasetversion"),
+        ),
+        sa.ForeignKeyConstraint(
+            ["raw_doc_id"],
+            ["datasetrawdoc.id"],
+            name=op.f("fk_rawdocversionlink_raw_doc_id_datasetrawdoc"),
+        ),
+        sa.PrimaryKeyConstraint("id", name=op.f("pk_rawdocversionlink")),
+        sa.UniqueConstraint(
+            "raw_doc_id",
+            "dataset_version_id",
+            name=op.f("uq_rawdocversionlink_raw_doc_id_dataset_version_id"),
+        ),
+    )
+    with op.batch_alter_table("rawdocversionlink", schema=None) as batch_op:
+        batch_op.create_index(
+            batch_op.f("ix_rawdocversionlink_dataset_version_id"),
+            ["dataset_version_id"],
+            unique=False,
+        )
+        batch_op.create_index(
+            batch_op.f("ix_rawdocversionlink_raw_doc_id"), ["raw_doc_id"], unique=False
+        )
+
+    with op.batch_alter_table("dataset", schema=None) as batch_op:
+        batch_op.alter_column(
+            "id",
+            existing_type=sa.VARCHAR(),
+            type_=sa.Integer(),
+            existing_nullable=False,
+            autoincrement=True,
+        )
+        batch_op.alter_column("grid_label", existing_type=sa.VARCHAR(), nullable=True)
+        batch_op.drop_constraint(
+            batch_op.f("uq_dataset_id_project_specific"), type_="unique"
+        )
+        batch_op.create_index(
+            batch_op.f("ix_dataset_id_project_specific"),
+            ["id_project_specific"],
+            unique=False,
+        )
+
+    # The identity index spans every column except the surrogate `id`,
+    # wrapping the nullable `grid_label` in `coalesce` so two otherwise-identical rows
+    # (grid_label NULL) still collide.
+    # Alembic can't autogenerate an expression index on SQLite, so it is hand-written.
+    # The name is shared with the model and with `save_dataset`
+    # (see `DATASET_IDENTITY_INDEX`),
+    # and is created at the top-level (after the batch block that rebuilds the table)
+    # so it lands on the final table.
+    op.create_index(
+        "dataset_uniqueness_idx",
+        "dataset",
+        [
+            "id_project_specific",
+            "project",
+            "model",
+            "institution",
+            "experiment",
+            "variant_label",
+            "variable",
+            "reporting_interval",
+            sa.text("coalesce(grid_label, '')"),
+            "processing_id",
+        ],
+        unique=True,
+    )
+
+
+def downgrade() -> None:
+    """Undo this migration"""
+    # Drop the hand-written identity index first,
+    # before the batch block rebuilds the `dataset` table
+    # and restores the old single-column unique constraint.
+    op.drop_index("dataset_uniqueness_idx", table_name="dataset")
+    with op.batch_alter_table("dataset", schema=None) as batch_op:
+        batch_op.drop_index(batch_op.f("ix_dataset_id_project_specific"))
+        batch_op.create_unique_constraint(
+            batch_op.f("uq_dataset_id_project_specific"), ["id_project_specific"]
+        )
+        batch_op.alter_column("grid_label", existing_type=sa.VARCHAR(), nullable=False)
+        batch_op.alter_column(
+            "id",
+            existing_type=sa.Integer(),
+            type_=sa.VARCHAR(),
+            existing_nullable=False,
+            autoincrement=True,
+        )
+
+    with op.batch_alter_table("rawdocversionlink", schema=None) as batch_op:
+        batch_op.drop_index(batch_op.f("ix_rawdocversionlink_raw_doc_id"))
+        batch_op.drop_index(batch_op.f("ix_rawdocversionlink_dataset_version_id"))
+
+    op.drop_table("rawdocversionlink")
+    with op.batch_alter_table("datasetversiondatanodelink", schema=None) as batch_op:
+        batch_op.drop_index(
+            batch_op.f("ix_datasetversiondatanodelink_dataset_version_id")
+        )
+        batch_op.drop_index(batch_op.f("ix_datasetversiondatanodelink_data_node_id"))
+
+    op.drop_table("datasetversiondatanodelink")
+    with op.batch_alter_table("datasetversion", schema=None) as batch_op:
+        batch_op.drop_index(batch_op.f("ix_datasetversion_dataset_id"))
+
+    op.drop_table("datasetversion")
+    with op.batch_alter_table("datasetrawdoc", schema=None) as batch_op:
+        batch_op.drop_index(batch_op.f("ix_datasetrawdoc_esgf_doc_id"))
+
+    op.drop_table("datasetrawdoc")
+    with op.batch_alter_table("datanode", schema=None) as batch_op:
+        batch_op.drop_index(batch_op.f("ix_datanode_data_node"))
+
+    op.drop_table("datanode")

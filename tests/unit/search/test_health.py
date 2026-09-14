@@ -22,16 +22,19 @@ from esmporium.query import QueryCMIP6, to_canonical
 from esmporium.search import (
     ESGF1_CMIP6_FACADE_PARAMETERS,
     ESGFNG_CMIP6_FACADE_PARAMETERS,
+    ESGFNGCMIP6ResultParser,
     NoAPIWouldAnswerError,
     SearchAPIESGF1Solr,
     SearchAPIESGFNGSTAC,
     SearchAPIFacade,
     SearchAPIRequestError,
+    SolrSingleRowResultParser,
     build_list_selector,
     check_query_values,
     fan_out,
     fire,
     search,
+    stac_east_n_matches,
 )
 from esmporium.search.health import SearchAPICall
 from esmporium.search.retry import _is_transient
@@ -78,11 +81,15 @@ def make_cmip6_facade(host, *, stac=False, attempts=1) -> SearchAPIFacade:
         return SearchAPIFacade(
             parameters=ESGFNG_CMIP6_FACADE_PARAMETERS,
             search_api=SearchAPIESGFNGSTAC(host, fast_retrying(attempts)),
+            result_parser=ESGFNGCMIP6ResultParser(
+                read_n_matches=stac_east_n_matches,
+            ),
         )
 
     return SearchAPIFacade(
         parameters=ESGF1_CMIP6_FACADE_PARAMETERS,
         search_api=SearchAPIESGF1Solr(host, fast_retrying(attempts)),
+        result_parser=SolrSingleRowResultParser(),
     )
 
 
@@ -95,7 +102,7 @@ def record(handler, apis) -> list[SearchAPICall]:
             QUERY,
             build_list_selector(apis),
             client=client_for(handler),
-            observer=calls.append,
+            api_call_observer=calls.append,
         )
     return calls
 
@@ -155,7 +162,11 @@ def test_success_with_an_uncountable_body_records_none_results():
 def test_stac_post_records_its_method_and_body():
     api = make_cmip6_facade("search.example.io", stac=True)
 
-    (call,) = record(lambda r: httpx.Response(200, json={"numberMatched": 3}), [api])
+    (call,) = record(
+        # A real STAC answer always carries `features`, empty or not.
+        lambda r: httpx.Response(200, json={"numberMatched": 3, "features": []}),
+        [api],
+    )
 
     assert call.http_method == "POST"
     assert call.request_body is not None
@@ -241,9 +252,9 @@ def test_an_unparseable_body_records_a_failure_with_the_status():
 def test_no_observer_records_nothing_but_still_works():
     selector = build_list_selector([make_cmip6_facade("host")])
 
-    # Success still returns the JSON.
+    # Success still parses an answer.
     outcome = search(QUERY, selector, client=client_for(lambda r: solr_response(1)))
-    assert outcome.results["host"]["response"]["numFound"] == 1
+    assert outcome.n_matches["host"] == 1
 
     # Failure still raises.
     with pytest.raises(NoAPIWouldAnswerError):
@@ -288,7 +299,7 @@ def test_check_query_values_records_its_call():
         QueryCMIP6(experiment_id="historical"),
         build_list_selector([make_cmip6_facade("node")]),
         client=client_for(handler),
-        observer=calls.append,
+        api_call_observer=calls.append,
     )
 
     (call,) = calls

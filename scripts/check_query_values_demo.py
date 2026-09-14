@@ -1,7 +1,7 @@
 """
 A runnable example of the value/typo checker: wrong queries -> live sources -> a report
 
-Sits BESIDE the search demo (`first_search_cmipx_full.py`), the same way the
+Sits BESIDE the search demo (`search_cmipx.py`), the same way the
 checker sits beside `search()`: a few deliberately-wrong queries, each checked
 against the right vocabulary source for its project and printed as a report.
 The checker itself now lives in `esmporium.search`; this is only a hand-run

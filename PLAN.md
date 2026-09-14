@@ -110,6 +110,7 @@ Unit tests:
 
 - [ ] parse a response from ESGF1, ESGF15-bridge and ESGF-NG into Dataset objects
     - use the pre-saved responses from PR1
+    - Open up pre-saved responses to tas and rlut (multiple variables, not just tas)
     - don't save the Datasets into the database - that is an integration test
     - this will require adding the dataset version and dataset location objects (and I guess then also tables). The dataset location link may need to be nullable, because it doesn't exist for ESGF-NG?
     - I think this will also require adding in the project-specific dataset tables so we can parse CMIP5, CMIP6 and CMIP7 results properly
@@ -306,6 +307,16 @@ Integration tests:
 Not included:
 
 -
+
+## PR5.5
+
+Dataset clash handling
+
+Look in `schema.py` at the comment that starts with "TODO: work out how we handle clashes".
+Then think about how we handle these cases.
+Probably we will just write tests for each to lock down the behaviour,
+but we might have to make some behaviour changes/add high-level helpers to get the behaviour we want.
+The tests will probably all be integration tests because setting up the database for the test could be a bit involved/slow.
 
 ## PR6
 

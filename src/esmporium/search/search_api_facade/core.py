@@ -16,11 +16,13 @@ from esmporium.query import (
     facet_spec,
 )
 from esmporium.search.apis import Request, SearchAPI
+from esmporium.search.result_parsing import DatasetFacets, ParsedDocument
 from esmporium.search.search_api_facade.parameters import (
     FacadeParametersProtocol,
     OneProjectRequiredError,
     get_mapping_to_query_style_facet_names,
 )
+from esmporium.search.search_api_facade.result_parsers import ResultParserProtocol
 
 
 def get_unexpressible_facets(
@@ -213,6 +215,23 @@ class SearchAPIFacade:
     The search API for which we are providing a facade
     """
 
+    # TODO: This docstring we may need to update based on
+    # potential updates to esgf-ng east/west issues
+    # https://github.com/ESGF/esgf-roadmap/issues/203
+    result_parser: ResultParserProtocol
+    """
+    The parser that reads this facade's search results
+
+    What a result looks like can be a function of its project
+    and the endpoint that answered
+    (e.g. a CMIP5 Solr record bundles many variables;
+    a CMIP6 STAC feature writes its its project somewhere a
+    CMIP7 one does not),
+    which is why the parser is chosen for this pairing
+    rather than derived from either half alone;
+    see [esmporium.search.search_api_facade.result_parsers][].
+    """
+
     def askable_facets(self, facets: set[str]) -> set[str]:
         """
         Get the subset of `facets` this facade can handle
@@ -356,7 +375,7 @@ class SearchAPIFacade:
             This facade's query style cannot express one of `facets`,
             so this response was never going to answer the question
         """
-        return self._read_back(self.search_api.parse_facet_values, raw, facets)
+        return self.read_back(self.search_api.parse_facet_values, raw, facets)
 
     def parse_facet_patterns(
         self, raw: dict[str, Any], facets: set[str]
@@ -397,26 +416,114 @@ class SearchAPIFacade:
         UnaskableFacetError
             This facade's query style cannot express one of `facets`
         """
-        return self._read_back(self.search_api.parse_facet_patterns, raw, facets)
+        return self.read_back(self.search_api.parse_facet_patterns, raw, facets)
 
-    # TODO: when we add an equivalent for reading search results,
-    # make this method and the search result reading method public,
-    # upgrade docstrings to the standards in the rest of the repository etc.
-    def _read_back(
+    def get_n_matches(self, raw: dict[str, Any]) -> int:
+        """
+        Get the number of records that matched a search from a raw response
+
+        Note: this is not necessarily the same as the number of results in `raw`.
+        Some search APIs will only return a limited number of results.
+
+        Parameters
+        ----------
+        raw
+            The response to read, i.e. the answer to a request built with
+            [build_search_request][(c).build_search_request]
+
+        Returns
+        -------
+        :
+            The number of records that matched the search
+
+        Raises
+        ------
+        NoSearchResultNumberOfMatchesReturnedError
+            `raw` does not report the number of records that matched the search
+        """
+        return self.result_parser.get_n_matches(raw)
+
+    def parse_search_results(self, raw: dict[str, Any]) -> tuple[ParsedDocument, ...]:
+        """
+        Parse a raw search response into the documents it carries
+
+        The facade holds the pieces this needs, so no collaborator has to guess
+        another's concern: the [result_parser][(c).result_parser] knows how this
+        project's results are written by this endpoint, the
+        [search_api][(c).search_api] knows the response format, and the
+        [parameters][(c).parameters] know which API field carries each facet.
+
+        Parameters
+        ----------
+        raw
+            The response to read
+
+            Usually the answer to a request built with
+            [build_search_request][(c).build_search_request].
+
+        Returns
+        -------
+        :
+            Parsed documents
+        """
+        return self.result_parser.parse_search_results(
+            raw, api=self.search_api, facade_parameters=self.parameters
+        )
+
+    def read_dataset_rows(self, doc: dict[str, Any]) -> tuple[DatasetFacets, ...]:
+        """
+        Read the complete dataset rows one search document maps to
+
+        Parameters
+        ----------
+        doc
+            One document
+
+            Usually extracted with
+            [search_api.extract_result_documents][esmporium.search.apis.SearchAPI.extract_result_documents].
+
+        Returns
+        -------
+        :
+            Parsed dataset facets
+        """
+        return self.result_parser.get_dataset_rows(
+            doc, api=self.search_api, facade_parameters=self.parameters
+        )
+
+    def read_back(
         self,
         parse: Callable[[dict[str, Any], set[str]], dict[str, Any]],
         raw: dict[str, Any],
         facets: set[str],
     ) -> dict[str, Any]:
         """
-        Parse a facet-values response and translate its keys back
+        Parse a facet response, translating its keys from API names back to the names given in `facets`
 
-        `parse` reads `raw` keyed by the API parameter names.
-        This method asks `parse` about the API parameter names for `facets`,
-        then hands the answer back under the names they were asked for.
-        Any facets which were asked for but were not included in the output of `parse`
-        do not appear in the result: the caller must handle these drops.
-        """
+        `parse` reads `raw` and gives answers keyed by the API parameter names.
+        This method translates those keys back to the names given in `facets`,
+        so the caller reads the answer under the same names it asked with.
+
+        A facet named in `facets` but missing from `parse`'s output is dropped
+        silently: the caller must handle these drops.
+
+        Parameters
+        ----------
+        parse
+            Function with which to read `raw`
+
+        raw
+            Raw object to read
+
+        facets
+            Facets to retrieve
+            (this function is responsible for figuring out the API names that correspond to the names in `facets`).
+
+        Returns
+        -------
+        :
+            The parsed response, using keys defined by `facets` rather than raw API keys where possible
+        """  # noqa: E501
         check_facets_askable(self.parameters.base_query_style, facets)
 
         api_name_lookup = self.parameters.get_mapping_to_api_facet_names(facets)

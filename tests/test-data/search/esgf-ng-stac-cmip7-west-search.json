@@ -1,77 +1,145 @@
 {
   "context": {
-    "matched": 34
+    "matched": 64
   },
   "features": [
     {
       "assets": {
-        "tas_tavg-h2m-hxy-u_mon_glb_g120_CanESM5-1_piControl_r1i1p2f1_650001-660012.nc": {
+        "tas_tavg-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_18500101-18601231.nc": {
           "alternate:name": "crd-esgf-drc.ec.gc.ca",
-          "cmip7:tracking_id": "hdl:21.14107/c2de596a-c516-424a-83fe-3f830d1a8842",
-          "created": "2026-08-05T19:22:58Z",
+          "cmip7:tracking_id": "hdl:21.14107/dd9d3a95-de14-4c57-a05b-fe6beeb80120",
+          "created": "2026-08-19T07:47:44Z",
           "description": "HTTPServer Link",
-          "file:checksum": "122061dbf38daf426e09bfd3bdfc1c8903b18da2b54f4c8aadd6fc54ff48e1ba8b84",
-          "file:local_path": "MIP-DRS7/CMIP7/CMIP/CCCma/CanESM5-1/piControl/r1i1p2f1/glb/mon/tas/tavg-h2m-hxy-u/g120/v20190429/tas_tavg-h2m-hxy-u_mon_glb_g120_CanESM5-1_piControl_r1i1p2f1_650001-660012.nc",
-          "file:size": 22976978,
-          "href": "https://crd-esgf-drc.ec.gc.ca/thredds/fileServer/esg_ng/MIP-DRS7/CMIP7/CMIP/CCCma/CanESM5-1/piControl/r1i1p2f1/glb/mon/tas/tavg-h2m-hxy-u/g120/v20190429/tas_tavg-h2m-hxy-u_mon_glb_g120_CanESM5-1_piControl_r1i1p2f1_650001-660012.nc",
+          "file:checksum": "12208810ee5c8b1ec9b433a0421ad00cdc2484f494f11c3244e5a8f18788acbeaaee",
+          "file:local_path": "MIP-DRS7/CMIP7/CMIP/CCCma/CanESM5-1/1pctCO2/r1i1p2f1/glb/day/tas/tavg-h2m-hxy-u/g120/v20190429/tas_tavg-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_18500101-18601231.nc",
+          "file:size": 78586053,
+          "href": "https://crd-esgf-drc.ec.gc.ca/thredds/fileServer/esg_ng/MIP-DRS7/CMIP7/CMIP/CCCma/CanESM5-1/1pctCO2/r1i1p2f1/glb/day/tas/tavg-h2m-hxy-u/g120/v20190429/tas_tavg-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_18500101-18601231.nc",
           "protocol": "https",
           "roles": [
             "data"
           ],
           "title": null,
           "type": "application/netcdf",
-          "updated": "2026-08-05T19:22:58Z"
+          "updated": "2026-08-19T07:47:44Z"
         },
-        "tas_tavg-h2m-hxy-u_mon_glb_g120_CanESM5-1_piControl_r1i1p2f1_660101-670012.nc": {
+        "tas_tavg-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_18610101-18801231.nc": {
           "alternate:name": "crd-esgf-drc.ec.gc.ca",
-          "cmip7:tracking_id": "hdl:21.14107/7c4a583c-0bfe-4517-98fa-325084b02684",
-          "created": "2026-08-05T19:22:58Z",
+          "cmip7:tracking_id": "hdl:21.14107/eba7eb4b-b99d-4948-a411-f1260732cb15",
+          "created": "2026-08-19T07:45:10Z",
           "description": "HTTPServer Link",
-          "file:checksum": "122088ebf351f596eb286d31519ed333e6b33606ca386735525d5fb4a247f6bc715f",
-          "file:local_path": "MIP-DRS7/CMIP7/CMIP/CCCma/CanESM5-1/piControl/r1i1p2f1/glb/mon/tas/tavg-h2m-hxy-u/g120/v20190429/tas_tavg-h2m-hxy-u_mon_glb_g120_CanESM5-1_piControl_r1i1p2f1_660101-670012.nc",
-          "file:size": 22753608,
-          "href": "https://crd-esgf-drc.ec.gc.ca/thredds/fileServer/esg_ng/MIP-DRS7/CMIP7/CMIP/CCCma/CanESM5-1/piControl/r1i1p2f1/glb/mon/tas/tavg-h2m-hxy-u/g120/v20190429/tas_tavg-h2m-hxy-u_mon_glb_g120_CanESM5-1_piControl_r1i1p2f1_660101-670012.nc",
+          "file:checksum": "12208480ad87d15be02afc1cc5108cfedad365e6a244f18625dd629ffdff7198e27c",
+          "file:local_path": "MIP-DRS7/CMIP7/CMIP/CCCma/CanESM5-1/1pctCO2/r1i1p2f1/glb/day/tas/tavg-h2m-hxy-u/g120/v20190429/tas_tavg-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_18610101-18801231.nc",
+          "file:size": 142682255,
+          "href": "https://crd-esgf-drc.ec.gc.ca/thredds/fileServer/esg_ng/MIP-DRS7/CMIP7/CMIP/CCCma/CanESM5-1/1pctCO2/r1i1p2f1/glb/day/tas/tavg-h2m-hxy-u/g120/v20190429/tas_tavg-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_18610101-18801231.nc",
           "protocol": "https",
           "roles": [
             "data"
           ],
           "title": null,
           "type": "application/netcdf",
-          "updated": "2026-08-05T19:22:58Z"
+          "updated": "2026-08-19T07:45:10Z"
         },
-        "tas_tavg-h2m-hxy-u_mon_glb_g120_CanESM5-1_piControl_r1i1p2f1_670101-680012.nc": {
+        "tas_tavg-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_18810101-19001231.nc": {
           "alternate:name": "crd-esgf-drc.ec.gc.ca",
-          "cmip7:tracking_id": "hdl:21.14107/aea87c58-038a-4086-8df6-4134b0bfb790",
-          "created": "2026-08-05T19:22:59Z",
+          "cmip7:tracking_id": "hdl:21.14107/60b39358-debd-4a7a-879e-9bba84de8367",
+          "created": "2026-08-19T07:47:04Z",
           "description": "HTTPServer Link",
-          "file:checksum": "122016b87fc5fde182bd9ec79544f81179c5381a25eb65e7f171340ca822eeed618a",
-          "file:local_path": "MIP-DRS7/CMIP7/CMIP/CCCma/CanESM5-1/piControl/r1i1p2f1/glb/mon/tas/tavg-h2m-hxy-u/g120/v20190429/tas_tavg-h2m-hxy-u_mon_glb_g120_CanESM5-1_piControl_r1i1p2f1_670101-680012.nc",
-          "file:size": 22755150,
-          "href": "https://crd-esgf-drc.ec.gc.ca/thredds/fileServer/esg_ng/MIP-DRS7/CMIP7/CMIP/CCCma/CanESM5-1/piControl/r1i1p2f1/glb/mon/tas/tavg-h2m-hxy-u/g120/v20190429/tas_tavg-h2m-hxy-u_mon_glb_g120_CanESM5-1_piControl_r1i1p2f1_670101-680012.nc",
+          "file:checksum": "1220a9449531bf1acbe6b69107250900835c9fc28c4f0603588a00621565cf308deb",
+          "file:local_path": "MIP-DRS7/CMIP7/CMIP/CCCma/CanESM5-1/1pctCO2/r1i1p2f1/glb/day/tas/tavg-h2m-hxy-u/g120/v20190429/tas_tavg-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_18810101-19001231.nc",
+          "file:size": 142502182,
+          "href": "https://crd-esgf-drc.ec.gc.ca/thredds/fileServer/esg_ng/MIP-DRS7/CMIP7/CMIP/CCCma/CanESM5-1/1pctCO2/r1i1p2f1/glb/day/tas/tavg-h2m-hxy-u/g120/v20190429/tas_tavg-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_18810101-19001231.nc",
           "protocol": "https",
           "roles": [
             "data"
           ],
           "title": null,
           "type": "application/netcdf",
-          "updated": "2026-08-05T19:22:59Z"
+          "updated": "2026-08-19T07:47:04Z"
         },
-        "tas_tavg-h2m-hxy-u_mon_glb_g120_CanESM5-1_piControl_r1i1p2f1_680101-690012.nc": {
+        "tas_tavg-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_19010101-19201231.nc": {
           "alternate:name": "crd-esgf-drc.ec.gc.ca",
-          "cmip7:tracking_id": "hdl:21.14107/5e053f33-a39f-44d3-8880-cc7015495792",
-          "created": "2026-08-05T19:22:59Z",
+          "cmip7:tracking_id": "hdl:21.14107/6d5b4ec9-4ee1-497e-b193-3382bf011d9a",
+          "created": "2026-08-19T07:45:32Z",
           "description": "HTTPServer Link",
-          "file:checksum": "1220f151f4ccd29671e0a3338dab48716e6e2c06d00b5551a89ad613050eea1495e0",
-          "file:local_path": "MIP-DRS7/CMIP7/CMIP/CCCma/CanESM5-1/piControl/r1i1p2f1/glb/mon/tas/tavg-h2m-hxy-u/g120/v20190429/tas_tavg-h2m-hxy-u_mon_glb_g120_CanESM5-1_piControl_r1i1p2f1_680101-690012.nc",
-          "file:size": 22755782,
-          "href": "https://crd-esgf-drc.ec.gc.ca/thredds/fileServer/esg_ng/MIP-DRS7/CMIP7/CMIP/CCCma/CanESM5-1/piControl/r1i1p2f1/glb/mon/tas/tavg-h2m-hxy-u/g120/v20190429/tas_tavg-h2m-hxy-u_mon_glb_g120_CanESM5-1_piControl_r1i1p2f1_680101-690012.nc",
+          "file:checksum": "122022c09df098a7909e5facb6312e1cdceefd6cd99ff5f09ab46b8c880bf302328f",
+          "file:local_path": "MIP-DRS7/CMIP7/CMIP/CCCma/CanESM5-1/1pctCO2/r1i1p2f1/glb/day/tas/tavg-h2m-hxy-u/g120/v20190429/tas_tavg-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_19010101-19201231.nc",
+          "file:size": 142253189,
+          "href": "https://crd-esgf-drc.ec.gc.ca/thredds/fileServer/esg_ng/MIP-DRS7/CMIP7/CMIP/CCCma/CanESM5-1/1pctCO2/r1i1p2f1/glb/day/tas/tavg-h2m-hxy-u/g120/v20190429/tas_tavg-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_19010101-19201231.nc",
           "protocol": "https",
           "roles": [
             "data"
           ],
           "title": null,
           "type": "application/netcdf",
-          "updated": "2026-08-05T19:22:59Z"
+          "updated": "2026-08-19T07:45:32Z"
+        },
+        "tas_tavg-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_19210101-19401231.nc": {
+          "alternate:name": "crd-esgf-drc.ec.gc.ca",
+          "cmip7:tracking_id": "hdl:21.14107/08c95e4b-5917-433d-a815-48e33b4ce446",
+          "created": "2026-08-19T07:46:19Z",
+          "description": "HTTPServer Link",
+          "file:checksum": "1220e65f63a7125d022166a498a63ae5ca13d40dc1b0036ae11b23e700aa1712fdf7",
+          "file:local_path": "MIP-DRS7/CMIP7/CMIP/CCCma/CanESM5-1/1pctCO2/r1i1p2f1/glb/day/tas/tavg-h2m-hxy-u/g120/v20190429/tas_tavg-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_19210101-19401231.nc",
+          "file:size": 142059510,
+          "href": "https://crd-esgf-drc.ec.gc.ca/thredds/fileServer/esg_ng/MIP-DRS7/CMIP7/CMIP/CCCma/CanESM5-1/1pctCO2/r1i1p2f1/glb/day/tas/tavg-h2m-hxy-u/g120/v20190429/tas_tavg-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_19210101-19401231.nc",
+          "protocol": "https",
+          "roles": [
+            "data"
+          ],
+          "title": null,
+          "type": "application/netcdf",
+          "updated": "2026-08-19T07:46:19Z"
+        },
+        "tas_tavg-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_19410101-19601231.nc": {
+          "alternate:name": "crd-esgf-drc.ec.gc.ca",
+          "cmip7:tracking_id": "hdl:21.14107/99d265e1-10da-47a9-a5ad-1710c31b15c9",
+          "created": "2026-08-19T07:47:24Z",
+          "description": "HTTPServer Link",
+          "file:checksum": "12200344299a52343d31621dce8ff06130263b04be9ac4805516b261c8a98aa451dc",
+          "file:local_path": "MIP-DRS7/CMIP7/CMIP/CCCma/CanESM5-1/1pctCO2/r1i1p2f1/glb/day/tas/tavg-h2m-hxy-u/g120/v20190429/tas_tavg-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_19410101-19601231.nc",
+          "file:size": 141778420,
+          "href": "https://crd-esgf-drc.ec.gc.ca/thredds/fileServer/esg_ng/MIP-DRS7/CMIP7/CMIP/CCCma/CanESM5-1/1pctCO2/r1i1p2f1/glb/day/tas/tavg-h2m-hxy-u/g120/v20190429/tas_tavg-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_19410101-19601231.nc",
+          "protocol": "https",
+          "roles": [
+            "data"
+          ],
+          "title": null,
+          "type": "application/netcdf",
+          "updated": "2026-08-19T07:47:24Z"
+        },
+        "tas_tavg-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_19610101-19801231.nc": {
+          "alternate:name": "crd-esgf-drc.ec.gc.ca",
+          "cmip7:tracking_id": "hdl:21.14107/4eb01689-d42e-4a60-ac79-f31f3bad73a9",
+          "created": "2026-08-19T07:46:42Z",
+          "description": "HTTPServer Link",
+          "file:checksum": "122097903d2a9b64f5eeee88f8cd9c45703a9348a36d0b885ef8ec4952f4cb695b71",
+          "file:local_path": "MIP-DRS7/CMIP7/CMIP/CCCma/CanESM5-1/1pctCO2/r1i1p2f1/glb/day/tas/tavg-h2m-hxy-u/g120/v20190429/tas_tavg-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_19610101-19801231.nc",
+          "file:size": 141531153,
+          "href": "https://crd-esgf-drc.ec.gc.ca/thredds/fileServer/esg_ng/MIP-DRS7/CMIP7/CMIP/CCCma/CanESM5-1/1pctCO2/r1i1p2f1/glb/day/tas/tavg-h2m-hxy-u/g120/v20190429/tas_tavg-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_19610101-19801231.nc",
+          "protocol": "https",
+          "roles": [
+            "data"
+          ],
+          "title": null,
+          "type": "application/netcdf",
+          "updated": "2026-08-19T07:46:42Z"
+        },
+        "tas_tavg-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_19810101-19991231.nc": {
+          "alternate:name": "crd-esgf-drc.ec.gc.ca",
+          "cmip7:tracking_id": "hdl:21.14107/25ace32a-5736-4d0b-bb96-6bfd592d485b",
+          "created": "2026-08-19T07:45:53Z",
+          "description": "HTTPServer Link",
+          "file:checksum": "1220ddf8aa91b248434789e289c29050fbecc288510b071a5188bc2a598a33146888",
+          "file:local_path": "MIP-DRS7/CMIP7/CMIP/CCCma/CanESM5-1/1pctCO2/r1i1p2f1/glb/day/tas/tavg-h2m-hxy-u/g120/v20190429/tas_tavg-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_19810101-19991231.nc",
+          "file:size": 134121843,
+          "href": "https://crd-esgf-drc.ec.gc.ca/thredds/fileServer/esg_ng/MIP-DRS7/CMIP7/CMIP/CCCma/CanESM5-1/1pctCO2/r1i1p2f1/glb/day/tas/tavg-h2m-hxy-u/g120/v20190429/tas_tavg-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_19810101-19991231.nc",
+          "protocol": "https",
+          "roles": [
+            "data"
+          ],
+          "title": null,
+          "type": "application/netcdf",
+          "updated": "2026-08-19T07:45:53Z"
         }
       },
       "bbox": [
@@ -108,10 +176,10 @@
         ],
         "type": "Polygon"
       },
-      "id": "MIP-DRS7.CMIP7.CMIP.CCCma.CanESM5-1.piControl.r1i1p2f1.glb.mon.tas.tavg-h2m-hxy-u.g120.v20190429",
+      "id": "MIP-DRS7.CMIP7.CMIP.CCCma.CanESM5-1.1pctCO2.r1i1p2f1.glb.day.tas.tavg-h2m-hxy-u.g120.v20190429",
       "links": [
         {
-          "href": "https://discovery.east.esgf.io/collections/CMIP7/items/MIP-DRS7.CMIP7.CMIP.CCCma.CanESM5-1.piControl.r1i1p2f1.glb.mon.tas.tavg-h2m-hxy-u.g120.v20190429",
+          "href": "https://discovery.east.esgf.io/collections/CMIP7/items/MIP-DRS7.CMIP7.CMIP.CCCma.CanESM5-1.1pctCO2.r1i1p2f1.glb.day.tas.tavg-h2m-hxy-u.g120.v20190429",
           "rel": "self",
           "title": null,
           "type": "application/json"
@@ -135,183 +203,7 @@
           "type": "application/json"
         },
         {
-          "href": "https://cmip7-citations.ceda.ac.uk/citation/CMIP7.CMIP.CCCma.CanESM5-1.piControl?httpAccept=application/json",
-          "rel": "cite-as",
-          "type": "application/json"
-        }
-      ],
-      "properties": {
-        "access": [
-          "HTTPServer"
-        ],
-        "cmip7:Conventions": [
-          "CF-1.12"
-        ],
-        "cmip7:activity_id": "CMIP",
-        "cmip7:area_label": "u",
-        "cmip7:data_specs_version": "MIP-DS7.1.0.0",
-        "cmip7:drs_specs": "MIP-DRS7",
-        "cmip7:experiment_id": "piControl",
-        "cmip7:forcing_index": "f1",
-        "cmip7:frequency": "mon",
-        "cmip7:grid_label": "g120",
-        "cmip7:horizontal_label": "hxy",
-        "cmip7:initialization_index": "i1",
-        "cmip7:institution_id": "CCCma",
-        "cmip7:license_id": "CC-BY-4.0",
-        "cmip7:mip_era": "CMIP7",
-        "cmip7:nominal_resolution": "500 km",
-        "cmip7:parent_activity_id": "CMIP",
-        "cmip7:parent_experiment_id": "piControl-spinup",
-        "cmip7:parent_mip_era": "CMIP7",
-        "cmip7:parent_source_id": "CanESM5-1",
-        "cmip7:parent_time_units": "days since 1850-01-01",
-        "cmip7:parent_variant_label": "r1i1p2f1",
-        "cmip7:physics_index": "p2",
-        "cmip7:pid": "hdl:21.14107/1f062cde-b12d-335d-a30b-988188098842",
-        "cmip7:product": "model-output",
-        "cmip7:realization_index": "r1",
-        "cmip7:realm": [
-          "atmos"
-        ],
-        "cmip7:region": "glb",
-        "cmip7:source_id": "CanESM5-1",
-        "cmip7:temporal_label": "tavg",
-        "cmip7:variable_branded_name": "tas_tavg-h2m-hxy-u",
-        "cmip7:variable_branding_suffix": "tavg-h2m-hxy-u",
-        "cmip7:variable_cf_standard_name": "air_temperature",
-        "cmip7:variable_id": "tas",
-        "cmip7:variable_long_name": "Near-Surface Air Temperature",
-        "cmip7:variable_units": "K",
-        "cmip7:variant_label": "r1i1p2f1",
-        "cmip7:vertical_label": "h2m",
-        "constellation": null,
-        "created": "2026-08-06T17:23:00.298012Z",
-        "datetime": null,
-        "description": null,
-        "end_datetime": "6900-12-16T12:00:00Z",
-        "gsd": null,
-        "instruments": null,
-        "latest": true,
-        "license": null,
-        "mission": null,
-        "platform": null,
-        "project": "CMIP7",
-        "providers": null,
-        "retracted": false,
-        "size": 91241518,
-        "start_datetime": "6500-01-16T12:00:00Z",
-        "title": "MIP-DRS7.CMIP7.CMIP.CCCma.CanESM5-1.piControl.r1i1p2f1.glb.mon.tas.tavg-h2m-hxy-u.g120",
-        "updated": "2026-08-29T01:25:34.629467Z",
-        "version": "20190429"
-      },
-      "stac_extensions": [
-        "https://esgf.github.io/stac-transaction-api/cmip7/v1.2.16/schema.json",
-        "https://stac-extensions.github.io/alternate-assets/v1.2.0/schema.json",
-        "https://stac-extensions.github.io/file/v2.1.0/schema.json"
-      ],
-      "stac_version": "1.1.0",
-      "type": "Feature"
-    },
-    {
-      "assets": {
-        "tas_tavg-h2m-hxy-u_day_glb_g110_UKCM2-0-LL_1pctCO2_r1i1p1f1_18500101-19491231.nc": {
-          "alternate:name": "ceda.ac.uk",
-          "cmip7:tracking_id": "hdl:21.14107/719613fd-2d05-4b1e-a8a6-7d0a02aded25",
-          "created": "2026-08-28T14:51:08Z",
-          "description": "HTTPServer Link",
-          "file:checksum": "1220f8e3b1ca02b835285f7f18cb27865c31cc0ae923446fcc788550f8d39ce652ca",
-          "file:local_path": "MIP-DRS7/CMIP7/CMIP/UKNCSP/UKCM2-0-LL/1pctCO2/r1i1p1f1/glb/day/tas/tavg-h2m-hxy-u/g110/v20260827/tas_tavg-h2m-hxy-u_day_glb_g110_UKCM2-0-LL_1pctCO2_r1i1p1f1_18500101-19491231.nc",
-          "file:size": 2024186342,
-          "href": "https://esgf.ceda.ac.uk/data/esg_cmip7/MIP-DRS7/CMIP7/CMIP/UKNCSP/UKCM2-0-LL/1pctCO2/r1i1p1f1/glb/day/tas/tavg-h2m-hxy-u/g110/v20260827/tas_tavg-h2m-hxy-u_day_glb_g110_UKCM2-0-LL_1pctCO2_r1i1p1f1_18500101-19491231.nc",
-          "protocol": "https",
-          "roles": [
-            "data"
-          ],
-          "title": null,
-          "type": "application/netcdf",
-          "updated": "2026-08-28T14:51:08Z"
-        },
-        "tas_tavg-h2m-hxy-u_day_glb_g110_UKCM2-0-LL_1pctCO2_r1i1p1f1_19500101-19991231.nc": {
-          "alternate:name": "ceda.ac.uk",
-          "cmip7:tracking_id": "hdl:21.14107/4b4a01ac-5455-4482-bd7a-aeeca74b7fb1",
-          "created": "2026-08-28T14:50:48Z",
-          "description": "HTTPServer Link",
-          "file:checksum": "12206d322dcf33ac43b83988507211e9bc337dd45b26b940ff715559c9c06afb9080",
-          "file:local_path": "MIP-DRS7/CMIP7/CMIP/UKNCSP/UKCM2-0-LL/1pctCO2/r1i1p1f1/glb/day/tas/tavg-h2m-hxy-u/g110/v20260827/tas_tavg-h2m-hxy-u_day_glb_g110_UKCM2-0-LL_1pctCO2_r1i1p1f1_19500101-19991231.nc",
-          "file:size": 1006945677,
-          "href": "https://esgf.ceda.ac.uk/data/esg_cmip7/MIP-DRS7/CMIP7/CMIP/UKNCSP/UKCM2-0-LL/1pctCO2/r1i1p1f1/glb/day/tas/tavg-h2m-hxy-u/g110/v20260827/tas_tavg-h2m-hxy-u_day_glb_g110_UKCM2-0-LL_1pctCO2_r1i1p1f1_19500101-19991231.nc",
-          "protocol": "https",
-          "roles": [
-            "data"
-          ],
-          "title": null,
-          "type": "application/netcdf",
-          "updated": "2026-08-28T14:50:48Z"
-        }
-      },
-      "bbox": [
-        -179.0625,
-        -89.375,
-        179.0625,
-        89.375
-      ],
-      "collection": "CMIP7",
-      "geometry": {
-        "coordinates": [
-          [
-            [
-              -179.0625,
-              -89.375
-            ],
-            [
-              179.0625,
-              -89.375
-            ],
-            [
-              179.0625,
-              89.375
-            ],
-            [
-              -179.0625,
-              89.375
-            ],
-            [
-              -179.0625,
-              -89.375
-            ]
-          ]
-        ],
-        "type": "Polygon"
-      },
-      "id": "MIP-DRS7.CMIP7.CMIP.UKNCSP.UKCM2-0-LL.1pctCO2.r1i1p1f1.glb.day.tas.tavg-h2m-hxy-u.g110.v20260827",
-      "links": [
-        {
-          "href": "https://discovery.east.esgf.io/collections/CMIP7/items/MIP-DRS7.CMIP7.CMIP.UKNCSP.UKCM2-0-LL.1pctCO2.r1i1p1f1.glb.day.tas.tavg-h2m-hxy-u.g110.v20260827",
-          "rel": "self",
-          "title": null,
-          "type": "application/json"
-        },
-        {
-          "href": "https://discovery.east.esgf.io/collections/CMIP7",
-          "rel": "parent",
-          "title": null,
-          "type": "application/json"
-        },
-        {
-          "href": "https://discovery.east.esgf.io/collections/CMIP7",
-          "rel": "collection",
-          "title": null,
-          "type": "application/json"
-        },
-        {
-          "href": "https://discovery.east.esgf.io/collections",
-          "rel": "root",
-          "title": null,
-          "type": "application/json"
-        },
-        {
-          "href": "https://cmip7-citations.ceda.ac.uk/citation/CMIP7.CMIP.UKNCSP.UKCM2-0-LL.1pctCO2?httpAccept=application/json",
+          "href": "https://cmip7-citations.ceda.ac.uk/citation/CMIP7.CMIP.CCCma.CanESM5-1.1pctCO2?httpAccept=application/json",
           "rel": "cite-as",
           "type": "application/json"
         }
@@ -330,28 +222,28 @@
         "cmip7:experiment_id": "1pctCO2",
         "cmip7:forcing_index": "f1",
         "cmip7:frequency": "day",
-        "cmip7:grid_label": "g110",
+        "cmip7:grid_label": "g120",
         "cmip7:horizontal_label": "hxy",
         "cmip7:initialization_index": "i1",
-        "cmip7:institution_id": "UKNCSP",
+        "cmip7:institution_id": "CCCma",
         "cmip7:license_id": "CC-BY-4.0",
         "cmip7:mip_era": "CMIP7",
-        "cmip7:nominal_resolution": "250 km",
+        "cmip7:nominal_resolution": "500 km",
         "cmip7:parent_activity_id": "CMIP",
         "cmip7:parent_experiment_id": "piControl",
         "cmip7:parent_mip_era": "CMIP7",
-        "cmip7:parent_source_id": "UKCM2-0-LL",
+        "cmip7:parent_source_id": "CanESM5-1",
         "cmip7:parent_time_units": "days since 1850-01-01",
-        "cmip7:parent_variant_label": "r1i1p1f1",
-        "cmip7:physics_index": "p1",
-        "cmip7:pid": "hdl:21.14107/3ce080b5-76db-3a07-b030-197a08ef9b5e",
+        "cmip7:parent_variant_label": "r1i1p2f1",
+        "cmip7:physics_index": "p2",
+        "cmip7:pid": "hdl:21.14107/bae40f5a-0661-3031-a274-5df941db2331",
         "cmip7:product": "model-output",
         "cmip7:realization_index": "r1",
         "cmip7:realm": [
           "atmos"
         ],
         "cmip7:region": "glb",
-        "cmip7:source_id": "UKCM2-0-LL",
+        "cmip7:source_id": "CanESM5-1",
         "cmip7:temporal_label": "tavg",
         "cmip7:variable_branded_name": "tas_tavg-h2m-hxy-u",
         "cmip7:variable_branding_suffix": "tavg-h2m-hxy-u",
@@ -359,10 +251,10 @@
         "cmip7:variable_id": "tas",
         "cmip7:variable_long_name": "Near-Surface Air Temperature",
         "cmip7:variable_units": "K",
-        "cmip7:variant_label": "r1i1p1f1",
+        "cmip7:variant_label": "r1i1p2f1",
         "cmip7:vertical_label": "h2m",
         "constellation": null,
-        "created": "2026-08-28T14:58:13.775344Z",
+        "created": "2026-09-06T17:19:19.156197Z",
         "datetime": null,
         "description": null,
         "end_datetime": "1999-12-31T12:00:00Z",
@@ -375,14 +267,287 @@
         "project": "CMIP7",
         "providers": null,
         "retracted": false,
-        "size": 3031132019,
+        "size": 1065514605,
         "start_datetime": "1850-01-01T12:00:00Z",
-        "title": "MIP-DRS7.CMIP7.CMIP.UKNCSP.UKCM2-0-LL.1pctCO2.r1i1p1f1.glb.day.tas.tavg-h2m-hxy-u.g110",
-        "updated": "2026-08-29T05:20:48.202324Z",
-        "version": "20260827"
+        "title": "MIP-DRS7.CMIP7.CMIP.CCCma.CanESM5-1.1pctCO2.r1i1p2f1.glb.day.tas.tavg-h2m-hxy-u.g120",
+        "updated": "2026-09-06T17:19:20.572672Z",
+        "version": "20190429"
       },
       "stac_extensions": [
-        "https://esgf.github.io/stac-transaction-api/cmip7/v1.2.18/schema.json",
+        "https://esgf.github.io/stac-transaction-api/cmip7/v1.2.15/schema.json",
+        "https://stac-extensions.github.io/alternate-assets/v1.2.0/schema.json",
+        "https://stac-extensions.github.io/file/v2.1.0/schema.json"
+      ],
+      "stac_version": "1.1.0",
+      "type": "Feature"
+    },
+    {
+      "assets": {
+        "tas_tmax-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_18500101-18601231.nc": {
+          "alternate:name": "crd-esgf-drc.ec.gc.ca",
+          "cmip7:tracking_id": "hdl:21.14107/0ce6da95-8b6e-4fc6-8de1-11aefe1a3c94",
+          "created": "2026-08-19T07:47:17Z",
+          "description": "HTTPServer Link",
+          "file:checksum": "1220180d4d18dbba0092750f41477b06d8c803c5f2e211e5ac7dc1449a741ed17548",
+          "file:local_path": "MIP-DRS7/CMIP7/CMIP/CCCma/CanESM5-1/1pctCO2/r1i1p2f1/glb/day/tas/tmax-h2m-hxy-u/g120/v20190429/tas_tmax-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_18500101-18601231.nc",
+          "file:size": 78697579,
+          "href": "https://crd-esgf-drc.ec.gc.ca/thredds/fileServer/esg_ng/MIP-DRS7/CMIP7/CMIP/CCCma/CanESM5-1/1pctCO2/r1i1p2f1/glb/day/tas/tmax-h2m-hxy-u/g120/v20190429/tas_tmax-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_18500101-18601231.nc",
+          "protocol": "https",
+          "roles": [
+            "data"
+          ],
+          "title": null,
+          "type": "application/netcdf",
+          "updated": "2026-08-19T07:47:17Z"
+        },
+        "tas_tmax-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_18610101-18801231.nc": {
+          "alternate:name": "crd-esgf-drc.ec.gc.ca",
+          "cmip7:tracking_id": "hdl:21.14107/1ae981fc-3bc3-4586-b013-4a68a4afed44",
+          "created": "2026-08-19T07:46:15Z",
+          "description": "HTTPServer Link",
+          "file:checksum": "122015c381416706d440d39b70c7f8168bf3d381ee5889e7fefc188aa18bbbed761a",
+          "file:local_path": "MIP-DRS7/CMIP7/CMIP/CCCma/CanESM5-1/1pctCO2/r1i1p2f1/glb/day/tas/tmax-h2m-hxy-u/g120/v20190429/tas_tmax-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_18610101-18801231.nc",
+          "file:size": 142906956,
+          "href": "https://crd-esgf-drc.ec.gc.ca/thredds/fileServer/esg_ng/MIP-DRS7/CMIP7/CMIP/CCCma/CanESM5-1/1pctCO2/r1i1p2f1/glb/day/tas/tmax-h2m-hxy-u/g120/v20190429/tas_tmax-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_18610101-18801231.nc",
+          "protocol": "https",
+          "roles": [
+            "data"
+          ],
+          "title": null,
+          "type": "application/netcdf",
+          "updated": "2026-08-19T07:46:15Z"
+        },
+        "tas_tmax-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_18810101-19001231.nc": {
+          "alternate:name": "crd-esgf-drc.ec.gc.ca",
+          "cmip7:tracking_id": "hdl:21.14107/a8ef4b83-36db-4fe7-ac21-579d29c1afcb",
+          "created": "2026-08-19T07:46:57Z",
+          "description": "HTTPServer Link",
+          "file:checksum": "12206bc4e88f9aa2526d6e66754a2cff0d7beebc501d5b2078a1d9e1cbd83a04b6ad",
+          "file:local_path": "MIP-DRS7/CMIP7/CMIP/CCCma/CanESM5-1/1pctCO2/r1i1p2f1/glb/day/tas/tmax-h2m-hxy-u/g120/v20190429/tas_tmax-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_18810101-19001231.nc",
+          "file:size": 142768795,
+          "href": "https://crd-esgf-drc.ec.gc.ca/thredds/fileServer/esg_ng/MIP-DRS7/CMIP7/CMIP/CCCma/CanESM5-1/1pctCO2/r1i1p2f1/glb/day/tas/tmax-h2m-hxy-u/g120/v20190429/tas_tmax-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_18810101-19001231.nc",
+          "protocol": "https",
+          "roles": [
+            "data"
+          ],
+          "title": null,
+          "type": "application/netcdf",
+          "updated": "2026-08-19T07:46:57Z"
+        },
+        "tas_tmax-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_19010101-19201231.nc": {
+          "alternate:name": "crd-esgf-drc.ec.gc.ca",
+          "cmip7:tracking_id": "hdl:21.14107/2822ef43-d8dd-40bd-a2c8-581404c12276",
+          "created": "2026-08-19T07:45:29Z",
+          "description": "HTTPServer Link",
+          "file:checksum": "1220b4d23e183b979fa74fccac43fd6a090d392d4ed0a5bbad4bc109c145595f60d6",
+          "file:local_path": "MIP-DRS7/CMIP7/CMIP/CCCma/CanESM5-1/1pctCO2/r1i1p2f1/glb/day/tas/tmax-h2m-hxy-u/g120/v20190429/tas_tmax-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_19010101-19201231.nc",
+          "file:size": 142575479,
+          "href": "https://crd-esgf-drc.ec.gc.ca/thredds/fileServer/esg_ng/MIP-DRS7/CMIP7/CMIP/CCCma/CanESM5-1/1pctCO2/r1i1p2f1/glb/day/tas/tmax-h2m-hxy-u/g120/v20190429/tas_tmax-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_19010101-19201231.nc",
+          "protocol": "https",
+          "roles": [
+            "data"
+          ],
+          "title": null,
+          "type": "application/netcdf",
+          "updated": "2026-08-19T07:45:29Z"
+        },
+        "tas_tmax-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_19210101-19401231.nc": {
+          "alternate:name": "crd-esgf-drc.ec.gc.ca",
+          "cmip7:tracking_id": "hdl:21.14107/1018567f-85d8-4eb3-af3e-fae835f48663",
+          "created": "2026-08-19T07:46:36Z",
+          "description": "HTTPServer Link",
+          "file:checksum": "12209d504777573b559821399ff50813e27a91bdda6195f859be81f2ed649d5b560f",
+          "file:local_path": "MIP-DRS7/CMIP7/CMIP/CCCma/CanESM5-1/1pctCO2/r1i1p2f1/glb/day/tas/tmax-h2m-hxy-u/g120/v20190429/tas_tmax-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_19210101-19401231.nc",
+          "file:size": 142447332,
+          "href": "https://crd-esgf-drc.ec.gc.ca/thredds/fileServer/esg_ng/MIP-DRS7/CMIP7/CMIP/CCCma/CanESM5-1/1pctCO2/r1i1p2f1/glb/day/tas/tmax-h2m-hxy-u/g120/v20190429/tas_tmax-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_19210101-19401231.nc",
+          "protocol": "https",
+          "roles": [
+            "data"
+          ],
+          "title": null,
+          "type": "application/netcdf",
+          "updated": "2026-08-19T07:46:36Z"
+        },
+        "tas_tmax-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_19410101-19601231.nc": {
+          "alternate:name": "crd-esgf-drc.ec.gc.ca",
+          "cmip7:tracking_id": "hdl:21.14107/fd753b28-ddc3-40b7-bcef-f9957cc042dc",
+          "created": "2026-08-19T07:47:42Z",
+          "description": "HTTPServer Link",
+          "file:checksum": "1220206689031c3579011cfdb24c95d78a7503e67274e5783c62c7038c36db59e18c",
+          "file:local_path": "MIP-DRS7/CMIP7/CMIP/CCCma/CanESM5-1/1pctCO2/r1i1p2f1/glb/day/tas/tmax-h2m-hxy-u/g120/v20190429/tas_tmax-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_19410101-19601231.nc",
+          "file:size": 142168535,
+          "href": "https://crd-esgf-drc.ec.gc.ca/thredds/fileServer/esg_ng/MIP-DRS7/CMIP7/CMIP/CCCma/CanESM5-1/1pctCO2/r1i1p2f1/glb/day/tas/tmax-h2m-hxy-u/g120/v20190429/tas_tmax-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_19410101-19601231.nc",
+          "protocol": "https",
+          "roles": [
+            "data"
+          ],
+          "title": null,
+          "type": "application/netcdf",
+          "updated": "2026-08-19T07:47:42Z"
+        },
+        "tas_tmax-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_19610101-19801231.nc": {
+          "alternate:name": "crd-esgf-drc.ec.gc.ca",
+          "cmip7:tracking_id": "hdl:21.14107/06fbdb1a-856e-4562-a963-97e611c7ba21",
+          "created": "2026-08-19T07:45:50Z",
+          "description": "HTTPServer Link",
+          "file:checksum": "1220b32cc8f1f99ec663b42a6295a146a074ba775d1782b0144577b2b0eae3062b7e",
+          "file:local_path": "MIP-DRS7/CMIP7/CMIP/CCCma/CanESM5-1/1pctCO2/r1i1p2f1/glb/day/tas/tmax-h2m-hxy-u/g120/v20190429/tas_tmax-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_19610101-19801231.nc",
+          "file:size": 141980698,
+          "href": "https://crd-esgf-drc.ec.gc.ca/thredds/fileServer/esg_ng/MIP-DRS7/CMIP7/CMIP/CCCma/CanESM5-1/1pctCO2/r1i1p2f1/glb/day/tas/tmax-h2m-hxy-u/g120/v20190429/tas_tmax-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_19610101-19801231.nc",
+          "protocol": "https",
+          "roles": [
+            "data"
+          ],
+          "title": null,
+          "type": "application/netcdf",
+          "updated": "2026-08-19T07:45:50Z"
+        },
+        "tas_tmax-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_19810101-19991231.nc": {
+          "alternate:name": "crd-esgf-drc.ec.gc.ca",
+          "cmip7:tracking_id": "hdl:21.14107/7d0ab19e-7513-4793-83ff-e2a48e6fb0fd",
+          "created": "2026-08-19T07:45:08Z",
+          "description": "HTTPServer Link",
+          "file:checksum": "1220edb24aa345558b0bcf6f961a86378e431a46673d960e0df7349985d36519c346",
+          "file:local_path": "MIP-DRS7/CMIP7/CMIP/CCCma/CanESM5-1/1pctCO2/r1i1p2f1/glb/day/tas/tmax-h2m-hxy-u/g120/v20190429/tas_tmax-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_19810101-19991231.nc",
+          "file:size": 134675456,
+          "href": "https://crd-esgf-drc.ec.gc.ca/thredds/fileServer/esg_ng/MIP-DRS7/CMIP7/CMIP/CCCma/CanESM5-1/1pctCO2/r1i1p2f1/glb/day/tas/tmax-h2m-hxy-u/g120/v20190429/tas_tmax-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_19810101-19991231.nc",
+          "protocol": "https",
+          "roles": [
+            "data"
+          ],
+          "title": null,
+          "type": "application/netcdf",
+          "updated": "2026-08-19T07:45:08Z"
+        }
+      },
+      "bbox": [
+        -180.0,
+        -87.86379884,
+        177.1875,
+        87.86379884
+      ],
+      "collection": "CMIP7",
+      "geometry": {
+        "coordinates": [
+          [
+            [
+              -180.0,
+              -87.86379884
+            ],
+            [
+              177.1875,
+              -87.86379884
+            ],
+            [
+              177.1875,
+              87.86379884
+            ],
+            [
+              -180.0,
+              87.86379884
+            ],
+            [
+              -180.0,
+              -87.86379884
+            ]
+          ]
+        ],
+        "type": "Polygon"
+      },
+      "id": "MIP-DRS7.CMIP7.CMIP.CCCma.CanESM5-1.1pctCO2.r1i1p2f1.glb.day.tas.tmax-h2m-hxy-u.g120.v20190429",
+      "links": [
+        {
+          "href": "https://discovery.east.esgf.io/collections/CMIP7/items/MIP-DRS7.CMIP7.CMIP.CCCma.CanESM5-1.1pctCO2.r1i1p2f1.glb.day.tas.tmax-h2m-hxy-u.g120.v20190429",
+          "rel": "self",
+          "title": null,
+          "type": "application/json"
+        },
+        {
+          "href": "https://discovery.east.esgf.io/collections/CMIP7",
+          "rel": "parent",
+          "title": null,
+          "type": "application/json"
+        },
+        {
+          "href": "https://discovery.east.esgf.io/collections/CMIP7",
+          "rel": "collection",
+          "title": null,
+          "type": "application/json"
+        },
+        {
+          "href": "https://discovery.east.esgf.io/collections",
+          "rel": "root",
+          "title": null,
+          "type": "application/json"
+        }
+      ],
+      "properties": {
+        "access": [
+          "HTTPServer"
+        ],
+        "cmip7:Conventions": [
+          "CF-1.12"
+        ],
+        "cmip7:activity_id": "CMIP",
+        "cmip7:area_label": "u",
+        "cmip7:data_specs_version": "MIP-DS7.1.0.0",
+        "cmip7:drs_specs": "MIP-DRS7",
+        "cmip7:experiment_id": "1pctCO2",
+        "cmip7:forcing_index": "f1",
+        "cmip7:frequency": "day",
+        "cmip7:grid_label": "g120",
+        "cmip7:horizontal_label": "hxy",
+        "cmip7:initialization_index": "i1",
+        "cmip7:institution_id": "CCCma",
+        "cmip7:license_id": "CC-BY-4.0",
+        "cmip7:mip_era": "CMIP7",
+        "cmip7:nominal_resolution": "500 km",
+        "cmip7:parent_activity_id": "CMIP",
+        "cmip7:parent_experiment_id": "piControl",
+        "cmip7:parent_mip_era": "CMIP7",
+        "cmip7:parent_source_id": "CanESM5-1",
+        "cmip7:parent_time_units": "days since 1850-01-01",
+        "cmip7:parent_variant_label": "r1i1p2f1",
+        "cmip7:physics_index": "p2",
+        "cmip7:pid": "hdl:21.14107/2bf9ad69-4f23-3693-9f3a-6ba874eed1ac",
+        "cmip7:product": "model-output",
+        "cmip7:realization_index": "r1",
+        "cmip7:realm": [
+          "atmos"
+        ],
+        "cmip7:region": "glb",
+        "cmip7:source_id": "CanESM5-1",
+        "cmip7:temporal_label": "tmax",
+        "cmip7:variable_branded_name": "tas_tmax-h2m-hxy-u",
+        "cmip7:variable_branding_suffix": "tmax-h2m-hxy-u",
+        "cmip7:variable_cf_standard_name": "air_temperature",
+        "cmip7:variable_id": "tas",
+        "cmip7:variable_long_name": "Daily Maximum Near-Surface Air Temperature",
+        "cmip7:variable_units": "K",
+        "cmip7:variant_label": "r1i1p2f1",
+        "cmip7:vertical_label": "h2m",
+        "constellation": null,
+        "created": "2026-09-07T00:57:50.431608Z",
+        "datetime": null,
+        "description": null,
+        "end_datetime": "1999-12-31T12:00:00Z",
+        "gsd": null,
+        "instruments": null,
+        "latest": true,
+        "license": null,
+        "mission": null,
+        "platform": null,
+        "project": "CMIP7",
+        "providers": null,
+        "retracted": false,
+        "size": 1068220830,
+        "start_datetime": "1850-01-01T12:00:00Z",
+        "title": "MIP-DRS7.CMIP7.CMIP.CCCma.CanESM5-1.1pctCO2.r1i1p2f1.glb.day.tas.tmax-h2m-hxy-u.g120",
+        "updated": "2026-09-07T00:57:50.431608Z",
+        "version": "20190429"
+      },
+      "stac_extensions": [
+        "https://esgf.github.io/stac-transaction-api/cmip7/v1.2.15/schema.json",
         "https://stac-extensions.github.io/alternate-assets/v1.2.0/schema.json",
         "https://stac-extensions.github.io/file/v2.1.0/schema.json"
       ],
@@ -422,7 +587,7 @@
         },
         "filter-lang": "cql2-json",
         "limit": 2,
-        "token": "TUlQLURSUzcuQ01JUDcuQ01JUC5VS05DU1AuVUtDTTItMC1MTC4xcGN0Q08yLnIxaTFwMWYxLmdsYi5kYXkudGFzLnRhdmctaDJtLWh4eS11LmcxMTAudjIwMjYwODI3"
+        "token": "TUlQLURSUzcuQ01JUDcuQ01JUC5DQ0NtYS5DYW5FU001LTEuMXBjdENPMi5yMWkxcDJmMS5nbGIuZGF5LnRhcy50bWF4LWgybS1oeHktdS5nMTIwLnYyMDE5MDQyOQ"
       },
       "href": "https://search.west.esgf.io/search",
       "method": "POST",
@@ -440,7 +605,7 @@
       "type": "application/json"
     }
   ],
-  "numMatched": 34,
+  "numMatched": 64,
   "numReturned": 2,
   "type": "FeatureCollection"
 }

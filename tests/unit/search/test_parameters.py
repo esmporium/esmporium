@@ -17,7 +17,6 @@ from esmporium.search import (
     ESGF1CMIP5ParametersQueryStyle,
     ESGF1CMIP6ParametersQueryStyle,
     ESGF1CMIP7ParametersQueryStyle,
-    ESGFNGCMIP5ParametersQueryStyle,
     ESGFNGCMIP6ParametersQueryStyle,
     ESGFNGCMIP7ParametersQueryStyle,
 )
@@ -39,20 +38,6 @@ from esmporium.search import (
                 other_terms={"custom_other": ("other_terms",)},
             ),
             id="solr-cmip5",
-        ),
-        pytest.param(
-            ESGFNGCMIP5ParametersQueryStyle(
-                model=("model",),
-                institute=("institution",),
-                experiment=("experiment",),
-                variable=("variable",),
-                ensemble=("variant_label",),
-                time_frequency=("reporting_interval",),
-                cmor_table=("processing_id",),
-                realm=("realm",),
-                other_terms={"custom_other": ("other_terms",)},
-            ),
-            id="stac-cmip5",
         ),
         pytest.param(
             ESGF1CMIP6ParametersQueryStyle(
@@ -360,30 +345,6 @@ def test_full_query_is_supported(start_query, exp_params):
                 ),
             ),
             id="canonical-grid-label-solr-cmip5-target",
-        ),
-        pytest.param(
-            QueryCanonical(model=("model",), resolution=("resolution",)),
-            ESGFNGCMIP5ParametersQueryStyle,
-            pytest.raises(
-                FacetNotExpressibleError,
-                match=(
-                    "facet 'resolution' cannot be represented in "
-                    "ESGFNGCMIP5ParametersQueryStyle"
-                ),
-            ),
-            id="canonical-resolution-stac-cmip5-target",
-        ),
-        pytest.param(
-            QueryCanonical(project=("CMIP5",), model=("model",)),
-            ESGFNGCMIP5ParametersQueryStyle,
-            pytest.raises(
-                FacetNotExpressibleError,
-                match=(
-                    "facet 'project' cannot be represented in "
-                    "ESGFNGCMIP5ParametersQueryStyle"
-                ),
-            ),
-            id="canonical-project-stac-cmip5-target",
         ),
         pytest.param(
             QueryCanonical(project=("CMIP6",), model=("model",)),

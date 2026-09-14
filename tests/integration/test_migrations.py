@@ -7,9 +7,10 @@ they have to also write the migration.
 
 from __future__ import annotations
 
-from sqlmodel import Session, text
+import pytest
+from sqlmodel import Session, select, text
 
-from esmporium.db import Dataset, migrate
+from esmporium.db import Dataset, UnhandledDatasetClashError, migrate, save_dataset
 
 
 def get_schema(engine):
@@ -39,6 +40,37 @@ def test_migrations_leave_database_matching_models(engine, get_pending_changes):
     assert get_pending_changes(engine) == [], (
         'Start with `make migration MESSAGE="..." to fix this'
     )
+
+
+def test_clash_detection_works_on_a_migrated_database(engine, get_dataset_kwargs):
+    """A clash still raises `UnhandledDatasetClashError` on a *migrated* database.
+
+    `save_dataset` recognises an identity clash by matching `DATASET_IDENTITY_INDEX` in
+    SQLite's `IntegrityError` text. That name has to agree in three places: the model's
+    `__table_args__`, the constant `save_dataset` reads, and the migration that actually
+    builds the index. The unit clash tests create the schema with `METADATA.create_all`,
+    so they only ever exercise the first two -- the index they hit is the model's.
+
+    This test migrates a real database instead, so the index is the *migration's*, and
+    checks a clash still surfaces as `UnhandledDatasetClashError`. If the migration's
+    index name ever drifts from the constant (a rename applied to the model but not the
+    migration), `save_dataset` stops matching, a raw `IntegrityError` escapes, and this
+    fails. It is the one guard `test_migrations_leave_database_matching_models` cannot
+    give: SQLite cannot reflect expression-based indexes, so alembic silently skips
+    comparing this one (see its `SAWarning`).
+
+    `grid_label=None` uses the CMIP5 shape on purpose, so the migrated index's
+    `coalesce(grid_label, '')` expression is exercised too.
+    """
+    migrate.upgrade_to_head(engine)
+
+    clash = get_dataset_kwargs("clash", grid_label=None)
+    with Session(engine) as session:
+        save_dataset(session, Dataset(**clash))
+        session.commit()
+
+        with pytest.raises(UnhandledDatasetClashError):
+            save_dataset(session, Dataset(**clash))
 
 
 def test_upgrade_from_nothing_records_head_revision(engine):
@@ -103,4 +135,7 @@ def test_upgrade_is_idempotent(engine, get_dataset_kwargs, get_pending_changes):
     # wasn't wiped by the upgrade call,
     # which it would be if the migrations were actually run.
     with Session(engine) as session:
-        assert session.get(Dataset, "id-one") is not None
+        surviving = session.exec(
+            select(Dataset).where(Dataset.id_project_specific == "id-one_ps")
+        ).all()
+        assert len(surviving) == 1
