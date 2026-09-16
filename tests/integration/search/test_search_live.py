@@ -9,8 +9,6 @@ the thing that changed is on the other end of the wire.
 
 from __future__ import annotations
 
-import re
-
 import httpx
 import pytest
 
@@ -18,7 +16,8 @@ from esmporium.query import QueryCMIP5, QueryCMIP6, QueryCMIP7, to_canonical
 from esmporium.search import (
     ESGF1_CMIP6_FACADE_PARAMETERS,
     INBUILT_SEARCH_API_FACADE_STORE,
-    NoAPIWouldAnswerError,
+    CouldNotGetSearchResponseError,
+    NoAPIAnsweredError,
     ParsedDocument,
     SearchAPIESGF1Solr,
     SearchAPIFacade,
@@ -224,31 +223,42 @@ def client():
         yield res
 
 
-def search_or_skip(query, api, client, limit, observer=None):
+@pytest.fixture
+def search_or_skip(skip_or_fail):
     """
-    Search one live node, skipping the test if that node will not answer
+    Get a function which searches one live node, skipping if that node will not answer
 
-    A node being down says nothing about the behaviour under test,
-    so it is a skip rather than a failure.
+    A node which failed in any other way,
+    e.g. by answering with something we could not read,
+    fails the test instead.
 
-    If `observer` is given it is passed through to `search`, so a caller can
-    assert on the search-API health recorded for the call.
+    The function takes `(query, api, client, limit, observer=None)`.
+    If `observer` is given it is passed through to `search`.
     """
-    try:
-        return search(
-            query,
-            build_list_selector([api]),
-            limit=limit,
-            client=client,
-            api_call_observer=observer,
-        )
-    except NoAPIWouldAnswerError:
-        pytest.skip(f"{api.search_api.host} did not answer, so it is down or unwell")
+
+    def search_one(query, api, client, limit, observer=None):
+        try:
+            return search(
+                query,
+                build_list_selector([api]),
+                limit=limit,
+                client=client,
+                api_call_observer=observer,
+            )
+        except NoAPIAnsweredError as exc:
+            skip_or_fail(
+                exc.failures,
+                did_not_answer=CouldNotGetSearchResponseError,
+                reason=f"{api.search_api.host} did not answer, so it is down or unwell",
+            )
+
+    return search_one
 
 
 @pytest.mark.parametrize("api, query", LIVE_CASES)
-def test_search_returns_results(client, api, query, recorded):
-    """A query we expect to match something comes back with matches
+def test_search_returns_results(client, api, query, recorded, search_or_skip):
+    """
+    A query we expect to match something comes back with matches
 
     Also checks that the search-API health was recorded: one row per attempt (a
     healthy node answers first try, but a flaky one may be retried), all for this
@@ -273,7 +283,9 @@ def test_search_returns_results(client, api, query, recorded):
 
 
 @pytest.mark.parametrize("api, query, poison_field", FACET_NAME_CASES)
-def test_search_applies_the_facets_we_send(client, api, query, poison_field, recorded):
+def test_search_applies_the_facets_we_send(  # noqa: PLR0913 - parametrised, plus fixtures
+    client, api, query, poison_field, recorded, search_or_skip
+):
     """
     Test that the API understood the facet names we sent it
 
@@ -326,7 +338,7 @@ def master_ids(documents: tuple[ParsedDocument, ...]) -> set[str]:
     return {document.id_project_specific for document in documents}
 
 
-def test_aggregating_over_nodes_finds_more_than_one_node(client):
+def test_aggregating_over_nodes_finds_more_than_one_node(client, skip_or_fail):
     """
     Searching several nodes finds more unique datasets than searching one
 
@@ -361,8 +373,12 @@ def test_aggregating_over_nodes_finds_more_than_one_node(client):
             stop_at_first_result=False,
             client=client,
         )
-    except NoAPIWouldAnswerError:
-        pytest.skip("no node answered, so there is nothing to aggregate")
+    except NoAPIAnsweredError as exc:
+        skip_or_fail(
+            exc.failures,
+            did_not_answer=CouldNotGetSearchResponseError,
+            reason="no node answered, so there is nothing to aggregate",
+        )
 
     per_host = {
         host: master_ids(documents) for host, documents in outcome.datasets.items()
@@ -384,7 +400,7 @@ def test_aggregating_over_nodes_finds_more_than_one_node(client):
 
 
 @pytest.mark.parametrize("api, make_query", AND_OR_CASES)
-def test_search_ands_across_facets(client, api, make_query):
+def test_search_ands_across_facets(client, api, make_query, search_or_skip):
     """
     Test that facets AND across each other
 
@@ -417,7 +433,7 @@ def test_search_ands_across_facets(client, api, make_query):
 
 
 @pytest.mark.parametrize("api, make_query", AND_OR_CASES)
-def test_search_ors_within_a_facet(client, api, make_query):
+def test_search_ors_within_a_facet(client, api, make_query, search_or_skip):
     """
     Test that the values within a facet OR rather than one of them being dropped
 
@@ -465,17 +481,18 @@ def test_search_ors_within_a_facet(client, api, make_query):
 # Eventually also will have higher level wrappers for more sophisticated
 # search logic -> i.e. Malte's search example.
 
-# TODO: some of this will change following PR #31
+
 # --- Raw ESGF-NG east/west shape assumptions ---------------------------------
 #
-# Our STAC result parsing leans on a few differences between the two ESGF-NG
-# deployments (east and west): where the bundle id lives (`base_id` vs the feature id),
-# where the project lives (`cmip6:mip_era` vs a `project` property), and where the match
-# count lives (`numberMatched` vs `numMatched`/`context.matched`). Those are pinned
-# against fabricated docs in `tests/unit/search/test_result_parsers.py` and against
-# recorded responses in `tests/unit/search/test_recorded_responses.py`, but a recording
-# only notices a change when it is refreshed by hand. ESGF plans to converge east and
-# west, so these assert the assumptions against the *live* responses: the day a
+# Our STAC result parsing leans on a few things the two ESGF-NG deployments (east and
+# west) publish: the project specific id in `properties.title`,
+# the project in a top-level `collection` key
+# and the match count in `numberMatched` or `numMatched`/`context.matched`.
+# Those are pinned against fabricated docs in `tests/unit/search/test_result_parsers.py`
+# and against recorded responses in `tests/unit/search/test_recorded_responses.py`,
+# but a recording only notices a change when it is refreshed by hand.
+# ESGF plans to converge east and west,
+# so these assert the assumptions against the *live* responses: the day a
 # deployment changes shape (or the two converge), the relevant test fails loudly rather
 # than our parsers silently reading the wrong field.
 
@@ -492,12 +509,6 @@ NG_STAC_CASES = (
     pytest.param("CMIP7", EAST_HOST, CMIP7_QUERY, id="cmip7-east"),
     pytest.param("CMIP7", WEST_HOST, CMIP7_QUERY, id="cmip7-west"),
 )
-
-CMIP6_STAC_CASES = tuple(case for case in NG_STAC_CASES if "cmip6" in case.id)
-CMIP7_STAC_CASES = tuple(case for case in NG_STAC_CASES if "cmip7" in case.id)
-
-VERSION_TOKEN = re.compile(r"v\d+")
-"""A STAC feature id's trailing version token, e.g. the `v20240101` in `...tas.v20240101`."""  # noqa: E501
 
 
 def fetch_raw_stac_or_skip(client, project, host, query):
@@ -523,68 +534,27 @@ def fetch_raw_stac_or_skip(client, project, host, query):
     return raw, features
 
 
-@pytest.mark.parametrize(
-    "project, host, query, expect_base_id",
-    [
-        pytest.param("CMIP6", EAST_HOST, CMIP6_QUERY, True, id="cmip6-east"),
-        pytest.param("CMIP6", WEST_HOST, CMIP6_QUERY, False, id="cmip6-west"),
-        pytest.param("CMIP7", EAST_HOST, CMIP7_QUERY, False, id="cmip7-east"),
-        pytest.param("CMIP7", WEST_HOST, CMIP7_QUERY, False, id="cmip7-west"),
-    ],
-)
-def test_live_stac_base_id_assumption(client, project, host, query, expect_base_id):
-    """Only east's CMIP6 features carry `base_id`; west's do not, nor does either CMIP7.
-
-    We read the bundle id from `base_id` where it exists and recover it from the feature
-    id otherwise (see `ESGFNGCMIP6ResultParser` / `ESGFNGCMIP7ResultParser`). If a
-    deployment gains or loses `base_id`, that choice silently becomes wrong.
-    """
-    _, features = fetch_raw_stac_or_skip(client, project, host, query)
-
-    carry_base_id = ["base_id" in feature["properties"] for feature in features]
-    if expect_base_id:
-        assert all(carry_base_id), (
-            f"{host} {project} features no longer all carry `base_id`, "
-            "which the parser reads the bundle id from here"
-        )
-    else:
-        assert not any(carry_base_id), (
-            f"{host} {project} features now carry `base_id`; here we recover the "
-            "bundle id from the feature id and would ignore a `base_id`"
-        )
-
-
-@pytest.mark.parametrize("project, host, query", CMIP6_STAC_CASES)
-def test_live_cmip6_project_lives_in_mip_era(client, project, host, query):
-    """CMIP6 STAC features carry the project in `cmip6:mip_era`, on both deployments.
-
-    We read the CMIP6 project from `cmip6:mip_era` rather than a plain `project`
-    property because east carries no `project` property at all (west does, as of
-    writing) -- so `cmip6:mip_era`, which both carry, is the field that works
-    everywhere. What breaks us is `cmip6:mip_era` going away; a `project` property
-    appearing does not, so we do not assert on it here (it already differs between the
-    deployments).
-    """
+@pytest.mark.parametrize("project, host, query", NG_STAC_CASES)
+def test_live_stac_project_specific_id_lives_in_title(client, project, host, query):
+    """STAC features carry the project specific id in `properties.title`, everywhere."""
     _, features = fetch_raw_stac_or_skip(client, project, host, query)
 
     for feature in features:
-        assert "cmip6:mip_era" in feature["properties"], (
-            f"{host} CMIP6 feature has no `cmip6:mip_era`, which we read as the project"
+        assert feature["properties"].get("title"), (
+            f"{host} {project} feature {feature['id']!r} has no `properties.title`, "
+            "which we read as the project specific id"
         )
 
 
-@pytest.mark.parametrize("project, host, query", CMIP7_STAC_CASES)
-def test_live_cmip7_project_is_a_plain_property(client, project, host, query):
-    """CMIP7 STAC features carry the project as a plain `project` property.
-
-    Unlike CMIP6 (which has none), so if it disappears our CMIP7 project reading breaks.
-    """
+@pytest.mark.parametrize("project, host, query", NG_STAC_CASES)
+def test_live_stac_project_lives_in_collection(client, project, host, query):
+    """STAC features carry the project in the top-level `collection` key, everywhere."""
     _, features = fetch_raw_stac_or_skip(client, project, host, query)
 
     for feature in features:
-        assert "project" in feature["properties"], (
-            f"{host} CMIP7 feature has no `project` property, "
-            "which we read as the project"
+        assert feature.get("collection") == project, (
+            f"{host} {project} feature {feature['id']!r} has `collection` "
+            f"{feature.get('collection')!r}, which we read as the project"
         )
 
 
@@ -612,20 +582,4 @@ def test_live_stac_match_count_key_matches_the_deployment(client, project, host,
         )
         assert has_west_count, (
             f"{host} reports neither `numMatched` nor `context.matched`"
-        )
-
-
-@pytest.mark.parametrize("project, host, query", NG_STAC_CASES)
-def test_live_stac_feature_id_ends_with_a_version_token(client, project, host, query):
-    """A STAC feature id ends in a `.vYYYYMMDD` token.
-
-    We recover a bundle id by dropping that token (west, and both CMIP7); if the id
-    shape changes, that recovery silently produces the wrong id.
-    """
-    _, features = fetch_raw_stac_or_skip(client, project, host, query)
-
-    for feature in features:
-        last_segment = feature["id"].rsplit(".", 1)[-1]
-        assert VERSION_TOKEN.fullmatch(last_segment), (
-            f"{host} feature id {feature['id']!r} does not end with a version token"
         )

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from esmporium.query import QueryCMIP5, QueryCMIP6, QueryCMIP7, QueryProtocol
 from esmporium.search import (
-    NoSourceWouldAnswerError,
+    NoAPIAnsweredError,
     ValueReport,
     check_query_values,
 )
@@ -60,7 +60,7 @@ def main() -> None:
         # perfectly ordinary on the next one along -- worth seeing in a demo.
         try:
             outcome = check_query_values(example, stop_at_first_result=False)
-        except NoSourceWouldAnswerError as exc:
+        except NoAPIAnsweredError as exc:
             # A demo is not the place for a traceback: every endpoint being
             # down says nothing about the checker we are demonstrating.
             print(f"query   : {example!r}")
@@ -70,8 +70,8 @@ def main() -> None:
         for report in outcome.reports.values():
             print_report(example, report)
 
-        for refusal in outcome.refusals.values():
-            print(f"refused : {refusal}\n")
+        for failure in outcome.failures.values():
+            print(f"failed  : {failure}\n")
 
         print("=" * 72 + "\n")
 
