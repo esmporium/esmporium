@@ -18,7 +18,8 @@ from esmporium.db import SearchAPICallRecord, record_search_api_calls
 from esmporium.db.migrate import upgrade_to_head
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Iterable, Iterator
+    from typing import NoReturn
 
     from sqlalchemy import Engine
 
@@ -52,3 +53,40 @@ def recorded(engine: Engine) -> Iterator[Recorded]:
             )
 
     yield observer, read_calls
+
+
+@pytest.fixture
+def skip_or_fail() -> Callable[..., NoReturn]:
+    """
+    Get a function which turns every endpoint failing into a skip or a failure
+
+    Call it with an iterable of failures
+    (e.g. those carried by an error saying nobody answered
+    e.g. `NoAPIAnsweredError.failures`),
+    the failure type to skip,
+    and the reason to skip with.
+
+    For example, an endpoint which did not answer is down or unwell,
+    which says nothing about the behaviour under test,
+    so if that is every failure, the test skips.
+    Any other failure fails the test.
+
+    Failing on anything but certain exceptions
+    means a kind of failure we add later fails loudly instead of quietly skipping.
+    """
+
+    def check(
+        failures: Iterable[Exception], *, skippable: type[Exception], reason: str
+    ) -> NoReturn:
+        other_failures = [
+            failure for failure in failures if not isinstance(failure, skippable)
+        ]
+        if other_failures:
+            pytest.fail(
+                "\n".join(str(failure) for failure in other_failures),
+                pytrace=False,
+            )
+
+        pytest.skip(reason)
+
+    return check

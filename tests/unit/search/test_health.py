@@ -22,8 +22,8 @@ from esmporium.query import QueryCMIP6, to_canonical
 from esmporium.search import (
     ESGF1_CMIP6_FACADE_PARAMETERS,
     ESGFNG_CMIP6_FACADE_PARAMETERS,
-    ESGFNGCMIP6ResultParser,
-    NoAPIWouldAnswerError,
+    ESGFNGResultParser,
+    NoAPIAnsweredError,
     SearchAPIESGF1Solr,
     SearchAPIESGFNGSTAC,
     SearchAPIFacade,
@@ -81,7 +81,7 @@ def make_cmip6_facade(host, *, stac=False, attempts=1) -> SearchAPIFacade:
         return SearchAPIFacade(
             parameters=ESGFNG_CMIP6_FACADE_PARAMETERS,
             search_api=SearchAPIESGFNGSTAC(host, fast_retrying(attempts)),
-            result_parser=ESGFNGCMIP6ResultParser(
+            result_parser=ESGFNGResultParser(
                 read_n_matches=stac_east_n_matches,
             ),
         )
@@ -97,7 +97,7 @@ def record(handler, apis) -> list[SearchAPICall]:
     """Run a search through `handler`, returning the calls it recorded."""
     calls: list[SearchAPICall] = []
     # A total failure still records what it tried; that is what we assert on.
-    with contextlib.suppress(NoAPIWouldAnswerError):
+    with contextlib.suppress(NoAPIAnsweredError):
         search(
             QUERY,
             build_list_selector(apis),
@@ -257,7 +257,7 @@ def test_no_observer_records_nothing_but_still_works():
     assert outcome.n_matches["host"] == 1
 
     # Failure still raises.
-    with pytest.raises(NoAPIWouldAnswerError):
+    with pytest.raises(NoAPIAnsweredError):
         search(QUERY, selector, client=client_for(lambda r: httpx.Response(404)))
 
 
