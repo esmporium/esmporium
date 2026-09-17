@@ -47,6 +47,7 @@ from esmporium.search.search_api_facade.parameters import (
     ESGF1_CMIP7_FACADE_PARAMETERS,
     ESGFNG_CMIP6_FACADE_PARAMETERS,
     ESGFNG_CMIP7_FACADE_PARAMETERS,
+    ClashingFacetsError,
     DirectMappingFacadeParameters,
     ESGF1CMIP5ParametersQueryStyle,
     ESGF1CMIP6ParametersQueryStyle,
@@ -59,6 +60,7 @@ from esmporium.search.search_api_facade.parameters import (
     STACFacadeParameters,
     get_mapping_to_query_style_facet_names,
     identity_string,
+    merge_other_terms,
 )
 from esmporium.search.search_api_facade.result_parsers import (
     ESGFNGResultParser,
@@ -97,6 +99,7 @@ __all__ = [
     "ESGFNG_CMIP6_FACADE_PARAMETERS",
     "ESGFNG_CMIP7_FACADE_PARAMETERS",
     "INBUILT_SEARCH_API_FACADE_STORE",
+    "ClashingFacetsError",
     "DirectMappingFacadeParameters",
     "ESGF1CMIP5ParametersQueryStyle",
     "ESGF1CMIP6ParametersQueryStyle",
@@ -130,6 +133,7 @@ __all__ = [
     "get_single_value_columns_from_doc",
     "get_unexpressible_facets",
     "identity_string",
+    "merge_other_terms",
     "stac_east_n_matches",
     "stac_west_n_matches",
 ]

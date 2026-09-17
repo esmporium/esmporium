@@ -19,7 +19,7 @@ Known facade parameter definitions
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Collection, Mapping
 from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, PlainValidator
@@ -84,6 +84,93 @@ def get_mapping_to_query_style_facet_names(
     return res
 
 
+class ClashingFacetsError(ValueError):
+    """
+    Raised when an other_terms name resolves to a facet the query already sets
+
+    other_terms is the escape hatch for facets we do not model, so a name in
+    other_terms which lands on a facet the query already sets is ambiguous:
+    there is no way to tell which value should win, so we refuse to guess.
+    """
+
+    def __init__(self, clashing: Collection[str]) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        clashing
+            The other_terms names which clash with a facet already set,
+            named as the user gave them in other_terms
+        """
+        self.clashing = tuple(sorted(clashing))
+        named = ", ".join(repr(facet) for facet in self.clashing)
+        noun = "facet" if len(self.clashing) == 1 else "facets"
+        super().__init__(
+            f"other_terms {noun} {named} already set by the query. "
+            "Set each facet either as a query facet or in other_terms, not both."
+        )
+
+
+def merge_other_terms(
+    facet_values: dict[str, tuple[str, ...]],
+    other_terms: Mapping[str, tuple[str, ...]],
+    to_api_name: Callable[[str], str],
+) -> dict[str, tuple[str, ...]]:
+    """
+    Merge other_terms into request facet values, under the API parameter names
+
+    other_terms are passed through as the user gave them: their names are the
+    search API's own parameter names, untranslated. `to_api_name` only applies
+    whatever the API layers on top of those names (e.g. the STAC collection
+    prefix), so a single other_terms entry works the same way as a modelled facet.
+
+    Parameters
+    ----------
+    facet_values
+        Facet values already built from the query's modelled facets,
+        keyed by API parameter name
+
+    other_terms
+        The user's other_terms, keyed by the search API's parameter name
+
+    to_api_name
+        How to turn an other_terms name into its final API parameter name
+        (identity for Solr, the collection prefix for STAC)
+
+    Returns
+    -------
+    :
+        `facet_values` with `other_terms` merged in
+
+    Raises
+    ------
+    ClashingFacetsError
+        An other_terms name resolves to a facet already in `facet_values`
+    """
+    res = dict(facet_values)
+    clashing: list[str] = []
+    for name, values in other_terms.items():
+        if not values:
+            # An empty facet is no constraint at all, so drop it,
+            # matching how modelled facets with no values are dropped
+            # by facet_values_from_attributes.
+            continue
+
+        api_name = to_api_name(name)
+        if api_name in res:
+            # Report the name the user typed, not the resolved API name.
+            clashing.append(name)
+            continue
+
+        res[api_name] = values
+
+    if clashing:
+        raise ClashingFacetsError(clashing)
+
+    return res
+
+
 class DirectMappingFacadeParameters(BaseModel):
     """
     Facade parameters whose API parameter names are the query style's parameter names
@@ -115,7 +202,13 @@ class DirectMappingFacadeParameters(BaseModel):
         """See [FacadeParametersProtocol.get_search_request_facet_values][esmporium.search.search_api_facade.parameters.protocol.FacadeParametersProtocol.get_search_request_facet_values]."""  # noqa: E501
         native = from_canonical(canonical=canonical, to=self.base_query_style)
 
-        return facet_values_from_attributes(native)
+        facet_values = facet_values_from_attributes(native)
+
+        # This API uses the query style's names directly,
+        # so other_terms go in under their own (API) names, unchanged.
+        return merge_other_terms(
+            facet_values, native.other_terms, to_api_name=identity_string
+        )
 
 
 class ESGF1CMIP5ParametersQueryStyle(BaseModel):
@@ -492,7 +585,13 @@ class STACFacadeParameters(BaseModel):
         for facet_name, values in facet_values_from_attributes(native).items():
             facet_values[f"{self.prefix}:{facet_name}"] = values
 
-        return facet_values
+        # other_terms carry the user's own (API) names, prefixed like every
+        # other facet so a single other_terms entry works across Solr and STAC.
+        return merge_other_terms(
+            facet_values,
+            native.other_terms,
+            to_api_name=lambda name: f"{self.prefix}:{name}",
+        )
 
 
 class ESGFNGCMIP6ParametersQueryStyle(BaseModel):

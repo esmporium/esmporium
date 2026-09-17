@@ -24,6 +24,7 @@ from esmporium.search import (
     ESGF1_CMIP6_FACADE_PARAMETERS,
     ESGFNG_CMIP6_FACADE_PARAMETERS,
     INBUILT_SEARCH_API_FACADE_STORE,
+    ClashingFacetsError,
     ESGFNGCMIP6ParametersQueryStyle,
     ESGFNGResultParser,
     LimitOutOfRangeError,
@@ -141,6 +142,97 @@ def test_build_get_facet_values_request_refuses_an_unexpressible_facet():
         api_facade_cmip6_esgf1().build_get_facet_values_request(
             CMIP6_CANONICALISED, {"variable", "product"}
         )
+
+
+# --- other_terms: the escape hatch reaching the request -----------------------
+
+# A CMIP6 query that sets a modelled facet and an other_terms facet.
+# The other_terms name is the search API's own parameter name, untranslated
+# (we cannot translate what we do not model), so it is given as the API spells it.
+CMIP6_WITH_OTHER_TERMS = to_canonical(
+    QueryCMIP6(
+        experiment_id="historical",
+        other_terms={"variable_long_name": "air_temperature"},
+    )
+)
+"""A CMIP6 query with a modelled facet plus an other_terms facet"""
+
+
+def test_esgf1_build_search_request_includes_other_terms():
+    """other_terms reach the Solr request under their own (API) names, unchanged"""
+    params = (
+        api_facade_cmip6_esgf1()
+        .build_search_request(CMIP6_WITH_OTHER_TERMS, limit=25)
+        .params
+    )
+
+    # The modelled facet still comes through under its API name.
+    assert params["experiment_id"] == ["historical"]
+    # The other_terms facet reaches the request under the name the user gave.
+    assert params["variable_long_name"] == ["air_temperature"]
+
+
+def test_esgfng_build_search_request_prefixes_other_terms():
+    """other_terms carry the collection prefix, exactly like modelled facets"""
+    body = (
+        api_facade_cmip6_esgfng()
+        .build_search_request(CMIP6_WITH_OTHER_TERMS, limit=25)
+        .json_body
+    )
+    clauses = body["filter"]["args"]
+
+    assert {
+        "op": "in",
+        "args": [{"property": "cmip6:variable_long_name"}, ["air_temperature"]],
+    } in clauses
+
+
+def test_build_search_request_other_terms_only():
+    """A query of only a project plus other_terms still constrains the request"""
+    canonical = to_canonical(
+        QueryCMIP6(
+            project="CMIP6",
+            other_terms={"variable_long_name": "air_temperature"},
+        )
+    )
+
+    params = api_facade_cmip6_esgf1().build_search_request(canonical, limit=25).params
+
+    # The only facet constraints are the project and the other_terms facet;
+    # without the other_terms fix this would be an empty (match-all) search.
+    assert params["project"] == ["CMIP6"]
+    assert params["variable_long_name"] == ["air_temperature"]
+
+
+def test_build_search_request_ignores_empty_other_terms():
+    """An other_terms facet with no values is no constraint, so it is dropped"""
+    canonical = to_canonical(
+        QueryCMIP6(experiment_id="historical", other_terms={"variable_long_name": ()})
+    )
+
+    params = api_facade_cmip6_esgf1().build_search_request(canonical, limit=25).params
+
+    assert "variable_long_name" not in params
+
+
+def test_esgf1_build_search_request_raises_on_other_terms_clash():
+    """Setting a facet as both a modelled facet and in other_terms is ambiguous"""
+    clashing = to_canonical(
+        QueryCMIP6(source_id="ACCESS-CM2", other_terms={"source_id": "other"})
+    )
+
+    with pytest.raises(ClashingFacetsError, match="source_id"):
+        api_facade_cmip6_esgf1().build_search_request(clashing, limit=25)
+
+
+def test_esgfng_build_search_request_raises_on_other_terms_clash():
+    """The clash is caught after prefixing too (cmip6:source_id from both sources)"""
+    clashing = to_canonical(
+        QueryCMIP6(source_id="ACCESS-CM2", other_terms={"source_id": "other"})
+    )
+
+    with pytest.raises(ClashingFacetsError, match="source_id"):
+        api_facade_cmip6_esgfng().build_search_request(clashing, limit=25)
 
 
 # --- reading a response back into the names it was asked under ----------------
