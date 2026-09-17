@@ -65,6 +65,63 @@ def test_build_search_request_accepts_the_ends_of_the_range():
         assert api().build_search_request({}, limit=limit).json_body["limit"] == limit
 
 
+def test_next_page_request_follows_the_next_link():
+    """STAC hands us the next request in a `next` link; we resend it verbatim"""
+    body = {"filter-lang": "cql2-json", "limit": 2, "token": "abc123"}
+    raw = {
+        "features": [{"id": "a"}],
+        "links": [
+            {"rel": "self", "href": "https://search.example.io/search"},
+            {
+                "rel": "next",
+                "method": "POST",
+                "href": "https://search.example.io/search",
+                "body": body,
+            },
+        ],
+    }
+
+    request = api().build_search_request({}, limit=2)
+    nxt = api().next_page_request(request, raw)
+
+    assert nxt is not None
+    assert nxt.method == "POST"
+    assert nxt.path == "/search"
+    # The body (carrying the continuation token) is resent as-is.
+    assert nxt.json_body == body
+
+
+def test_next_page_request_stops_when_there_is_no_next_link():
+    """No `next` link is how the server says that was the last page"""
+    raw = {
+        "features": [{"id": "a"}],
+        "links": [{"rel": "self", "href": "https://search.example.io/search"}],
+    }
+
+    assert api().next_page_request(api().build_search_request({}, limit=2), raw) is None
+
+
+def test_next_page_request_with_no_links_at_all_stops():
+    """A response carrying no links is also a last page"""
+    assert (
+        api().next_page_request(
+            api().build_search_request({}, limit=2), {"features": []}
+        )
+        is None
+    )
+
+
+def test_next_page_request_with_an_unusable_next_link_raises():
+    """A `next` link we cannot resend (no body) is a response we do not understand"""
+    raw = {
+        "features": [{"id": "a"}],
+        "links": [{"rel": "next", "href": "https://search.example.io/search"}],
+    }
+
+    with pytest.raises(UnreadableResponseError, match="the body to POST"):
+        api().next_page_request(api().build_search_request({}, limit=2), raw)
+
+
 def test_extract_result_documents_reads_the_features():
     """A search answer keeps its records under `features`"""
     features = [{"id": "a"}, {"id": "b"}]

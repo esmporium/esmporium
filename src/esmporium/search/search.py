@@ -25,6 +25,7 @@ from esmporium.search.result_parsing import ParsedDocument, ResultProcessor
 from esmporium.search.search_api_facade import (
     DEFAULT_SELECTOR,
     NMatchesReader,
+    SearchAPIFacade,
     SearchAPIFacadeSelector,
     SelectorOfferedNoAPIFacadeError,
 )
@@ -444,6 +445,33 @@ class NoAPIAnsweredError(RuntimeError):
         )
 
 
+class PaginationLimitError(RuntimeError):
+    """
+    Raised when paging through a search hits a safety limit before it is exhausted
+
+    This is a guardrail, not a normal outcome. It fires either because a search
+    collected more records than the caller allowed (`max_results`), or because an
+    endpoint asked us to re-request a page we had already requested, which would
+    otherwise loop forever.
+    """
+
+    def __init__(self, host: str, message: str) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        host
+            The host we were paging through
+
+        message
+            Why we stopped, phrased to follow on from "while paging results from
+            <host>: "
+        """
+        self.host = host
+        super().__init__(f"While paging results from {host}: {message}")
+
+
 @dataclass(frozen=True)
 class SearchOutcome:
     """
@@ -457,20 +485,205 @@ class SearchOutcome:
     """
 
     datasets: dict[str, tuple[ParsedDocument, ...]]
-    """The parsed documents each endpoint answered with, keyed by host"""
+    """
+    The parsed documents each endpoint answered with, keyed by host
+
+    These are all the documents across every page we fetched from that host, not
+    just the first page. If paging through a host failed part way, this holds the
+    pages we did get and that host is also in `failures`: comparing `len` here with
+    `n_matches` for that host shows how much is missing.
+    """
 
     n_matches: dict[str, int | None]
     """
     How many records each endpoint reported matched the search, keyed by host
 
     This is the total matched,
-    which can exceed the number of documents returned in one page.
+    which can exceed the number of documents returned in one page
+    (and, if paging failed part way, the number in `datasets`).
     `None` for an endpoint whose response carried no count we could read.
     """
     # TODO: consider raising if we can't get the number of matches in future.
 
     failures: dict[str, CouldNotSearchError]
-    """Reasons we failed to get allowed search results, keyed by host"""
+    """
+    Reasons we failed to get allowed search results, keyed by host
+
+    A host can be in both this and `datasets`: if paging succeeded for some pages
+    and then failed, the pages we got are kept in `datasets` and the failure that
+    stopped us is recorded here.
+    """
+
+
+@dataclass(frozen=True)
+class _FacadePages:
+    """The outcome of paging through one facade's answer to a search"""
+
+    collected: tuple[ParsedDocument, ...]
+    """Every parsed document we fetched, across all pages"""
+
+    n_matches: int | None
+    """The total the endpoint reported matched, read from the first page"""
+
+    completed: bool
+    """Whether we fetched every page (`False` if a page failed part way)"""
+
+    failure: CouldNotSearchError | None
+    """The failure that stopped us, if paging did not complete"""
+
+
+def _request_fingerprint(request: Request) -> str:
+    """
+    Render a request as a stable string, so repeats can be spotted
+
+    Used to detect an endpoint that asks us to re-request a page we have already
+    requested, which would otherwise page forever.
+
+    Parameters
+    ----------
+    request
+        The request to render
+
+    Returns
+    -------
+    :
+        A string that is equal for two requests exactly when they would be sent the
+        same way
+    """
+    return json.dumps(
+        {
+            "method": request.method,
+            "path": request.path,
+            "params": request.params,
+            "json_body": request.json_body,
+        },
+        sort_keys=True,
+        default=str,
+    )
+
+
+def _collect_all_pages(  # noqa: PLR0913 - the keyword-only extras are injection seams
+    client: httpx.Client,
+    facade: SearchAPIFacade,
+    first_request: Request,
+    first_raw: dict[str, Any],
+    *,
+    host: str,
+    max_results: int | None,
+    api_call_observer: SearchAPICallObserver | None,
+    processor: ResultProcessor | None,
+) -> _FacadePages:
+    """
+    Page through one facade's answer, parsing and saving each page as it arrives
+
+    The first page has already been fetched (`first_raw`); this parses it, hands it
+    to `processor`, then follows the endpoint's own pagination page by page (see
+    [esmporium.search.apis.SearchAPI.next_page_request][]) until there are no more.
+
+    Each page is handed to `processor` the moment it is parsed, so a failure part way
+    still leaves the earlier pages saved. Such a failure is returned on the result
+    rather than raised, so the caller can keep the pages we did get and record the
+    failure against the host.
+
+    Parameters
+    ----------
+    client
+        The HTTP client to fetch further pages with
+
+    facade
+        The facade whose answer we are paging through
+
+    first_request
+        The request that produced `first_raw`
+
+    first_raw
+        The first page of the answer, already fetched
+
+    host
+        The host we are paging through, used for the processor and for errors
+
+    max_results
+        The most records to collect before stopping with a
+        [PaginationLimitError][(m).]. `None` disables the cap.
+
+    api_call_observer
+        Told about each further request, as in [fire][(m).]
+
+    processor
+        Handed each page as it is parsed, as in [search][(m).]
+
+    Returns
+    -------
+    :
+        What we collected, the total matched, and whether we got every page
+
+    Raises
+    ------
+    PaginationLimitError
+        We collected more than `max_results`, or the endpoint asked us to
+        re-request a page we had already requested
+    """
+    api = facade.search_api
+    collected: list[ParsedDocument] = []
+    n_matches = _result_count_or_none(facade.get_n_matches, first_raw)
+    seen = {_request_fingerprint(first_request)}
+
+    request = first_request
+    raw = first_raw
+    try:
+        while True:
+            parsed = facade.parse_search_results(raw)
+            collected.extend(parsed)
+            if processor is not None:
+                processor(host, parsed)
+
+            if max_results is not None and len(collected) > max_results:
+                raise PaginationLimitError(
+                    host,
+                    f"collected more than the max_results safety cap of "
+                    f"{max_results}. Raise max_results (or set it to None) to fetch "
+                    "more.",
+                )
+
+            nxt = api.next_page_request(request, raw)
+            if nxt is None:
+                break
+
+            fingerprint = _request_fingerprint(nxt)
+            if fingerprint in seen:
+                raise PaginationLimitError(
+                    host,
+                    "the endpoint asked us to re-request a page we had already "
+                    "requested, which would page forever.",
+                )
+            seen.add(fingerprint)
+
+            request = nxt
+            raw = fire(
+                client,
+                api,
+                nxt,
+                api_call_observer,
+                read_n_matches=facade.get_n_matches,
+            )
+    except SearchAPIRequestError as exc:
+        return _FacadePages(
+            tuple(collected),
+            n_matches,
+            completed=False,
+            failure=CouldNotGetSearchResponseError(host, cause=exc),
+        )
+    except UnreadableResponseError as exc:
+        return _FacadePages(
+            tuple(collected),
+            n_matches,
+            completed=False,
+            failure=CouldNotUseSearchResultsError(
+                host, cause=exc, url=get_url(api, request)
+            ),
+        )
+
+    return _FacadePages(tuple(collected), n_matches, completed=True, failure=None)
 
 
 def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection seams
@@ -478,8 +691,8 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
     selector: SearchAPIFacadeSelector = DEFAULT_SELECTOR,
     *,
     stop_at_first_result: bool = True,
-    # Limit handling and pagination will be added in PR2.5
     limit: int = 10_000,
+    max_results: int | None = 1_000_000,
     client: httpx.Client | None = None,
     api_call_observer: SearchAPICallObserver | None = None,
     processor: ResultProcessor | None = None,
@@ -509,6 +722,19 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
         The page size to ask each endpoint for,
         i.e. the most records to get in one response, not the total matched.
         The total matched comes back in the response itself.
+
+        When more records match than fit in one page, we page through the rest:
+        every page is fetched, parsed and handed to `processor` as it arrives, and
+        the parsed documents from all pages end up in the outcome's `datasets`.
+
+    max_results
+        The most records to collect from one endpoint before stopping with a
+        [PaginationLimitError][(m).].
+
+        This is a safety guardrail against a runaway search (or an endpoint that
+        pages forever), not a normal limit: ordinary searches never approach the
+        default. Raise it, or set it to `None` to disable it, for a deliberate
+        "fetch everything" run over a very large result set.
 
     client
         The HTTP client to search with.
@@ -542,6 +768,11 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
     NoAPIAnsweredError
         The selector offered at least one endpoint
         and none of them gave us results we could use
+
+    PaginationLimitError
+        Paging through an endpoint hit the `max_results` cap, or the endpoint asked
+        us to re-request a page we had already requested. Pages fetched before this
+        have already been handed to `processor`.
     """
     canonical = to_canonical(query)
 
@@ -572,7 +803,8 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
                 failures[host] = CouldNotGetSearchResponseError(host, cause=exc)
             else:
                 # The facade knows this host's format and project, so it turns the raw
-                # answer into datasets here, the moment it arrives.
+                # answer into datasets here, the moment it arrives, paging through the
+                # rest of the results as it goes.
                 # Note: if the selector offers the same host twice,
                 # the second answer simply replaces the first here.
                 # That is wasteful, because we run the query again, but it is not wrong:
@@ -584,22 +816,29 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
                 # If either of those assumptions changed, this would break.
                 # We will have to be more careful in higher-level functions
                 # to do queries over multiple projects (PR3).
-                try:
-                    parsed = facade.parse_search_results(raw)
-                except UnreadableResponseError as exc:
-                    failures[host] = CouldNotUseSearchResultsError(
-                        host,
-                        cause=exc,
-                        url=get_url(facade.search_api, request),
-                    )
-                else:
-                    datasets[host] = parsed
-                    n_matches[host] = _result_count_or_none(facade.get_n_matches, raw)
-                    if processor is not None:
-                        processor(host, parsed)
+                pages = _collect_all_pages(
+                    client,
+                    facade,
+                    request,
+                    raw,
+                    host=host,
+                    max_results=max_results,
+                    api_call_observer=api_call_observer,
+                    processor=processor,
+                )
+                # Keep whatever pages we got, even if paging then failed: an empty
+                # but completed answer (no matches) belongs here too, so we key on
+                # "we parsed at least the first page", not "we collected something".
+                if pages.completed or pages.collected:
+                    datasets[host] = pages.collected
+                    n_matches[host] = pages.n_matches
+                if pages.failure is not None:
+                    failures[host] = pages.failure
 
-                    if stop_at_first_result:
-                        break
+                # Only a host we fully paged through counts as "a result": a partial
+                # answer should not stop us asking the next endpoint for a complete one.
+                if pages.completed and stop_at_first_result:
+                    break
 
             attempt += 1
 

@@ -657,6 +657,58 @@ class SearchAPI(Protocol):
         """
         ...
 
+    # TODO: When we introduce parallelisation, this is the place where
+    # Solr and STAC will differentiate. We will keep this workflow for STAC
+    # which cannot parallelise, but will need to build an alternative for
+    # Solr so that multiple page requests can be sent simultaneously.
+    # Note for STAC multiple search queries may be sent simultaneously,
+    # it is pages that have to be requested consecutively until no more
+    # results are returned.
+    def next_page_request(
+        self, request: Request, raw: dict[str, Any]
+    ) -> Request | None:
+        """
+        Build the request for the page after the one that answered with `raw`
+
+        This is how a search is paged through: send `request`, read `raw`, then keep
+        calling this with the request just sent and the answer it gave until it
+        returns `None`, sending each request it hands back.
+
+        How the next page is found is this API's own concern, and the two families
+        differ fundamentally:
+
+        - the Solr APIs are offset-based (random access): the next page is the same
+          request with its `offset` advanced by `limit`, and there are no more pages
+          once the offset reaches the total (`response.numFound`).
+        - the STAC API is cursor-based (consecutive): the next request is the one the
+          server hands back in its `links` entry with `rel: "next"` (which carries a
+          continuation token), and there are no more pages once that link is absent.
+          STAC therefore cannot be paged without the previous answer, and its pages
+          cannot be requested out of order.
+
+        Parameters
+        ----------
+        request
+            The request that was just sent, i.e. the one `raw` answers
+
+        raw
+            The answer to `request`, i.e. a response from
+            [build_search_request][(c).build_search_request]
+
+        Returns
+        -------
+        :
+            The request for the next page,
+            or `None` if `raw` was the last page (there is nothing more to fetch)
+
+        Raises
+        ------
+        UnreadableResponseError
+            `raw` says there is a next page but not in a shape we can read
+            (e.g. a STAC `next` link with no body to send)
+        """
+        ...
+
     def build_get_facet_values_for_project_request(
         self, facets: set[str], project: str
     ) -> Request:

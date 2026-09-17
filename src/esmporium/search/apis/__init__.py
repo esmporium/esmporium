@@ -10,9 +10,9 @@ We provide these interfaces in case you want or need to use them directly,
 without the constraints provided by our higher-level interfaces.
 """
 
-from esmporium.search.apis.esgf1 import SearchAPIESGF1Solr
+from esmporium.search.apis.esgf1 import SearchAPIESGF1Solr, solr_next_page_request
 from esmporium.search.apis.esgf15_bridge import SearchAPIESGF15BridgeSolr
-from esmporium.search.apis.esgfng import SearchAPIESGFNGSTAC
+from esmporium.search.apis.esgfng import SearchAPIESGFNGSTAC, stac_next_page_request
 from esmporium.search.apis.protocol import (
     LimitOutOfRangeError,
     MultipleFacetValuesError,
@@ -44,4 +44,6 @@ __all__ = [
     "describe_search_api",
     "read_response_path",
     "single_facet_value_or_none",
+    "solr_next_page_request",
+    "stac_next_page_request",
 ]
