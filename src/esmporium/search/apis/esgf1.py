@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from tenacity import Retrying
@@ -15,6 +15,7 @@ from esmporium.search.apis.protocol import (
     LimitOutOfRangeError,
     NoFacetValuesReturnedError,
     NoSearchResultDocumentsError,
+    read_response_path,
     single_facet_value_or_none,
 )
 from esmporium.search.apis.request import Request
@@ -132,6 +133,55 @@ def solr_extract_result_documents(raw: dict[str, Any]) -> list[dict[str, Any]]:
     res: list[dict[str, Any]] = list(docs)  # ty: ignore invalid-assignment
 
     return res
+
+
+def solr_next_page_request(request: Request, raw: dict[str, Any]) -> Request | None:
+    """
+    Build the request for the page after a Solr-shaped response
+
+    Solr is offset-based, so the next page is the same request with its `offset`
+    advanced by one page (`limit`). There are no more pages once the next offset
+    reaches the total the response reports at `response.numFound`.
+
+    Parameters
+    ----------
+    request
+        The search request that was just sent, i.e. the one `raw` answers
+
+        Its `offset` (defaulting to `0`, the first page) and `limit` are read from
+        `request.params`.
+
+    raw
+        The answer to `request`
+
+    Returns
+    -------
+    :
+        The request for the next page,
+        or `None` if `raw` was the last page
+
+    Raises
+    ------
+    UnreadableResponseError
+        `raw` does not report the total number of matches at `response.numFound`
+    """
+    params = request.params or {}
+    limit = params.get("limit")
+    if not isinstance(limit, int) or limit <= 0:
+        # A page size of zero (e.g. a facet-values request) can never advance,
+        # so there is no next page to ask for.
+        return None
+
+    num_found = read_response_path(
+        raw, "response.numFound", what="the total number of matches"
+    )
+
+    offset = params.get("offset", 0)
+    next_offset = offset + limit
+    if next_offset >= num_found:
+        return None
+
+    return replace(request, params={**params, "offset": next_offset})
 
 
 def solr_read_facet_list_as_strings(
@@ -300,6 +350,14 @@ class SearchAPIESGF1Solr:
             params[api_name] = list(values)
 
         return Request("GET", "/esg-search/search", params=params)
+
+    def next_page_request(
+        self, request: Request, raw: dict[str, Any]
+    ) -> Request | None:
+        """
+        See [SearchAPI.next_page_request][esmporium.search.apis.SearchAPI.next_page_request].
+        """  # noqa: E501
+        return solr_next_page_request(request, raw)
 
     def build_get_facet_values_for_project_request(
         self, facets: set[str], project: str

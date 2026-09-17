@@ -13,6 +13,7 @@ from esmporium.search.apis import (
     NoFacetValuesReturnedError,
     NoSearchResultDocumentsError,
     SearchAPIESGF1Solr,
+    UnreadableResponseError,
 )
 from esmporium.search.retry import build_transient_retrying
 
@@ -67,6 +68,54 @@ def test_build_search_request_accepts_the_ends_of_the_range():
     """The ends of the accepted range are themselves accepted"""
     for limit in (0, 10_000):
         assert api().build_search_request({}, limit=limit).params["limit"] == limit
+
+
+def test_next_page_request_advances_the_offset_by_one_page():
+    """The next page is the same request with its offset advanced by `limit`"""
+    request = api().build_search_request({"variable_id": ("tas",)}, limit=25)
+    raw = {"response": {"numFound": 100, "start": 0, "docs": []}}
+
+    nxt = api().next_page_request(request, raw)
+
+    assert nxt is not None
+    assert nxt.params["offset"] == 25
+    # Everything else is carried over unchanged.
+    assert nxt.params["limit"] == 25
+    assert nxt.params["variable_id"] == ["tas"]
+    assert nxt.params["format"] == "application/solr+json"
+    assert nxt.method == request.method
+    assert nxt.path == request.path
+
+
+def test_next_page_request_walks_through_the_pages_then_stops():
+    """Each call advances a page; no page once the offset reaches the total"""
+    a = api()
+    raw = {"response": {"numFound": 25, "docs": []}}
+
+    page2 = a.next_page_request(a.build_search_request({}, limit=10), raw)
+    assert page2.params["offset"] == 10
+
+    page3 = a.next_page_request(page2, raw)
+    assert page3.params["offset"] == 20
+
+    # 20 + 10 = 30, which is past the 25 that matched, so there is no fourth page.
+    assert a.next_page_request(page3, raw) is None
+
+
+def test_next_page_request_stops_when_the_first_page_holds_everything():
+    """No paging when the whole result set fits in one page"""
+    request = api().build_search_request({}, limit=100)
+    raw = {"response": {"numFound": 40, "docs": []}}
+
+    assert api().next_page_request(request, raw) is None
+
+
+def test_next_page_request_without_a_total_raises():
+    """We cannot know if there is more without the total, so we fail loudly"""
+    request = api().build_search_request({}, limit=10)
+
+    with pytest.raises(UnreadableResponseError, match=re.escape("response.numFound")):
+        api().next_page_request(request, {"response": {"docs": []}})
 
 
 def test_extract_result_documents_reads_the_records():
