@@ -21,7 +21,7 @@ from esmporium.search import (
     ESGFNGResultParser,
     FacetFinding,
     FindingKind,
-    NoAPIAnsweredError,
+    NoFacadeAnsweredError,
     NotAFacetOfTheQueryError,
     SearchAPIESGF1Solr,
     SearchAPIESGFNGSTAC,
@@ -458,7 +458,7 @@ def test_high_raises_with_every_failure_when_no_api_answers():
     "we checked and it was fine". Which endpoints failed is the interesting
     part, so every failure is carried, not just the last.
     """
-    with pytest.raises(NoAPIAnsweredError) as excinfo:
+    with pytest.raises(NoFacadeAnsweredError) as excinfo:
         check_query_values(
             QueryCMIP6(experiment_id="Historical"),
             selector=selector_yielding(

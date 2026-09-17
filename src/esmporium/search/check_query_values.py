@@ -36,7 +36,7 @@ from esmporium.search.apis import (
 )
 from esmporium.search.health import SearchAPICallObserver
 from esmporium.search.search import (
-    NoAPIAnsweredError,
+    NoFacadeAnsweredError,
     SearchAPIRequestError,
     fire,
     get_url,
@@ -650,7 +650,7 @@ def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberat
         raise SelectorOfferedNoAPIFacadeError(canonical, selector)
 
     if not reports and failures:
-        raise NoAPIAnsweredError(tuple(failures.values()))
+        raise NoFacadeAnsweredError(tuple(failures.values()))
 
     return ValueCheckOutcome(reports, failures)
 

@@ -13,7 +13,7 @@ from esmporium.search import (
     CouldNotGetAllowedValuesResponseError,
     FacetFinding,
     FindingKind,
-    NoAPIAnsweredError,
+    NoFacadeAnsweredError,
     ValueReport,
     check_query_values,
 )
@@ -41,7 +41,7 @@ def only_report(skip_or_fail):
     def check_one(query: QueryProtocol, observer=None) -> ValueReport:
         try:
             outcome = check_query_values(query, api_call_observer=observer)
-        except NoAPIAnsweredError as exc:
+        except NoFacadeAnsweredError as exc:
             skip_or_fail(
                 exc.failures,
                 did_not_answer=CouldNotGetAllowedValuesResponseError,

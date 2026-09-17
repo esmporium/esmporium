@@ -8,12 +8,18 @@ import json
 import logging
 import shlex
 import time
+from collections.abc import Collection
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from esmporium.query import QueryProtocol, to_canonical
+from esmporium.query import (
+    QueryProtocol,
+    facet_spec,
+    facet_values_from_attributes,
+    to_canonical,
+)
 from esmporium.search.apis import (
     NoSearchResultNumberOfMatchesReturnedError,
     Request,
@@ -24,7 +30,9 @@ from esmporium.search.health import SearchAPICall, SearchAPICallObserver
 from esmporium.search.result_parsing import ParsedDocument, ResultProcessor
 from esmporium.search.search_api_facade import (
     DEFAULT_SELECTOR,
+    ClashingFacetsError,
     NMatchesReader,
+    SearchAPIFacade,
     SearchAPIFacadeSelector,
     SelectorOfferedNoAPIFacadeError,
 )
@@ -410,12 +418,13 @@ class CouldNotUseSearchResultsError(CouldNotSearchError):
         self.url = url
 
 
-class NoAPIAnsweredError(RuntimeError):
+class NoFacadeAnsweredError(RuntimeError):
     """
-    Raised when every API we asked failed to give us anything we could use
+    Raised when every facade we asked failed to give us anything we could use
 
-    "Failed" covers an API not answering and an API answering
-    with something we could not read: `failures` says which it was for each API.
+    "Failed" covers a facade not being able to handle the query,
+    an API not answering and an API answering with something we could not read:
+    `failures` says which it was for each API.
 
     Should carry all of the failures rather than only the last,
     because which APIs failed, and how, is the interesting part:
@@ -425,8 +434,10 @@ class NoAPIAnsweredError(RuntimeError):
 
     def __init__(
         self,
-        failures: tuple[CouldNotSearchError, ...]
-        | tuple[CouldNotGetAllowedValuesError, ...],
+        failures: dict[
+            str,
+            tuple[CouldNotSearchError, ...] | tuple[CouldNotGetAllowedValuesError, ...],
+        ],
     ) -> None:
         """
         Initialise the error
@@ -434,14 +445,119 @@ class NoAPIAnsweredError(RuntimeError):
         Parameters
         ----------
         failures
-            Why each API gave us nothing we could use, in the order they were asked
+            Why each facade gave us nothing we could use, keyed by the facade
         """
         self.failures = failures
-        asked = "\n".join(f"  - {failure}" for failure in failures)
+        asked = "\n".join(
+            f"  - {facade_key}: {failure}" for facade_key, failure in failures.items()
+        )
+        noun = "facade" if len(failures) == 1 else "facades"
         super().__init__(
-            f"Asked {len(failures)} API(s) and none of them gave us anything "
+            f"Asked {len(failures)} {noun} and none of them gave us anything "
             f"we could use:\n{asked}"
         )
+
+
+class ClashingFacetsForFacadeError(ValueError):
+    """
+    Raised when `other_terms` sets values for facets that a query already sets
+
+    Unlike [ClashingFacetsError][(m).], this also gives context about the original query
+    and facade being used
+    (because the facade decides
+    how the original query's facet names are translated to API names).
+
+    other_terms is the escape hatch for facets we do not model,
+    so a name in other_terms which lands on a facet the query already sets is ambiguous:
+    there is no way to tell which value should win, so we refuse to guess.
+    """
+
+    def __init__(
+        self,
+        query: QueryProtocol,
+        facade: SearchAPIFacade,
+        clashing: Collection[str],
+    ) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        query
+            The original query
+
+        facade
+            The facade being used
+
+        clashing
+            The facet names that clash,
+            once `query` has been translated into the API names required by `facade`.
+        """
+        self.query = query
+        self.facade = facade
+        self.clashing = tuple(sorted(clashing))
+
+        if len(self.clashing) > 1:
+            clashing_api_names = (
+                ", ".join(repr(facet) for facet in self.clashing[:-1])
+                + f" and {self.clashing[-1]!r}"
+            )
+
+        else:
+            clashing_api_names = repr(self.clashing[0])
+
+        noun = "facet" if len(self.clashing) == 1 else "facets"
+        conjugation = "clashes" if len(self.clashing) == 1 else "clash"
+
+        # Get the facets we set via the query
+        spec = facet_spec(type(query))
+        set_facet_values = facet_values_from_attributes(query)
+
+        # Get the map from query to canonical to API for all the facets we set
+        query_to_canonical_map = {
+            k: spec.native_to_canonical[k] for k in set_facet_values
+        }
+        canonical_to_api_map = facade.parameters.get_mapping_to_api_facet_names(
+            query_to_canonical_map.values()
+        )
+
+        # Invert and get the map for only the keys which caused clashes
+        api_to_canonical_map = {v: k for k, v in canonical_to_api_map.items()}
+        api_to_canonical_map_relevant = {
+            k: v for k, v in api_to_canonical_map.items() if k in self.clashing
+        }
+
+        # Get the relvant map from query to API terms
+        query_to_api_map_relevant = {
+            spec.canonical_to_native[api_to_canonical_map_relevant[k]]: k
+            for k in api_to_canonical_map_relevant
+        }
+
+        # Create our reader string
+        query_to_api_map_relevant_keys = list(query_to_api_map_relevant.keys())
+        if len(self.clashing) > 1:
+            clashing_query_names = (
+                ", ".join(repr(facet) for facet in query_to_api_map_relevant_keys[:-1])
+                + f" and {query_to_api_map_relevant_keys[-1]!r}"
+            )
+
+        else:
+            clashing_query_names = repr(query_to_api_map_relevant_keys[0])
+
+        # Store key results
+        self.query_to_api_map_relevant = query_to_api_map_relevant
+
+        msg = (
+            f"`other_terms` {noun} {clashing_api_names} {conjugation} "
+            "with the query's facet names, "
+            "once the query's facet names are translated to the API's names. "
+            f"The relevant mapping from query names to API names is: "
+            f"{query_to_api_map_relevant}. "
+            f"Either set {clashing_query_names} via the query "
+            f"or set {clashing_api_names} via `other_terms`, "
+            f"don't do both. {query=}"
+        )
+        super().__init__(msg)
 
 
 @dataclass(frozen=True)
@@ -552,15 +668,20 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
     owns_client = client is None
     client = client if client is not None else httpx.Client(follow_redirects=True)
 
-    asked_someone = False
+    selector_offered_an_option = False
 
     try:
         attempt = 0
         while (facade := selector(canonical, attempt)) is not None:
-            asked_someone = True
-            request = facade.build_search_request(canonical, limit)
-            host = facade.search_api.host
+            selector_offered_an_option = True
+            facade_key = (
+                facade.search_api.host,
+                type(facade.search_api).__name__,
+                facade.parameters.base_query_style.__name__,
+            )
+
             try:
+                request = facade.build_search_request(canonical, limit)
                 raw = fire(
                     client,
                     facade.search_api,
@@ -568,8 +689,14 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
                     api_call_observer,
                     read_n_matches=facade.get_n_matches,
                 )
+            except ClashingFacetsError as exc:
+                failures[facade_key] = ClashingFacetsForFacadeError(
+                    query=query, facade=facade, clashing=exc.clashing
+                )
             except SearchAPIRequestError as exc:
-                failures[host] = CouldNotGetSearchResponseError(host, cause=exc)
+                failures[facade_key] = CouldNotGetSearchResponseError(
+                    facade.search_api.host, cause=exc
+                )
             else:
                 # The facade knows this host's format and project, so it turns the raw
                 # answer into datasets here, the moment it arrives.
@@ -587,16 +714,18 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
                 try:
                     parsed = facade.parse_search_results(raw)
                 except UnreadableResponseError as exc:
-                    failures[host] = CouldNotUseSearchResultsError(
-                        host,
+                    failures[facade_key] = CouldNotUseSearchResultsError(
+                        facade_key,
                         cause=exc,
                         url=get_url(facade.search_api, request),
                     )
                 else:
-                    datasets[host] = parsed
-                    n_matches[host] = _result_count_or_none(facade.get_n_matches, raw)
+                    datasets[facade_key] = parsed
+                    n_matches[facade_key] = _result_count_or_none(
+                        facade.get_n_matches, raw
+                    )
                     if processor is not None:
-                        processor(host, parsed)
+                        processor(facade, parsed)
 
                     if stop_at_first_result:
                         break
@@ -607,10 +736,10 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
         if owns_client:
             client.close()
 
-    if not asked_someone:
+    if not selector_offered_an_option:
         raise SelectorOfferedNoAPIFacadeError(canonical, selector)
 
     if not datasets and failures:
-        raise NoAPIAnsweredError(tuple(failures.values()))
+        raise NoFacadeAnsweredError(failures)
 
     return SearchOutcome(datasets, n_matches, failures)

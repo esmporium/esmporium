@@ -23,7 +23,7 @@ from esmporium.search import (
     ESGF1_CMIP6_FACADE_PARAMETERS,
     ESGFNG_CMIP6_FACADE_PARAMETERS,
     ESGFNGResultParser,
-    NoAPIAnsweredError,
+    NoFacadeAnsweredError,
     SearchAPIESGF1Solr,
     SearchAPIESGFNGSTAC,
     SearchAPIFacade,
@@ -97,7 +97,7 @@ def record(handler, apis) -> list[SearchAPICall]:
     """Run a search through `handler`, returning the calls it recorded."""
     calls: list[SearchAPICall] = []
     # A total failure still records what it tried; that is what we assert on.
-    with contextlib.suppress(NoAPIAnsweredError):
+    with contextlib.suppress(NoFacadeAnsweredError):
         search(
             QUERY,
             build_list_selector(apis),
@@ -257,7 +257,7 @@ def test_no_observer_records_nothing_but_still_works():
     assert outcome.n_matches["host"] == 1
 
     # Failure still raises.
-    with pytest.raises(NoAPIAnsweredError):
+    with pytest.raises(NoFacadeAnsweredError):
         search(QUERY, selector, client=client_for(lambda r: httpx.Response(404)))
 
 

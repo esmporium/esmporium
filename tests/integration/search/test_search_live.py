@@ -17,7 +17,7 @@ from esmporium.search import (
     ESGF1_CMIP6_FACADE_PARAMETERS,
     INBUILT_SEARCH_API_FACADE_STORE,
     CouldNotGetSearchResponseError,
-    NoAPIAnsweredError,
+    NoFacadeAnsweredError,
     ParsedDocument,
     SearchAPIESGF1Solr,
     SearchAPIFacade,
@@ -236,27 +236,29 @@ def search_or_skip(skip_or_fail):
     If `observer` is given it is passed through to `search`.
     """
 
-    def search_one(query, api, client, limit, observer=None):
+    def search_one(query, facade, client, limit, observer=None):
         try:
             return search(
                 query,
-                build_list_selector([api]),
+                build_list_selector([facade]),
                 limit=limit,
                 client=client,
                 api_call_observer=observer,
             )
-        except NoAPIAnsweredError as exc:
+        except NoFacadeAnsweredError as exc:
             skip_or_fail(
                 exc.failures,
                 did_not_answer=CouldNotGetSearchResponseError,
-                reason=f"{api.search_api.host} did not answer, so it is down or unwell",
+                reason=(
+                    f"{facade.search_api.host} did not answer, so it is down or unwell"
+                ),
             )
 
     return search_one
 
 
-@pytest.mark.parametrize("api, query", LIVE_CASES)
-def test_search_returns_results(client, api, query, recorded, search_or_skip):
+@pytest.mark.parametrize("facade, query", LIVE_CASES)
+def test_search_returns_results(client, facade, query, recorded, search_or_skip):
     """
     A query we expect to match something comes back with matches
 
@@ -266,28 +268,28 @@ def test_search_returns_results(client, api, query, recorded, search_or_skip):
     """
     observer, read_calls = recorded
 
-    outcome = search_or_skip(query, api, client, limit=5, observer=observer)
+    outcome = search_or_skip(query, facade, client, limit=5, observer=observer)
 
-    assert outcome.n_matches[api.search_api.host] > 0
+    assert outcome.n_matches[facade.search_api.host] > 0
 
     # One row per attempt, all for this host, timed; the last is the success.
     calls = read_calls()
     assert calls, "expected at least one recorded call"
-    assert all(call.host == api.search_api.host for call in calls)
+    assert all(call.host == facade.search_api.host for call in calls)
     assert all(call.response_time_seconds > 0.0 for call in calls)
     assert [call.attempt_number for call in calls] == list(range(1, len(calls) + 1))
     success = calls[-1]
     assert success.success is True
     assert success.response_code == 200
-    assert success.num_results == outcome.n_matches[api.search_api.host]
+    assert success.num_results == outcome.n_matches[facade.search_api.host]
 
 
-@pytest.mark.parametrize("api, query, poison_field", FACET_NAME_CASES)
+@pytest.mark.parametrize("facade, query, poison_field", FACET_NAME_CASES)
 def test_search_applies_the_facets_we_send(  # noqa: PLR0913 - parametrised, plus fixtures
-    client, api, query, poison_field, recorded, search_or_skip
+    client, facade, query, poison_field, recorded, search_or_skip
 ):
     """
-    Test that the API understood the facet names we sent it
+    Test that the facade understood the facet names we sent it
 
     We take the query which does match data and change one facet
     to a value nothing can have.
@@ -302,15 +304,15 @@ def test_search_applies_the_facets_we_send(  # noqa: PLR0913 - parametrised, plu
     observer, read_calls = recorded
 
     nonsense = query.model_copy(update={poison_field: (NOT_A_REAL_VALUE,)})
-    outcome = search_or_skip(nonsense, api, client, limit=5, observer=observer)
+    outcome = search_or_skip(nonsense, facade, client, limit=5, observer=observer)
 
-    assert outcome.n_matches[api.search_api.host] == 0
+    assert outcome.n_matches[facade.search_api.host] == 0
 
     # A response that matched nothing is still a successful call, and recorded.
     # One row per attempt; the final, successful one carries the zero count.
     calls = read_calls()
     assert calls, "expected at least one recorded call"
-    assert all(call.host == api.search_api.host for call in calls)
+    assert all(call.host == facade.search_api.host for call in calls)
     assert all(call.response_time_seconds > 0.0 for call in calls)
     success = calls[-1]
     assert success.success is True
@@ -373,7 +375,7 @@ def test_aggregating_over_nodes_finds_more_than_one_node(client, skip_or_fail):
             stop_at_first_result=False,
             client=client,
         )
-    except NoAPIAnsweredError as exc:
+    except NoFacadeAnsweredError as exc:
         skip_or_fail(
             exc.failures,
             did_not_answer=CouldNotGetSearchResponseError,

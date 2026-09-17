@@ -24,7 +24,7 @@ from esmporium.search import (
     CouldNotGetSearchResponseError,
     CouldNotUseSearchResultsError,
     ESGFNGResultParser,
-    NoAPIAnsweredError,
+    NoFacadeAnsweredError,
     SearchAPIESGF1Solr,
     SearchAPIESGFNGSTAC,
     SearchAPIFacade,
@@ -117,7 +117,7 @@ def test_search_raises_on_a_client_error_without_retrying():
 
     selector = build_list_selector([make_facade_cmip6_esgf1("host", attempts=3)])
 
-    with pytest.raises(NoAPIAnsweredError, match="host"):
+    with pytest.raises(NoFacadeAnsweredError, match="host"):
         search(QUERY_CMIP6, selector, client=client_for(handler))
 
     assert calls == 1
@@ -134,7 +134,7 @@ def test_search_retries_a_transient_failure_then_gives_up():
 
     selector = build_list_selector([make_facade_cmip6_esgf1("host", attempts=3)])
 
-    with pytest.raises(NoAPIAnsweredError, match="host"):
+    with pytest.raises(NoFacadeAnsweredError, match="host"):
         search(QUERY_CMIP6, selector, client=client_for(handler))
 
     assert calls == 3
@@ -168,7 +168,7 @@ def test_search_raises_when_the_body_is_not_json():
 
     selector = build_list_selector([make_facade_cmip6_esgf1("host", attempts=3)])
 
-    with pytest.raises(NoAPIAnsweredError, match="host"):
+    with pytest.raises(NoFacadeAnsweredError, match="host"):
         search(QUERY_CMIP6, selector, client=client_for(handler))
 
     assert calls == 1, "an unreadable body is not a transient failure"
@@ -328,7 +328,7 @@ def test_search_raises_when_no_node_answers_readably():
     selector = build_list_selector([make_facade_cmip6_esgf1("host-a")])
 
     with pytest.raises(
-        NoAPIAnsweredError,
+        NoFacadeAnsweredError,
         match="host-a answered our search request with something we could not read",
     ):
         search(QUERY_CMIP6, selector, client=client_for(handler))
