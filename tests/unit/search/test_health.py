@@ -254,7 +254,12 @@ def test_no_observer_records_nothing_but_still_works():
 
     # Success still parses an answer.
     outcome = search(QUERY, selector, client=client_for(lambda r: solr_response(1)))
-    assert outcome.n_matches["host"] == 1
+    assert (
+        outcome.n_matches[
+            ("host", "SearchAPIESGF1Solr", "ESGF1CMIP6ParametersQueryStyle")
+        ]
+        == 1
+    )
 
     # Failure still raises.
     with pytest.raises(NoFacadeAnsweredError):

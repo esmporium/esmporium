@@ -10,7 +10,7 @@ import shlex
 import time
 from collections.abc import Collection
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 import httpx
 
@@ -572,8 +572,8 @@ class SearchOutcome:
     is surfaced explicitly as `n_matches`.
     """
 
-    datasets: dict[str, tuple[ParsedDocument, ...]]
-    """The parsed documents each endpoint answered with, keyed by host"""
+    parsed_docs: dict[FacadeKey, tuple[ParsedDocument, ...]]
+    """The parsed documents each endpoint answered with, keyed by the facade"""
 
     n_matches: dict[str, int | None]
     """
@@ -585,8 +585,18 @@ class SearchOutcome:
     """
     # TODO: consider raising if we can't get the number of matches in future.
 
-    failures: dict[str, CouldNotSearchError]
+    failures: dict[FacadeKey, CouldNotSearchError]
     """Reasons we failed to get allowed search results, keyed by host"""
+
+
+FacadeKey: TypeAlias = tuple[str, str, str]
+"""
+A key which identifies a given facade
+
+The first element is the host.
+The second is the type of search API this facade uses/assumes.
+The third is the query style used by this facade.
+"""
 
 
 def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection seams
@@ -661,7 +671,7 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
     """
     canonical = to_canonical(query)
 
-    datasets: dict[str, tuple[ParsedDocument, ...]] = {}
+    parsed_docs: dict[str, tuple[ParsedDocument, ...]] = {}
     n_matches: dict[str, int | None] = {}
     failures: dict[str, CouldNotSearchError] = {}
 
@@ -720,7 +730,7 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
                         url=get_url(facade.search_api, request),
                     )
                 else:
-                    datasets[facade_key] = parsed
+                    parsed_docs[facade_key] = parsed
                     n_matches[facade_key] = _result_count_or_none(
                         facade.get_n_matches, raw
                     )
@@ -739,7 +749,7 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
     if not selector_offered_an_option:
         raise SelectorOfferedNoAPIFacadeError(canonical, selector)
 
-    if not datasets and failures:
+    if not parsed_docs and failures:
         raise NoFacadeAnsweredError(failures)
 
-    return SearchOutcome(datasets, n_matches, failures)
+    return SearchOutcome(parsed_docs, n_matches, failures)

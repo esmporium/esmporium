@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import threading
 
 import httpx
@@ -86,8 +87,9 @@ def test_search_parses_the_answer_on_success():
     )
 
     # The body carries no docs, so there are no datasets, but the count is still read.
-    assert outcome.datasets == {"host": ()}
-    assert outcome.n_matches == {"host": 3}
+    result_key = ("host", "SearchAPIESGF1Solr", "ESGF1CMIP6ParametersQueryStyle")
+    assert outcome.parsed_docs == {result_key: ()}
+    assert outcome.n_matches == {result_key: 3}
     assert outcome.failures == {}
 
 
@@ -153,7 +155,9 @@ def test_search_retries_a_transient_failure_then_succeeds():
 
     outcome = search(QUERY_CMIP6, selector, client=client_for(handler))
 
-    assert outcome.n_matches == {"host": 9}
+    assert outcome.n_matches == {
+        ("host", "SearchAPIESGF1Solr", "ESGF1CMIP6ParametersQueryStyle"): 9
+    }
     assert calls == 2
 
 
@@ -188,8 +192,9 @@ def test_search_stops_at_the_first_answer_by_default():
 
     outcome = search(QUERY_CMIP6, selector, client=client_for(by_host))
 
-    assert list(outcome.datasets) == ["host-a"]
-    assert outcome.n_matches["host-a"] == 5
+    result_key = ("host-a", "SearchAPIESGF1Solr", "ESGF1CMIP6ParametersQueryStyle")
+    assert list(outcome.parsed_docs) == [result_key]
+    assert outcome.n_matches[result_key] == 5
     # host-b was never asked, so it did not fail either.
     assert outcome.failures == {}
 
@@ -204,9 +209,22 @@ def test_search_aggregates_every_node_when_asked_to():
         QUERY_CMIP6, selector, stop_at_first_result=False, client=client_for(by_host)
     )
 
-    assert set(outcome.datasets) == {"host-a", "host-b"}
-    assert outcome.n_matches["host-a"] == 5
-    assert outcome.n_matches["host-b"] == 7
+    assert set(outcome.parsed_docs) == {
+        ("host-a", "SearchAPIESGF1Solr", "ESGF1CMIP6ParametersQueryStyle"),
+        ("host-b", "SearchAPIESGF1Solr", "ESGF1CMIP6ParametersQueryStyle"),
+    }
+    assert (
+        outcome.n_matches[
+            ("host-a", "SearchAPIESGF1Solr", "ESGF1CMIP6ParametersQueryStyle")
+        ]
+        == 5
+    )
+    assert (
+        outcome.n_matches[
+            ("host-b", "SearchAPIESGF1Solr", "ESGF1CMIP6ParametersQueryStyle")
+        ]
+        == 7
+    )
 
 
 def test_search_hands_each_answer_to_the_processor():
@@ -221,14 +239,21 @@ def test_search_hands_each_answer_to_the_processor():
         selector,
         stop_at_first_result=False,
         client=client_for(by_host),
-        processor=lambda host, parsed: calls.append((host, parsed)),
+        processor=lambda facade, parsed: calls.append((facade, parsed)),
     )
 
-    # One call per answering host, in the order they answered...
-    assert [host for host, _ in calls] == ["host-a", "host-b"]
-    # ...each handed exactly what the outcome carries for that host.
-    for host, parsed in calls:
-        assert parsed == outcome.datasets[host]
+    assert [facade for facade, _ in calls] == [selector(None, 0), selector(None, 1)]
+    for facade, parsed in calls:
+        assert (
+            parsed
+            == outcome.parsed_docs[
+                (
+                    facade.search_api.host,
+                    type(facade.search_api).__name__,
+                    facade.parameters.base_query_style.__name__,
+                )
+            ]
+        )
 
 
 def test_search_does_not_call_the_processor_for_a_failure():
@@ -248,10 +273,10 @@ def test_search_does_not_call_the_processor_for_a_failure():
         QUERY_CMIP6,
         selector,
         client=client_for(handler),
-        processor=lambda host, parsed: calls.append(host),
+        processor=lambda facade, parsed: calls.append(facade),
     )
 
-    assert calls == ["host-b"]
+    assert calls == [selector(None, 1)]
 
 
 def test_search_skips_a_node_that_does_not_answer():
@@ -268,12 +293,30 @@ def test_search_skips_a_node_that_does_not_answer():
 
     outcome = search(QUERY_CMIP6, selector, client=client_for(handler))
 
-    assert list(outcome.datasets) == ["host-b"]
-    assert outcome.n_matches["host-b"] == 4
+    assert list(outcome.parsed_docs) == [
+        ("host-b", "SearchAPIESGF1Solr", "ESGF1CMIP6ParametersQueryStyle")
+    ]
+    assert (
+        outcome.n_matches[
+            ("host-b", "SearchAPIESGF1Solr", "ESGF1CMIP6ParametersQueryStyle")
+        ]
+        == 4
+    )
     # The node which was passed over is kept, with what it said.
-    assert set(outcome.failures) == {"host-a"}
-    assert isinstance(outcome.failures["host-a"], CouldNotGetSearchResponseError)
-    assert "host-a" in str(outcome.failures["host-a"])
+    assert set(outcome.failures) == {
+        ("host-a", "SearchAPIESGF1Solr", "ESGF1CMIP6ParametersQueryStyle")
+    }
+    assert isinstance(
+        outcome.failures[
+            ("host-a", "SearchAPIESGF1Solr", "ESGF1CMIP6ParametersQueryStyle")
+        ],
+        CouldNotGetSearchResponseError,
+    )
+    assert "host-a" in str(
+        outcome.failures[
+            ("host-a", "SearchAPIESGF1Solr", "ESGF1CMIP6ParametersQueryStyle")
+        ]
+    )
 
 
 def test_search_skips_a_node_whose_answer_we_cannot_read():
@@ -303,10 +346,19 @@ def test_search_skips_a_node_whose_answer_we_cannot_read():
         QUERY_CMIP6, selector, client=client_for(handler), stop_at_first_result=False
     )
 
-    assert list(outcome.datasets) == ["host-b"]
-    assert outcome.n_matches["host-b"] == 4
+    assert list(outcome.parsed_docs) == [
+        ("host-b", "SearchAPIESGF1Solr", "ESGF1CMIP6ParametersQueryStyle")
+    ]
+    assert (
+        outcome.n_matches[
+            ("host-b", "SearchAPIESGF1Solr", "ESGF1CMIP6ParametersQueryStyle")
+        ]
+        == 4
+    )
 
-    failure = outcome.failures["host-a"]
+    failure = outcome.failures[
+        ("host-a", "SearchAPIESGF1Solr", "ESGF1CMIP6ParametersQueryStyle")
+    ]
     assert isinstance(failure, CouldNotUseSearchResultsError)
     # The failure says the host answered, says what we could not read in it,
     # and says what to send again to see it for yourself.
@@ -329,7 +381,10 @@ def test_search_raises_when_no_node_answers_readably():
 
     with pytest.raises(
         NoFacadeAnsweredError,
-        match="host-a answered our search request with something we could not read",
+        match=re.escape(
+            "('host-a', 'SearchAPIESGF1Solr', 'ESGF1CMIP6ParametersQueryStyle') "
+            "answered our search request with something we could not read"
+        ),
     ):
         search(QUERY_CMIP6, selector, client=client_for(handler))
 
@@ -354,7 +409,12 @@ def test_search_keeps_an_empty_but_valid_answer():
         QUERY_CMIP6, selector, client=client_for(lambda request: solr_response(0))
     )
 
-    assert outcome.n_matches["host-a"] == 0
+    assert (
+        outcome.n_matches[
+            ("host-a", "SearchAPIESGF1Solr", "ESGF1CMIP6ParametersQueryStyle")
+        ]
+        == 0
+    )
 
 
 def test_search_builds_and_closes_its_own_client(monkeypatch):
@@ -365,7 +425,12 @@ def test_search_builds_and_closes_its_own_client(monkeypatch):
     selector = build_list_selector([make_facade_cmip6_esgf1("host-a")])
     outcome = search(QUERY_CMIP6, selector)
 
-    assert outcome.n_matches["host-a"] == 2
+    assert (
+        outcome.n_matches[
+            ("host-a", "SearchAPIESGF1Solr", "ESGF1CMIP6ParametersQueryStyle")
+        ]
+        == 2
+    )
     assert built.is_closed, "a client search built itself should be closed after"
 
 

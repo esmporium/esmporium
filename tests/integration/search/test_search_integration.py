@@ -27,7 +27,7 @@ def test_search_esgf1_request_raises_on_other_terms_clash():
     query = QueryCMIP6(source_id="ACCESS-CM2", other_terms={"source_id": "other"})
 
     error_msg = re.escape(
-        "esgf.nci.org.au: "
+        "('esgf.nci.org.au', 'SearchAPIESGF1Solr', 'ESGF1CMIP6ParametersQueryStyle'): "
         "`other_terms` facet 'source_id' clashes with the query's facet names, "
         "once the query's facet names are translated to the API's names. "
         "The relevant mapping from query names to API names is: "
@@ -55,7 +55,7 @@ def test_search_esgf1_request_raises_on_other_terms_clash_cross_project():
     query = QueryCMIP6(source_id="ACCESS-CM2", other_terms={"model": "other"})
 
     error_msg = re.escape(
-        "esgf.nci.org.au: "
+        "('esgf.nci.org.au', 'SearchAPIESGF1Solr', 'ESGF1CMIP5ParametersQueryStyle'): "
         "`other_terms` facet 'model' clashes with the query's facet names, "
         "once the query's facet names are translated to the API's names. "
         "The relevant mapping from query names to API names is: "
@@ -83,7 +83,7 @@ def test_search_esgfng_request_raises_on_other_terms_clash():
     query = QueryCMIP6(source_id="ACCESS-CM2", other_terms={"cmip6:source_id": "other"})
 
     error_msg = re.escape(
-        "search.east.esgf.io: "
+        "('search.east.esgf.io', 'SearchAPIESGFNGSTAC', 'ESGFNGCMIP6ParametersQueryStyle'): "  # noqa: E501
         "`other_terms` facet 'cmip6:source_id' clashes with the query's facet names, "
         "once the query's facet names are translated to the API's names. "
         "The relevant mapping from query names to API names is: "
@@ -116,7 +116,7 @@ def test_search_esgfng_request_raises_on_other_terms_clash_cross_project():
     )
 
     error_msg = re.escape(
-        "search.east.esgf.io: "
+        "('search.east.esgf.io', 'SearchAPIESGFNGSTAC', 'ESGFNGCMIP7ParametersQueryStyle'): "  # noqa: E501
         "`other_terms` facet 'cmip7:variable_branding_suffix' "
         "clashes with the query's facet names, "
         "once the query's facet names are translated to the API's names. "
@@ -151,7 +151,7 @@ def test_search_raises_on_other_terms_multiple_clashes():
     )
 
     error_msg = re.escape(
-        "esgf.nci.org.au: "
+        "('esgf.nci.org.au', 'SearchAPIESGF1Solr', 'ESGF1CMIP6ParametersQueryStyle'): "
         "`other_terms` facets 'frequency' and 'source_id' "
         "clash with the query's facet names, "
         "once the query's facet names are translated to the API's names. "

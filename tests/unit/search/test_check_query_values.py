@@ -367,10 +367,14 @@ def test_high_routes_through_the_selector_to_the_api():
         client=client_for(facet_values_from(["historical"])),
     )
 
-    assert set(outcome.reports) == {"routed.example"}
-    # The report is keyed by, and names, the host the values came from.
-    assert outcome.reports["routed.example"].source == "routed.example"
-    assert outcome.reports["routed.example"].findings == (
+    expected_report_key = (
+        "routed.example",
+        "SearchAPIESGF1Solr",
+        "ESGF1CMIP6ParametersQueryStyle",
+    )
+    assert set(outcome.reports) == {expected_report_key}
+    assert outcome.reports[expected_report_key].source == expected_report_key
+    assert outcome.reports[expected_report_key].findings == (
         FacetFinding("experiment", "Historical", "case", ("historical",)),
     )
 
@@ -393,16 +397,26 @@ def test_high_moves_on_to_the_next_api_when_one_will_not_answer():
         client=client_for(handler),
     )
 
-    assert set(outcome.reports) == {"second.example"}
-    assert outcome.reports["second.example"].findings == (
+    expected_report_key = (
+        "second.example",
+        "SearchAPIESGF1Solr",
+        "ESGF1CMIP6ParametersQueryStyle",
+    )
+    assert set(outcome.reports) == {expected_report_key}
+    assert outcome.reports[expected_report_key].findings == (
         FacetFinding("experiment", "Historical", "case", ("historical",)),
     )
     # The node which would not answer is kept too, with what it said.
-    assert set(outcome.failures) == {"down.example"}
-    assert isinstance(
-        outcome.failures["down.example"], CouldNotGetAllowedValuesResponseError
+    expected_down_key = (
+        "down.example",
+        "SearchAPIESGF1Solr",
+        "ESGF1CMIP6ParametersQueryStyle",
     )
-    assert "down.example" in str(outcome.failures["down.example"])
+    assert set(outcome.failures) == {expected_down_key}
+    assert isinstance(
+        outcome.failures[expected_down_key], CouldNotGetAllowedValuesResponseError
+    )
+    assert "down.example" in str(outcome.failures[expected_down_key])
 
 
 def test_high_asks_every_api_when_told_not_to_stop_at_the_first():
@@ -428,9 +442,19 @@ def test_high_asks_every_api_when_told_not_to_stop_at_the_first():
         client=client_for(handler),
     )
 
-    assert set(outcome.reports) == {"knows.example", "does-not.example"}
-    assert outcome.reports["knows.example"].findings == ()
-    (finding,) = outcome.reports["does-not.example"].findings
+    assert set(outcome.reports) == {
+        ("knows.example", "SearchAPIESGF1Solr", "ESGF1CMIP6ParametersQueryStyle"),
+        ("does-not.example", "SearchAPIESGF1Solr", "ESGF1CMIP6ParametersQueryStyle"),
+    }
+    assert (
+        outcome.reports[
+            ("knows.example", "SearchAPIESGF1Solr", "ESGF1CMIP6ParametersQueryStyle")
+        ].findings
+        == ()
+    )
+    (finding,) = outcome.reports[
+        ("does-not.example", "SearchAPIESGF1Solr", "ESGF1CMIP6ParametersQueryStyle")
+    ].findings
     assert finding.value == "abrupt-4xCO2"
     assert finding.kind is FindingKind.UNKNOWN
 
@@ -446,8 +470,12 @@ def test_high_keeps_the_answers_it_got_when_only_some_apis_fail():
         client=client_for(handler),
     )
 
-    assert set(outcome.reports) == {"up.example"}
-    assert set(outcome.failures) == {"down.example"}
+    assert set(outcome.reports) == {
+        ("up.example", "SearchAPIESGF1Solr", "ESGF1CMIP6ParametersQueryStyle")
+    }
+    assert set(outcome.failures) == {
+        ("down.example", "SearchAPIESGF1Solr", "ESGF1CMIP6ParametersQueryStyle")
+    }
 
 
 def test_high_raises_with_every_failure_when_no_api_answers():
@@ -467,7 +495,11 @@ def test_high_raises_with_every_failure_when_no_api_answers():
             client=client_for(lambda request: httpx.Response(503)),
         )
 
-    assert [failure.description for failure in excinfo.value.failures] == [
+    assert sorted(excinfo.value.failures.keys()) == [
+        ("first.example", "SearchAPIESGF1Solr", "ESGF1CMIP6ParametersQueryStyle"),
+        ("last.example", "SearchAPIESGF1Solr", "ESGF1CMIP6ParametersQueryStyle"),
+    ]
+    assert [failure.description for failure in excinfo.value.failures.values()] == [
         "first.example",
         "last.example",
     ]
@@ -475,7 +507,7 @@ def test_high_raises_with_every_failure_when_no_api_answers():
     assert "last.example" in str(excinfo.value)
     assert all(
         isinstance(failure, CouldNotGetAllowedValuesResponseError)
-        for failure in excinfo.value.failures
+        for failure in excinfo.value.failures.values()
     )
 
 

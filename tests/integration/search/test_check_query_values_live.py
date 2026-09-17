@@ -125,7 +125,7 @@ def test_cmip6_experiment_case_slip_is_matched_to_the_real_spelling(
     # carry a count.)
     calls = read_calls()
     assert calls, "expected at least one recorded call"
-    assert all(call.host == report.source for call in calls)
+    assert all(call.host == report.source[0] for call in calls)
     assert all(call.response_time_seconds > 0.0 for call in calls)
     assert calls[-1].success is True
 

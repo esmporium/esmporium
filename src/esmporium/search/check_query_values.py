@@ -36,6 +36,7 @@ from esmporium.search.apis import (
 )
 from esmporium.search.health import SearchAPICallObserver
 from esmporium.search.search import (
+    FacadeKey,
     NoFacadeAnsweredError,
     SearchAPIRequestError,
     fire,
@@ -533,10 +534,10 @@ class ValueCheckOutcome:
     What came of checking a query: the APIs which answered, and those which did not
     """
 
-    reports: dict[str, ValueReport]
+    reports: dict[FacadeKey, ValueReport]
     """What each API which answered said about the query, keyed by host"""
 
-    failures: dict[str, CouldNotGetAllowedValuesError]
+    failures: dict[FacadeKey, CouldNotGetAllowedValuesError]
     """Reasons we failed to get allowed values, keyed by host"""
 
 
@@ -616,26 +617,26 @@ def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberat
     owns_client = client is None
     client = client if client is not None else httpx.Client(follow_redirects=True)
 
-    asked_someone = False
+    selector_offered_an_option = False
 
     try:
         attempt = 0
         while (facade := selector(canonical, attempt)) is not None:
-            asked_someone = True
-            host = facade.search_api.host
+            selector_offered_an_option = True
+            facade_key = (
+                facade.search_api.host,
+                type(facade.search_api).__name__,
+                facade.parameters.base_query_style.__name__,
+            )
             try:
                 allowed = allowed_values_from_api(
                     facade, client, canonical, facets, api_call_observer
                 )
             except CouldNotGetAllowedValuesError as exc:
-                failures[host] = exc
+                failures[facade_key] = exc
             else:
-                # Note: if the selector offers the same host twice,
-                # the second report simply replaces the first here.
-                # That is wasteful, because we ask the same host again,
-                # but it is not wrong: both reports say the same thing.
-                reports[host] = check_query_values_low(
-                    canonical, allowed, host, close_matches
+                reports[facade_key] = check_query_values_low(
+                    canonical, allowed, facade_key, close_matches
                 )
                 if stop_at_first_result:
                     break
@@ -646,11 +647,11 @@ def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberat
         if owns_client:
             client.close()
 
-    if not asked_someone:
+    if not selector_offered_an_option:
         raise SelectorOfferedNoAPIFacadeError(canonical, selector)
 
     if not reports and failures:
-        raise NoFacadeAnsweredError(tuple(failures.values()))
+        raise NoFacadeAnsweredError(failures)
 
     return ValueCheckOutcome(reports, failures)
 
@@ -697,7 +698,7 @@ def check_against_patterns(
 def check_query_values_low(
     canonical: QueryCanonical,
     allowed: AllowedValues,
-    source: str,
+    facade_key: FacadeKey,
     close_matches: CloseMatcher = close_matches_difflib,
 ) -> ValueReport:
     """
@@ -716,7 +717,7 @@ def check_query_values_low(
     allowed
         What the source could say about the query's facets
 
-    source
+    facade_key
         How to name where `allowed` came from, for reporting purposes
 
     close_matches
@@ -736,4 +737,4 @@ def check_query_values_low(
 
     failed_to_check = tuple(sorted(facets - allowed.facets_covered()))
 
-    return ValueReport(canonical, source, findings, failed_to_check)
+    return ValueReport(canonical, facade_key, findings, failed_to_check)
