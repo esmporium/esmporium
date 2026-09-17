@@ -24,6 +24,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, PlainValidator
 
+from esmporium.formatting import readable_list
 from esmporium.query import (
     FacetValues,
     FacetValuesByName,
@@ -94,7 +95,8 @@ class ClashingFacetsError(ValueError):
 
     Note that, we expect this error to be raised when the query's names
     have already been translated to API names.
-    See [ClashingFacetsForFacadeError][esmporium.search.]
+    See
+    [ClashingFacetsForFacadeError][esmporium.search.search.ClashingFacetsForFacadeError]
     for an error that contains more context.
     """
 
@@ -110,19 +112,11 @@ class ClashingFacetsError(ValueError):
         """
         self.clashing = tuple(sorted(clashing))
 
-        if len(self.clashing) > 1:
-            named = (
-                ", ".join(repr(facet) for facet in self.clashing[:-1])
-                + f" and {self.clashing[-1]!r}"
-            )
-
-        else:
-            named = repr(self.clashing[0])
-
+        named = readable_list(self.clashing)
         noun = "facet" if len(self.clashing) == 1 else "facets"
         conjugation = "clashes" if len(self.clashing) == 1 else "clash"
         msg = (
-            f"`other_terms` {noun} {named} {conjugation} with the query's facet names."
+            f"`other_terms` {noun} {named} {conjugation} with the query's facet names. "
             "Set each facet either as a query facet or in `other_terms`, not both."
         )
         super().__init__(msg)

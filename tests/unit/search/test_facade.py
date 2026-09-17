@@ -164,8 +164,13 @@ def test_esgf1_build_search_request_includes_other_terms():
     assert request.params["variable_long_name"] == ["air_temperature"]
 
 
-def test_esgfng_build_search_request_prefixes_other_terms():
-    """other_terms carry the collection prefix, exactly like modelled facets"""
+def test_esgfng_build_search_request_does_not_prefix_other_terms():
+    """
+    other_terms reach the STAC request exactly as the user gave them
+
+    Unlike modelled facets, they do not pick up the collection prefix:
+    see the note in the test body.
+    """
     request = api_facade_cmip6_esgfng().build_search_request(
         CMIP6_WITH_OTHER_TERMS, limit=25
     )
@@ -225,7 +230,7 @@ def test_esgf1_build_search_request_raises_on_other_terms_clash():
 
 def test_esgfng_build_search_request_raises_on_other_terms_clash():
     """
-    The clash is caught after prefixing too
+    A clash is caught against the API's names, prefix and all
 
     In this test, `cmip6:source_id` ends up coming from both sources
     """

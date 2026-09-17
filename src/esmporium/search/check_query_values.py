@@ -40,6 +40,7 @@ from esmporium.search.search import (
     NoFacadeAnsweredError,
     SearchAPIRequestError,
     fire,
+    get_facade_key,
     get_url,
 )
 from esmporium.search.search_api_facade import (
@@ -111,11 +112,11 @@ class ValueReport:
     The query which was checked
     """
 
-    source: str
+    source: FacadeKey
     """
-    How the source of allowed values describes itself
+    The facade the allowed values came from
 
-    Used for reporting only, hence just a string
+    Used for reporting only
     """
 
     findings: tuple[FacetFinding, ...]
@@ -535,10 +536,10 @@ class ValueCheckOutcome:
     """
 
     reports: dict[FacadeKey, ValueReport]
-    """What each API which answered said about the query, keyed by host"""
+    """What each facade which answered said about the query, keyed by the facade"""
 
     failures: dict[FacadeKey, CouldNotGetAllowedValuesError]
-    """Reasons we failed to get allowed values, keyed by host"""
+    """Reasons we failed to get allowed values, keyed by the facade"""
 
 
 def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberate injection seams
@@ -594,9 +595,9 @@ def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberat
     Returns
     -------
     :
-        What each API which answered said about the query's values,
-        and why each API which gave us no allowed values gave us none,
-        both keyed by host
+        What each facade which answered said about the query's values,
+        and why each facade which gave us no allowed values gave us none,
+        both keyed by the facade
 
     Raises
     ------
@@ -604,15 +605,15 @@ def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberat
         `selector` had no API facade to offer for this query,
         so there was nobody to ask
 
-    NoAPIAnsweredError
-        The selector offered at least one API
+    NoFacadeAnsweredError
+        The selector offered at least one facade
         and none of them gave us facet values we could use
     """
     canonical = to_canonical(query)
     facets = facets_the_user_set(canonical)
 
-    reports: dict[str, ValueReport] = {}
-    failures: dict[str, CouldNotGetAllowedValuesError] = {}
+    reports: dict[FacadeKey, ValueReport] = {}
+    failures: dict[FacadeKey, CouldNotGetAllowedValuesError] = {}
 
     owns_client = client is None
     client = client if client is not None else httpx.Client(follow_redirects=True)
@@ -623,11 +624,7 @@ def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberat
         attempt = 0
         while (facade := selector(canonical, attempt)) is not None:
             selector_offered_an_option = True
-            facade_key = (
-                facade.search_api.host,
-                type(facade.search_api).__name__,
-                facade.parameters.base_query_style.__name__,
-            )
+            facade_key = get_facade_key(facade)
             try:
                 allowed = allowed_values_from_api(
                     facade, client, canonical, facets, api_call_observer

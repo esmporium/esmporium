@@ -277,6 +277,10 @@ def answered(values, patterns=None):
     )
 
 
+A_NODE_KEY = ("a-node", "SearchAPIESGF1Solr", "ESGF1CMIP6ParametersQueryStyle")
+"""The facade key of a stand-in node, for the tests which only report on it"""
+
+
 def selector_yielding(*apis):
     """
     A selector which offers the given APIs in order, then runs out
@@ -304,10 +308,10 @@ def test_low_tiers_findings_and_reports_the_rest_as_unchecked():
     canonical = canonical_cmip6(experiment_id="Historical", variable_id="tas")
     allowed = answered({"experiment": {"historical"}})
 
-    report = check_query_values_low(canonical, allowed, "a-node")
+    report = check_query_values_low(canonical, allowed, A_NODE_KEY)
 
     assert report.query.project == ("CMIP6",)
-    assert report.source == "a-node"
+    assert report.source == A_NODE_KEY
     # experiment was checked (wrong case); variable had no values to check against.
     assert report.findings == (
         FacetFinding("experiment", "Historical", "case", ("historical",)),
@@ -321,7 +325,7 @@ def test_low_reports_ok_when_everything_matches():
     canonical = canonical_cmip6(experiment_id="historical")
     allowed = answered({"experiment": {"historical"}})
 
-    report = check_query_values_low(canonical, allowed, "a-node")
+    report = check_query_values_low(canonical, allowed, A_NODE_KEY)
 
     assert report.findings == ()
     assert report.failed_to_check == ()
@@ -335,7 +339,7 @@ def test_a_report_which_could_not_check_something_is_not_ok():
     canonical = canonical_cmip6(variable_id="tas")
     allowed = answered({})
 
-    report = check_query_values_low(canonical, allowed, "a-node")
+    report = check_query_values_low(canonical, allowed, A_NODE_KEY)
 
     assert report.findings == ()
     assert report.failed_to_check == ("variable",)
@@ -520,7 +524,7 @@ def test_a_value_matching_the_pattern_passes_silently():
     canonical = canonical_cmip6(variant_label="r5i31p250f19")
     allowed = answered({}, patterns={"variant_label": re.compile(VARIANT_PATTERN)})
 
-    report = check_query_values_low(canonical, allowed, "a-node")
+    report = check_query_values_low(canonical, allowed, A_NODE_KEY)
 
     assert report.findings == ()
     assert report.failed_to_check == ()
@@ -538,7 +542,7 @@ def test_a_value_failing_the_pattern_is_malformed_and_shows_the_pattern():
     canonical = canonical_cmip6(variant_label="r1i1pf1")
     allowed = answered({}, patterns={"variant_label": re.compile(VARIANT_PATTERN)})
 
-    report = check_query_values_low(canonical, allowed, "a-node")
+    report = check_query_values_low(canonical, allowed, A_NODE_KEY)
 
     (finding,) = report.findings
     assert finding.facet == "variant_label"
@@ -558,7 +562,7 @@ def test_a_listed_facet_is_tiered_like_any_other_even_when_generated():
     canonical = canonical_cmip6(variant_label="r1i1pf1")
     allowed = answered({"variant_label": {"r1i1p1f1", "r1i1p2f1", "r2i1p1f1"}})
 
-    report = check_query_values_low(canonical, allowed, "a-node")
+    report = check_query_values_low(canonical, allowed, A_NODE_KEY)
 
     (finding,) = report.findings
     assert finding.facet == "variant_label"
@@ -571,7 +575,7 @@ def test_a_listed_value_which_is_present_is_not_flagged():
     canonical = canonical_cmip6(variant_label="r1i1p1f1")
     allowed = answered({"variant_label": {"r1i1p1f1", "r2i1p1f1"}})
 
-    report = check_query_values_low(canonical, allowed, "a-node")
+    report = check_query_values_low(canonical, allowed, A_NODE_KEY)
 
     assert report.findings == ()
     assert report.ok()
@@ -582,7 +586,7 @@ def test_a_facet_the_source_says_nothing_about_could_not_be_checked():
     canonical = canonical_cmip6(variant_label="r1i1pf1")
     allowed = answered({})  # no values, no patterns
 
-    report = check_query_values_low(canonical, allowed, "a-node")
+    report = check_query_values_low(canonical, allowed, A_NODE_KEY)
 
     assert report.findings == ()
     assert report.failed_to_check == ("variant_label",)
@@ -599,7 +603,7 @@ def test_a_query_specific_facet_is_checked_when_the_source_lists_it():
     canonical = to_canonical(QueryCMIP5(experiment="historical", product="output3"))
     allowed = answered({"product": {"output1", "output2"}})
 
-    report = check_query_values_low(canonical, allowed, "a-node")
+    report = check_query_values_low(canonical, allowed, A_NODE_KEY)
 
     (finding,) = report.findings
     assert finding.facet == "product"
@@ -637,7 +641,7 @@ def test_a_finding_can_be_named_the_way_the_user_wrote_it():
     canonical = canonical_cmip6(experiment_id="Historical")
     allowed = answered({"experiment": {"historical"}})
 
-    report = check_query_values_low(canonical, allowed, "a-node")
+    report = check_query_values_low(canonical, allowed, A_NODE_KEY)
 
     (finding,) = report.findings
     assert finding.facet == "experiment"
@@ -649,7 +653,7 @@ def test_a_query_specific_facet_already_carries_the_users_name():
     canonical = to_canonical(QueryCMIP5(experiment="historical", product="output3"))
     allowed = answered({"product": {"output1", "output2"}})
 
-    report = check_query_values_low(canonical, allowed, "a-node")
+    report = check_query_values_low(canonical, allowed, A_NODE_KEY)
 
     (finding,) = report.findings
     assert report.facet_as_asked(finding.facet) == "product"
@@ -668,7 +672,7 @@ def test_the_close_match_function_reaches_the_report_layer():
     report = check_query_values_low(
         canonical,
         allowed,
-        "a-node",
+        A_NODE_KEY,
         close_matches=lambda value, values: ("everything-is-close",),
     )
 
@@ -745,7 +749,7 @@ def test_a_canonically_built_query_reads_back_canonically():
     )
     allowed = answered({"experiment": {"historical"}})
 
-    report = check_query_values_low(canonical, allowed, "a-node")
+    report = check_query_values_low(canonical, allowed, A_NODE_KEY)
 
     (finding,) = report.findings
     assert report.facet_as_asked(finding.facet) == "experiment"
