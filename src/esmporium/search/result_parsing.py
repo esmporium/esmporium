@@ -8,10 +8,13 @@ parsers and translations are defined in
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Protocol
 
 from pydantic import BaseModel, ConfigDict
+
+if TYPE_CHECKING:
+    from esmporium.search.search_api_facade import SearchAPIFacade
 
 
 class DatasetFacets(BaseModel):
@@ -112,11 +115,17 @@ class ParsedDocument:
 # and searches/query collections in our database.
 # (No need to change anything now though,
 # let's deal with this change when we need it in PR4)
-ResultProcessor = Callable[[str, tuple[ParsedDocument, ...]], None]
-"""
-A callback that processes the parsed results one host answered with
+class ResultProcessor(Protocol):
+    """
+    A callback that processes the parsed results one host answered with
 
-Called as `processor(search_host, parsed_documents)`. The search layer types its
-injection seam against this without importing `db`; the `db` layer supplies a concrete
-processor (see [`esmporium.db.build_result_processor`][]) bound to a session.
-"""
+    The database layer supplies a concrete processor
+    (see [`esmporium.db.build_result_processor`][]).
+    """
+
+    def __call__(
+        self, facade: SearchAPIFacade, parsed_documents: tuple[ParsedDocument, ...]
+    ) -> None:
+        """
+        Process the results that come from a given facade
+        """

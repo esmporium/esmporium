@@ -23,7 +23,7 @@ from esmporium.search import (
     ESGF1_CMIP6_FACADE_PARAMETERS,
     ESGFNG_CMIP6_FACADE_PARAMETERS,
     ESGFNGResultParser,
-    NoAPIAnsweredError,
+    NoFacadeAnsweredError,
     SearchAPIESGF1Solr,
     SearchAPIESGFNGSTAC,
     SearchAPIFacade,
@@ -38,6 +38,7 @@ from esmporium.search import (
 )
 from esmporium.search.health import SearchAPICall
 from esmporium.search.retry import _is_transient
+from esmporium.search.search import get_facade_key
 
 # NOTE: the mock helpers below are duplicated from
 # `tests/unit/search/test_search.py` and `test_check_query_values.py`. They are
@@ -97,7 +98,7 @@ def record(handler, apis) -> list[SearchAPICall]:
     """Run a search through `handler`, returning the calls it recorded."""
     calls: list[SearchAPICall] = []
     # A total failure still records what it tried; that is what we assert on.
-    with contextlib.suppress(NoAPIAnsweredError):
+    with contextlib.suppress(NoFacadeAnsweredError):
         search(
             QUERY,
             build_list_selector(apis),
@@ -250,14 +251,15 @@ def test_an_unparseable_body_records_a_failure_with_the_status():
 
 
 def test_no_observer_records_nothing_but_still_works():
-    selector = build_list_selector([make_cmip6_facade("host")])
+    facade = make_cmip6_facade("host")
+    selector = build_list_selector([facade])
 
     # Success still parses an answer.
     outcome = search(QUERY, selector, client=client_for(lambda r: solr_response(1)))
-    assert outcome.n_matches["host"] == 1
+    assert outcome.n_matches[get_facade_key(facade)] == 1
 
     # Failure still raises.
-    with pytest.raises(NoAPIAnsweredError):
+    with pytest.raises(NoFacadeAnsweredError):
         search(QUERY, selector, client=client_for(lambda r: httpx.Response(404)))
 
 

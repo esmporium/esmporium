@@ -364,9 +364,9 @@ def facet_values_from_attributes(query: QueryProtocol) -> dict[str, tuple[str, .
     """
     Get the set (i.e. not empty) facets of a query which holds facets as attributes
 
-    Which facets to look for comes from the class's own annotations, so this works
-    for any query which holds its facets as attributes — a pydantic model, an
-    attrs class, or something of your own.
+    Which facets to look for comes from the class's own annotations,
+    so this works for any query which holds its facets as attributes
+    — a pydantic model, an attrs class, or something of your own.
 
     Parameters
     ----------
@@ -437,19 +437,15 @@ class Query(BaseModel):
 
     other_terms: FacetValuesByName = {}
     """
-    Facets names we have not modelled, passed through untranslated.
+    Facets we have not modelled, passed through untranslated.
 
     The escape hatch for anything this query's fields do not name.
-    Never checked, that is up to you to manage. Each facet name is
-    sent to the search API exactly as you give it, although for a
-    STAC API a prefix (e.g. `cmip6:`) is added.
-
-    Note also that a facet name must already be in the Search API's
-    own parameter name, not a query style's name. Mostly, there is no
-    distinction here, e.g. CMIP7's `variable_id` is called `variable_id`
-    by the API. A known difference in CMIP7is query style `branding_suffix`
-    but the API requires `variable_branding_suffix`. You would need to put
-    the API parameter as the facet name.
+    These facets are never checked.
+    They are your escape hatch, but that also means 'escaping' from error handling.
+    Each facet name is sent to the search API exactly as you give it
+    (so, for example,
+    you need to include prefixes for STAC APIs where they are required
+    and you need to know the name used by the API exactly).
     """
 
     source_query: SourceQuery = None

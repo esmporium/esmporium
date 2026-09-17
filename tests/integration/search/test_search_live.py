@@ -17,7 +17,7 @@ from esmporium.search import (
     ESGF1_CMIP6_FACADE_PARAMETERS,
     INBUILT_SEARCH_API_FACADE_STORE,
     CouldNotGetSearchResponseError,
-    NoAPIAnsweredError,
+    NoFacadeAnsweredError,
     ParsedDocument,
     SearchAPIESGF1Solr,
     SearchAPIFacade,
@@ -236,27 +236,29 @@ def search_or_skip(skip_or_fail):
     If `observer` is given it is passed through to `search`.
     """
 
-    def search_one(query, api, client, limit, observer=None):
+    def search_one(query, facade, client, limit, observer=None):
         try:
             return search(
                 query,
-                build_list_selector([api]),
+                build_list_selector([facade]),
                 limit=limit,
                 client=client,
                 api_call_observer=observer,
             )
-        except NoAPIAnsweredError as exc:
+        except NoFacadeAnsweredError as exc:
             skip_or_fail(
                 exc.failures,
                 did_not_answer=CouldNotGetSearchResponseError,
-                reason=f"{api.search_api.host} did not answer, so it is down or unwell",
+                reason=(
+                    f"{facade.search_api.host} did not answer, so it is down or unwell"
+                ),
             )
 
     return search_one
 
 
-@pytest.mark.parametrize("api, query", LIVE_CASES)
-def test_search_returns_results(client, api, query, recorded, search_or_skip):
+@pytest.mark.parametrize("facade, query", LIVE_CASES)
+def test_search_returns_results(client, facade, query, recorded, search_or_skip):
     """
     A query we expect to match something comes back with matches
 
@@ -266,28 +268,33 @@ def test_search_returns_results(client, api, query, recorded, search_or_skip):
     """
     observer, read_calls = recorded
 
-    outcome = search_or_skip(query, api, client, limit=5, observer=observer)
+    outcome = search_or_skip(query, facade, client, limit=5, observer=observer)
 
-    assert outcome.n_matches[api.search_api.host] > 0
+    facade_key = (
+        facade.search_api.host,
+        type(facade.search_api).__name__,
+        facade.parameters.base_query_style.__name__,
+    )
+    assert outcome.n_matches[facade_key] > 0
 
     # One row per attempt, all for this host, timed; the last is the success.
     calls = read_calls()
     assert calls, "expected at least one recorded call"
-    assert all(call.host == api.search_api.host for call in calls)
+    assert all(call.host == facade.search_api.host for call in calls)
     assert all(call.response_time_seconds > 0.0 for call in calls)
     assert [call.attempt_number for call in calls] == list(range(1, len(calls) + 1))
     success = calls[-1]
     assert success.success is True
     assert success.response_code == 200
-    assert success.num_results == outcome.n_matches[api.search_api.host]
+    assert success.num_results == outcome.n_matches[facade_key]
 
 
-@pytest.mark.parametrize("api, query, poison_field", FACET_NAME_CASES)
+@pytest.mark.parametrize("facade, query, poison_field", FACET_NAME_CASES)
 def test_search_applies_the_facets_we_send(  # noqa: PLR0913 - parametrised, plus fixtures
-    client, api, query, poison_field, recorded, search_or_skip
+    client, facade, query, poison_field, recorded, search_or_skip
 ):
     """
-    Test that the API understood the facet names we sent it
+    Test that the facade understood the facet names we sent it
 
     We take the query which does match data and change one facet
     to a value nothing can have.
@@ -302,15 +309,20 @@ def test_search_applies_the_facets_we_send(  # noqa: PLR0913 - parametrised, plu
     observer, read_calls = recorded
 
     nonsense = query.model_copy(update={poison_field: (NOT_A_REAL_VALUE,)})
-    outcome = search_or_skip(nonsense, api, client, limit=5, observer=observer)
+    outcome = search_or_skip(nonsense, facade, client, limit=5, observer=observer)
 
-    assert outcome.n_matches[api.search_api.host] == 0
+    facade_key = (
+        facade.search_api.host,
+        type(facade.search_api).__name__,
+        facade.parameters.base_query_style.__name__,
+    )
+    assert outcome.n_matches[facade_key] == 0
 
     # A response that matched nothing is still a successful call, and recorded.
     # One row per attempt; the final, successful one carries the zero count.
     calls = read_calls()
     assert calls, "expected at least one recorded call"
-    assert all(call.host == api.search_api.host for call in calls)
+    assert all(call.host == facade.search_api.host for call in calls)
     assert all(call.response_time_seconds > 0.0 for call in calls)
     success = calls[-1]
     assert success.success is True
@@ -373,7 +385,7 @@ def test_aggregating_over_nodes_finds_more_than_one_node(client, skip_or_fail):
             stop_at_first_result=False,
             client=client,
         )
-    except NoAPIAnsweredError as exc:
+    except NoFacadeAnsweredError as exc:
         skip_or_fail(
             exc.failures,
             did_not_answer=CouldNotGetSearchResponseError,
@@ -381,7 +393,7 @@ def test_aggregating_over_nodes_finds_more_than_one_node(client, skip_or_fail):
         )
 
     per_host = {
-        host: master_ids(documents) for host, documents in outcome.datasets.items()
+        host: master_ids(documents) for host, documents in outcome.parsed_docs.items()
     }
     answered = {host: ids for host, ids in per_host.items() if ids}
     if len(answered) < 2:
@@ -399,8 +411,8 @@ def test_aggregating_over_nodes_finds_more_than_one_node(client, skip_or_fail):
     )
 
 
-@pytest.mark.parametrize("api, make_query", AND_OR_CASES)
-def test_search_ands_across_facets(client, api, make_query, search_or_skip):
+@pytest.mark.parametrize("facade, make_query", AND_OR_CASES)
+def test_search_ands_across_facets(client, facade, make_query, search_or_skip):
     """
     Test that facets AND across each other
 
@@ -419,21 +431,26 @@ def test_search_ands_across_facets(client, api, make_query, search_or_skip):
 
     def count(variables, experiments):
         query = make_query(variables, experiments)
-        outcome = search_or_skip(query, api, client, limit=1)
-        return outcome.n_matches[api.search_api.host]
+        outcome = search_or_skip(query, facade, client, limit=1)
+        facade_key = (
+            facade.search_api.host,
+            type(facade.search_api).__name__,
+            facade.parameters.base_query_style.__name__,
+        )
+        return outcome.n_matches[facade_key]
 
     for variable in AND_OR_VARIABLES:
         for experiment in AND_OR_EXPERIMENTS:
             if count((variable,), (experiment,)) == 0:
                 pytest.skip(
-                    f"{api.search_api.host} has no data for variable={variable}, "
+                    f"{facade.search_api.host} has no data for variable={variable}, "
                     f"experiment={experiment}, so this combination cannot show "
                     "whether the facets ANDed"
                 )
 
 
-@pytest.mark.parametrize("api, make_query", AND_OR_CASES)
-def test_search_ors_within_a_facet(client, api, make_query, search_or_skip):
+@pytest.mark.parametrize("facade, make_query", AND_OR_CASES)
+def test_search_ors_within_a_facet(client, facade, make_query, search_or_skip):
     """
     Test that the values within a facet OR rather than one of them being dropped
 
@@ -451,8 +468,13 @@ def test_search_ors_within_a_facet(client, api, make_query, search_or_skip):
 
     def count(variables, experiments):
         query = make_query(variables, experiments)
-        outcome = search_or_skip(query, api, client, limit=1)
-        return outcome.n_matches[api.search_api.host]
+        outcome = search_or_skip(query, facade, client, limit=1)
+        facade_key = (
+            facade.search_api.host,
+            type(facade.search_api).__name__,
+            facade.parameters.base_query_style.__name__,
+        )
+        return outcome.n_matches[facade_key]
 
     experiment = AND_OR_EXPERIMENTS[:1]
     separately = [count((variable,), experiment) for variable in AND_OR_VARIABLES]
@@ -463,13 +485,13 @@ def test_search_ors_within_a_facet(client, api, make_query, search_or_skip):
         # `test_search_ands_across_facets` is where a missing combination is
         # reported, so saying it twice here would only be noise.
         pytest.skip(
-            f"{api.search_api.host} matched nothing for one of "
+            f"{facade.search_api.host} matched nothing for one of "
             f"{AND_OR_VARIABLES} on their own, so there is nothing to compare "
             "the combined search against"
         )
 
     assert together >= max(separately), (
-        f"asking {api.search_api.host} for {AND_OR_VARIABLES} together "
+        f"asking {facade.search_api.host} for {AND_OR_VARIABLES} together "
         f"matched {together}, "
         f"fewer than the {max(separately)} matched by one of them alone: "
         "the values are not being ORed within the facet"
