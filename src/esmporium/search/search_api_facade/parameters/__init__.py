@@ -8,6 +8,7 @@ from esmporium.search.search_api_facade.parameters.known_facade_parameters impor
     ESGF1_CMIP7_FACADE_PARAMETERS,
     ESGFNG_CMIP6_FACADE_PARAMETERS,
     ESGFNG_CMIP7_FACADE_PARAMETERS,
+    ClashingFacetsError,
     DirectMappingFacadeParameters,
     ESGF1CMIP5ParametersQueryStyle,
     ESGF1CMIP6ParametersQueryStyle,
@@ -19,6 +20,7 @@ from esmporium.search.search_api_facade.parameters.known_facade_parameters impor
     STACFacadeParameters,
     get_mapping_to_query_style_facet_names,
     identity_string,
+    merge_other_terms,
 )
 from esmporium.search.search_api_facade.parameters.protocol import (
     FacadeParametersProtocol,
@@ -30,6 +32,7 @@ __all__ = [
     "ESGF1_CMIP7_FACADE_PARAMETERS",
     "ESGFNG_CMIP6_FACADE_PARAMETERS",
     "ESGFNG_CMIP7_FACADE_PARAMETERS",
+    "ClashingFacetsError",
     "DirectMappingFacadeParameters",
     "ESGF1CMIP5ParametersQueryStyle",
     "ESGF1CMIP6ParametersQueryStyle",
@@ -42,4 +45,5 @@ __all__ = [
     "STACFacadeParameters",
     "get_mapping_to_query_style_facet_names",
     "identity_string",
+    "merge_other_terms",
 ]

@@ -437,10 +437,19 @@ class Query(BaseModel):
 
     other_terms: FacetValuesByName = {}
     """
-    Facets we have not modelled, passed through untranslated.
+    Facets names we have not modelled, passed through untranslated.
 
     The escape hatch for anything this query's fields do not name.
-    Never checked, that is up to you to manage.
+    Never checked, that is up to you to manage. Each facet name is
+    sent to the search API exactly as you give it, although for a
+    STAC API a prefix (e.g. `cmip6:`) is added.
+
+    Note also that a facet name must already be in the Search API's
+    own parameter name, not a query style's name. Mostly, there is no
+    distinction here, e.g. CMIP7's `variable_id` is called `variable_id`
+    by the API. A known difference in CMIP7is query style `branding_suffix`
+    but the API requires `variable_branding_suffix`. You would need to put
+    the API parameter as the facet name.
     """
 
     source_query: SourceQuery = None
