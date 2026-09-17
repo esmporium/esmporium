@@ -435,7 +435,7 @@ class NoFacadeAnsweredError(RuntimeError):
     def __init__(
         self,
         failures: dict[
-            str,
+            FacadeKey,
             tuple[CouldNotSearchError, ...] | tuple[CouldNotGetAllowedValuesError, ...],
         ],
     ) -> None:
@@ -445,7 +445,7 @@ class NoFacadeAnsweredError(RuntimeError):
         Parameters
         ----------
         failures
-            Why each facade gave us nothing we could use, keyed by the facade
+            Why each facade gave us nothing we could use, keyed by the facade key
         """
         self.failures = failures
         asked = "\n".join(
