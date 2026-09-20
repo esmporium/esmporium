@@ -24,6 +24,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, PlainValidator
 
+from esmporium.formatting import readable_list
 from esmporium.query import (
     FacetValues,
     FacetValuesByName,
@@ -86,11 +87,17 @@ def get_mapping_to_query_style_facet_names(
 
 class ClashingFacetsError(ValueError):
     """
-    Raised when an other_terms name resolves to a facet the query already sets
+    Raised when `other_terms` sets values for facets that a query already sets
 
-    other_terms is the escape hatch for facets we do not model, so a name in
-    other_terms which lands on a facet the query already sets is ambiguous:
+    `other_terms` is the escape hatch for facets we do not model,
+    so a name in other_terms which lands on a facet the query already sets is ambiguous:
     there is no way to tell which value should win, so we refuse to guess.
+
+    Note that, we expect this error to be raised when the query's names
+    have already been translated to API names.
+    See
+    [ClashingFacetsForFacadeError][esmporium.search.search.ClashingFacetsForFacadeError]
+    for an error that contains more context.
     """
 
     def __init__(self, clashing: Collection[str]) -> None:
@@ -104,39 +111,32 @@ class ClashingFacetsError(ValueError):
             named as the user gave them in other_terms
         """
         self.clashing = tuple(sorted(clashing))
-        named = ", ".join(repr(facet) for facet in self.clashing)
+
+        named = readable_list(self.clashing)
         noun = "facet" if len(self.clashing) == 1 else "facets"
-        super().__init__(
-            f"other_terms {noun} {named} already set by the query. "
-            "Set each facet either as a query facet or in other_terms, not both."
+        conjugation = "clashes" if len(self.clashing) == 1 else "clash"
+        msg = (
+            f"`other_terms` {noun} {named} {conjugation} with the query's facet names. "
+            "Set each facet either as a query facet or in `other_terms`, not both."
         )
+        super().__init__(msg)
 
 
 def merge_other_terms(
     facet_values: dict[str, tuple[str, ...]],
     other_terms: Mapping[str, tuple[str, ...]],
-    to_api_name: Callable[[str], str],
 ) -> dict[str, tuple[str, ...]]:
     """
-    Merge other_terms into request facet values, under the API parameter names
-
-    other_terms are passed through as the user gave them: their names are the
-    search API's own parameter names, untranslated. `to_api_name` only applies
-    whatever the API layers on top of those names (e.g. the STAC collection
-    prefix), so a single other_terms entry works the same way as a modelled facet.
+    Merge other terms into request facet values
 
     Parameters
     ----------
     facet_values
         Facet values already built from the query's modelled facets,
-        keyed by API parameter name
+        keyed by API parameter name.
 
     other_terms
-        The user's other_terms, keyed by the search API's parameter name
-
-    to_api_name
-        How to turn an other_terms name into its final API parameter name
-        (identity for Solr, the collection prefix for STAC)
+        The user's other_terms
 
     Returns
     -------
@@ -146,24 +146,22 @@ def merge_other_terms(
     Raises
     ------
     ClashingFacetsError
-        An other_terms name resolves to a facet already in `facet_values`
+        An `other_terms` key resolves to a facet already in `facet_values`
     """
     res = dict(facet_values)
     clashing: list[str] = []
     for name, values in other_terms.items():
         if not values:
             # An empty facet is no constraint at all, so drop it,
-            # matching how modelled facets with no values are dropped
-            # by facet_values_from_attributes.
+            # (matching how modelled facets with no values are dropped
+            # by facet_values_from_attributes).
             continue
 
-        api_name = to_api_name(name)
-        if api_name in res:
-            # Report the name the user typed, not the resolved API name.
+        if name in res:
             clashing.append(name)
             continue
 
-        res[api_name] = values
+        res[name] = values
 
     if clashing:
         raise ClashingFacetsError(clashing)
@@ -204,11 +202,7 @@ class DirectMappingFacadeParameters(BaseModel):
 
         facet_values = facet_values_from_attributes(native)
 
-        # This API uses the query style's names directly,
-        # so other_terms go in under their own (API) names, unchanged.
-        return merge_other_terms(
-            facet_values, native.other_terms, to_api_name=identity_string
-        )
+        return merge_other_terms(facet_values, native.other_terms)
 
 
 class ESGF1CMIP5ParametersQueryStyle(BaseModel):
@@ -585,13 +579,7 @@ class STACFacadeParameters(BaseModel):
         for facet_name, values in facet_values_from_attributes(native).items():
             facet_values[f"{self.prefix}:{facet_name}"] = values
 
-        # other_terms carry the user's own (API) names, prefixed like every
-        # other facet so a single other_terms entry works across Solr and STAC.
-        return merge_other_terms(
-            facet_values,
-            native.other_terms,
-            to_api_name=lambda name: f"{self.prefix}:{name}",
-        )
+        return merge_other_terms(facet_values, native.other_terms)
 
 
 class ESGFNGCMIP6ParametersQueryStyle(BaseModel):

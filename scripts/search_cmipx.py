@@ -9,7 +9,7 @@ It shows two opt-in seams that hang off `search()`:
 - an `api_call_observer` that records every request into a throwaway SQLite database
   (which host, what status, how many results, how long), printed after the searches;
 - a `processor` from `build_result_processor(session)` that parses and saves each
-  host's datasets the moment it answers. The rows it wrote are counted at the end.
+  facade's datasets the moment it answers. The rows it wrote are counted at the end.
 
 Finally, once the rows are stored, it queries the database directly to show that the
 saved `Dataset` rows are now just ordinary rows you can filter -- e.g. "give me only
@@ -120,7 +120,7 @@ def main() -> None:
         with Session(engine) as session:
             # Passing these is the whole opt-in: leave them off and nothing is recorded
             # or saved. The observer records every request; the processor saves each
-            # host's datasets the moment it answers.
+            # facade's datasets the moment it answers.
             observer = record_search_api_calls(engine)
             processor = build_result_processor(session)
 
@@ -129,10 +129,10 @@ def main() -> None:
                 outcome = search(
                     query, limit=2, api_call_observer=observer, processor=processor
                 )
-                for host, documents in outcome.datasets.items():
+                for facade_key, documents in outcome.parsed_docs.items():
                     dataset_rows = sum(len(doc.datasets) for doc in documents)
                     print(
-                        f"  {host:22} matched={outcome.n_matches[host]} "
+                        f"  {facade_key} matched={outcome.n_matches[facade_key]} "
                         f"documents={len(documents)} dataset_rows={dataset_rows}"
                     )
 

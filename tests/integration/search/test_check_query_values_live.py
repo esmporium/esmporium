@@ -13,7 +13,7 @@ from esmporium.search import (
     CouldNotGetAllowedValuesResponseError,
     FacetFinding,
     FindingKind,
-    NoAPIAnsweredError,
+    NoFacadeAnsweredError,
     ValueReport,
     check_query_values,
 )
@@ -41,7 +41,7 @@ def only_report(skip_or_fail):
     def check_one(query: QueryProtocol, observer=None) -> ValueReport:
         try:
             outcome = check_query_values(query, api_call_observer=observer)
-        except NoAPIAnsweredError as exc:
+        except NoFacadeAnsweredError as exc:
             skip_or_fail(
                 exc.failures,
                 did_not_answer=CouldNotGetAllowedValuesResponseError,
@@ -125,7 +125,7 @@ def test_cmip6_experiment_case_slip_is_matched_to_the_real_spelling(
     # carry a count.)
     calls = read_calls()
     assert calls, "expected at least one recorded call"
-    assert all(call.host == report.source for call in calls)
+    assert all(call.host == report.source[0] for call in calls)
     assert all(call.response_time_seconds > 0.0 for call in calls)
     assert calls[-1].success is True
 
