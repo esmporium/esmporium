@@ -169,7 +169,7 @@ def test_esgfng_build_search_request_does_not_prefix_other_terms():
     other_terms reach the STAC request exactly as the user gave them
 
     Unlike modelled facets, they do not pick up the collection prefix:
-    see the note in the test body.
+    see the note in the test body below.
     """
     request = api_facade_cmip6_esgfng().build_search_request(
         CMIP6_WITH_OTHER_TERMS, limit=25
