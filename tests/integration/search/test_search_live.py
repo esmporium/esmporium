@@ -26,7 +26,7 @@ from esmporium.search import (
     build_list_selector,
     build_transient_retrying,
     fire,
-    search,
+    search_single_project,
 )
 
 pytestmark = pytest.mark.hits_esgf_search_api
@@ -238,7 +238,7 @@ def search_or_skip(skip_or_fail):
 
     def search_one(query, facade, client, limit, observer=None):
         try:
-            return search(
+            return search_single_project(
                 query,
                 build_list_selector([facade]),
                 limit=limit,
@@ -358,7 +358,7 @@ def test_search_pages_through_all_the_results(
     pages: list[int] = []
 
     try:
-        outcome = search(
+        outcome = search_single_project(
             query,
             build_list_selector([api]),
             limit=page_size,
@@ -434,7 +434,7 @@ def test_aggregating_over_nodes_finds_more_than_one_node(client, skip_or_fail):
     ]
 
     try:
-        outcome = search(
+        outcome = search_single_project(
             CMIP6_QUERY,
             build_list_selector(nodes),
             stop_at_first_result=False,

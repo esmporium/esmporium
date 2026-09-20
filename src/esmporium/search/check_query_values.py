@@ -555,8 +555,9 @@ def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberat
     Check a query's values against the APIs which would have served it
 
     The endpoints are worked through in the order
-    [search][esmporium.search.search.search] would have tried them,
-    and this takes the same `stop_at_first_result` as `search` does,
+    [search_single_project][esmporium.search.search.search_single_project]
+    would have tried them,
+    and this takes the same `stop_at_first_result` as `search_single_project` does,
     so the two answer the same question about the same endpoints
     in the same way.
 

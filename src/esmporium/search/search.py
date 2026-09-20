@@ -945,7 +945,7 @@ def collect_all_pages(  # noqa: PLR0913 - the keyword-only extras are injection 
     return FacadePages(tuple(collected), n_matches, completed=True, failure=None)
 
 
-def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection seams
+def search_single_project(  # noqa: PLR0913 - the keyword-only extras are deliberate injection seams
     query: QueryProtocol,
     selector: SearchAPIFacadeSelector = DEFAULT_SELECTOR,
     *,
@@ -959,6 +959,12 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
 ) -> SearchOutcome:
     """
     Search the facades the selector yields, and parse their answers into datasets
+
+    This is the low-level, single-project building block: `query` must name exactly
+    one project (the selector and facades enforce that). To search several projects,
+    or to run several queries and have every result saved to the database, use the
+    higher-level [`esmporium.workflow.search`][], which splits multi-project queries
+    and calls this function once per project.
 
     Parameters
     ----------
@@ -1083,8 +1089,9 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
                 # because we only handle a single query in this function
                 # and our facades only support searching a single project at a time.
                 # If either of those assumptions changed, this would break.
-                # We will have to be more careful in higher-level functions
-                # to do queries over multiple projects (PR3).
+                # Queries over multiple projects (and multiple queries at once) are
+                # handled a level up, in `esmporium.workflow.search`, which splits
+                # them into single-project queries and calls this function for each.
                 pages = collect_all_pages(
                     client,
                     facade,

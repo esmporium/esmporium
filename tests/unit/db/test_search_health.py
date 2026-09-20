@@ -24,7 +24,7 @@ from esmporium.search import (
     SearchAPIFacade,
     SolrSingleRowResultParser,
     build_list_selector,
-    search,
+    search_single_project,
 )
 from esmporium.search.health import SearchAPICall
 from esmporium.search.retry import build_transient_retrying
@@ -309,7 +309,7 @@ def test_selector_injects_into_search_and_is_asked_in_ranked_order(engine):
 
     # Every node answers, so `datasets` is keyed in the order they were asked,
     # which is the selector's ranked (fastest-first) order.
-    outcome = search(
+    outcome = search_single_project(
         QUERY_CMIP6,
         selector,
         stop_at_first_result=False,

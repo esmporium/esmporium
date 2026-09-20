@@ -33,7 +33,7 @@ from esmporium.search import (
     check_query_values,
     fan_out,
     fire,
-    search,
+    search_single_project,
     stac_east_n_matches,
 )
 from esmporium.search.health import SearchAPICall
@@ -99,7 +99,7 @@ def record(handler, apis) -> list[SearchAPICall]:
     calls: list[SearchAPICall] = []
     # A total failure still records what it tried; that is what we assert on.
     with contextlib.suppress(NoFacadeAnsweredError):
-        search(
+        search_single_project(
             QUERY,
             build_list_selector(apis),
             client=client_for(handler),
@@ -255,12 +255,16 @@ def test_no_observer_records_nothing_but_still_works():
     selector = build_list_selector([facade])
 
     # Success still parses an answer.
-    outcome = search(QUERY, selector, client=client_for(lambda r: solr_response(1)))
+    outcome = search_single_project(
+        QUERY, selector, client=client_for(lambda r: solr_response(1))
+    )
     assert outcome.n_matches[get_facade_key(facade)] == 1
 
     # Failure still raises.
     with pytest.raises(NoFacadeAnsweredError):
-        search(QUERY, selector, client=client_for(lambda r: httpx.Response(404)))
+        search_single_project(
+            QUERY, selector, client=client_for(lambda r: httpx.Response(404))
+        )
 
 
 def test_fire_fails_loudly_carrying_the_cause():

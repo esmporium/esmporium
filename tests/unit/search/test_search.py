@@ -36,7 +36,7 @@ from esmporium.search import (
     SelectorOfferedNoAPIFacadeError,
     SolrSingleRowResultParser,
     build_list_selector,
-    search,
+    search_single_project,
     stac_east_n_matches,
 )
 from esmporium.search.retry import _is_transient
@@ -50,7 +50,7 @@ from esmporium.search.search import (
 LOGGER_NAME = "esmporium.search.search"
 
 QUERY_CMIP6 = QueryCMIP6(experiment_id="historical", variable_id="tas", frequency="mon")
-"""A CMIP6 query; search() canonicalises it for us"""
+"""A CMIP6 query; search_single_project() canonicalises it for us"""
 
 
 def fast_retrying(attempts: int) -> Retrying:
@@ -186,7 +186,7 @@ def test_search_parses_the_answer_on_success():
     """A 200 is parsed into datasets and its match count, keyed by host"""
     selector = build_list_selector([make_facade_cmip6_esgf1("host")])
 
-    outcome = search(
+    outcome = search_single_project(
         QUERY_CMIP6, selector, client=client_for(lambda r: solr_response(3))
     )
 
@@ -207,7 +207,7 @@ def test_search_uses_the_apis_own_timeout():
 
     selector = build_list_selector([make_facade_cmip6_esgf1("host", timeout=5.0)])
 
-    search(QUERY_CMIP6, selector, client=client_for(handler))
+    search_single_project(QUERY_CMIP6, selector, client=client_for(handler))
 
     assert seen == [{"connect": 5.0, "read": 5.0, "write": 5.0, "pool": 5.0}]
 
@@ -224,7 +224,7 @@ def test_search_raises_on_a_client_error_without_retrying():
     selector = build_list_selector([make_facade_cmip6_esgf1("host", attempts=3)])
 
     with pytest.raises(NoFacadeAnsweredError, match="host"):
-        search(QUERY_CMIP6, selector, client=client_for(handler))
+        search_single_project(QUERY_CMIP6, selector, client=client_for(handler))
 
     assert calls == 1
 
@@ -241,7 +241,7 @@ def test_search_retries_a_transient_failure_then_gives_up():
     selector = build_list_selector([make_facade_cmip6_esgf1("host", attempts=3)])
 
     with pytest.raises(NoFacadeAnsweredError, match="host"):
-        search(QUERY_CMIP6, selector, client=client_for(handler))
+        search_single_project(QUERY_CMIP6, selector, client=client_for(handler))
 
     assert calls == 3
 
@@ -257,7 +257,7 @@ def test_search_retries_a_transient_failure_then_succeeds():
 
     selector = build_list_selector([make_facade_cmip6_esgf1("host", attempts=3)])
 
-    outcome = search(QUERY_CMIP6, selector, client=client_for(handler))
+    outcome = search_single_project(QUERY_CMIP6, selector, client=client_for(handler))
 
     assert outcome.n_matches == {key_cmip6_esgf1("host"): 9}
     assert calls == 2
@@ -275,7 +275,7 @@ def test_search_raises_when_the_body_is_not_json():
     selector = build_list_selector([make_facade_cmip6_esgf1("host", attempts=3)])
 
     with pytest.raises(NoFacadeAnsweredError, match="host"):
-        search(QUERY_CMIP6, selector, client=client_for(handler))
+        search_single_project(QUERY_CMIP6, selector, client=client_for(handler))
 
     assert calls == 1, "an unreadable body is not a transient failure"
 
@@ -292,7 +292,7 @@ def test_search_stops_at_the_first_answer_by_default():
         [make_facade_cmip6_esgf1("host-a"), make_facade_cmip6_esgf1("host-b")]
     )
 
-    outcome = search(QUERY_CMIP6, selector, client=client_for(by_host))
+    outcome = search_single_project(QUERY_CMIP6, selector, client=client_for(by_host))
 
     result_key = key_cmip6_esgf1("host-a")
     assert list(outcome.parsed_docs) == [result_key]
@@ -307,7 +307,7 @@ def test_search_aggregates_every_node_when_asked_to():
         [make_facade_cmip6_esgf1("host-a"), make_facade_cmip6_esgf1("host-b")]
     )
 
-    outcome = search(
+    outcome = search_single_project(
         QUERY_CMIP6, selector, stop_at_first_result=False, client=client_for(by_host)
     )
 
@@ -326,7 +326,7 @@ def test_search_hands_each_answer_to_the_processor():
         [make_facade_cmip6_esgf1("host-a"), make_facade_cmip6_esgf1("host-b")]
     )
 
-    outcome = search(
+    outcome = search_single_project(
         QUERY_CMIP6,
         selector,
         stop_at_first_result=False,
@@ -352,7 +352,7 @@ def test_search_does_not_call_the_processor_for_a_failure():
         [make_facade_cmip6_esgf1("host-a"), make_facade_cmip6_esgf1("host-b")]
     )
 
-    search(
+    search_single_project(
         QUERY_CMIP6,
         selector,
         client=client_for(handler),
@@ -374,7 +374,7 @@ def test_search_skips_a_node_that_does_not_answer():
         [make_facade_cmip6_esgf1("host-a"), make_facade_cmip6_esgf1("host-b")]
     )
 
-    outcome = search(QUERY_CMIP6, selector, client=client_for(handler))
+    outcome = search_single_project(QUERY_CMIP6, selector, client=client_for(handler))
 
     assert list(outcome.parsed_docs) == [key_cmip6_esgf1("host-b")]
     assert outcome.n_matches[key_cmip6_esgf1("host-b")] == 4
@@ -409,7 +409,7 @@ def test_search_skips_a_node_whose_answer_we_cannot_read():
         [make_facade_cmip6_esgf1("host-a"), make_facade_cmip6_esgf1("host-b")]
     )
 
-    outcome = search(
+    outcome = search_single_project(
         QUERY_CMIP6, selector, client=client_for(handler), stop_at_first_result=False
     )
 
@@ -444,7 +444,7 @@ def test_search_raises_when_no_node_answers_readably():
             "with something we could not read"
         ),
     ):
-        search(QUERY_CMIP6, selector, client=client_for(handler))
+        search_single_project(QUERY_CMIP6, selector, client=client_for(handler))
 
 
 def test_search_with_no_endpoint_to_try_raises():
@@ -456,14 +456,16 @@ def test_search_with_no_endpoint_to_try_raises():
     when in truth nothing was searched at all.
     """
     with pytest.raises(SelectorOfferedNoAPIFacadeError, match="CMIP6"):
-        search(QUERY_CMIP6, build_list_selector([]), client=client_for(never_asked))
+        search_single_project(
+            QUERY_CMIP6, build_list_selector([]), client=client_for(never_asked)
+        )
 
 
 def test_search_keeps_an_empty_but_valid_answer():
     """'Nothing matched' is an answer, so it is kept"""
     selector = build_list_selector([make_facade_cmip6_esgf1("host-a")])
 
-    outcome = search(
+    outcome = search_single_project(
         QUERY_CMIP6, selector, client=client_for(lambda request: solr_response(0))
     )
 
@@ -476,7 +478,7 @@ def test_search_builds_and_closes_its_own_client(monkeypatch):
     monkeypatch.setattr(httpx, "Client", lambda **kwargs: built)
 
     selector = build_list_selector([make_facade_cmip6_esgf1("host-a")])
-    outcome = search(QUERY_CMIP6, selector)
+    outcome = search_single_project(QUERY_CMIP6, selector)
 
     assert outcome.n_matches[key_cmip6_esgf1("host-a")] == 2
     assert built.is_closed, "a client search built itself should be closed after"
@@ -487,7 +489,7 @@ def test_search_logs_the_request_at_debug(caplog):
     selector = build_list_selector([make_facade_cmip6_esgf1("esgf.example.org")])
 
     with caplog.at_level(logging.DEBUG, logger=LOGGER_NAME):
-        search(
+        search_single_project(
             QUERY_CMIP6,
             selector,
             limit=2,
@@ -529,7 +531,7 @@ def test_search_curl_reproduces_a_post_body(caplog):
     selector = build_list_selector([stac_api])
 
     with caplog.at_level(logging.DEBUG, logger=LOGGER_NAME):
-        search(
+        search_single_project(
             QUERY_CMIP6,
             selector,
             # A real STAC answer always carries `features`, empty or not.
@@ -552,7 +554,9 @@ def test_search_does_not_log_below_debug(caplog):
     selector = build_list_selector([make_facade_cmip6_esgf1("host")])
 
     with caplog.at_level(logging.INFO, logger=LOGGER_NAME):
-        search(QUERY_CMIP6, selector, client=client_for(lambda r: solr_response(1)))
+        search_single_project(
+            QUERY_CMIP6, selector, client=client_for(lambda r: solr_response(1))
+        )
 
     assert [r for r in caplog.records if r.name == LOGGER_NAME] == []
 
@@ -563,7 +567,7 @@ def test_search_pages_through_all_solr_results():
     offsets: list[int] = []
     pages: list[tuple[str, tuple]] = []
 
-    outcome = search(
+    outcome = search_single_project(
         QUERY_CMIP6,
         selector,
         limit=2,
@@ -585,7 +589,7 @@ def test_search_does_not_page_when_the_first_page_holds_everything():
     selector = build_list_selector([make_facade_cmip6_esgf1("host")])
     offsets: list[int] = []
 
-    outcome = search(
+    outcome = search_single_project(
         QUERY_CMIP6,
         selector,
         limit=10,
@@ -629,7 +633,9 @@ def test_search_pages_through_all_stac_results():
         bodies.append(json.loads(request.content))
         return next(responses)
 
-    outcome = search(QUERY_CMIP6, selector, limit=1, client=client_for(handler))
+    outcome = search_single_project(
+        QUERY_CMIP6, selector, limit=1, client=client_for(handler)
+    )
 
     stac_key = get_facade_key(make_facade_cmip6_stac())
     assert len(outcome.parsed_docs[stac_key]) == 3
@@ -663,7 +669,9 @@ def test_search_keeps_earlier_pages_when_a_later_page_fails():
 
     selector = build_list_selector([make_facade_cmip6_esgf1("host", attempts=1)])
 
-    outcome = search(QUERY_CMIP6, selector, limit=2, client=client_for(handler))
+    outcome = search_single_project(
+        QUERY_CMIP6, selector, limit=2, client=client_for(handler)
+    )
 
     # The first page is kept...
     assert len(outcome.parsed_docs[key_cmip6_esgf1("host")]) == 2
@@ -695,7 +703,9 @@ def test_search_partial_answer_does_not_stop_it_trying_the_next_host():
         [make_facade_cmip6_esgf1("host-a"), make_facade_cmip6_esgf1("host-b")]
     )
 
-    outcome = search(QUERY_CMIP6, selector, limit=1, client=client_for(handler))
+    outcome = search_single_project(
+        QUERY_CMIP6, selector, limit=1, client=client_for(handler)
+    )
 
     # host-a gave a partial answer and a failure; host-b was still asked and answered.
     assert set(outcome.failures) == {key_cmip6_esgf1("host-a")}
@@ -714,7 +724,7 @@ def test_search_raises_when_the_result_cap_is_exceeded():
             "None) to fetch more."
         ),
     ):
-        search(
+        search_single_project(
             QUERY_CMIP6,
             selector,
             limit=2,
@@ -746,7 +756,7 @@ def test_search_raises_when_an_endpoint_loops():
             "which would page forever."
         ),
     ):
-        search(QUERY_CMIP6, selector, limit=1, client=client_for(handler))
+        search_single_project(QUERY_CMIP6, selector, limit=1, client=client_for(handler))
 
 
 def test_search_warns_when_it_will_paginate():
@@ -763,7 +773,7 @@ def test_search_warns_when_it_will_paginate():
             "warn_on_pagination=False to silence this."
         ),
     ):
-        search(
+        search_single_project(
             QUERY_CMIP6,
             selector,
             limit=2,
@@ -775,7 +785,7 @@ def test_warn_on_pagination_false_silences_the_warning(recwarn):
     """The pagination warning is opt-out: `warn_on_pagination=False` stops it"""
     selector = build_list_selector([make_facade_cmip6_esgf1("host")])
 
-    search(
+    search_single_project(
         QUERY_CMIP6,
         selector,
         limit=2,
@@ -791,7 +801,7 @@ def test_search_does_not_warn_when_the_results_fit_in_one_page(recwarn):
     selector = build_list_selector([make_facade_cmip6_esgf1("host")])
 
     # 2 matches at 5 per page is a single page: no paging, so nothing to warn about.
-    search(
+    search_single_project(
         QUERY_CMIP6,
         selector,
         limit=5,
@@ -815,7 +825,7 @@ def test_search_treats_an_other_terms_clash_as_that_facade_failing():
     answering = make_facade_cmip5_esgf1("host-b")
     selector = build_list_selector([clashing, answering])
 
-    outcome = search(
+    outcome = search_single_project(
         query, selector, stop_at_first_result=False, client=client_for(by_host)
     )
 

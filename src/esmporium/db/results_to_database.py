@@ -289,10 +289,12 @@ def build_result_processor(
     """
     Build a processor that persists one facade's parsed results into `session`
 
-    The returned callback can be used by e.g. [`esmporium.search.search`][].
-    Search calls the returned callback as each facade answers
-    so it can ingest that facade's documents and commits,
-    making results are durable as soon as they arrive.
+    The returned callback is what
+    [`esmporium.search.search_single_project`][] calls as each facade
+    answers: it ingests that facade's documents and commits, so results are durable as
+    soon as they arrive. Inject it as
+    `search_single_project(..., processor=build_result_processor(session))`.
+    The higher-level [`esmporium.workflow.search`][] wires this up for you.
 
     Parameters
     ----------
