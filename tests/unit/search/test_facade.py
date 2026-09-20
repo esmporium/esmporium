@@ -24,6 +24,7 @@ from esmporium.search import (
     ESGF1_CMIP6_FACADE_PARAMETERS,
     ESGFNG_CMIP6_FACADE_PARAMETERS,
     INBUILT_SEARCH_API_FACADE_STORE,
+    ClashingFacetsError,
     ESGFNGCMIP6ParametersQueryStyle,
     ESGFNGResultParser,
     LimitOutOfRangeError,
@@ -141,6 +142,104 @@ def test_build_get_facet_values_request_refuses_an_unexpressible_facet():
         api_facade_cmip6_esgf1().build_get_facet_values_request(
             CMIP6_CANONICALISED, {"variable", "product"}
         )
+
+
+# --- other_terms: the escape hatch reaching the request -----------------------
+CMIP6_WITH_OTHER_TERMS = to_canonical(
+    QueryCMIP6(
+        experiment_id="historical",
+        other_terms={"variable_long_name": "air_temperature"},
+    )
+)
+"""A CMIP6 query with a modelled facet plus an other_terms facet"""
+
+
+def test_esgf1_build_search_request_includes_other_terms():
+    """other_terms reach the Solr request under their own (API) names, unchanged"""
+    request = api_facade_cmip6_esgf1().build_search_request(
+        CMIP6_WITH_OTHER_TERMS, limit=25
+    )
+
+    assert request.params["experiment_id"] == ["historical"]
+    assert request.params["variable_long_name"] == ["air_temperature"]
+
+
+def test_esgfng_build_search_request_does_not_prefix_other_terms():
+    """
+    other_terms reach the STAC request exactly as the user gave them
+
+    Unlike modelled facets, they do not pick up the collection prefix:
+    see the note in the test body below.
+    """
+    request = api_facade_cmip6_esgfng().build_search_request(
+        CMIP6_WITH_OTHER_TERMS, limit=25
+    )
+    clauses = request.json_body["filter"]["args"]
+
+    assert {
+        "op": "in",
+        "args": [
+            {
+                # the cmip6: prefix is not included here.
+                # If the user wants it they have to manage it.
+                # This ensures that other_terms is a true escape hatch
+                # (we do exactly as the user asks),
+                # at the expense of helping them with the need for a prefix.
+                "property": "variable_long_name"
+            },
+            ["air_temperature"],
+        ],
+    } in clauses
+
+
+def test_build_search_request_other_terms_only():
+    """A query of only a project plus other_terms still constrains the request"""
+    canonical = to_canonical(
+        QueryCMIP6(
+            project="CMIP6",
+            other_terms={"variable_long_name": "air_temperature"},
+        )
+    )
+
+    request = api_facade_cmip6_esgf1().build_search_request(canonical, limit=25)
+
+    assert request.params["project"] == ["CMIP6"]
+    assert request.params["variable_long_name"] == ["air_temperature"]
+
+
+def test_build_search_request_ignores_empty_other_terms():
+    """An other_terms facet with no values is no constraint, so it is dropped"""
+    canonical = to_canonical(
+        QueryCMIP6(experiment_id="historical", other_terms={"variable_long_name": ()})
+    )
+
+    request = api_facade_cmip6_esgf1().build_search_request(canonical, limit=25)
+
+    assert "variable_long_name" not in request.params
+
+
+def test_esgf1_build_search_request_raises_on_other_terms_clash():
+    """Setting a facet as both a modelled facet and in other_terms is ambiguous"""
+    clashing = to_canonical(
+        QueryCMIP6(source_id="ACCESS-CM2", other_terms={"source_id": "other"})
+    )
+
+    with pytest.raises(ClashingFacetsError, match="source_id"):
+        api_facade_cmip6_esgf1().build_search_request(clashing, limit=25)
+
+
+def test_esgfng_build_search_request_raises_on_other_terms_clash():
+    """
+    A clash is caught against the API's names, prefix and all
+
+    In this test, `cmip6:source_id` ends up coming from both sources
+    """
+    clashing = to_canonical(
+        QueryCMIP6(source_id="ACCESS-CM2", other_terms={"cmip6:source_id": "other"})
+    )
+
+    with pytest.raises(ClashingFacetsError, match="source_id"):
+        api_facade_cmip6_esgfng().build_search_request(clashing, limit=25)
 
 
 # --- reading a response back into the names it was asked under ----------------

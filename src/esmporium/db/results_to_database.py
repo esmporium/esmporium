@@ -37,6 +37,8 @@ from esmporium.search.result_parsing import (
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
 
+    from esmporium.search.search_api_facade import SearchAPIFacade
+
 
 class UnhandledDatasetClashError(Exception):
     """
@@ -285,12 +287,12 @@ def build_result_processor(
     normalisers: Mapping[str, NormaliseFunc] = DEFAULT_NORMALISERS,
 ) -> ResultProcessor:
     """
-    Build a processor that persists one host's parsed results into `session`
+    Build a processor that persists one facade's parsed results into `session`
 
-    The returned callback is what [`esmporium.search.search`][] calls as each host
-    answers: it ingests that host's documents and commits, so results are durable as
-    soon as they arrive. Inject it as
-    `search(..., processor=build_result_processor(session))`.
+    The returned callback can be used by e.g. [`esmporium.search.search`][].
+    Search calls the returned callback as each facade answers
+    so it can ingest that facade's documents and commits,
+    making results are durable as soon as they arrive.
 
     Parameters
     ----------
@@ -314,10 +316,10 @@ def build_result_processor(
     """
 
     def processor(
-        search_host: str, parsed_documents: tuple[ParsedDocument, ...]
+        facade: SearchAPIFacade, parsed_documents: tuple[ParsedDocument, ...]
     ) -> None:
-        # `search_host` is part of the ResultProcessor callback contract but is no
-        # longer persisted, so it is deliberately unused here.
+        # `facade` is part of the ResultProcessor callback contract
+        # but is currently not used here (that may change in future).
         ingest_parsed_documents(session, parsed_documents, normalisers)
         session.commit()
 
