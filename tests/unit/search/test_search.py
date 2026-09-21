@@ -706,7 +706,7 @@ def test_search_raises_when_the_result_cap_is_exceeded():
     """The max_results guardrail stops a runaway search"""
     selector = build_list_selector([make_facade_cmip6_esgf1("host")])
 
-    with pytest.raises(PaginationLimitError, match="more careful check"):
+    with pytest.raises(PaginationLimitError, match="safety cap"):
         search(
             QUERY_CMIP6,
             selector,
@@ -731,7 +731,7 @@ def test_search_raises_when_an_endpoint_loops():
             },
         )
 
-    with pytest.raises(PaginationLimitError, match="pin more clearly"):
+    with pytest.raises(PaginationLimitError, match="page forever"):
         search(QUERY_CMIP6, selector, limit=1, client=client_for(handler))
 
 
@@ -740,7 +740,7 @@ def test_search_warns_when_it_will_paginate():
     selector = build_list_selector([make_facade_cmip6_esgf1("host")])
 
     # 6 matches at 2 per page is 3 pages, so it warns and names the numbers.
-    with pytest.warns(PaginationWarning, match="pin me"):
+    with pytest.warns(PaginationWarning, match="page through about"):
         search(
             QUERY_CMIP6,
             selector,
