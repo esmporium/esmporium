@@ -665,19 +665,9 @@ class SearchAPI(Protocol):
 
         This is how a search is paged through: send `request`, read `raw`, then keep
         calling this with the request just sent and the answer it gave until it
-        returns `None`, sending each request it hands back.
+        returns `None`, sending each request you get back along the way.
 
-        How the next page is found is this API's own concern, and the two families
-        differ fundamentally:
-
-        - the Solr APIs are offset-based (random access): the next page is the same
-          request with its `offset` advanced by `limit`, and there are no more pages
-          once the offset reaches the total (`response.numFound`).
-        - the STAC API is cursor-based (consecutive): the next request is the one the
-          server hands back in its `links` entry with `rel: "next"` (which carries a
-          continuation token), and there are no more pages once that link is absent.
-          STAC therefore cannot be paged without the previous answer, and its pages
-          cannot be requested out of order.
+        How the next page is found is the implementer's API's own concern.
 
         Parameters
         ----------
@@ -691,14 +681,13 @@ class SearchAPI(Protocol):
         Returns
         -------
         :
-            The request for the next page,
-            or `None` if `raw` was the last page (there is nothing more to fetch)
+            The request to use to get the next page,
+            or `None` if `raw` was the last page.
 
         Raises
         ------
         UnreadableResponseError
-            `raw` says there is a next page but not in a shape we can read
-            (e.g. a STAC `next` link with no body to send)
+            `raw` says there is a next page but not in a shape we can read.
         """
         ...
 

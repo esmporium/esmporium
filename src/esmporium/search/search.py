@@ -663,14 +663,10 @@ class PaginationWarning(UserWarning):
     """
     Warns that a search is large enough that it will page through several requests
 
-    Emitted (unless `warn_on_pagination` is turned off) when an endpoint reports more
-    matches than fit in one page, so the caller knows the search will make several
+    Should be used (normally behind a guard which can turn the warning off)
+    when an endpoint reports more matches than fit in one page,
+    so the caller knows the search will make several
     requests and may take a while before it is done.
-
-    A [UserWarning][] so it shows by default, and its own category so it is easy to
-    silence on its own: filter it with
-    `warnings.simplefilter("ignore", PaginationWarning)`,
-    or escalate it to an error in tests, without touching any other warning.
     """
 
 
@@ -978,10 +974,6 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
         It defaults to `None` (no cap), so a search fetches every matching record
         unless you ask it not to.
 
-        Turning this off does not remove the loop protection: an endpoint that asks
-        us to re-request a page we already fetched still stops with a
-        [PaginationLimitError][(m).], because that would otherwise page forever.
-
     warn_on_pagination
         Whether to warn (with a [PaginationWarning][(m).]) when a search matches more
         records than fit in one page, so you know it will make several requests and
@@ -1028,6 +1020,11 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
         Paging through an endpoint hit the `max_results` cap, or the endpoint asked
         us to re-request a page we had already requested. Pages fetched before this
         have already been handed to `processor`.
+        
+    Warns
+    ------
+    PaginationWarning
+        [text here]
     """
     canonical = to_canonical(query)
 

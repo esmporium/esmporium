@@ -204,12 +204,14 @@ def solr_next_page_request(request: Request, raw: dict[str, Any]) -> Request | N
     """
     params = request.params or {}
     limit = params.get("limit")
-    if not isinstance(limit, int) or limit <= 0:
-        # A page size of zero (e.g. a facet-values request) can never advance,
+    if not isinstance(limit, int):
+        # raise or warn here
+    
+    if limit <= 0:
+        # A page size of zero or less (e.g. a facet-values request) can never advance,
         # so there is no next page to ask for.
         return None
 
-    # Read the total the same way the result parser does, so it is defined once.
     num_found = solr_n_matches(raw)
 
     offset = params.get("offset", 0)
