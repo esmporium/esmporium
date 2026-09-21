@@ -494,7 +494,11 @@ def test_search_logs_the_request_at_debug(caplog):
             client=client_for(lambda r: solr_response(1)),
         )
 
-    records = [r for r in caplog.records if r.name == LOGGER_NAME]
+    # Filter to the request log specifically (only it carries the http_* fields):
+    # paging may also debug-log, e.g. when the reported total and what came back differ.
+    records = [
+        r for r in caplog.records if r.name == LOGGER_NAME and hasattr(r, "http_curl")
+    ]
     assert len(records) == 1
     record = records[0]
 
@@ -534,7 +538,9 @@ def test_search_curl_reproduces_a_post_body(caplog):
             ),
         )
 
-    (record,) = [r for r in caplog.records if r.name == LOGGER_NAME]
+    (record,) = [
+        r for r in caplog.records if r.name == LOGGER_NAME and hasattr(r, "http_curl")
+    ]
     assert "-X POST" in record.http_curl
     assert "--data" in record.http_curl
     # "historical" is the experiment_id from QUERY_CMIP6, so it rides in the body.
