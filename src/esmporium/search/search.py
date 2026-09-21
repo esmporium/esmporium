@@ -6,8 +6,10 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import shlex
 import time
+import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -515,8 +517,18 @@ class SearchOutcome:
     """
 
 
+class PaginationWarning(UserWarning):
+    """
+    Warns that a search is large enough that it will page through several requests
+
+    Emitted (unless `warn_on_pagination` is turned off) when an endpoint reports more
+    matches than fit in one page, so the caller knows the search will make several
+    requests and may take a while before it is done.
+    """
+
+
 @dataclass(frozen=True)
-class _FacadePages:
+class FacadePages:
     """The outcome of paging through one facade's answer to a search"""
 
     collected: tuple[ParsedDocument, ...]
@@ -562,17 +574,64 @@ def _request_fingerprint(request: Request) -> str:
     )
 
 
-def _collect_all_pages(  # noqa: PLR0913 - the keyword-only extras are injection seams
+def _warn_if_paginating(host: str, *, n_matches: int | None, limit: int) -> None:
+    """
+    Warn that a search will page through several requests, if it will
+
+    A search pages whenever more records match than fit in one page (`limit`), and
+    the number of requests that takes is `ceil(n_matches / limit)`: a big result set
+    with a small page size is many small requests, and a huge result set is many
+    requests even at the largest page size. Either can take a while, so we say so.
+
+    Parameters
+    ----------
+    host
+        The host being searched, named in the warning
+
+    n_matches
+        How many records the endpoint reported matched, or `None` if it did not say
+
+        Nothing is warned about when this is `None`: without the total we cannot tell
+        whether paging will happen, let alone how much of it.
+
+    limit
+        The page size that was asked for, i.e. the most records in one response
+
+    Warns
+    -----
+    PaginationWarning
+        `n_matches` is known and exceeds `limit`, so the search will page
+    """
+    if n_matches is None or n_matches <= limit:
+        return
+
+    pages = math.ceil(n_matches / limit)
+    # @znicholls, makes sense to have this warning keyed by host rather than Facade?
+    # search results depends explicitly on host...
+    warnings.warn(
+        f"This search of {host} matched {n_matches:,} records but fetches "
+        f"{limit:,} per page, so it could page through about {pages:,} requests "
+        "and may take a while. Raise `limit` (maximum limit is 10_000)"
+        "to fetch more records per request, "
+        "narrow your query, or pass warn_on_pagination=False to silence this.",
+        PaginationWarning,
+        stacklevel=2,
+    )
+
+
+def collect_all_pages(  # noqa: PLR0913 - the keyword-only extras are injection seams
     client: httpx.Client,
     facade: SearchAPIFacade,
     first_request: Request,
     first_raw: dict[str, Any],
     *,
     host: str,
+    limit: int,
     max_results: int | None,
+    warn_on_pagination: bool,
     api_call_observer: SearchAPICallObserver | None,
     processor: ResultProcessor | None,
-) -> _FacadePages:
+) -> FacadePages:
     """
     Page through one facade's answer, parsing and saving each page as it arrives
 
@@ -602,9 +661,19 @@ def _collect_all_pages(  # noqa: PLR0913 - the keyword-only extras are injection
     host
         The host we are paging through, used for the processor and for errors
 
+    limit
+        The page size that was asked for, i.e. the most records in one response
+
+        Used only to work out (against the total matched) how many requests paging
+        will take, for the [PaginationWarning][(m).].
+
     max_results
         The most records to collect before stopping with a
         [PaginationLimitError][(m).]. `None` disables the cap.
+
+    warn_on_pagination
+        Whether to emit a [PaginationWarning][(m).] when the endpoint reports more
+        matches than fit in one page, so the caller knows paging is happening.
 
     api_call_observer
         Told about each further request, as in [fire][(m).]
@@ -626,6 +695,8 @@ def _collect_all_pages(  # noqa: PLR0913 - the keyword-only extras are injection
     api = facade.search_api
     collected: list[ParsedDocument] = []
     n_matches = _result_count_or_none(facade.get_n_matches, first_raw)
+    if warn_on_pagination:
+        _warn_if_paginating(host, n_matches=n_matches, limit=limit)
     seen = {_request_fingerprint(first_request)}
 
     request = first_request
@@ -667,14 +738,14 @@ def _collect_all_pages(  # noqa: PLR0913 - the keyword-only extras are injection
                 read_n_matches=facade.get_n_matches,
             )
     except SearchAPIRequestError as exc:
-        return _FacadePages(
+        return FacadePages(
             tuple(collected),
             n_matches,
             completed=False,
             failure=CouldNotGetSearchResponseError(host, cause=exc),
         )
     except UnreadableResponseError as exc:
-        return _FacadePages(
+        return FacadePages(
             tuple(collected),
             n_matches,
             completed=False,
@@ -683,7 +754,7 @@ def _collect_all_pages(  # noqa: PLR0913 - the keyword-only extras are injection
             ),
         )
 
-    return _FacadePages(tuple(collected), n_matches, completed=True, failure=None)
+    return FacadePages(tuple(collected), n_matches, completed=True, failure=None)
 
 
 def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection seams
@@ -692,7 +763,8 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
     *,
     stop_at_first_result: bool = True,
     limit: int = 10_000,
-    max_results: int | None = 1_000_000,
+    max_results: int | None = None,
+    warn_on_pagination: bool = True,
     client: httpx.Client | None = None,
     api_call_observer: SearchAPICallObserver | None = None,
     processor: ResultProcessor | None = None,
@@ -731,10 +803,23 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
         The most records to collect from one endpoint before stopping with a
         [PaginationLimitError][(m).].
 
-        This is a safety guardrail against a runaway search (or an endpoint that
-        pages forever), not a normal limit: ordinary searches never approach the
-        default. Raise it, or set it to `None` to disable it, for a deliberate
-        "fetch everything" run over a very large result set.
+        This is an optional safety guardrail against a runaway search over a huge
+        result set: set it to a number to cap how much one endpoint may return.
+        It defaults to `None` (no cap), so a search fetches every matching record
+        unless you ask it not to.
+
+        Turning this off does not remove the loop protection: an endpoint that asks
+        us to re-request a page we already fetched still stops with a
+        [PaginationLimitError][(m).], because that would otherwise page forever.
+
+    warn_on_pagination
+        Whether to warn (with a [PaginationWarning][(m).]) when a search matches more
+        records than fit in one page, so you know it will make several requests and
+        may take a while.
+
+        On by default; pass `False` to silence it (e.g. once you already expect the
+        search to be large). The warning is its own category, so it can also be
+        silenced or escalated on its own through the [warnings][] machinery.
 
     client
         The HTTP client to search with.
@@ -816,13 +901,15 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
                 # If either of those assumptions changed, this would break.
                 # We will have to be more careful in higher-level functions
                 # to do queries over multiple projects (PR3).
-                pages = _collect_all_pages(
+                pages = collect_all_pages(
                     client,
                     facade,
                     request,
                     raw,
                     host=host,
+                    limit=limit,
                     max_results=max_results,
+                    warn_on_pagination=warn_on_pagination,
                     api_call_observer=api_call_observer,
                     processor=processor,
                 )

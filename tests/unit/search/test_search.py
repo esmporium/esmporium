@@ -27,6 +27,7 @@ from esmporium.search import (
     ESGFNGResultParser,
     NoAPIAnsweredError,
     PaginationLimitError,
+    PaginationWarning,
     SearchAPIESGF1Solr,
     SearchAPIESGFNGSTAC,
     SearchAPIFacade,
@@ -693,3 +694,47 @@ def test_search_raises_when_an_endpoint_loops():
 
     with pytest.raises(PaginationLimitError, match="already requested"):
         search(QUERY_CMIP6, selector, limit=1, client=client_for(handler))
+
+
+def test_search_warns_when_it_will_paginate():
+    """A search matching more than one page's worth warns that it will page"""
+    selector = build_list_selector([make_facade_cmip6_esgf1("host")])
+
+    # 6 matches at 2 per page is 3 pages, so it warns and names the numbers.
+    with pytest.warns(PaginationWarning, match="matched 6 records"):
+        search(
+            QUERY_CMIP6,
+            selector,
+            limit=2,
+            client=client_for(paginated_solr(6, 2)),
+        )
+
+
+def test_warn_on_pagination_false_silences_the_warning(recwarn):
+    """The pagination warning is opt-out: `warn_on_pagination=False` stops it"""
+    selector = build_list_selector([make_facade_cmip6_esgf1("host")])
+
+    search(
+        QUERY_CMIP6,
+        selector,
+        limit=2,
+        warn_on_pagination=False,
+        client=client_for(paginated_solr(6, 2)),
+    )
+
+    assert not [w for w in recwarn if isinstance(w.message, PaginationWarning)]
+
+
+def test_search_does_not_warn_when_the_results_fit_in_one_page(recwarn):
+    """A search whose matches all fit in one page does not warn about paging"""
+    selector = build_list_selector([make_facade_cmip6_esgf1("host")])
+
+    # 2 matches at 5 per page is a single page: no paging, so nothing to warn about.
+    search(
+        QUERY_CMIP6,
+        selector,
+        limit=5,
+        client=client_for(paginated_solr(2, 5)),
+    )
+
+    assert not [w for w in recwarn if isinstance(w.message, PaginationWarning)]
