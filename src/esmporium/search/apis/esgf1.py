@@ -15,7 +15,7 @@ from esmporium.search.apis.protocol import (
     LimitOutOfRangeError,
     NoFacetValuesReturnedError,
     NoSearchResultDocumentsError,
-    read_response_path,
+    NoSearchResultNumberOfMatchesReturnedError,
     single_facet_value_or_none,
 )
 from esmporium.search.apis.request import Request
@@ -135,6 +135,43 @@ def solr_extract_result_documents(raw: dict[str, Any]) -> list[dict[str, Any]]:
     return res
 
 
+def solr_n_matches(raw: dict[str, Any]) -> int:
+    """
+    Get the number of records that matched a search from a Solr-shaped response
+
+    Note: this is not the same as the number of results in `raw`.
+    Solr has the idea of 'limit', which means that the number of results returned
+    can differ from the total number of records which matched a given query.
+
+    Parameters
+    ----------
+    raw
+        The raw search result to read
+
+    Returns
+    -------
+    :
+        The number of records that matched the search
+
+    Raises
+    ------
+    NoSearchResultNumberOfMatchesReturnedError
+        `raw` does not report the number of records that matched the search
+    """
+    num_found = raw.get("response", {}).get("numFound")
+    if isinstance(num_found, int):
+        return num_found
+
+    elif num_found is not None:
+        msg = (
+            "We expected to get an integer at 'response.numFound', "
+            f"but instead got {num_found!r}"
+        )
+        raise TypeError(msg)
+
+    raise NoSearchResultNumberOfMatchesReturnedError(raw, "response.numFound")
+
+
 def solr_next_page_request(request: Request, raw: dict[str, Any]) -> Request | None:
     """
     Build the request for the page after a Solr-shaped response
@@ -172,9 +209,8 @@ def solr_next_page_request(request: Request, raw: dict[str, Any]) -> Request | N
         # so there is no next page to ask for.
         return None
 
-    num_found = read_response_path(
-        raw, "response.numFound", what="the total number of matches"
-    )
+    # Read the total the same way the result parser does, so it is defined once.
+    num_found = solr_n_matches(raw)
 
     offset = params.get("offset", 0)
     next_offset = offset + limit

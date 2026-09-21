@@ -8,7 +8,7 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from esmporium.search.apis.esgf1 import extract_one_element_list
+from esmporium.search.apis.esgf1 import extract_one_element_list, solr_n_matches
 from esmporium.search.apis.esgfng import stac_nodes
 from esmporium.search.apis.protocol import (
     NoSearchResultNumberOfMatchesReturnedError,
@@ -128,43 +128,6 @@ def _single_row(
     )
 
     return DatasetFacets.model_validate({**base, **columns})
-
-
-def solr_n_matches(raw: dict[str, Any]) -> int:
-    """
-    Get the number of records that matched a search from a Solr-shaped response
-
-    Note: this is not the same as the number of results in `raw`.
-    Solr has the idea of 'limit', which means that the number of results returned
-    can differ from the total number of records which matched a given query.
-
-    Parameters
-    ----------
-    raw
-        The raw search result to read
-
-    Returns
-    -------
-    :
-        The number of records that matched the search
-
-    Raises
-    ------
-    NoSearchResultNumberOfMatchesReturnedError
-        `raw` does not report the number of records that matched the search
-    """
-    num_found = raw.get("response", {}).get("numFound")
-    if isinstance(num_found, int):
-        return num_found
-
-    elif num_found is not None:
-        msg = (
-            "We expected to get an integer at 'response.numFound', "
-            f"but instead got {num_found!r}"
-        )
-        raise TypeError(msg)
-
-    raise NoSearchResultNumberOfMatchesReturnedError(raw, "response.numFound")
 
 
 def _n_matches_from(

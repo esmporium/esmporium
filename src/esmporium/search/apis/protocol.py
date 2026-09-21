@@ -657,13 +657,6 @@ class SearchAPI(Protocol):
         """
         ...
 
-    # TODO: When we introduce parallelisation, this is the place where
-    # Solr and STAC will differentiate. We will keep this workflow for STAC
-    # which cannot parallelise, but will need to build an alternative for
-    # Solr so that multiple page requests can be sent simultaneously.
-    # Note for STAC multiple search queries may be sent simultaneously,
-    # it is pages that have to be requested consecutively until no more
-    # results are returned.
     def next_page_request(
         self, request: Request, raw: dict[str, Any]
     ) -> Request | None:
