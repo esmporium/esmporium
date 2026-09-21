@@ -706,7 +706,7 @@ def test_search_raises_when_the_result_cap_is_exceeded():
     """The max_results guardrail stops a runaway search"""
     selector = build_list_selector([make_facade_cmip6_esgf1("host")])
 
-    with pytest.raises(PaginationLimitError, match="max_results"):
+    with pytest.raises(PaginationLimitError, match="more careful check"):
         search(
             QUERY_CMIP6,
             selector,
