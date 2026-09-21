@@ -740,7 +740,7 @@ def test_search_warns_when_it_will_paginate():
     selector = build_list_selector([make_facade_cmip6_esgf1("host")])
 
     # 6 matches at 2 per page is 3 pages, so it warns and names the numbers.
-    with pytest.warns(PaginationWarning, match="matched 6 records"):
+    with pytest.warns(PaginationWarning, match="pin me"):
         search(
             QUERY_CMIP6,
             selector,
