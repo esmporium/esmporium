@@ -204,9 +204,20 @@ def solr_next_page_request(request: Request, raw: dict[str, Any]) -> Request | N
     """
     params = request.params or {}
     limit = params.get("limit")
-    if not isinstance(limit, int):
-        # raise or warn here
-    
+    # A missing `offset` is expected: the first request (see `build_search_request`)
+    # never sets one, and page one is offset 0. From page two on, this function is what
+    # adds it (via the `replace` below), so `limit` and `offset` are always on a request
+    # *we* built, never read from the response. A non-int (or missing `limit`) here is
+    # therefore our own bug, not a bad answer from the API, so we fail loudly with a
+    # plain error rather than the response-level `UnreadableResponseError`.
+    offset = params.get("offset", 0)
+    if not isinstance(limit, int) or not isinstance(offset, int):
+        msg = (
+            "Solr paging expects an int 'limit' and 'offset' on the request we built, "
+            f"got limit={limit!r}, offset={offset!r}."
+        )
+        raise TypeError(msg)
+
     if limit <= 0:
         # A page size of zero or less (e.g. a facet-values request) can never advance,
         # so there is no next page to ask for.
@@ -214,7 +225,6 @@ def solr_next_page_request(request: Request, raw: dict[str, Any]) -> Request | N
 
     num_found = solr_n_matches(raw)
 
-    offset = params.get("offset", 0)
     next_offset = offset + limit
     if next_offset >= num_found:
         return None

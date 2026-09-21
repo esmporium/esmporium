@@ -667,10 +667,14 @@ class PaginationWarning(UserWarning):
     """
     Warns that a search is large enough that it will page through several requests
 
-    Should be used (normally behind a guard which can turn the warning off)
-    when an endpoint reports more matches than fit in one page,
-    so the caller knows the search will make several
+    Emitted (unless `warn_on_pagination` is turned off) when an endpoint reports more
+    matches than fit in one page, so the caller knows the search will make several
     requests and may take a while before it is done.
+
+    A [UserWarning][] so it shows by default, and its own category so it is easy to
+    silence on its own: filter it with
+    `warnings.simplefilter("ignore", PaginationWarning)`,
+    or escalate it to an error in tests, without touching any other warning.
     """
 
 
@@ -870,7 +874,7 @@ def collect_all_pages(  # noqa: PLR0913 - the keyword-only extras are injection 
             api_call_observer,
             read_n_matches=facade.get_n_matches,
         )
-        # Read the count directly (not via _result_count_or_none): a search response
+        # Read the count directly: a search response
         # that omits its total is one we cannot use, so let the raise propagate to the
         # UnreadableResponseError handler below rather than swallowing it to None.
         n_matches = facade.get_n_matches(raw)
@@ -996,6 +1000,10 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
         It defaults to `None` (no cap), so a search fetches every matching record
         unless you ask it not to.
 
+        Turning this off does not remove the loop protection: an endpoint that asks
+        us to re-request a page we already fetched still stops with a
+        [PaginationLimitError][(m).], because that would otherwise page forever.
+
     warn_on_pagination
         Whether to warn (with a [PaginationWarning][(m).]) when a search matches more
         records than fit in one page, so you know it will make several requests and
@@ -1042,11 +1050,6 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
         Paging through an endpoint hit the `max_results` cap, or the endpoint asked
         us to re-request a page we had already requested. Pages fetched before this
         have already been handed to `processor`.
-        
-    Warns
-    ------
-    PaginationWarning
-        [text here]
     """
     canonical = to_canonical(query)
 
