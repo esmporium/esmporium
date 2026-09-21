@@ -706,7 +706,14 @@ def test_search_raises_when_the_result_cap_is_exceeded():
     """The max_results guardrail stops a runaway search"""
     selector = build_list_selector([make_facade_cmip6_esgf1("host")])
 
-    with pytest.raises(PaginationLimitError, match="safety cap"):
+    with pytest.raises(
+        PaginationLimitError,
+        match=re.escape(
+            f"While paging results from {key_cmip6_esgf1('host')}: collected more "
+            "than the max_results safety cap of 3. Raise max_results (or set it to "
+            "None) to fetch more."
+        ),
+    ):
         search(
             QUERY_CMIP6,
             selector,
@@ -731,7 +738,14 @@ def test_search_raises_when_an_endpoint_loops():
             },
         )
 
-    with pytest.raises(PaginationLimitError, match="page forever"):
+    with pytest.raises(
+        PaginationLimitError,
+        match=re.escape(
+            f"While paging results from {get_facade_key(make_facade_cmip6_stac())}: "
+            "the endpoint asked us to re-request a page we had already requested, "
+            "which would page forever."
+        ),
+    ):
         search(QUERY_CMIP6, selector, limit=1, client=client_for(handler))
 
 
@@ -740,7 +754,15 @@ def test_search_warns_when_it_will_paginate():
     selector = build_list_selector([make_facade_cmip6_esgf1("host")])
 
     # 6 matches at 2 per page is 3 pages, so it warns and names the numbers.
-    with pytest.warns(PaginationWarning, match="page through about"):
+    with pytest.warns(
+        PaginationWarning,
+        match=re.escape(
+            "This search of host matched 6 records but fetches 2 per page, so it "
+            "will page through about 3 requests and may take a while. Raise `limit` "
+            "to fetch more records per request, narrow your query, or pass "
+            "warn_on_pagination=False to silence this."
+        ),
+    ):
         search(
             QUERY_CMIP6,
             selector,

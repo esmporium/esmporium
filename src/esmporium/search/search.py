@@ -12,6 +12,7 @@ import time
 import warnings
 from collections.abc import Collection
 from dataclasses import dataclass
+from functools import partial
 from typing import TYPE_CHECKING, Any, TypeAlias
 
 import httpx
@@ -867,13 +868,14 @@ def collect_all_pages(  # noqa: PLR0913 - the keyword-only extras are injection 
     n_matches: int | None = None
     seen: set[str] = set()
     try:
-        raw = fire(
-            client,
-            api,
-            request,
-            api_call_observer,
+        fire_here = partial(
+            fire,
+            client=client,
+            api=api,
+            api_call_observer=api_call_observer,
             read_n_matches=facade.get_n_matches,
         )
+        raw = fire_here(request=request)
         # Read the count directly: a search response
         # that omits its total is one we cannot use, so let the raise propagate to the
         # UnreadableResponseError handler below rather than swallowing it to None.
@@ -910,13 +912,7 @@ def collect_all_pages(  # noqa: PLR0913 - the keyword-only extras are injection 
             seen.add(fingerprint)
 
             request = nxt
-            raw = fire(
-                client,
-                api,
-                nxt,
-                api_call_observer,
-                read_n_matches=facade.get_n_matches,
-            )
+            raw = fire_here(request=nxt)
     except SearchAPIRequestError as exc:
         return FacadePages(
             tuple(collected),

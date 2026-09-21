@@ -12,6 +12,7 @@ from esmporium.search.apis import (
     LimitOutOfRangeError,
     NoFacetValuesReturnedError,
     NoSearchResultDocumentsError,
+    Request,
     SearchAPIESGF1Solr,
     UnreadableResponseError,
 )
@@ -116,6 +117,29 @@ def test_next_page_request_without_a_total_raises():
 
     with pytest.raises(UnreadableResponseError, match=re.escape("response.numFound")):
         api().next_page_request(request, {"response": {"docs": []}})
+
+
+def test_next_page_request_without_a_limit_raises():
+    """`limit` must be on the request we built; a request missing it is our own bug"""
+    # A request with no `limit` in its params is one we should never build. We fail
+    # loudly with a clear message, rather than letting `None` flow into arithmetic and
+    # surface as a bare, contextless TypeError somewhere downstream.
+    request = Request("GET", "/esg-search/search", params={"distrib": "true"})
+    raw = {"response": {"numFound": 100, "docs": []}}
+
+    with pytest.raises(TypeError, match="limit"):
+        api().next_page_request(request, raw)
+
+
+def test_next_page_request_with_a_non_int_offset_raises():
+    """`offset`, when present, is one we added ourselves, so a non-int is our bug"""
+    request = Request(
+        "GET", "/esg-search/search", params={"limit": 10, "offset": "nope"}
+    )
+    raw = {"response": {"numFound": 100, "docs": []}}
+
+    with pytest.raises(TypeError, match="offset"):
+        api().next_page_request(request, raw)
 
 
 def test_extract_result_documents_reads_the_records():

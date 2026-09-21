@@ -203,24 +203,36 @@ def solr_next_page_request(request: Request, raw: dict[str, Any]) -> Request | N
         `raw` does not report the total number of matches at `response.numFound`
     """
     params = request.params or {}
-    limit = params.get("limit")
+
     # A missing `offset` is expected: the first request (see `build_search_request`)
     # never sets one, and page one is offset 0. From page two on, this function is what
-    # adds it (via the `replace` below), so `limit` and `offset` are always on a request
-    # *we* built, never read from the response. A non-int (or missing `limit`) here is
-    # therefore our own bug, not a bad answer from the API, so we fail loudly with a
-    # plain error rather than the response-level `UnreadableResponseError`.
+    # adds it (via the `replace` below). So `offset` is always on a request *we* built,
+    # never read from the response: a non-int is our own bug, not a bad answer from the
+    # API, so we fail loudly with a plain error.
     offset = params.get("offset", 0)
-    if not isinstance(limit, int) or not isinstance(offset, int):
+    if not isinstance(offset, int):
         msg = (
-            "Solr paging expects an int 'limit' and 'offset' on the request we built, "
-            f"got limit={limit!r}, offset={offset!r}."
+            "Solr paging expects an int 'offset' on the request we built, "
+            f"got {offset!r}."
+        )
+        raise TypeError(msg)
+
+    # `limit` is required: every request we build carries it (from build_search_request)
+    # and it is the page size we advance `offset` by. Missing or non-int here is a
+    # request we built (or were handed) wrong, not a bad answer from the API, so this is
+    # a plain error rather than the response-level `UnreadableResponseError`.
+    limit = params.get("limit")
+    if not isinstance(limit, int):
+        msg = (
+            "Solr paging needs an int 'limit' on the request to know the page size, "
+            f"got {limit!r}. This is a request we built without one, not a bad API "
+            "answer."
         )
         raise TypeError(msg)
 
     if limit <= 0:
-        # A page size of zero or less (e.g. a facet-values request) can never advance,
-        # so there is no next page to ask for.
+        # A page size of zero or less (e.g. a facet-values request, which uses
+        # `min_limit=0`) can never advance, so there is no next page to ask for.
         return None
 
     num_found = solr_n_matches(raw)
