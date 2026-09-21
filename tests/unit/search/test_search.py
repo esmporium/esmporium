@@ -731,7 +731,7 @@ def test_search_raises_when_an_endpoint_loops():
             },
         )
 
-    with pytest.raises(PaginationLimitError, match="already requested"):
+    with pytest.raises(PaginationLimitError, match="pin more clearly"):
         search(QUERY_CMIP6, selector, limit=1, client=client_for(handler))
 
 
