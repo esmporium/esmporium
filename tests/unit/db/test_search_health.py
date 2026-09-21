@@ -316,7 +316,10 @@ def test_selector_injects_into_search_and_is_asked_in_ranked_order(engine):
         client=client_for(lambda request: solr_response(1)),
     )
 
-    assert list(outcome.datasets) == ["fast", "slow"]
+    assert list(outcome.parsed_docs) == [
+        ("fast", "SearchAPIESGF1Solr", "ESGF1CMIP6ParametersQueryStyle"),
+        ("slow", "SearchAPIESGF1Solr", "ESGF1CMIP6ParametersQueryStyle"),
+    ]
 
 
 def test_selector_needs_exactly_one_project(engine):

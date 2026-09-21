@@ -10,12 +10,18 @@ import math
 import shlex
 import time
 import warnings
+from collections.abc import Collection
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 import httpx
 
-from esmporium.query import QueryProtocol, to_canonical
+from esmporium.formatting import readable_list
+from esmporium.query import (
+    QueryProtocol,
+    facet_spec,
+    to_canonical,
+)
 from esmporium.search.apis import (
     NoSearchResultNumberOfMatchesReturnedError,
     Request,
@@ -26,6 +32,7 @@ from esmporium.search.health import SearchAPICall, SearchAPICallObserver
 from esmporium.search.result_parsing import ParsedDocument, ResultProcessor
 from esmporium.search.search_api_facade import (
     DEFAULT_SELECTOR,
+    ClashingFacetsError,
     NMatchesReader,
     SearchAPIFacade,
     SearchAPIFacadeSelector,
@@ -36,6 +43,39 @@ if TYPE_CHECKING:
     from esmporium.search.check_query_values import CouldNotGetAllowedValuesError
 
 logger = logging.getLogger(__name__)
+
+FacadeKey: TypeAlias = tuple[str, str, str]
+"""
+A key which identifies a given facade
+
+The first element is the host.
+The second is the type of search API this facade uses/assumes.
+The third is the query style used by this facade.
+"""
+
+
+def get_facade_key(facade: SearchAPIFacade) -> FacadeKey:
+    """
+    Get the key which identifies a facade
+
+    Each element can be served by more than one facade,
+    which is why we group them like this.
+
+    Parameters
+    ----------
+    facade
+        The facade to identify
+
+    Returns
+    -------
+    :
+        The facade's key
+    """
+    return (
+        facade.search_api.host,
+        type(facade.search_api).__name__,
+        facade.parameters.base_query_style.__name__,
+    )
 
 
 def get_url(api: SearchAPI, request: Request) -> str:
@@ -321,7 +361,9 @@ class CouldNotSearchError(RuntimeError):
     with something we could not read.
     """
 
-    def __init__(self, message: str, host: str, cause: Exception | None) -> None:
+    def __init__(
+        self, message: str, facade_key: FacadeKey, cause: Exception | None
+    ) -> None:
         """
         Initialise the error
 
@@ -330,14 +372,14 @@ class CouldNotSearchError(RuntimeError):
         message
             The message which says why we have no results
 
-        host
-            The host which gave us no results
+        facade_key
+            The facade which gave us no results
 
         cause
             What went wrong, if we know it, kept on `cause` for callers to inspect
         """
         super().__init__(message)
-        self.host = host
+        self.facade_key = facade_key
         self.cause = cause
 
 
@@ -346,14 +388,14 @@ class CouldNotGetSearchResponseError(CouldNotSearchError):
     Raised when an API does not answer a search
     """
 
-    def __init__(self, host: str, cause: Exception | None = None) -> None:
+    def __init__(self, facade_key: FacadeKey, cause: Exception | None = None) -> None:
         """
         Initialise the error
 
         Parameters
         ----------
-        host
-            The host which did not answer
+        facade_key
+            The facade which did not answer
 
         cause
             What went wrong, if we know it
@@ -363,9 +405,9 @@ class CouldNotGetSearchResponseError(CouldNotSearchError):
         """
         why = "" if cause is None else f" ({cause})"
         super().__init__(
-            f"{host} did not answer our search request{why}, "
+            f"{facade_key[0]} did not answer our search request{why}, "
             "so it has given us no results.",
-            host=host,
+            facade_key=facade_key,
             cause=cause,
         )
 
@@ -382,7 +424,7 @@ class CouldNotUseSearchResultsError(CouldNotSearchError):
 
     def __init__(
         self,
-        host: str,
+        facade_key: FacadeKey,
         cause: Exception,
         url: str | None = None,
     ) -> None:
@@ -391,8 +433,8 @@ class CouldNotUseSearchResultsError(CouldNotSearchError):
 
         Parameters
         ----------
-        host
-            The host whose answer we could not read
+        facade_key
+            The facade whose answer we could not read
 
         cause
             What we could not read, kept on `cause` for callers to inspect
@@ -404,21 +446,23 @@ class CouldNotUseSearchResultsError(CouldNotSearchError):
             what someone would need to ask the same question again.
         """
         super().__init__(
-            f"{host} answered our search request with something we could not read "
+            f"{facade_key} answered our search request "
+            "with something we could not read "
             f"({cause}), so it has given us no results."
             f"{f' We asked: {url}.' if url else ''}",
-            host=host,
+            facade_key=facade_key,
             cause=cause,
         )
         self.url = url
 
 
-class NoAPIAnsweredError(RuntimeError):
+class NoFacadeAnsweredError(RuntimeError):
     """
-    Raised when every API we asked failed to give us anything we could use
+    Raised when every facade we asked failed to give us anything we could use
 
-    "Failed" covers an API not answering and an API answering
-    with something we could not read: `failures` says which it was for each API.
+    "Failed" covers a facade not being able to handle the query,
+    an API not answering and an API answering with something we could not read:
+    `failures` says which it was for each API.
 
     Should carry all of the failures rather than only the last,
     because which APIs failed, and how, is the interesting part:
@@ -428,8 +472,8 @@ class NoAPIAnsweredError(RuntimeError):
 
     def __init__(
         self,
-        failures: tuple[CouldNotSearchError, ...]
-        | tuple[CouldNotGetAllowedValuesError, ...],
+        failures: dict[FacadeKey, CouldNotSearchError]
+        | dict[FacadeKey, CouldNotGetAllowedValuesError],
     ) -> None:
         """
         Initialise the error
@@ -437,14 +481,155 @@ class NoAPIAnsweredError(RuntimeError):
         Parameters
         ----------
         failures
-            Why each API gave us nothing we could use, in the order they were asked
+            Why each facade gave us nothing we could use, keyed by the facade key
         """
         self.failures = failures
-        asked = "\n".join(f"  - {failure}" for failure in failures)
+        asked = "\n".join(
+            f"  - {facade_key}: {failure}" for facade_key, failure in failures.items()
+        )
+        noun = "facade" if len(failures) == 1 else "facades"
         super().__init__(
-            f"Asked {len(failures)} API(s) and none of them gave us anything "
+            f"Asked {len(failures)} {noun} and none of them gave us anything "
             f"we could use:\n{asked}"
         )
+
+
+class ClashingFacetsForFacadeError(CouldNotSearchError):
+    """
+    Raised when `other_terms` sets values for facets that a query already sets
+
+    Unlike [ClashingFacetsError][(m).], this also gives context about the original query
+    and facade being used
+    (because the facade decides
+    how the original query's facet names are translated to API names).
+
+    other_terms is the escape hatch for facets we do not model,
+    so a name in other_terms which lands on a facet the query already sets is ambiguous:
+    there is no way to tell which value should win, so we refuse to guess.
+
+    This sub-classes [CouldNotSearchError][(m).]
+    because clashing facets prevent us from constructing a request
+    and therefore from searching,
+    but a query which clashes for one facade can be perfectly askable for another
+    so we want this to fall under the same 'banner'.
+    """
+
+    def __init__(
+        self,
+        query: QueryProtocol,
+        facade: SearchAPIFacade,
+        clashing: Collection[str],
+    ) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        query
+            The original query
+
+        facade
+            The facade being used
+
+        clashing
+            The facet names that clash,
+            once `query` has been translated into the API names required by `facade`.
+        """
+        self.query = query
+        self.facade = facade
+        self.clashing = tuple(sorted(clashing))
+
+        clashing_api_names = readable_list(self.clashing)
+        noun = "facet" if len(self.clashing) == 1 else "facets"
+        conjugation = "clashes" if len(self.clashing) == 1 else "clash"
+
+        # Figure out the canonical name the clashes map to, if any
+        spec_facade_parameters = facet_spec(facade.parameters.base_query_style)
+        api_name_to_canonical_map = {
+            v: k
+            for k, v in facade.parameters.get_mapping_to_api_facet_names(
+                {
+                    *spec_facade_parameters.facet_names,
+                    *spec_facade_parameters.canonical_to_native,
+                }
+            ).items()
+        }
+
+        clash_to_canonical_map = {
+            clash: api_name_to_canonical_map[clash]
+            for clash in self.clashing
+            if clash in api_name_to_canonical_map
+        }
+
+        # Figure out the query name each clash maps to
+        spec_query = facet_spec(type(query))
+        clash_to_query_map_canonical = {
+            clash: spec_query.canonical_to_native[maybe_canonical]
+            for clash, maybe_canonical in clash_to_canonical_map.items()
+            if maybe_canonical not in spec_query.query_specific_facets
+        }
+        clash_to_query_map_query_specific = {
+            clash: maybe_query_specific
+            for clash, maybe_query_specific in clash_to_canonical_map.items()
+            if maybe_query_specific in spec_query.query_specific_facets
+            # Don't need to check spec_facade_parameters,
+            # the facet would have caused an error already there
+            # if it wasn't supported by spec_facade_parameters.
+        }
+
+        # The two are keyed by different kinds of facet, so neither can shadow
+        # the other. Anything the query does not set (e.g. a facet the facade
+        # sets itself) is already gone: it never made it into the maps.
+        clash_to_query_map = {
+            **clash_to_query_map_canonical,
+            **clash_to_query_map_query_specific,
+        }
+
+        # A clash we could not map back is a facet the facade puts in the request
+        # itself (STAC's `collection`, say, which it works out from the project)
+        # rather than one the query names, so there is no query name to offer
+        # as the alternative to setting it in `other_terms`.
+        mapped = tuple(clash for clash in self.clashing if clash in clash_to_query_map)
+        unmapped = tuple(
+            clash for clash in self.clashing if clash not in clash_to_query_map
+        )
+
+        # Create our relevant map from query terms to API terms,
+        # in the order the clashes are reported in
+        query_to_clash_map_relevant = {
+            clash_to_query_map[clash]: clash for clash in mapped
+        }
+        clashing_query_names = readable_list(tuple(query_to_clash_map_relevant))
+
+        # Store key results
+        self.query_to_api_map_relevant = query_to_clash_map_relevant
+
+        advice = ""
+        if mapped:
+            advice += (
+                f"The relevant mapping from query names to API names is: "
+                f"{query_to_clash_map_relevant}. "
+                f"Either set {clashing_query_names} via the query "
+                f"or set {readable_list(mapped)} via `other_terms`, don't do both. "
+            )
+
+        if unmapped:
+            verb = "is" if len(unmapped) == 1 else "are"
+            pronoun = "it" if len(unmapped) == 1 else "they"
+            advice += (
+                f"{readable_list(unmapped)} {verb} set by the facade itself "
+                "rather than by a facet of the query, "
+                f"so {pronoun} cannot be set via `other_terms`. "
+            )
+
+        msg = (
+            f"`other_terms` {noun} {clashing_api_names} {conjugation} "
+            "with the query's facet names, "
+            "once the query's facet names are translated to the API's names. "
+            f"{advice}"
+            f"{query=}"
+        )
+        super().__init__(msg, facade_key=get_facade_key(facade), cause=None)
 
 
 class PaginationLimitError(RuntimeError):
@@ -457,21 +642,36 @@ class PaginationLimitError(RuntimeError):
     otherwise loop forever.
     """
 
-    def __init__(self, host: str, message: str) -> None:
+    def __init__(self, facade_key: FacadeKey, message: str) -> None:
         """
         Initialise the error
 
         Parameters
         ----------
-        host
-            The host we were paging through
+        facade_key
+            The facade we were paging through
 
         message
             Why we stopped, phrased to follow on from "while paging results from
-            <host>: "
+            <facade>: "
         """
-        self.host = host
-        super().__init__(f"While paging results from {host}: {message}")
+        self.facade_key = facade_key
+        super().__init__(f"While paging results from {facade_key}: {message}")
+
+
+class PaginationWarning(UserWarning):
+    """
+    Warns that a search is large enough that it will page through several requests
+
+    Emitted (unless `warn_on_pagination` is turned off) when an endpoint reports more
+    matches than fit in one page, so the caller knows the search will make several
+    requests and may take a while before it is done.
+
+    A [UserWarning][] so it shows by default, and its own category so it is easy to
+    silence on its own: filter it with
+    `warnings.simplefilter("ignore", PaginationWarning)`,
+    or escalate it to an error in tests, without touching any other warning.
+    """
 
 
 @dataclass(frozen=True)
@@ -486,45 +686,21 @@ class SearchOutcome:
     is surfaced explicitly as `n_matches`.
     """
 
-    datasets: dict[str, tuple[ParsedDocument, ...]]
-    """
-    The parsed documents each endpoint answered with, keyed by host
+    parsed_docs: dict[FacadeKey, tuple[ParsedDocument, ...]]
+    """The parsed documents each facade answered with, keyed by the facade"""
 
-    These are all the documents across every page we fetched from that host, not
-    just the first page. If paging through a host failed part way, this holds the
-    pages we did get and that host is also in `failures`: comparing `len` here with
-    `n_matches` for that host shows how much is missing.
+    n_matches: dict[FacadeKey, int | None]
     """
-
-    n_matches: dict[str, int | None]
-    """
-    How many records each endpoint reported matched the search, keyed by host
+    How many records each facade reported matched the search, keyed by the facade
 
     This is the total matched,
-    which can exceed the number of documents returned in one page
-    (and, if paging failed part way, the number in `datasets`).
-    `None` for an endpoint whose response carried no count we could read.
+    which can exceed the number of documents returned in one page.
+    `None` for a facade whose response carried no count we could read.
     """
     # TODO: consider raising if we can't get the number of matches in future.
 
-    failures: dict[str, CouldNotSearchError]
-    """
-    Reasons we failed to get allowed search results, keyed by host
-
-    A host can be in both this and `datasets`: if paging succeeded for some pages
-    and then failed, the pages we got are kept in `datasets` and the failure that
-    stopped us is recorded here.
-    """
-
-
-class PaginationWarning(UserWarning):
-    """
-    Warns that a search is large enough that it will page through several requests
-
-    Emitted (unless `warn_on_pagination` is turned off) when an endpoint reports more
-    matches than fit in one page, so the caller knows the search will make several
-    requests and may take a while before it is done.
-    """
+    failures: dict[FacadeKey, CouldNotSearchError]
+    """Reasons we failed to get search results, keyed by the facade"""
 
 
 @dataclass(frozen=True)
@@ -606,13 +782,10 @@ def _warn_if_paginating(host: str, *, n_matches: int | None, limit: int) -> None
         return
 
     pages = math.ceil(n_matches / limit)
-    # @znicholls, makes sense to have this warning keyed by host rather than Facade?
-    # search results depends explicitly on host...
     warnings.warn(
         f"This search of {host} matched {n_matches:,} records but fetches "
-        f"{limit:,} per page, so it could page through about {pages:,} requests "
-        "and may take a while. Raise `limit` (maximum limit is 10_000)"
-        "to fetch more records per request, "
+        f"{limit:,} per page, so it will page through about {pages:,} requests "
+        "and may take a while. Raise `limit` to fetch more records per request, "
         "narrow your query, or pass warn_on_pagination=False to silence this.",
         PaginationWarning,
         stacklevel=2,
@@ -625,7 +798,6 @@ def collect_all_pages(  # noqa: PLR0913 - the keyword-only extras are injection 
     first_request: Request,
     first_raw: dict[str, Any],
     *,
-    host: str,
     limit: int,
     max_results: int | None,
     warn_on_pagination: bool,
@@ -642,7 +814,7 @@ def collect_all_pages(  # noqa: PLR0913 - the keyword-only extras are injection 
     Each page is handed to `processor` the moment it is parsed, so a failure part way
     still leaves the earlier pages saved. Such a failure is returned on the result
     rather than raised, so the caller can keep the pages we did get and record the
-    failure against the host.
+    failure against the facade.
 
     Parameters
     ----------
@@ -657,9 +829,6 @@ def collect_all_pages(  # noqa: PLR0913 - the keyword-only extras are injection 
 
     first_raw
         The first page of the answer, already fetched
-
-    host
-        The host we are paging through, used for the processor and for errors
 
     limit
         The page size that was asked for, i.e. the most records in one response
@@ -693,10 +862,11 @@ def collect_all_pages(  # noqa: PLR0913 - the keyword-only extras are injection 
         re-request a page we had already requested
     """
     api = facade.search_api
+    facade_key = get_facade_key(facade)
     collected: list[ParsedDocument] = []
     n_matches = _result_count_or_none(facade.get_n_matches, first_raw)
     if warn_on_pagination:
-        _warn_if_paginating(host, n_matches=n_matches, limit=limit)
+        _warn_if_paginating(facade_key[0], n_matches=n_matches, limit=limit)
     seen = {_request_fingerprint(first_request)}
 
     request = first_request
@@ -706,11 +876,11 @@ def collect_all_pages(  # noqa: PLR0913 - the keyword-only extras are injection 
             parsed = facade.parse_search_results(raw)
             collected.extend(parsed)
             if processor is not None:
-                processor(host, parsed)
+                processor(facade, parsed)
 
             if max_results is not None and len(collected) > max_results:
                 raise PaginationLimitError(
-                    host,
+                    facade_key,
                     f"collected more than the max_results safety cap of "
                     f"{max_results}. Raise max_results (or set it to None) to fetch "
                     "more.",
@@ -723,7 +893,7 @@ def collect_all_pages(  # noqa: PLR0913 - the keyword-only extras are injection 
             fingerprint = _request_fingerprint(nxt)
             if fingerprint in seen:
                 raise PaginationLimitError(
-                    host,
+                    facade_key,
                     "the endpoint asked us to re-request a page we had already "
                     "requested, which would page forever.",
                 )
@@ -742,7 +912,7 @@ def collect_all_pages(  # noqa: PLR0913 - the keyword-only extras are injection 
             tuple(collected),
             n_matches,
             completed=False,
-            failure=CouldNotGetSearchResponseError(host, cause=exc),
+            failure=CouldNotGetSearchResponseError(facade_key, cause=exc),
         )
     except UnreadableResponseError as exc:
         return FacadePages(
@@ -750,7 +920,7 @@ def collect_all_pages(  # noqa: PLR0913 - the keyword-only extras are injection 
             n_matches,
             completed=False,
             failure=CouldNotUseSearchResultsError(
-                host, cause=exc, url=get_url(api, request)
+                facade_key, cause=exc, url=get_url(api, request)
             ),
         )
 
@@ -797,7 +967,7 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
 
         When more records match than fit in one page, we page through the rest:
         every page is fetched, parsed and handed to `processor` as it arrives, and
-        the parsed documents from all pages end up in the outcome's `datasets`.
+        the parsed documents from all pages end up in the outcome's `parsed_docs`.
 
     max_results
         The most records to collect from one endpoint before stopping with a
@@ -832,7 +1002,7 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
         See [esmporium.search.health][] for how to build one.
 
     processor
-        Called with `(host, parsed_documents)` as soon as each endpoint answers,
+        Called with `(facade, parsed_documents)` as soon as each page is parsed,
         so its results can be acted on (e.g. saved) the moment they arrive
         rather than at the end.
         If `None` (the default),
@@ -850,8 +1020,8 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
     SelectorOfferedNoAPIFacadeError
         `selector` had no facade to offer for this query at all
 
-    NoAPIAnsweredError
-        The selector offered at least one endpoint
+    NoFacadeAnsweredError
+        The selector offered at least one facade
         and none of them gave us results we could use
 
     PaginationLimitError
@@ -861,22 +1031,23 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
     """
     canonical = to_canonical(query)
 
-    datasets: dict[str, tuple[ParsedDocument, ...]] = {}
-    n_matches: dict[str, int | None] = {}
-    failures: dict[str, CouldNotSearchError] = {}
+    parsed_docs: dict[FacadeKey, tuple[ParsedDocument, ...]] = {}
+    n_matches: dict[FacadeKey, int | None] = {}
+    failures: dict[FacadeKey, CouldNotSearchError] = {}
 
     owns_client = client is None
     client = client if client is not None else httpx.Client(follow_redirects=True)
 
-    asked_someone = False
+    selector_offered_an_option = False
 
     try:
         attempt = 0
         while (facade := selector(canonical, attempt)) is not None:
-            asked_someone = True
-            request = facade.build_search_request(canonical, limit)
-            host = facade.search_api.host
+            selector_offered_an_option = True
+            facade_key = get_facade_key(facade)
+
             try:
+                request = facade.build_search_request(canonical, limit)
                 raw = fire(
                     client,
                     facade.search_api,
@@ -884,8 +1055,14 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
                     api_call_observer,
                     read_n_matches=facade.get_n_matches,
                 )
+            except ClashingFacetsError as exc:
+                failures[facade_key] = ClashingFacetsForFacadeError(
+                    query=query, facade=facade, clashing=exc.clashing
+                )
             except SearchAPIRequestError as exc:
-                failures[host] = CouldNotGetSearchResponseError(host, cause=exc)
+                failures[facade_key] = CouldNotGetSearchResponseError(
+                    facade_key, cause=exc
+                )
             else:
                 # The facade knows this host's format and project, so it turns the raw
                 # answer into datasets here, the moment it arrives, paging through the
@@ -906,7 +1083,6 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
                     facade,
                     request,
                     raw,
-                    host=host,
                     limit=limit,
                     max_results=max_results,
                     warn_on_pagination=warn_on_pagination,
@@ -917,12 +1093,12 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
                 # but completed answer (no matches) belongs here too, so we key on
                 # "we parsed at least the first page", not "we collected something".
                 if pages.completed or pages.collected:
-                    datasets[host] = pages.collected
-                    n_matches[host] = pages.n_matches
+                    parsed_docs[facade_key] = pages.collected
+                    n_matches[facade_key] = pages.n_matches
                 if pages.failure is not None:
-                    failures[host] = pages.failure
+                    failures[facade_key] = pages.failure
 
-                # Only a host we fully paged through counts as "a result": a partial
+                # Only a facade we fully paged through counts as "a result": a partial
                 # answer should not stop us asking the next endpoint for a complete one.
                 if pages.completed and stop_at_first_result:
                     break
@@ -933,10 +1109,10 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
         if owns_client:
             client.close()
 
-    if not asked_someone:
+    if not selector_offered_an_option:
         raise SelectorOfferedNoAPIFacadeError(canonical, selector)
 
-    if not datasets and failures:
-        raise NoAPIAnsweredError(tuple(failures.values()))
+    if not parsed_docs and failures:
+        raise NoFacadeAnsweredError(failures)
 
-    return SearchOutcome(datasets, n_matches, failures)
+    return SearchOutcome(parsed_docs, n_matches, failures)
