@@ -21,6 +21,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from dataclasses import field as dcfield
 from enum import Enum
+from typing import cast
 
 import httpx
 
@@ -39,6 +40,7 @@ from esmporium.search.apis import (
 )
 from esmporium.search.health import SearchAPICallObserver
 from esmporium.search.search import (
+    AllSubQueriesFailedError,
     FacadeKey,
     NoFacadeAnsweredError,
     SearchAPIRequestError,
@@ -544,6 +546,18 @@ class ValueCheckOutcome:
     failures: dict[FacadeKey, CouldNotGetAllowedValuesError]
     """Reasons we failed to get allowed values, keyed by the facade"""
 
+    @property
+    def answered(self) -> bool:
+        """
+        Whether any facade answered, i.e. this is a real answer and not a pure failure
+
+        `False` only for the empty, failures-only outcome that the multi-query
+        [check_query_values][(m).] puts in place of a sub-query whose endpoints all
+        failed, so a caller can tell a project that was checked from one that could not
+        be reached (the latter has `answered` `False` and a populated `failures`).
+        """
+        return bool(self.reports)
+
 
 def check_query_values_single_project(  # noqa: PLR0913 - the keyword-only extras are deliberate injection seams
     query: QueryProtocol,
@@ -678,26 +692,13 @@ def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberat
     Check one or more queries, over one or more projects, against the APIs
 
     This is the high-level entry point, and the value-checking mirror of
-    [`esmporium.search.search`][]: each query may name one *or more* projects; we split
-    every query into one single-project query per project (via
-    [translate_to_projects][esmporium.query.translate.translate_to_projects]) and check
+    [`esmporium.search.search`][]: each query must name one *or more* projects,
+    we split every query into one single-project query per project and check
     each through [check_query_values_single_project][(m).].
 
-    Unlike [`esmporium.search.search`][], nothing is saved: value-checking only reads
-    and reports, so there is no processor here, just the outcomes handed back to you.
-    This is the opt-in helper to reach for when a search came back empty and you want to
-    know whether a value was mistyped; see [check_query_values_single_project][(m).] for
-    what each project's check does and what it can and cannot tell you.
-
-    A query which names no project is refused: splitting raises
-    [NoTargetProjectError][esmporium.query.translate.NoTargetProjectError] before any
-    endpoint is contacted, so a bad query in the batch stops the whole call before it
-    does anything.
-
-    By default the sub-queries run one after another. Pass `max_workers > 1` to run them
+    By default the sub-queries run sequentially. Pass `max_workers > 1` to run them
     concurrently in a thread pool: the work is network-bound, so this is usually a large
-    win when there are several sub-queries. Value-checking writes nothing, so there is
-    no database concurrency to arrange (unlike [`esmporium.search.search`][]).
+    win when there are several sub-queries.
 
     Parameters
     ----------
@@ -742,18 +743,23 @@ def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberat
         [translate_to_projects][esmporium.query.translate.translate_to_projects]
         yields them).
 
+        A sub-query whose endpoints all failed still gets an entry, in place: an empty
+        outcome carrying that sub-query's `failures` and reporting `answered` as
+        `False`. Only a total failure (no sub-query answered) raises instead.
+
     Raises
     ------
     NoTargetProjectError
         A query in `queries` names no project. Raised while splitting, before any check
         happens.
 
-    Notes
-    -----
-    A sub-query that fails outright (e.g. every endpoint it was offered failed) raises,
-    just as [check_query_values_single_project][(m).] does; that error propagates and
-    stops the run. Aggregating partial failures across sub-queries is deliberately left
-    for later.
+    NoFacadeAnsweredError
+        Every sub-query failed and there was exactly one, so its failure is re-raised
+        unchanged.
+
+    AllSubQueriesFailedError
+        Every sub-query failed and there were several, so all their failures are
+        gathered into one error rather than any being lost.
     """
     # Split every query up front, so a query with no project blows up before we contact
     # any endpoint.
@@ -765,31 +771,51 @@ def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberat
     owns_client = client is None
     client = client if client is not None else httpx.Client(follow_redirects=True)
 
-    def run_one(sub_query: QueryProtocol) -> ValueCheckOutcome:
+    def run_one(
+        sub_query: QueryProtocol,
+    ) -> tuple[ValueCheckOutcome, NoFacadeAnsweredError | None]:
         # Each check is independent and shares nothing mutable, so it is safe to call
         # from a thread. `client` is shared: httpx.Client is thread-safe for concurrent
         # requests.
-        return check_query_values_single_project(
-            sub_query,
-            selector,
-            stop_at_first_result=stop_at_first_result,
-            close_matches=close_matches,
-            client=client,
-            api_call_observer=api_call_observer,
-        )
+        try:
+            outcome = check_query_values_single_project(
+                sub_query,
+                selector,
+                stop_at_first_result=stop_at_first_result,
+                close_matches=close_matches,
+                client=client,
+                api_call_observer=api_call_observer,
+            )
+        except NoFacadeAnsweredError as exc:
+            # This sub-query's endpoints all failed. Keep going: fold it into an empty
+            # outcome carrying the failures, so a caller still gets the sub-queries that
+            # did answer. Anything else propagates and stops the whole run.
+            # `exc.failures` came from the value-check path, hence that variant.
+            failures = cast(
+                "dict[FacadeKey, CouldNotGetAllowedValuesError]", exc.failures
+            )
+            return ValueCheckOutcome({}, failures), exc
+        return outcome, None
 
     try:
         if max_workers is None or max_workers == 1 or len(sub_queries) <= 1:
-            outcomes: list[ValueCheckOutcome] = [run_one(sq) for sq in sub_queries]
+            results = [run_one(sq) for sq in sub_queries]
         else:
             # `map` preserves input order across the pool.
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                outcomes = list(executor.map(run_one, sub_queries))
+                results = list(executor.map(run_one, sub_queries))
     finally:
         if owns_client:
             client.close()
 
-    return tuple(outcomes)
+    caught = [exc for _, exc in results if exc is not None]
+    if caught and len(caught) == len(results):
+        # Every sub-query failed, so there is nothing to return: fail loudly, as above.
+        if len(caught) == 1:
+            raise caught[0]
+        raise AllSubQueriesFailedError(tuple(caught))
+
+    return tuple(outcome for outcome, _ in results)
 
 
 def check_against_patterns(

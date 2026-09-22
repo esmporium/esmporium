@@ -348,12 +348,6 @@ def build_result_processor_factory(
     transaction, so one that finishes is committed and durable before the next begins,
     and what lets a parallel search give each worker its own session.
 
-    If you use this with a parallel search (`search(..., max_workers > 1)`) against a
-    shared **SQLite** database, first configure `engine` with
-    [configure_sqlite_for_concurrency][esmporium.db.configure_sqlite_for_concurrency]:
-    default SQLite fails a second concurrent writer immediately, so the workers' commits
-    would otherwise collide.
-
     Parameters
     ----------
     engine

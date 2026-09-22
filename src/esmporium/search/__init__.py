@@ -62,6 +62,7 @@ from esmporium.search.result_parsing import (
 )
 from esmporium.search.retry import build_transient_retrying
 from esmporium.search.search import (
+    AllSubQueriesFailedError,
     CouldNotGetSearchResponseError,
     CouldNotSearchError,
     CouldNotUseSearchResultsError,
@@ -138,6 +139,7 @@ __all__ = [
     "INBUILT_SEARCH_API_FACADE_STORE",
     "SOLR_FORMAT_TAG",
     "STAC_FORMAT_TAG",
+    "AllSubQueriesFailedError",
     "AllowedValues",
     "ClashingFacetsError",
     "CouldNotGetAllowedValuesError",

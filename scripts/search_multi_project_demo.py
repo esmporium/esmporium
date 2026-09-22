@@ -9,30 +9,7 @@ give it.
 
 This demo builds ONE query that names three projects, so `search` splits it into three
 sub-queries (CMIP5, CMIP6, CMIP7). It then runs the whole thing twice against throwaway
-databases:
-
-- serially (`max_workers=None`, the default): the sub-queries run one after another; and
-- in parallel (`max_workers > 1`): the sub-queries run at once in a thread pool.
-
-For each run it prints the wall-clock time next to the total response time ESGF spent on
-the requests. Serially those two are close; in parallel the wall clock is much smaller
-than the sum, because the requests overlap -- that gap is the win. Both runs save the
-same rows.
-
-For the parallel run the engine is prepared with `configure_sqlite_for_concurrency`
-first: that (WAL + busy_timeout) is what lets several workers commit to one SQLite
-database without tripping over each other. It is harmless for the serial run, so the
-demo always applies it.
-
-`search` also accepts a *list* of queries (e.g. one narrow project-specific query per
-project, which you need when a facet value is spelt differently per project -- CMIP5's
-`model="ACCESS1.0"` vs CMIP6's `source_id="ACCESS-CM2"`); those are parallelised the
-same way. This demo keeps to the single multi-project query to show the split clearly.
-
-Run it:
-
-    python scripts/search_multi_project_demo.py
-    python scripts/search_multi_project_demo.py --max-workers 3 --verbose
+databases; serially, then in parallel in a thread pool.
 """
 
 from __future__ import annotations
@@ -58,9 +35,9 @@ from esmporium.search import search
 
 # One query, three projects. `search` splits this into a CMIP5, a CMIP6 and a CMIP7
 # sub-query, translating the shared facet names into each project's own dialect. The
-# facet *values* here (variable, reporting interval, experiment) are spelt the same
-# across projects, so one query is enough. `historical` bounds each project to a single
-# page at the default limit, keeping the demo quick.
+# facet *values* here (variable, reporting interval, experiment) are known to be spelt
+# the same across projects, so one query is enough. `historical` bounds each project
+# to a single page at the default limit, keeping the demo quick.
 MULTI_PROJECT_QUERY = Query(
     project=("CMIP5", "CMIP6", "CMIP7"),
     variable="tas",

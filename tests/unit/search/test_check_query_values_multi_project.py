@@ -19,6 +19,8 @@ from tenacity import Retrying, stop_after_attempt
 from esmporium.query import NoTargetProjectError, Query
 from esmporium.search import (
     ESGF1_CMIP6_FACADE_PARAMETERS,
+    AllSubQueriesFailedError,
+    NoFacadeAnsweredError,
     SearchAPIESGF1Solr,
     SearchAPIFacade,
     SolrSingleRowResultParser,
@@ -162,3 +164,54 @@ def test_parallelises_over_the_sub_queries():
     )
 
     assert len(outcomes) == 2
+
+
+def failing_for(down_project: str):
+    """A handler that answers every project but `down_project`, which it 500s"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        (project,) = request.url.params.get_list("project")
+        if project == down_project:
+            return httpx.Response(500)
+        return facet_values(experiment_id=["historical", 5])
+
+    return handler
+
+
+def test_a_failed_sub_query_does_not_sink_the_ones_that_answered():
+    """One project's endpoints all failing does not stop the others being checked"""
+    outcomes = check_query_values(
+        Query(project=("CMIP5", "CMIP6"), experiment="historical"),
+        build_list_selector([make_facade()]),
+        client=client_for(failing_for("CMIP6")),
+    )
+
+    assert len(outcomes) == 2
+    answered = [outcome for outcome in outcomes if outcome.answered]
+    unreachable = [outcome for outcome in outcomes if not outcome.answered]
+    assert len(answered) == 1
+    assert len(unreachable) == 1
+    assert unreachable[0].reports == {}
+    assert unreachable[0].failures
+
+
+def test_a_single_failed_sub_query_re_raises_its_own_error():
+    """A one-project check that fails raises NoFacadeAnsweredError, wrapper or not"""
+    with pytest.raises(NoFacadeAnsweredError):
+        check_query_values(
+            Query(project=("CMIP6",), experiment="historical"),
+            build_list_selector([make_facade()]),
+            client=client_for(failing_for("CMIP6")),
+        )
+
+
+def test_all_sub_queries_failing_raises_an_aggregate():
+    """When every sub-query fails, one error gathers all of them, none lost"""
+    with pytest.raises(AllSubQueriesFailedError) as excinfo:
+        check_query_values(
+            Query(project=("CMIP5", "CMIP6"), experiment="historical"),
+            build_list_selector([make_facade()]),
+            client=client_for(lambda r: httpx.Response(500)),
+        )
+
+    assert len(excinfo.value.failures) == 2

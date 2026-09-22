@@ -29,6 +29,8 @@ from esmporium.db import (
 from esmporium.query import NoTargetProjectError, Query
 from esmporium.search import (
     ESGF1_CMIP6_FACADE_PARAMETERS,
+    AllSubQueriesFailedError,
+    NoFacadeAnsweredError,
     SearchAPIESGF1Solr,
     SearchAPIFacade,
     SolrSingleRowResultParser,
@@ -265,12 +267,6 @@ def test_parallelises_over_the_sub_queries():
 def test_a_failing_worker_does_not_stop_the_others_being_processed():
     """
     One worker blowing up does not stop the others' results reaching their processor
-
-    Each worker hands its pages to its own processor as they arrive (the inner loop), so
-    the surviving sub-query's results are processed even though the run as a whole then
-    fails on the other sub-query. This is the parallel echo of
-    `test_finished_subqueries_survive_a_kill_mid_run`; it is kept because it pins that
-    property under threads.
     """
     processed = []
     lock = threading.Lock()
@@ -306,10 +302,6 @@ def test_a_failing_worker_does_not_stop_the_others_being_processed():
 def test_parallel_writes_land_in_a_shared_sqlite_db(tmp_path):
     """
     Parallel workers writing distinct datasets to one SQLite database all get saved
-
-    This is the direct, fast proof (no live ESGF) that concurrent DB writes work once
-    the engine is configured for concurrency: four sub-queries, each in its own worker
-    with its own session, all commit to the one file.
     """
     engine = configure_sqlite_for_concurrency(
         create_engine(f"sqlite:///{tmp_path / 'esmporium.db'}")
@@ -346,3 +338,68 @@ def test_parallel_writes_land_in_a_shared_sqlite_db(tmp_path):
         assert saved_master_ids(engine) == {f"CMIP6.d{i}" for i in range(4)}
     finally:
         engine.dispose()
+
+
+def failing_for(down_project: str):
+    """A handler that answers every project but `down_project`, which it 500s"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        (project,) = request.url.params.get_list("project")
+        if project == down_project:
+            # Every endpoint for this project errors, so its sub-query fails outright.
+            return httpx.Response(500)
+        return solr_body([solr_doc(f"ok-{project}")])
+
+    return handler
+
+
+def test_a_failed_sub_query_does_not_sink_the_ones_that_answered():
+    """
+    When one project's endpoints all fail, the others still come back
+
+    The failed project is not dropped: it takes its place in the results as an empty,
+    `answered`-False outcome carrying its failures, so the caller can see both what
+    succeeded and what could not be reached.
+    """
+    outcomes = search(
+        Query(project=("CMIP5", "CMIP6"), variable="tas", reporting_interval="mon"),
+        build_list_selector([make_facade()]),
+        client=client_for(failing_for("CMIP6")),
+    )
+
+    assert len(outcomes) == 2
+    answered = [outcome for outcome in outcomes if outcome.answered]
+    unreachable = [outcome for outcome in outcomes if not outcome.answered]
+    assert len(answered) == 1
+    assert len(unreachable) == 1
+    # The one that answered carries a real result; the one that failed carries why.
+    assert any(
+        doc.datasets for docs in answered[0].parsed_docs.values() for doc in docs
+    )
+    assert unreachable[0].parsed_docs == {}
+    assert unreachable[0].failures
+
+
+def test_a_single_failed_sub_query_re_raises_its_own_error():
+    """A one-project search that fails raises NoFacadeAnsweredError, wrapper or not"""
+    with pytest.raises(NoFacadeAnsweredError):
+        search(
+            Query(project=("CMIP6",), variable="tas", reporting_interval="mon"),
+            build_list_selector([make_facade()]),
+            client=client_for(failing_for("CMIP6")),
+        )
+
+
+def test_all_sub_queries_failing_raises_an_aggregate():
+    """When every sub-query fails, one error gathers all of them, none lost"""
+    with pytest.raises(AllSubQueriesFailedError) as excinfo:
+        search(
+            Query(project=("CMIP5", "CMIP6"), variable="tas", reporting_interval="mon"),
+            build_list_selector([make_facade()]),
+            client=client_for(lambda r: httpx.Response(500)),
+        )
+
+    assert len(excinfo.value.failures) == 2
+    assert all(
+        isinstance(failure, NoFacadeAnsweredError) for failure in excinfo.value.failures
+    )

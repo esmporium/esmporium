@@ -2,7 +2,6 @@
 High-level search functionality
 """
 
-# TODO: is this "high-level", or "low level"?
 from __future__ import annotations
 
 import json
@@ -16,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from functools import partial
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 import httpx
 
@@ -500,6 +499,28 @@ class NoFacadeAnsweredError(RuntimeError):
         )
 
 
+class AllSubQueriesFailedError(RuntimeError):
+    """
+    Raised when every sub-query of a multi-query search or value check failed
+    """
+
+    def __init__(self, failures: tuple[NoFacadeAnsweredError, ...]) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        failures
+            Each failed sub-query's error, in the order the sub-queries ran
+        """
+        self.failures = failures
+        joined = "\n".join(f"  - {failure}" for failure in failures)
+        super().__init__(
+            f"All {len(failures)} sub-queries failed to return anything we could use:\n"
+            f"{joined}"
+        )
+
+
 class ClashingFacetsForFacadeError(CouldNotSearchError):
     """
     Raised when `other_terms` sets values for facets that a query already sets
@@ -676,11 +697,6 @@ class PaginationWarning(UserWarning):
     Emitted (unless `warn_on_pagination` is turned off) when an endpoint reports more
     matches than fit in one page, so the caller knows the search will make several
     requests and may take a while before it is done.
-
-    A [UserWarning][] so it shows by default, and its own category so it is easy to
-    silence on its own: filter it with
-    `warnings.simplefilter("ignore", PaginationWarning)`,
-    or escalate it to an error in tests, without touching any other warning.
     """
 
 
@@ -711,6 +727,20 @@ class SearchOutcome:
 
     failures: dict[FacadeKey, CouldNotSearchError]
     """Reasons we failed to get search results, keyed by the facade"""
+
+    @property
+    def answered(self) -> bool:
+        """
+        Whether any facade answered, i.e. this is a real answer and not a pure failure
+
+        `True` for any outcome a search actually returned (even one where every facade
+        matched zero records). `False` only for the empty, failures-only outcome that
+        the multi-query [search][(m).] puts in place of a sub-query whose endpoints all
+        failed, so a caller can tell "this project came back empty" from "this project
+        could not be reached" -- the latter has `answered` `False` and a populated
+        `failures`.
+        """
+        return bool(self.parsed_docs)
 
 
 @dataclass(frozen=True)
@@ -1144,8 +1174,6 @@ def search_single_project(  # noqa: PLR0913 - the keyword-only extras are delibe
     return SearchOutcome(parsed_docs, n_matches, failures)
 
 
-# TODO: allows for future parallelisation by building individual
-# processors for each sub-query
 ProcessorFactory: TypeAlias = Callable[
     [], AbstractContextManager[ResultProcessor | None]
 ]
@@ -1157,6 +1185,10 @@ sub-query's search, so each sub-query gets its own processor and anything that
 processor holds (e.g. a database session and its transaction) is set up before the
 search and torn down after.
 """
+
+# TODO: in future we will more explicitly handle query logic (AND/OR) across
+# both STAC and Solr, as the APIs are not made equally in their logic
+# handling.
 
 
 def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection seams
@@ -1182,42 +1214,11 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
     each through [search_single_project][(m).], handing that sub-query's results to a
     fresh processor as they arrive.
 
-    This function knows nothing about the database. Whatever should happen to results as
-    they arrive is supplied through `processor_factory`: pass the database-saving one
-    ([esmporium.db.build_result_processor_factory][]) to have every result saved, or
-    your own to do something else, or none to just collect the outcomes. The coupling to
-    the database lives entirely in the factory the caller injects, not here.
+    Each query must still name at least one project, else we raise an error.
 
-    A query which names no project is refused: splitting raises
-    [NoTargetProjectError][esmporium.query.translate.NoTargetProjectError] before any
-    endpoint is contacted or any processor is run, so a bad query in the batch stops the
-    whole call before it does anything.
-
-    ## Running sub-queries in parallel
-
-    By default the sub-queries run one after another. Pass `max_workers > 1` to run them
+    By default the sub-queries run sequentially. Pass `max_workers > 1` to run them
     concurrently in a thread pool: the work is network-bound, so this is usually a large
-    win when there are several sub-queries. Each worker gets its own processor from
-    `processor_factory` (its own database session and transaction), so the workers do
-    not share mutable state. Only pagination *within* one sub-query stays sequential.
-
-    If you parallelise a search that saves to a **shared SQLite database**, configure
-    the engine with
-    [configure_sqlite_for_concurrency][esmporium.db.configure_sqlite_for_concurrency]
-    first: default SQLite fails a second concurrent writer immediately, and that helper
-    (WAL + busy_timeout) is what lets the workers' commits coexist.
-
-    ## Running several queries to control facet logic
-
-    Passing several queries is (once we filter results against the query, in a later
-    step) the only way to express certain "this but not that" logic. The ESGF Solr API
-    ORs the values within a facet, so a single query for
-    `variable=[tas, ts], frequency=[mon, day]` matches all four combinations
-    (tas-monthly, tas-daily, ts-monthly, ts-daily). To get, say, tas-monthly and
-    ts-daily but *not* the cross terms, you have to send two queries:
-    `variable=tas, frequency=mon` and `variable=ts, frequency=day`.
-    (This is definitely how Solr behaves; ESGF-NG's CQL2 may allow finer AND/OR control,
-    which we may support directly in future.)
+    win when there are several sub-queries.
 
     Parameters
     ----------
@@ -1278,17 +1279,25 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
         them). Two sub-queries can answer from the same endpoint, which is why these are
         kept apart rather than merged into one endpoint-keyed outcome.
 
+        A sub-query whose endpoints all failed still gets an entry, in place, so the
+        result stays aligned with the sub-queries: an empty outcome carrying that
+        sub-query's `failures` and reporting `answered` as `False`. This is only reached
+        if at least one sub-query answered (see `Raises`).
+
     Raises
     ------
     NoTargetProjectError
         A query in `queries` names no project. Raised while splitting, before any search
         or processor runs.
 
-    Notes
-    -----
-    A sub-query that fails outright (e.g. every endpoint it was offered failed) raises,
-    just as [search_single_project][(m).] does; that error propagates and stops the run.
-    Aggregating partial failures across sub-queries is deliberately left for later.
+    NoFacadeAnsweredError
+        Every sub-query failed and there was exactly one, so its failure is re-raised
+        unchanged (a single-project search fails the same way with or without this
+        wrapper).
+
+    AllSubQueriesFailedError
+        Every sub-query failed and there were several, so all their failures are
+        gathered into one error rather than any being lost.
     """
     # Split every query up front, so a query with no project blows up before we contact
     # any endpoint or run any processor.
@@ -1300,7 +1309,9 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
     owns_client = client is None
     client = client if client is not None else httpx.Client(follow_redirects=True)
 
-    def run_one(sub_query: QueryProtocol) -> SearchOutcome:
+    def run_one(
+        sub_query: QueryProtocol,
+    ) -> tuple[SearchOutcome, NoFacadeAnsweredError | None]:
         # A fresh processor (and so, for the saving one, a fresh session and
         # transaction) per sub-query: entered around this sub-query's search and exited
         # after. This is the seam that makes a worker independent -- it owns its session
@@ -1309,31 +1320,51 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
         processor_cm: AbstractContextManager[ResultProcessor | None] = (
             nullcontext(None) if processor_factory is None else processor_factory()
         )
-        with processor_cm as processor:
-            return search_single_project(
-                sub_query,
-                selector,
-                stop_at_first_result=stop_at_first_result,
-                limit=limit,
-                max_results=max_results,
-                warn_on_pagination=warn_on_pagination,
-                client=client,
-                api_call_observer=api_call_observer,
-                processor=processor,
-            )
+        try:
+            with processor_cm as processor:
+                outcome = search_single_project(
+                    sub_query,
+                    selector,
+                    stop_at_first_result=stop_at_first_result,
+                    limit=limit,
+                    max_results=max_results,
+                    warn_on_pagination=warn_on_pagination,
+                    client=client,
+                    api_call_observer=api_call_observer,
+                    processor=processor,
+                )
+        except NoFacadeAnsweredError as exc:
+            # This sub-query's endpoints all failed. Keep going: turn it into an empty
+            # outcome carrying the failures, so a caller still gets the sub-queries that
+            # did answer (and can see this one did not, via `SearchOutcome.answered`).
+            # Anything else (a config error, a pagination-cap breach, a bug) is not a
+            # "node was down" and is left to propagate and stop the whole run.
+            # `exc.failures` came from search_single_project, so it is that variant.
+            failures = cast("dict[FacadeKey, CouldNotSearchError]", exc.failures)
+            return SearchOutcome({}, {}, failures), exc
+        return outcome, None
 
     try:
         if max_workers is None or max_workers == 1 or len(sub_queries) <= 1:
             # Sequential: results are handled and committed one sub-query at a time.
-            outcomes: list[SearchOutcome] = [run_one(sq) for sq in sub_queries]
+            results = [run_one(sq) for sq in sub_queries]
         else:
-            # Parallel: `map` preserves input order and, if one worker raises, re-raises
-            # the first error only after the executor has joined the rest, so the other
-            # workers' inline-committed results are already saved.
+            # Parallel: `map` preserves input order and, if a worker raises something
+            # we do not fold in (see run_one), re-raises the first such error only once
+            # the executor has joined the rest, so the others' committed results stay.
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                outcomes = list(executor.map(run_one, sub_queries))
+                results = list(executor.map(run_one, sub_queries))
     finally:
         if owns_client:
             client.close()
 
-    return tuple(outcomes)
+    caught = [exc for _, exc in results if exc is not None]
+    if caught and len(caught) == len(results):
+        # Every sub-query failed, so there is nothing to return: fail loudly. A lone
+        # failure re-raises as-is, so a single-project search fails exactly as it would
+        # without the wrapper; several failures are gathered so none is lost.
+        if len(caught) == 1:
+            raise caught[0]
+        raise AllSubQueriesFailedError(tuple(caught))
+
+    return tuple(outcome for outcome, _ in results)
