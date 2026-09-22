@@ -18,7 +18,11 @@ import httpx
 import pytest
 from sqlmodel import Session, select
 
-from esmporium.db import Dataset, build_result_processor_factory
+from esmporium.db import (
+    Dataset,
+    build_result_processor_factory,
+    configure_sqlite_for_concurrency,
+)
 from esmporium.db.migrate import upgrade_to_head
 from esmporium.query import QueryCMIP5, QueryCMIP6
 from esmporium.search import search
@@ -43,7 +47,7 @@ TIMEOUT = 60.0
 # written as separate project-specific queries rather than one multi-project query.
 QUERIES = (
     QueryCMIP5(
-        experiment="historical", variable="tas", time_frequency="mon", model="ACCESS1-0"
+        experiment="historical", variable="tas", time_frequency="mon", model="ACCESS1.0"
     ),
     QueryCMIP6(
         experiment_id="historical",
@@ -88,4 +92,32 @@ def test_search_saves_results_for_several_projects(engine):
     # One outcome per query came back...
     assert len(outcomes) == len(QUERIES)
     # ...and the same run saved rows for both projects.
+    assert {"CMIP5", "CMIP6"} <= saved_projects(engine)
+
+
+def test_search_saves_results_for_several_projects_in_parallel(engine):
+    """
+    Running the queries with parallel workers saves the same projects as a serial run
+
+    Same call as above, but with `max_workers > 1` so the sub-queries run concurrently,
+    each worker with its own session, all committing to the one SQLite database. The
+    engine is configured for concurrency first (WAL + busy_timeout) so the workers'
+    commits do not collide. The observable result is identical to the serial run.
+    """
+    configure_sqlite_for_concurrency(engine)
+    upgrade_to_head(engine)
+
+    with httpx.Client(follow_redirects=True, timeout=TIMEOUT) as client:
+        try:
+            outcomes = search(
+                QUERIES,
+                limit=50,
+                client=client,
+                processor_factory=build_result_processor_factory(engine),
+                max_workers=len(QUERIES),
+            )
+        except NobodyAnsweredError:
+            pytest.skip("a node did not answer, so it is down or unwell")
+
+    assert len(outcomes) == len(QUERIES)
     assert {"CMIP5", "CMIP6"} <= saved_projects(engine)

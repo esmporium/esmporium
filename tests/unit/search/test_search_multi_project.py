@@ -10,6 +10,8 @@ leaves the finished sub-queries in the database.
 
 from __future__ import annotations
 
+import threading
+from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 import httpx
@@ -18,7 +20,12 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, create_engine, select
 from tenacity import Retrying, retry_if_exception, stop_after_attempt
 
-from esmporium.db import METADATA, Dataset, build_result_processor_factory
+from esmporium.db import (
+    METADATA,
+    Dataset,
+    build_result_processor_factory,
+    configure_sqlite_for_concurrency,
+)
 from esmporium.query import NoTargetProjectError, Query
 from esmporium.search import (
     ESGF1_CMIP6_FACADE_PARAMETERS,
@@ -229,3 +236,113 @@ def test_accepts_a_single_query_as_well_as_a_collection(engine):
 
     assert len(outcomes) == 1
     assert saved_master_ids(engine) == {"CMIP6.single"}
+
+
+def test_parallelises_over_the_sub_queries():
+    """
+    With `max_workers > 1` the sub-queries are genuinely in flight at the same time
+
+    Both requests must reach the handler together to pass the barrier. A sequential run
+    would leave the second unsent while the first blocks, so the barrier would time out
+    and the test would fail rather than hang.
+    """
+    barrier = threading.Barrier(2, timeout=5)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        barrier.wait()
+        return solr_body([solr_doc("d")])
+
+    outcomes = search(
+        Query(project=("CMIP5", "CMIP6"), variable="tas", reporting_interval="mon"),
+        build_list_selector([make_facade()]),
+        client=client_for(handler),
+        max_workers=2,
+    )
+
+    assert len(outcomes) == 2
+
+
+def test_a_failing_worker_does_not_stop_the_others_being_processed():
+    """
+    One worker blowing up does not stop the others' results reaching their processor
+
+    Each worker hands its pages to its own processor as they arrive (the inner loop), so
+    the surviving sub-query's results are processed even though the run as a whole then
+    fails on the other sub-query. This is the parallel echo of
+    `test_finished_subqueries_survive_a_kill_mid_run`; it is kept because it pins that
+    property under threads.
+    """
+    processed = []
+    lock = threading.Lock()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        (project,) = request.url.params.get_list("project")
+        if project == "CMIP6":
+            # This worker "dies" before returning anything.
+            raise ProcessKilled
+        return solr_body([solr_doc("survivor")])
+
+    @contextmanager
+    def recording_factory():
+        def processor(facade, parsed):
+            with lock:
+                processed.append(parsed)
+
+        yield processor
+
+    with pytest.raises(ProcessKilled):
+        search(
+            Query(project=("CMIP5", "CMIP6"), variable="tas", reporting_interval="mon"),
+            build_list_selector([make_facade()]),
+            client=client_for(handler),
+            processor_factory=recording_factory,
+            max_workers=2,
+        )
+
+    # The surviving (CMIP5) worker's results were still handed to its processor.
+    assert len(processed) == 1
+
+
+def test_parallel_writes_land_in_a_shared_sqlite_db(tmp_path):
+    """
+    Parallel workers writing distinct datasets to one SQLite database all get saved
+
+    This is the direct, fast proof (no live ESGF) that concurrent DB writes work once
+    the engine is configured for concurrency: four sub-queries, each in its own worker
+    with its own session, all commit to the one file.
+    """
+    engine = configure_sqlite_for_concurrency(
+        create_engine(f"sqlite:///{tmp_path / 'esmporium.db'}")
+    )
+    METADATA.create_all(engine)
+
+    calls = 0
+    lock = threading.Lock()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        with lock:
+            i = calls
+            calls += 1
+        # A distinct dataset per request, so every worker writes its own row.
+        return solr_body([solr_doc(f"d{i}")])
+
+    # Two two-project queries -> four single-project sub-queries.
+    queries = (
+        Query(project=("CMIP5", "CMIP6"), variable="tas", reporting_interval="mon"),
+        Query(project=("CMIP5", "CMIP6"), variable="pr", reporting_interval="mon"),
+    )
+
+    outcomes = search(
+        queries,
+        build_list_selector([make_facade()]),
+        client=client_for(handler),
+        processor_factory=build_result_processor_factory(engine),
+        max_workers=4,
+    )
+
+    try:
+        assert len(outcomes) == 4
+        assert saved_master_ids(engine) == {f"CMIP6.d{i}" for i in range(4)}
+    finally:
+        engine.dispose()

@@ -10,6 +10,8 @@ single-project checking behaviour itself is covered in `test_check_query_values.
 
 from __future__ import annotations
 
+import threading
+
 import httpx
 import pytest
 from tenacity import Retrying, stop_after_attempt
@@ -136,3 +138,27 @@ def test_a_finding_surfaces_through_the_wrapper():
     assert finding.value == "Historical"
     assert finding.kind == "case"
     assert finding.suggestions == ("historical",)
+
+
+def test_parallelises_over_the_sub_queries():
+    """
+    With `max_workers > 1` the sub-queries are genuinely in flight at the same time
+
+    Both facet-value requests must reach the handler together to pass the barrier. A
+    sequential run would leave the second unsent while the first blocks, so the barrier
+    would time out and the test would fail rather than hang.
+    """
+    barrier = threading.Barrier(2, timeout=5)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        barrier.wait()
+        return facet_values(experiment_id=["historical", 5])
+
+    outcomes = check_query_values(
+        Query(project=("CMIP5", "CMIP6"), experiment="historical"),
+        build_list_selector([make_facade()]),
+        client=client_for(handler),
+        max_workers=2,
+    )
+
+    assert len(outcomes) == 2

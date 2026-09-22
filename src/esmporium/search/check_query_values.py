@@ -17,6 +17,7 @@ from __future__ import annotations
 import difflib
 import re
 from collections.abc import Callable, Iterable, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from dataclasses import field as dcfield
 from enum import Enum
@@ -671,6 +672,7 @@ def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberat
     client: httpx.Client | None = None,
     api_call_observer: SearchAPICallObserver | None = None,
     project_query_map: Mapping[str, type[QueryProtocol]] | None = None,
+    max_workers: int | None = None,
 ) -> tuple[ValueCheckOutcome, ...]:
     """
     Check one or more queries, over one or more projects, against the APIs
@@ -691,6 +693,11 @@ def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberat
     [NoTargetProjectError][esmporium.query.translate.NoTargetProjectError] before any
     endpoint is contacted, so a bad query in the batch stops the whole call before it
     does anything.
+
+    By default the sub-queries run one after another. Pass `max_workers > 1` to run them
+    concurrently in a thread pool: the work is network-bound, so this is usually a large
+    win when there are several sub-queries. Value-checking writes nothing, so there is
+    no database concurrency to arrange (unlike [`esmporium.search.search`][]).
 
     Parameters
     ----------
@@ -721,6 +728,11 @@ def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberat
         [translate_to_projects][esmporium.query.translate.translate_to_projects] when
         splitting a query, to control which query class each project uses. If `None`,
         the default mapping is used.
+
+    max_workers
+        How many sub-queries to check at once. `None` (the default) or `1` runs them
+        sequentially; a value greater than `1` runs them concurrently in a thread pool
+        of that size.
 
     Returns
     -------
@@ -753,19 +765,26 @@ def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberat
     owns_client = client is None
     client = client if client is not None else httpx.Client(follow_redirects=True)
 
-    outcomes: list[ValueCheckOutcome] = []
+    def run_one(sub_query: QueryProtocol) -> ValueCheckOutcome:
+        # Each check is independent and shares nothing mutable, so it is safe to call
+        # from a thread. `client` is shared: httpx.Client is thread-safe for concurrent
+        # requests.
+        return check_query_values_single_project(
+            sub_query,
+            selector,
+            stop_at_first_result=stop_at_first_result,
+            close_matches=close_matches,
+            client=client,
+            api_call_observer=api_call_observer,
+        )
+
     try:
-        for sub_query in sub_queries:
-            outcomes.append(
-                check_query_values_single_project(
-                    sub_query,
-                    selector,
-                    stop_at_first_result=stop_at_first_result,
-                    close_matches=close_matches,
-                    client=client,
-                    api_call_observer=api_call_observer,
-                )
-            )
+        if max_workers is None or max_workers == 1 or len(sub_queries) <= 1:
+            outcomes: list[ValueCheckOutcome] = [run_one(sq) for sq in sub_queries]
+        else:
+            # `map` preserves input order across the pool.
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                outcomes = list(executor.map(run_one, sub_queries))
     finally:
         if owns_client:
             client.close()

@@ -46,11 +46,12 @@ from esmporium.search.search import get_facade_key
 # small, and copying keeps this file self-contained. A future PR (PR3 needs a mock
 # search endpoint of its own) may pull them into a shared `mock_search_api` module.
 
-# NOTE 2: We explicitly do not test parallelism on search calls yet.
-# A concurrency/thread test — without WAL + busy_timeout a
-# concurrent-write SQLite test is flaky, and thread-safety is the deferred parallel
-# PR's concern. Deterministic multi-row behaviour is already covered by the
-# retry / multi-host cases in file 1.
+# NOTE 2: Parallelism over sub-queries now lives in `search`/`check_query_values`
+# (max_workers). Its concurrency is tested in `test_search_multi_project.py`
+# (a barrier proves real concurrency; a WAL + busy_timeout SQLite engine proves parallel
+# writes land) and `test_check_query_values_multi_project.py`. What is still deferred:
+# concurrent writes of the *same* dataset identity across worker transactions, which the
+# get-or-create in `results_to_database` does not yet make race-safe.
 # FROM ZN: "make sure that database writing works, even when calls are made in
 # parallel so can clash/race each other or have other weird parallel side effects"
 

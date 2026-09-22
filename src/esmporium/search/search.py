@@ -12,6 +12,7 @@ import shlex
 import time
 import warnings
 from collections.abc import Callable, Collection, Iterable, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from functools import partial
@@ -1170,6 +1171,7 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
     api_call_observer: SearchAPICallObserver | None = None,
     processor_factory: ProcessorFactory | None = None,
     project_query_map: Mapping[str, type[QueryProtocol]] | None = None,
+    max_workers: int | None = None,
 ) -> tuple[SearchOutcome, ...]:
     """
     Search one or more queries over one or more projects
@@ -1190,6 +1192,20 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
     [NoTargetProjectError][esmporium.query.translate.NoTargetProjectError] before any
     endpoint is contacted or any processor is run, so a bad query in the batch stops the
     whole call before it does anything.
+
+    ## Running sub-queries in parallel
+
+    By default the sub-queries run one after another. Pass `max_workers > 1` to run them
+    concurrently in a thread pool: the work is network-bound, so this is usually a large
+    win when there are several sub-queries. Each worker gets its own processor from
+    `processor_factory` (its own database session and transaction), so the workers do
+    not share mutable state. Only pagination *within* one sub-query stays sequential.
+
+    If you parallelise a search that saves to a **shared SQLite database**, configure
+    the engine with
+    [configure_sqlite_for_concurrency][esmporium.db.configure_sqlite_for_concurrency]
+    first: default SQLite fails a second concurrent writer immediately, and that helper
+    (WAL + busy_timeout) is what lets the workers' commits coexist.
 
     ## Running several queries to control facet logic
 
@@ -1248,6 +1264,11 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
         splitting a query, to control which query class each project uses. If `None`,
         the default mapping is used.
 
+    max_workers
+        How many sub-queries to run at once. `None` (the default) or `1` runs them
+        sequentially, one after another. A value greater than `1` runs them concurrently
+        in a thread pool of that size (see "Running sub-queries in parallel" above).
+
     Returns
     -------
     :
@@ -1279,31 +1300,38 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
     owns_client = client is None
     client = client if client is not None else httpx.Client(follow_redirects=True)
 
-    outcomes: list[SearchOutcome] = []
-    try:
-        for sub_query in sub_queries:
-            # A fresh processor (and so, for the saving one, a fresh session and
-            # transaction) per sub-query: entered around this sub-query's search and
-            # exited after, so an earlier sub-query's results are handled and torn down
-            # before the next one starts. This is also the seam a parallel version would
-            # give each worker its own copy of.
-            processor_cm: AbstractContextManager[ResultProcessor | None] = (
-                nullcontext(None) if processor_factory is None else processor_factory()
+    def run_one(sub_query: QueryProtocol) -> SearchOutcome:
+        # A fresh processor (and so, for the saving one, a fresh session and
+        # transaction) per sub-query: entered around this sub-query's search and exited
+        # after. This is the seam that makes a worker independent -- it owns its session
+        # and shares nothing mutable -- so it is safe to call from a thread. `client` is
+        # shared: httpx.Client is thread-safe for concurrent requests.
+        processor_cm: AbstractContextManager[ResultProcessor | None] = (
+            nullcontext(None) if processor_factory is None else processor_factory()
+        )
+        with processor_cm as processor:
+            return search_single_project(
+                sub_query,
+                selector,
+                stop_at_first_result=stop_at_first_result,
+                limit=limit,
+                max_results=max_results,
+                warn_on_pagination=warn_on_pagination,
+                client=client,
+                api_call_observer=api_call_observer,
+                processor=processor,
             )
-            with processor_cm as processor:
-                outcomes.append(
-                    search_single_project(
-                        sub_query,
-                        selector,
-                        stop_at_first_result=stop_at_first_result,
-                        limit=limit,
-                        max_results=max_results,
-                        warn_on_pagination=warn_on_pagination,
-                        client=client,
-                        api_call_observer=api_call_observer,
-                        processor=processor,
-                    )
-                )
+
+    try:
+        if max_workers is None or max_workers == 1 or len(sub_queries) <= 1:
+            # Sequential: results are handled and committed one sub-query at a time.
+            outcomes: list[SearchOutcome] = [run_one(sq) for sq in sub_queries]
+        else:
+            # Parallel: `map` preserves input order and, if one worker raises, re-raises
+            # the first error only after the executor has joined the rest, so the other
+            # workers' inline-committed results are already saved.
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                outcomes = list(executor.map(run_one, sub_queries))
     finally:
         if owns_client:
             client.close()
