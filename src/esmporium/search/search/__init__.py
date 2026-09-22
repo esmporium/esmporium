@@ -2,7 +2,6 @@
 High-level search functionality
 """
 
-# TODO: is this "high-level", or "low level"?
 from __future__ import annotations
 
 from esmporium.search.search.errors import (
