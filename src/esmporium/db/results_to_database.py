@@ -342,7 +342,7 @@ def build_result_processor_factory(
 
     This is the database-saving [ProcessorFactory][esmporium.search.ProcessorFactory] to
     hand to [`esmporium.search.search`][]: it is called once per sub-query and opens a
-    fresh [Session][sqlmodel.Session] (and so a fresh transaction) for that sub-query,
+    fresh `sqlmodel.Session` (and so a fresh transaction) for that sub-query,
     yields a [build_result_processor][(m).] bound to it, and closes it afterwards. A
     session per sub-query is what keeps each sub-query's results in their own
     transaction, so one that finishes is committed and durable before the next begins,
