@@ -1,10 +1,11 @@
 """
-Test the high-level `search` wrapper against a mock API and an in-memory database
+Test the high-level `search` against a mock API and an in-memory database
 
-These cover the behaviours the wrapper adds on top of `search_single_project`:
-splitting a query into one search per project, running several queries, refusing a
-query with no project, and — the important one — saving each sub-query's results as it
-goes, so a kill part way through still leaves the finished sub-queries in the database.
+These cover the behaviours `search` adds on top of `search_single_project`: splitting a
+query into one search per project, running several queries, refusing a query with no
+project, and — the important one — handing each sub-query's results to a fresh processor
+as they arrive, so with the database-saving processor a kill part way through still
+leaves the finished sub-queries in the database.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, create_engine, select
 from tenacity import Retrying, retry_if_exception, stop_after_attempt
 
-from esmporium.db import METADATA, Dataset
+from esmporium.db import METADATA, Dataset, build_result_processor_factory
 from esmporium.query import NoTargetProjectError, Query
 from esmporium.search import (
     ESGF1_CMIP6_FACADE_PARAMETERS,
@@ -25,9 +26,9 @@ from esmporium.search import (
     SearchAPIFacade,
     SolrSingleRowResultParser,
     build_list_selector,
+    search,
 )
 from esmporium.search.retry import _is_transient
-from esmporium.workflow import search
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -45,8 +46,8 @@ def engine() -> Iterator[Engine]:
     Get an in-memory SQLite engine with our schema created
 
     `StaticPool` keeps every connection pointed at the one in-memory database, so the
-    fresh session the wrapper opens per sub-query and the session we read back with all
-    see the same tables.
+    fresh session the processor factory opens per sub-query and the session we read back
+    with all see the same tables.
     """
     engine = create_engine(
         "sqlite://",
@@ -149,7 +150,7 @@ def test_finished_subqueries_survive_a_kill_mid_run(engine):
     with pytest.raises(ProcessKilled):
         search(
             (first, second),
-            engine=engine,
+            processor_factory=build_result_processor_factory(engine),
             selector=build_list_selector([make_facade()]),
             client=client_for(handler),
         )
@@ -174,7 +175,7 @@ def test_runs_every_query_and_saves_all_results(engine):
 
     outcomes = search(
         (first, second),
-        engine=engine,
+        processor_factory=build_result_processor_factory(engine),
         selector=build_list_selector([make_facade()]),
         client=client_for(handler),
     )
@@ -193,7 +194,7 @@ def test_splits_a_multi_project_query_into_one_search_per_project(engine):
 
     outcomes = search(
         Query(project=("CMIP5", "CMIP6"), variable="tas", reporting_interval="mon"),
-        engine=engine,
+        processor_factory=build_result_processor_factory(engine),
         selector=build_list_selector([make_facade()]),
         client=client_for(handler),
     )
@@ -208,7 +209,7 @@ def test_a_query_with_no_project_is_refused_before_any_work(engine):
     with pytest.raises(NoTargetProjectError):
         search(
             Query(variable="tas", reporting_interval="mon"),
-            engine=engine,
+            processor_factory=build_result_processor_factory(engine),
             selector=build_list_selector([make_facade()]),
             client=client_for(never_asked),
         )
@@ -221,7 +222,7 @@ def test_accepts_a_single_query_as_well_as_a_collection(engine):
     """A bare query is treated as a one-query run, not iterated as a collection"""
     outcomes = search(
         CMIP6_QUERY,
-        engine=engine,
+        processor_factory=build_result_processor_factory(engine),
         selector=build_list_selector([make_facade()]),
         client=client_for(lambda r: solr_body([solr_doc("single")])),
     )

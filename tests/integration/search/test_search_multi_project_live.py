@@ -1,7 +1,7 @@
 """
 Test the high-level `search` wrapper end to end against the live ESGF search APIs
 
-The unit tests in `tests/unit/search/test_workflow.py` pin the wrapper's plumbing
+The unit tests in `tests/unit/search/test_search_multi_project.py` pin the plumbing
 (splitting, per-sub-query saving, the no-project error) against a mock API. This is the
 live counterpart: run several project-specific queries through `search` and check that
 rows for each project actually land in the database. If the unit tests pass and this
@@ -18,10 +18,10 @@ import httpx
 import pytest
 from sqlmodel import Session, select
 
-from esmporium.db import Dataset
+from esmporium.db import Dataset, build_result_processor_factory
 from esmporium.db.migrate import upgrade_to_head
 from esmporium.query import QueryCMIP5, QueryCMIP6
-from esmporium.workflow import search
+from esmporium.search import search
 
 # The error raised when no endpoint gave us anything is being renamed
 # (NoAPIAnsweredError -> NoFacadeAnsweredError) on another branch. Bind whichever exists
@@ -72,7 +72,12 @@ def test_search_saves_results_for_several_projects(engine):
 
     with httpx.Client(follow_redirects=True, timeout=TIMEOUT) as client:
         try:
-            outcomes = search(QUERIES, engine=engine, limit=50, client=client)
+            outcomes = search(
+                QUERIES,
+                limit=50,
+                client=client,
+                processor_factory=build_result_processor_factory(engine),
+            )
         except NobodyAnsweredError:
             # A node being down is the common cause here and says nothing about the
             # wrapper, so skip. A real bug (e.g. a facet name we got wrong) does not

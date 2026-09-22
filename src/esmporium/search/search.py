@@ -11,7 +11,8 @@ import math
 import shlex
 import time
 import warnings
-from collections.abc import Collection
+from collections.abc import Callable, Collection, Iterable, Mapping
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING, Any, TypeAlias
@@ -23,6 +24,7 @@ from esmporium.query import (
     QueryProtocol,
     facet_spec,
     to_canonical,
+    translate_to_projects,
 )
 from esmporium.search.apis import (
     NoSearchResultNumberOfMatchesReturnedError,
@@ -963,9 +965,8 @@ def search_single_project(  # noqa: PLR0913 - the keyword-only extras are delibe
 
     This is the low-level, single-project building block: `query` must name exactly
     one project (the selector and facades enforce that). To search several projects,
-    or to run several queries and have every result saved to the database, use the
-    higher-level [`esmporium.workflow.search`][], which splits multi-project queries
-    and calls this function once per project.
+    or to run several queries through one call, use the higher-level [search][(m).],
+    which splits multi-project queries and calls this function once per project.
 
     Parameters
     ----------
@@ -1074,8 +1075,17 @@ def search_single_project(  # noqa: PLR0913 - the keyword-only extras are delibe
             try:
                 request = facade.build_search_request(canonical, limit)
             except ClashingFacetsError as exc:
+                # Explain the clash in terms of the query the user actually wrote.
+                # When `search` split a multi-project query, `query` here is the
+                # translated, project-specific one and `source_query` is the original
+                # (e.g. the generic `Query`, or a `QueryCMIP6` re-projected to CMIP7),
+                # so its facet names are the ones the user can act on. A query that was
+                # not translated has no `source_query`, so we fall back to it.
+                report_query = (
+                    query.source_query if query.source_query is not None else query
+                )
                 failures[facade_key] = ClashingFacetsForFacadeError(
-                    query=query, facade=facade, clashing=exc.clashing
+                    query=report_query, facade=facade, clashing=exc.clashing
                 )
             else:
                 # The facade knows this host's format and project, so it fetches and
@@ -1091,8 +1101,8 @@ def search_single_project(  # noqa: PLR0913 - the keyword-only extras are delibe
                 # and our facades only support searching a single project at a time.
                 # If either of those assumptions changed, this would break.
                 # Queries over multiple projects (and multiple queries at once) are
-                # handled a level up, in `esmporium.workflow.search`, which splits
-                # them into single-project queries and calls this function for each.
+                # handled a level up, in `search`, which splits them into
+                # single-project queries and calls this function for each.
                 pages = collect_all_pages(
                     client,
                     facade,
@@ -1130,3 +1140,199 @@ def search_single_project(  # noqa: PLR0913 - the keyword-only extras are delibe
         raise NoFacadeAnsweredError(failures)
 
     return SearchOutcome(parsed_docs, n_matches, failures)
+
+
+# TODO: allows for future parallelisation by building individual
+# processors for each sub-query
+ProcessorFactory: TypeAlias = Callable[
+    [], AbstractContextManager[ResultProcessor | None]
+]
+"""
+Makes a fresh result processor for one sub-query, as a context manager
+
+[search][(m).] calls this once per sub-query and enters the context around that
+sub-query's search, so each sub-query gets its own processor and anything that
+processor holds (e.g. a database session and its transaction) is set up before the
+search and torn down after.
+"""
+
+
+def _as_query_iterable(
+    queries: QueryProtocol | Iterable[QueryProtocol],
+) -> tuple[QueryProtocol, ...]:
+    """
+    Normalise the `queries` argument to a tuple of queries
+
+    A single query is wrapped in a one-tuple; an iterable of queries is materialised.
+    We tell the two apart by duck typing rather than `isinstance`, because
+    [QueryProtocol][esmporium.query.QueryProtocol] is not `runtime_checkable`: a single
+    query carries `other_terms`, an iterable of queries does not.
+
+    Parameters
+    ----------
+    queries
+        A single query, or an iterable of queries
+
+    Returns
+    -------
+    :
+        The queries as a tuple
+    """
+    if hasattr(queries, "other_terms"):
+        # A single query, not an iterable of them.
+        return (queries,)  # type: ignore[return-value]
+
+    return tuple(queries)
+
+
+def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection seams
+    queries: QueryProtocol | Iterable[QueryProtocol],
+    selector: SearchAPIFacadeSelector = DEFAULT_SELECTOR,
+    *,
+    stop_at_first_result: bool = True,
+    limit: int = 10_000,
+    max_results: int | None = None,
+    warn_on_pagination: bool = True,
+    client: httpx.Client | None = None,
+    api_call_observer: SearchAPICallObserver | None = None,
+    processor_factory: ProcessorFactory | None = None,
+    project_query_map: Mapping[str, type[QueryProtocol]] | None = None,
+) -> tuple[SearchOutcome, ...]:
+    """
+    Search one or more queries over one or more projects
+
+    This is the high-level entry point. Each query may name one *or more* projects; we
+    split every query into one single-project query per project (via
+    [translate_to_projects][esmporium.query.translate.translate_to_projects]) and run
+    each through [search_single_project][(m).], handing that sub-query's results to a
+    fresh processor as they arrive.
+
+    This function knows nothing about the database. Whatever should happen to results as
+    they arrive is supplied through `processor_factory`: pass the database-saving one
+    ([esmporium.db.build_result_processor_factory][]) to have every result saved, or
+    your own to do something else, or none to just collect the outcomes. The coupling to
+    the database lives entirely in the factory the caller injects, not here.
+
+    A query which names no project is refused: splitting raises
+    [NoTargetProjectError][esmporium.query.translate.NoTargetProjectError] before any
+    endpoint is contacted or any processor is run, so a bad query in the batch stops the
+    whole call before it does anything.
+
+    ## Running several queries to control facet logic
+
+    Passing several queries is (once we filter results against the query, in a later
+    step) the only way to express certain "this but not that" logic. The ESGF Solr API
+    ORs the values within a facet, so a single query for
+    `variable=[tas, ts], frequency=[mon, day]` matches all four combinations
+    (tas-monthly, tas-daily, ts-monthly, ts-daily). To get, say, tas-monthly and
+    ts-daily but *not* the cross terms, you have to send two queries:
+    `variable=tas, frequency=mon` and `variable=ts, frequency=day`.
+    (This is definitely how Solr behaves; ESGF-NG's CQL2 may allow finer AND/OR control,
+    which we may support directly in future.)
+
+    Parameters
+    ----------
+    queries
+        A single query, or an iterable of queries. Each query may name one or more
+        projects. A query that names no project is an error (see above).
+
+    selector
+        Passed straight through to [search_single_project][(m).] for every sub-query.
+        The default picks facades by the sub-query's (single) project.
+
+    stop_at_first_result
+        Passed through to each [search_single_project][(m).] call.
+
+    limit
+        Passed through to each [search_single_project][(m).] call.
+
+    max_results
+        Passed through to each [search_single_project][(m).] call.
+
+    warn_on_pagination
+        Passed through to each [search_single_project][(m).] call.
+
+    client
+        The HTTP client to search with, shared across every sub-query. If `None`, one is
+        built for the call and closed at the end.
+
+    api_call_observer
+        Passed through to each [search_single_project][(m).] call. See
+        [esmporium.search.health][] for how to build one; the database-backed one is
+        [record_search_api_calls][esmporium.db.search_health.record_search_api_calls].
+
+    processor_factory
+        Called once per sub-query to make the processor for that sub-query, as a
+        context manager entered around the sub-query's search (see
+        [ProcessorFactory][(m).]). If `None` (the default), no processor is used: the
+        results are still returned in the outcomes, they are just not handed anywhere.
+        To save every result to the database, pass
+        [esmporium.db.build_result_processor_factory][].
+
+    project_query_map
+        Passed through to
+        [translate_to_projects][esmporium.query.translate.translate_to_projects] when
+        splitting a query, to control which query class each project uses. If `None`,
+        the default mapping is used.
+
+    Returns
+    -------
+    :
+        One [SearchOutcome][(m).] per sub-query, in the order the sub-queries ran
+        (queries in input order; within a query, the projects in the order
+        [translate_to_projects][esmporium.query.translate.translate_to_projects] yields
+        them). Two sub-queries can answer from the same endpoint, which is why these are
+        kept apart rather than merged into one endpoint-keyed outcome.
+
+    Raises
+    ------
+    NoTargetProjectError
+        A query in `queries` names no project. Raised while splitting, before any search
+        or processor runs.
+
+    Notes
+    -----
+    A sub-query that fails outright (e.g. every endpoint it was offered failed) raises,
+    just as [search_single_project][(m).] does; that error propagates and stops the run.
+    Aggregating partial failures across sub-queries is deliberately left for later.
+    """
+    # Split every query up front, so a query with no project blows up before we contact
+    # any endpoint or run any processor.
+    sub_queries: list[QueryProtocol] = []
+    for query in _as_query_iterable(queries):
+        by_project = translate_to_projects(query, project_query_map=project_query_map)
+        sub_queries.extend(by_project.values())
+
+    owns_client = client is None
+    client = client if client is not None else httpx.Client(follow_redirects=True)
+
+    outcomes: list[SearchOutcome] = []
+    try:
+        for sub_query in sub_queries:
+            # A fresh processor (and so, for the saving one, a fresh session and
+            # transaction) per sub-query: entered around this sub-query's search and
+            # exited after, so an earlier sub-query's results are handled and torn down
+            # before the next one starts. This is also the seam a parallel version would
+            # give each worker its own copy of.
+            processor_cm: AbstractContextManager[ResultProcessor | None] = (
+                nullcontext(None) if processor_factory is None else processor_factory()
+            )
+            with processor_cm as processor:
+                outcomes.append(
+                    search_single_project(
+                        sub_query,
+                        selector,
+                        stop_at_first_result=stop_at_first_result,
+                        limit=limit,
+                        max_results=max_results,
+                        warn_on_pagination=warn_on_pagination,
+                        client=client,
+                        api_call_observer=api_call_observer,
+                        processor=processor,
+                    )
+                )
+    finally:
+        if owns_client:
+            client.close()
+
+    return tuple(outcomes)

@@ -68,6 +68,7 @@ from esmporium.search.search import (
     NoFacadeAnsweredError,
     PaginationLimitError,
     PaginationWarning,
+    ProcessorFactory,
     SearchAPIRequestError,
     SearchOutcome,
     collect_all_pages,
@@ -75,6 +76,7 @@ from esmporium.search.search import (
     fire,
     get_url,
     log_request_as_url_and_curl,
+    search,
     search_single_project,
 )
 from esmporium.search.search_api_facade import (
@@ -169,6 +171,7 @@ __all__ = [
     "PaginationLimitError",
     "PaginationWarning",
     "ParsedDocument",
+    "ProcessorFactory",
     "ProjectPrefixMismatchError",
     "Request",
     "ResultParserProtocol",
@@ -222,6 +225,7 @@ __all__ = [
     "merge_other_terms",
     "normalise_stored_document",
     "read_response_path",
+    "search",
     "search_single_project",
     "stac_east_n_matches",
     "stac_west_n_matches",

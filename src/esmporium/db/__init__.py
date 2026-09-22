@@ -14,6 +14,7 @@ from esmporium.db.dataset_uniqueness import (
 from esmporium.db.results_to_database import (
     UnhandledDatasetClashError,
     build_result_processor,
+    build_result_processor_factory,
     ingest_parsed_documents,
     save_dataset,
 )
@@ -54,6 +55,7 @@ __all__ = [
     "aggregate_host_health",
     "build_health_selector",
     "build_result_processor",
+    "build_result_processor_factory",
     "facet_differences",
     "get_median_response_time_for_ranking",
     "ingest_parsed_documents",

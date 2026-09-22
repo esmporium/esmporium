@@ -128,7 +128,7 @@ Not included:
 
 - parent stuff, that comes later
 
-## PR2.2
+## PR2.2 Done, see https://github.com/esmporium/esmporium/pull/37
 
 Add tests that the same request is built if a user uses `other_terms` instead of our supported names.
 
@@ -136,7 +136,7 @@ They can be unit tests (I think).
 
 This is how we check that `other_terms` will actually end up in requests to search APIs.
 
-## PR2.5
+## PR2.5 Done, see https://github.com/esmporium/esmporium/pull/40
 
 Pagination
 
