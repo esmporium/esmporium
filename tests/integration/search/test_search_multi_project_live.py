@@ -25,16 +25,11 @@ from esmporium.db import (
 )
 from esmporium.db.migrate import upgrade_to_head
 from esmporium.query import QueryCMIP5, QueryCMIP6
-from esmporium.search import search
-
-# The error raised when no endpoint gave us anything is being renamed
-# (NoAPIAnsweredError -> NoFacadeAnsweredError) on another branch. Bind whichever exists
-# so this test needs no edit when that branch merges; we only skip on it, we do not look
-# inside it, so its changing shape does not reach us either.
-try:
-    from esmporium.search import NoFacadeAnsweredError as NobodyAnsweredError
-except ImportError:  # pragma: no cover - depends on which branch is checked out
-    from esmporium.search import NoAPIAnsweredError as NobodyAnsweredError
+from esmporium.search import (
+    AllSubQueriesFailedError,
+    NoFacadeAnsweredError,
+    search,
+)
 
 pytestmark = pytest.mark.hits_esgf_search_api
 
@@ -64,6 +59,18 @@ def saved_projects(engine) -> set[str]:
         return {row.project for row in session.exec(select(Dataset)).all()}
 
 
+def skip_if_a_node_was_down(outcomes) -> None:
+    """
+    Skip if any sub-query could not be reached, which says nothing about the wrapper
+
+    A node being down shows up as an outcome with `answered` `False`. A real bug (e.g. a
+    facet name we got wrong) is different: it comes back as a *successful, empty* answer
+    (`answered` `True`, no rows), so the database assertion still catches it loudly.
+    """
+    if not all(outcome.answered for outcome in outcomes):
+        pytest.skip("a node did not answer, so it is down or unwell")
+
+
 def test_search_saves_results_for_several_projects(engine):
     """
     Running several project-specific queries through `search` saves each project's rows
@@ -82,12 +89,13 @@ def test_search_saves_results_for_several_projects(engine):
                 client=client,
                 processor_factory=build_result_processor_factory(engine),
             )
-        except NobodyAnsweredError:
-            # A node being down is the common cause here and says nothing about the
-            # wrapper, so skip. A real bug (e.g. a facet name we got wrong) does not
-            # look like this: it comes back as a successful, empty answer, so the DB
-            # assertion below still catches it loudly.
-            pytest.skip("a node did not answer, so it is down or unwell")
+        except (AllSubQueriesFailedError, NoFacadeAnsweredError):
+            # Every project's nodes were down, so there is nothing to test today.
+            pytest.skip("no node answered, so they are down or unwell")
+
+    # A node down for only one project no longer aborts the run (it comes back as an
+    # unanswered outcome), so skip on that too rather than failing the DB assertion.
+    skip_if_a_node_was_down(outcomes)
 
     # One outcome per query came back...
     assert len(outcomes) == len(QUERIES)
@@ -116,8 +124,10 @@ def test_search_saves_results_for_several_projects_in_parallel(engine):
                 processor_factory=build_result_processor_factory(engine),
                 max_workers=len(QUERIES),
             )
-        except NobodyAnsweredError:
-            pytest.skip("a node did not answer, so it is down or unwell")
+        except (AllSubQueriesFailedError, NoFacadeAnsweredError):
+            pytest.skip("no node answered, so they are down or unwell")
+
+    skip_if_a_node_was_down(outcomes)
 
     assert len(outcomes) == len(QUERIES)
     assert {"CMIP5", "CMIP6"} <= saved_projects(engine)

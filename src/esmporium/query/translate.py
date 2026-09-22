@@ -435,7 +435,7 @@ def as_query_iterable(
     # so a single query is itself iterable. We key on `other_terms` instead: a query
     # carries it, an iterable of queries does not.
     if hasattr(queries, "other_terms"):
-        # A single query, not an iterable of them.
+        # Probably a single query, not an iterable of them.
         return (queries,)  # type: ignore[return-value]
 
     return tuple(queries)
