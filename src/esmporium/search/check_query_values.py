@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import difflib
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from dataclasses import field as dcfield
 from enum import Enum
@@ -27,8 +27,10 @@ from esmporium.query import (
     CANONICAL_FACETS,
     QueryCanonical,
     QueryProtocol,
+    as_query_iterable,
     facet_spec,
     to_canonical,
+    translate_to_projects,
 )
 from esmporium.search.apis import (
     UncompilableFacetPatternError,
@@ -542,7 +544,7 @@ class ValueCheckOutcome:
     """Reasons we failed to get allowed values, keyed by the facade"""
 
 
-def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberate injection seams
+def check_query_values_single_project(  # noqa: PLR0913 - the keyword-only extras are deliberate injection seams
     query: QueryProtocol,
     selector: SearchAPIFacadeSelector = DEFAULT_SELECTOR,
     *,
@@ -552,7 +554,13 @@ def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberat
     api_call_observer: SearchAPICallObserver | None = None,
 ) -> ValueCheckOutcome:
     """
-    Check a query's values against the APIs which would have served it
+    Check one single-project query's values against the APIs which would have served it
+
+    This is the low-level, single-project building block: `query` must name exactly one
+    project (the selector and facades enforce that). To check a query that names several
+    projects, or several queries at once, use the higher-level
+    [check_query_values][(m).], which splits multi-project queries and calls this
+    function once per project.
 
     The endpoints are worked through in the order
     [search_single_project][esmporium.search.search.search_single_project]
@@ -652,6 +660,117 @@ def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberat
         raise NoFacadeAnsweredError(failures)
 
     return ValueCheckOutcome(reports, failures)
+
+
+def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberate injection seams
+    queries: QueryProtocol | Iterable[QueryProtocol],
+    selector: SearchAPIFacadeSelector = DEFAULT_SELECTOR,
+    *,
+    stop_at_first_result: bool = True,
+    close_matches: CloseMatcher = close_matches_difflib,
+    client: httpx.Client | None = None,
+    api_call_observer: SearchAPICallObserver | None = None,
+    project_query_map: Mapping[str, type[QueryProtocol]] | None = None,
+) -> tuple[ValueCheckOutcome, ...]:
+    """
+    Check one or more queries, over one or more projects, against the APIs
+
+    This is the high-level entry point, and the value-checking mirror of
+    [`esmporium.search.search`][]: each query may name one *or more* projects; we split
+    every query into one single-project query per project (via
+    [translate_to_projects][esmporium.query.translate.translate_to_projects]) and check
+    each through [check_query_values_single_project][(m).].
+
+    Unlike [`esmporium.search.search`][], nothing is saved: value-checking only reads
+    and reports, so there is no processor here, just the outcomes handed back to you.
+    This is the opt-in helper to reach for when a search came back empty and you want to
+    know whether a value was mistyped; see [check_query_values_single_project][(m).] for
+    what each project's check does and what it can and cannot tell you.
+
+    A query which names no project is refused: splitting raises
+    [NoTargetProjectError][esmporium.query.translate.NoTargetProjectError] before any
+    endpoint is contacted, so a bad query in the batch stops the whole call before it
+    does anything.
+
+    Parameters
+    ----------
+    queries
+        A single query, or an iterable of queries. Each query may name one or more
+        projects. A query that names no project is an error (see above).
+
+    selector
+        Passed straight through to [check_query_values_single_project][(m).] for every
+        sub-query. The default picks facades by the sub-query's (single) project.
+
+    stop_at_first_result
+        Passed through to each [check_query_values_single_project][(m).] call.
+
+    close_matches
+        Passed through to each [check_query_values_single_project][(m).] call.
+
+    client
+        The HTTP client to ask the APIs with, shared across every sub-query. If `None`,
+        one is built for the call and closed at the end.
+
+    api_call_observer
+        Passed through to each [check_query_values_single_project][(m).] call. See
+        [esmporium.search.health][] for how to build one.
+
+    project_query_map
+        Passed through to
+        [translate_to_projects][esmporium.query.translate.translate_to_projects] when
+        splitting a query, to control which query class each project uses. If `None`,
+        the default mapping is used.
+
+    Returns
+    -------
+    :
+        One [ValueCheckOutcome][(m).] per sub-query, in the order the sub-queries ran
+        (queries in input order; within a query, the projects in the order
+        [translate_to_projects][esmporium.query.translate.translate_to_projects]
+        yields them).
+
+    Raises
+    ------
+    NoTargetProjectError
+        A query in `queries` names no project. Raised while splitting, before any check
+        happens.
+
+    Notes
+    -----
+    A sub-query that fails outright (e.g. every endpoint it was offered failed) raises,
+    just as [check_query_values_single_project][(m).] does; that error propagates and
+    stops the run. Aggregating partial failures across sub-queries is deliberately left
+    for later.
+    """
+    # Split every query up front, so a query with no project blows up before we contact
+    # any endpoint.
+    sub_queries: list[QueryProtocol] = []
+    for query in as_query_iterable(queries):
+        by_project = translate_to_projects(query, project_query_map=project_query_map)
+        sub_queries.extend(by_project.values())
+
+    owns_client = client is None
+    client = client if client is not None else httpx.Client(follow_redirects=True)
+
+    outcomes: list[ValueCheckOutcome] = []
+    try:
+        for sub_query in sub_queries:
+            outcomes.append(
+                check_query_values_single_project(
+                    sub_query,
+                    selector,
+                    stop_at_first_result=stop_at_first_result,
+                    close_matches=close_matches,
+                    client=client,
+                    api_call_observer=api_call_observer,
+                )
+            )
+    finally:
+        if owns_client:
+            client.close()
+
+    return tuple(outcomes)
 
 
 def check_against_patterns(

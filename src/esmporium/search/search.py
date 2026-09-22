@@ -22,6 +22,7 @@ import httpx
 from esmporium.formatting import readable_list
 from esmporium.query import (
     QueryProtocol,
+    as_query_iterable,
     facet_spec,
     to_canonical,
     translate_to_projects,
@@ -1157,34 +1158,6 @@ search and torn down after.
 """
 
 
-def _as_query_iterable(
-    queries: QueryProtocol | Iterable[QueryProtocol],
-) -> tuple[QueryProtocol, ...]:
-    """
-    Normalise the `queries` argument to a tuple of queries
-
-    A single query is wrapped in a one-tuple; an iterable of queries is materialised.
-    We tell the two apart by duck typing rather than `isinstance`, because
-    [QueryProtocol][esmporium.query.QueryProtocol] is not `runtime_checkable`: a single
-    query carries `other_terms`, an iterable of queries does not.
-
-    Parameters
-    ----------
-    queries
-        A single query, or an iterable of queries
-
-    Returns
-    -------
-    :
-        The queries as a tuple
-    """
-    if hasattr(queries, "other_terms"):
-        # A single query, not an iterable of them.
-        return (queries,)  # type: ignore[return-value]
-
-    return tuple(queries)
-
-
 def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection seams
     queries: QueryProtocol | Iterable[QueryProtocol],
     selector: SearchAPIFacadeSelector = DEFAULT_SELECTOR,
@@ -1299,7 +1272,7 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
     # Split every query up front, so a query with no project blows up before we contact
     # any endpoint or run any processor.
     sub_queries: list[QueryProtocol] = []
-    for query in _as_query_iterable(queries):
+    for query in as_query_iterable(queries):
         by_project = translate_to_projects(query, project_query_map=project_query_map)
         sub_queries.extend(by_project.values())
 

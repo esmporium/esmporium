@@ -17,7 +17,7 @@ from esmporium.query import QueryCMIP5, QueryCMIP6, QueryCMIP7, QueryProtocol
 from esmporium.search import (
     NoFacadeAnsweredError,
     ValueReport,
-    check_query_values,
+    check_query_values_single_project,
 )
 
 
@@ -59,7 +59,9 @@ def main() -> None:
         # hold identical data, so a value one has never heard of can be
         # perfectly ordinary on the next one along -- worth seeing in a demo.
         try:
-            outcome = check_query_values(example, stop_at_first_result=False)
+            outcome = check_query_values_single_project(
+                example, stop_at_first_result=False
+            )
         except NoFacadeAnsweredError as exc:
             # A demo is not the place for a traceback: every endpoint being
             # down says nothing about the checker we are demonstrating.

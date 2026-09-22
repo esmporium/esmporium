@@ -15,7 +15,7 @@ from esmporium.search import (
     FindingKind,
     NoFacadeAnsweredError,
     ValueReport,
-    check_query_values,
+    check_query_values_single_project,
 )
 
 pytestmark = pytest.mark.hits_esgf_search_api
@@ -34,13 +34,15 @@ def only_report(skip_or_fail):
     with something we could not read, fails the test instead (see `skip_or_fail`).
 
     The function takes `(query, observer=None)`.
-    If `observer` is given it is passed through to `check_query_values`, so a
-    caller can assert on the search-API health recorded for the call.
+    If `observer` is given it is passed through to `check_query_values_single_project`,
+    so a caller can assert on the search-API health recorded for the call.
     """
 
     def check_one(query: QueryProtocol, observer=None) -> ValueReport:
         try:
-            outcome = check_query_values(query, api_call_observer=observer)
+            outcome = check_query_values_single_project(
+                query, api_call_observer=observer
+            )
         except NoFacadeAnsweredError as exc:
             skip_or_fail(
                 exc.failures,

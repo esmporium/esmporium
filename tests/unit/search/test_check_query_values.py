@@ -29,8 +29,8 @@ from esmporium.search import (
     SelectorOfferedNoAPIFacadeError,
     SolrSingleRowResultParser,
     allowed_values_from_api,
-    check_query_values,
     check_query_values_low,
+    check_query_values_single_project,
     compare_values,
     facets_the_user_set,
     stac_east_n_matches,
@@ -356,7 +356,7 @@ def test_high_with_no_api_to_ask_raises():
     so it is said out loud instead.
     """
     with pytest.raises(SelectorOfferedNoAPIFacadeError, match="CMIP5"):
-        check_query_values(
+        check_query_values_single_project(
             QueryCMIP5(experiment="abrupt-4xco2", variable="tas"),
             selector=lambda canonical, attempt: None,
             client=client_for(never_asked),
@@ -365,7 +365,7 @@ def test_high_with_no_api_to_ask_raises():
 
 def test_high_routes_through_the_selector_to_the_api():
     """Test that the API the selector offers is the one asked, and reported under."""
-    outcome = check_query_values(
+    outcome = check_query_values_single_project(
         QueryCMIP6(experiment_id="Historical"),
         selector=selector_yielding(solr_api("routed.example")),
         client=client_for(facet_values_from(["historical"])),
@@ -393,7 +393,7 @@ def test_high_moves_on_to_the_next_api_when_one_will_not_answer():
     """
     handler = by_host({"second.example": facet_values_from(["historical"])})
 
-    outcome = check_query_values(
+    outcome = check_query_values_single_project(
         QueryCMIP6(experiment_id="Historical"),
         selector=selector_yielding(
             solr_api("down.example"), solr_api("second.example")
@@ -437,7 +437,7 @@ def test_high_asks_every_api_when_told_not_to_stop_at_the_first():
             "does-not.example": facet_values_from(["historical"]),
         }
     )
-    outcome = check_query_values(
+    outcome = check_query_values_single_project(
         QueryCMIP6(experiment_id="abrupt-4xCO2"),
         selector=selector_yielding(
             solr_api("knows.example"), solr_api("does-not.example")
@@ -467,7 +467,7 @@ def test_high_keeps_the_answers_it_got_when_only_some_apis_fail():
     """A failure alongside an answer is reported alongside it, not raised."""
     handler = by_host({"up.example": facet_values_from(["historical"])})
 
-    outcome = check_query_values(
+    outcome = check_query_values_single_project(
         QueryCMIP6(experiment_id="historical"),
         selector=selector_yielding(solr_api("up.example"), solr_api("down.example")),
         stop_at_first_result=False,
@@ -491,7 +491,7 @@ def test_high_raises_with_every_failure_when_no_api_answers():
     part, so every failure is carried, not just the last.
     """
     with pytest.raises(NoFacadeAnsweredError) as excinfo:
-        check_query_values(
+        check_query_values_single_project(
             QueryCMIP6(experiment_id="Historical"),
             selector=selector_yielding(
                 solr_api("first.example"), solr_api("last.example")

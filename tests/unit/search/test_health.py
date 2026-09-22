@@ -5,7 +5,8 @@ These cover what `fire` records on each path: success (with results, with none, 
 with an uncountable body), the failure paths (client error, transient failure
 retried, transport error, unparseable body), retries recording one row per attempt,
 the opt-out when no observer is given, that `fire` fails loudly with a cause, and
-that both callers (`search` and `check_query_values`) thread the observer down.
+that both callers (`search_single_project` and `check_query_values_single_project`)
+thread the observer down.
 `fan_out` is covered here too. The database side of recording is covered in
 `tests/unit/db/test_search_health.py`.
 """
@@ -30,7 +31,7 @@ from esmporium.search import (
     SearchAPIRequestError,
     SolrSingleRowResultParser,
     build_list_selector,
-    check_query_values,
+    check_query_values_single_project,
     fan_out,
     fire,
     search_single_project,
@@ -301,7 +302,7 @@ def test_check_query_values_records_its_call():
         )
 
     calls: list[SearchAPICall] = []
-    check_query_values(
+    check_query_values_single_project(
         QueryCMIP6(experiment_id="historical"),
         build_list_selector([make_cmip6_facade("node")]),
         client=client_for(handler),
