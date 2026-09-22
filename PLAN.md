@@ -149,7 +149,7 @@ Integration tests:
 - Pagination: an explicit integration test for a search that returns around >10 queries when we set limit to 3 (so we need multiple queries to get everything)
     - by fiddling with limits, we should be able to set up an integration test for both SOLR and STAC
 
-## PR3
+## PR3 see https://github.com/esmporium/esmporium/pull/41
 
 Alter our search entrypoint
 
@@ -170,6 +170,8 @@ In PR3.5, we will add handling of parallelisation of calls to `search_single`
 only ever passes queries that specify a single project to `search_single`
 (we are never going to be fancy and put CMIP6 and CMIP6Plus searches together to save one query, because it makes implementation and error handling so much harder).
 
+Add parallelisation in this PR. Parallelisation of search queries and saving (noting that we will not parallelise pagination). Only Solr (not STAC) could parallelised, and the benefits (time saved) would be small. Instead we will focus our attention on optimising other areas of the workflow to parallelise where we can really save.
+
 My instinct is to do it this way. Check this plan with claude first.
 
 Unit tests:
@@ -188,19 +190,11 @@ Integration tests:
 Not included:
 
 - there is no deliberately no attempt to cache in anyway here. If the user says 'search', we search (even if we already ran the same search 2 seconds previously) because the state of the ESGF database might have changed since we last looked (i.e. there is no sensible way to cache).
+-
 
-## PR3.5
+## PR 3.5
 
-Parallelisation of searching and saving
-
-Unit tests:
-
-- [ ]
-
-Integration tests:
-
-- [ ] parallelisation when we need pagination (i.e. have more than 10 000 results, although there are ways to test this that don't require getting more than 10 000 results e.g. set limit to 3 and get 13 results)
-- [ ] parallelisation of pagination (might be overkill or overload servers (let's see what claude thinks), but might be helpful because we can calculate offset etc. without waiting for the previous query to come back)
+Split search.py into subfolders for clarity.
 
 ## PR3.6 and friends
 

@@ -41,7 +41,7 @@ from esmporium.search.retry import _is_transient
 from esmporium.search.search import get_facade_key
 
 # NOTE: the mock helpers below are duplicated from
-# `tests/unit/search/test_search.py` and `test_check_query_values.py`. They are
+# `tests/unit/search/test_search_single.py` and `test_check_query_values.py`. They are
 # small, and copying keeps this file self-contained. A future PR (PR3 needs a mock
 # search endpoint of its own) may pull them into a shared `mock_search_api` module.
 

@@ -1,5 +1,5 @@
 """
-Test the search step against a mock API
+Test the single-project search step (`search_single_project`) against a mock API
 
 These cover the paths the live integration tests cannot control:
 what happens when a node errors, when it errors transiently,
@@ -756,7 +756,9 @@ def test_search_raises_when_an_endpoint_loops():
             "which would page forever."
         ),
     ):
-        search_single_project(QUERY_CMIP6, selector, limit=1, client=client_for(handler))
+        search_single_project(
+            QUERY_CMIP6, selector, limit=1, client=client_for(handler)
+        )
 
 
 def test_search_warns_when_it_will_paginate():
