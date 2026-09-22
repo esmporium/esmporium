@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from tenacity import Retrying
@@ -15,6 +15,7 @@ from esmporium.search.apis.protocol import (
     LimitOutOfRangeError,
     NoFacetValuesReturnedError,
     NoSearchResultDocumentsError,
+    NoSearchResultNumberOfMatchesReturnedError,
     single_facet_value_or_none,
 )
 from esmporium.search.apis.request import Request
@@ -132,6 +133,115 @@ def solr_extract_result_documents(raw: dict[str, Any]) -> list[dict[str, Any]]:
     res: list[dict[str, Any]] = list(docs)  # ty: ignore invalid-assignment
 
     return res
+
+
+def solr_n_matches(raw: dict[str, Any]) -> int:
+    """
+    Get the number of records that matched a search from a Solr-shaped response
+
+    Note: this is not the same as the number of results in `raw`.
+    Solr has the idea of 'limit', which means that the number of results returned
+    can differ from the total number of records which matched a given query.
+
+    Parameters
+    ----------
+    raw
+        The raw search result to read
+
+    Returns
+    -------
+    :
+        The number of records that matched the search
+
+    Raises
+    ------
+    NoSearchResultNumberOfMatchesReturnedError
+        `raw` does not report the number of records that matched the search
+    """
+    num_found = raw.get("response", {}).get("numFound")
+    if isinstance(num_found, int):
+        return num_found
+
+    elif num_found is not None:
+        msg = (
+            "We expected to get an integer at 'response.numFound', "
+            f"but instead got {num_found!r}"
+        )
+        raise TypeError(msg)
+
+    raise NoSearchResultNumberOfMatchesReturnedError(raw, "response.numFound")
+
+
+def solr_next_page_request(request: Request, raw: dict[str, Any]) -> Request | None:
+    """
+    Build the request for the page after a Solr-shaped response
+
+    Solr is offset-based, so the next page is the same request with its `offset`
+    advanced by one page (`limit`). There are no more pages once the next offset
+    reaches the total the response reports at `response.numFound`.
+
+    Parameters
+    ----------
+    request
+        The search request that was just sent, i.e. the one `raw` answers
+
+        Its `offset` (defaulting to `0`, the first page) and `limit` are read from
+        `request.params`.
+
+    raw
+        The answer to `request`
+
+    Returns
+    -------
+    :
+        The request for the next page,
+        or `None` if `raw` was the last page
+
+    Raises
+    ------
+    UnreadableResponseError
+        `raw` does not report the total number of matches at `response.numFound`
+    """
+    params = request.params or {}
+
+    # A missing `offset` is expected: the first request (see `build_search_request`)
+    # never sets one, and page one is offset 0. From page two on, this function is what
+    # adds it (via the `replace` below). So `offset` is always on a request *we* built,
+    # never read from the response: a non-int is our own bug, not a bad answer from the
+    # API, so we fail loudly with a plain error.
+    offset = params.get("offset", 0)
+    if not isinstance(offset, int):
+        msg = (
+            "Solr paging expects an int 'offset' on the request we built, "
+            f"got {offset!r}."
+        )
+        raise TypeError(msg)
+
+    # `limit` is required: every request we build carries it (from build_search_request)
+    # and it is the page size we advance `offset` by. Missing or non-int here is a
+    # request we built (or were handed) wrong, not a bad answer from the API, so this is
+    # a plain error rather than the response-level `UnreadableResponseError`.
+    limit = params.get("limit")
+    if not isinstance(limit, int):
+        msg = (
+            "Solr paging needs an int 'limit' on the request to know the page size, "
+            f"got {limit!r}. This is a request we built without one, not a bad API "
+            "answer."
+        )
+        raise TypeError(msg)
+
+    if limit <= 0:
+        # A page size of zero or less (e.g. a facet-values request, which uses
+        # `min_limit=0`) can never advance, so there is no next page to ask for.
+        return None
+
+    num_found = solr_n_matches(raw)
+
+    next_offset = offset + limit
+    if next_offset >= num_found:
+        return None
+
+    return replace(request, params={**params, "offset": next_offset})
 
 
 def solr_read_facet_list_as_strings(
@@ -300,6 +410,14 @@ class SearchAPIESGF1Solr:
             params[api_name] = list(values)
 
         return Request("GET", "/esg-search/search", params=params)
+
+    def next_page_request(
+        self, request: Request, raw: dict[str, Any]
+    ) -> Request | None:
+        """
+        See [SearchAPI.next_page_request][esmporium.search.apis.SearchAPI.next_page_request].
+        """  # noqa: E501
+        return solr_next_page_request(request, raw)
 
     def build_get_facet_values_for_project_request(
         self, facets: set[str], project: str

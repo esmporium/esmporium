@@ -9,6 +9,7 @@ and what we log.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -27,6 +28,8 @@ from esmporium.search import (
     CouldNotUseSearchResultsError,
     ESGFNGResultParser,
     NoFacadeAnsweredError,
+    PaginationLimitError,
+    PaginationWarning,
     SearchAPIESGF1Solr,
     SearchAPIESGFNGSTAC,
     SearchAPIFacade,
@@ -83,6 +86,86 @@ def make_facade_cmip6_esgf1(
         search_api=SearchAPIESGF1Solr(host, fast_retrying(attempts), timeout=timeout),
         result_parser=SolrSingleRowResultParser(),
     )
+
+
+def solr_doc(doc_id: str) -> dict:
+    """A minimal CMIP6 Solr record that parses into one dataset row"""
+    return {
+        "master_id": [f"CMIP6.{doc_id}"],
+        "id": [doc_id],
+        "project": ["CMIP6"],
+        "source_id": ["ACCESS"],
+        "institution_id": ["CSIRO"],
+        "experiment_id": ["historical"],
+        "variant_label": ["r1i1p1f1"],
+        "variable_id": ["tas"],
+        "frequency": ["mon"],
+        "table_id": ["Amon"],
+        "grid_label": ["gn"],
+        "version": ["20200101"],
+        "latest": [True],
+        "retracted": [False],
+        "data_node": ["node.example"],
+    }
+
+
+def paginated_solr(total: int, limit: int, seen_offsets: list[int] | None = None):
+    """A Solr handler that serves `total` records `limit` at a time, by offset"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        offset = int(request.url.params.get("offset", 0))
+        if seen_offsets is not None:
+            seen_offsets.append(offset)
+        docs = [
+            solr_doc(f"d{offset + i}")
+            for i in range(min(limit, max(0, total - offset)))
+        ]
+        return httpx.Response(
+            200, json={"response": {"numFound": total, "start": offset, "docs": docs}}
+        )
+
+    return handler
+
+
+def make_facade_cmip6_stac(host: str = "search.example.io") -> SearchAPIFacade:
+    """Build a CMIP6-STAC (ESGF-NG) facade for `host`"""
+    return SearchAPIFacade(
+        parameters=ESGFNG_CMIP6_FACADE_PARAMETERS,
+        search_api=SearchAPIESGFNGSTAC(host, fast_retrying(1)),
+        result_parser=ESGFNGResultParser(read_n_matches=stac_east_n_matches),
+    )
+
+
+def stac_feature(feature_id: str) -> dict:
+    """A minimal CMIP6 STAC feature that parses into one dataset row"""
+    return {
+        "id": feature_id,
+        "collection": "CMIP6",
+        "properties": {
+            "title": f"CMIP6.{feature_id}",
+            "version": "20200101",
+            "latest": True,
+            "retracted": False,
+            "cmip6:source_id": "ACCESS",
+            "cmip6:institution_id": "CSIRO",
+            "cmip6:experiment_id": "historical",
+            "cmip6:variant_label": "r1i1p1f1",
+            "cmip6:variable_id": "tas",
+            "cmip6:frequency": "mon",
+            "cmip6:table_id": "Amon",
+            "cmip6:grid_label": "gn",
+        },
+    }
+
+
+def stac_next_link(token: str) -> dict:
+    """The `next` link a STAC server hands back, carrying a continuation token"""
+    return {
+        "rel": "next",
+        "method": "POST",
+        "href": "https://search.example.io/search",
+        "body": {"filter-lang": "cql2-json", "limit": 1, "token": token},
+    }
 
 
 def key_cmip6_esgf1(host: str) -> FacadeKey:
@@ -411,7 +494,11 @@ def test_search_logs_the_request_at_debug(caplog):
             client=client_for(lambda r: solr_response(1)),
         )
 
-    records = [r for r in caplog.records if r.name == LOGGER_NAME]
+    # Filter to the request log specifically (only it carries the http_* fields):
+    # paging may also debug-log, e.g. when the reported total and what came back differ.
+    records = [
+        r for r in caplog.records if r.name == LOGGER_NAME and hasattr(r, "http_curl")
+    ]
     assert len(records) == 1
     record = records[0]
 
@@ -451,7 +538,9 @@ def test_search_curl_reproduces_a_post_body(caplog):
             ),
         )
 
-    (record,) = [r for r in caplog.records if r.name == LOGGER_NAME]
+    (record,) = [
+        r for r in caplog.records if r.name == LOGGER_NAME and hasattr(r, "http_curl")
+    ]
     assert "-X POST" in record.http_curl
     assert "--data" in record.http_curl
     # "historical" is the experiment_id from QUERY_CMIP6, so it rides in the body.
@@ -466,6 +555,250 @@ def test_search_does_not_log_below_debug(caplog):
         search(QUERY_CMIP6, selector, client=client_for(lambda r: solr_response(1)))
 
     assert [r for r in caplog.records if r.name == LOGGER_NAME] == []
+
+
+def test_search_pages_through_all_solr_results():
+    """When more matched than fit one page, every page is fetched and collected"""
+    selector = build_list_selector([make_facade_cmip6_esgf1("host")])
+    offsets: list[int] = []
+    pages: list[tuple[str, tuple]] = []
+
+    outcome = search(
+        QUERY_CMIP6,
+        selector,
+        limit=2,
+        client=client_for(paginated_solr(5, 2, seen_offsets=offsets)),
+        processor=lambda facade, parsed: pages.append((facade, parsed)),
+    )
+
+    # All 5 records are collected across the pages, and the total is the total.
+    assert len(outcome.parsed_docs[key_cmip6_esgf1("host")]) == 5
+    assert outcome.n_matches[key_cmip6_esgf1("host")] == 5
+    # 5 records at 2 per page is three pages, requested at offsets 0, 2, 4.
+    assert offsets == [0, 2, 4]
+    # The processor is handed each page as it arrives, not the lot at the end.
+    assert [len(parsed) for _, parsed in pages] == [2, 2, 1]
+
+
+def test_search_does_not_page_when_the_first_page_holds_everything():
+    """A single-page result makes a single request"""
+    selector = build_list_selector([make_facade_cmip6_esgf1("host")])
+    offsets: list[int] = []
+
+    outcome = search(
+        QUERY_CMIP6,
+        selector,
+        limit=10,
+        client=client_for(paginated_solr(3, 10, seen_offsets=offsets)),
+    )
+
+    assert len(outcome.parsed_docs[key_cmip6_esgf1("host")]) == 3
+    assert offsets == [0]
+
+
+def test_search_pages_through_all_stac_results():
+    """STAC is paged by following the server's `next` token until it is gone"""
+    selector = build_list_selector([make_facade_cmip6_stac()])
+    responses = iter(
+        [
+            httpx.Response(
+                200,
+                json={
+                    "numberMatched": 3,
+                    "features": [stac_feature("a")],
+                    "links": [stac_next_link("t1")],
+                },
+            ),
+            httpx.Response(
+                200,
+                json={
+                    "numberMatched": 3,
+                    "features": [stac_feature("b")],
+                    "links": [stac_next_link("t2")],
+                },
+            ),
+            httpx.Response(
+                200,
+                json={"numberMatched": 3, "features": [stac_feature("c")], "links": []},
+            ),
+        ]
+    )
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return next(responses)
+
+    outcome = search(QUERY_CMIP6, selector, limit=1, client=client_for(handler))
+
+    stac_key = get_facade_key(make_facade_cmip6_stac())
+    assert len(outcome.parsed_docs[stac_key]) == 3
+    assert outcome.n_matches[stac_key] == 3
+    # Page 1 is our own request (no token); pages 2 and 3 resend the tokens the
+    # server handed back, in order.
+    assert "token" not in bodies[0]
+    assert bodies[1]["token"] == "t1"  # noqa: S105 - a pagination token, not a secret
+    assert bodies[2]["token"] == "t2"  # noqa: S105 - a pagination token, not a secret
+
+
+def test_search_keeps_earlier_pages_when_a_later_page_fails():
+    """A failure part way keeps the pages we got and records the failure"""
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(
+                200,
+                json={
+                    "response": {
+                        "numFound": 6,
+                        "start": 0,
+                        "docs": [solr_doc("a"), solr_doc("b")],
+                    }
+                },
+            )
+        return httpx.Response(503)
+
+    selector = build_list_selector([make_facade_cmip6_esgf1("host", attempts=1)])
+
+    outcome = search(QUERY_CMIP6, selector, limit=2, client=client_for(handler))
+
+    # The first page is kept...
+    assert len(outcome.parsed_docs[key_cmip6_esgf1("host")]) == 2
+    # ...alongside the total, so the shortfall is visible...
+    assert outcome.n_matches[key_cmip6_esgf1("host")] == 6
+    # ...and the failure that stopped us is recorded for the same facade.
+    assert isinstance(
+        outcome.failures[key_cmip6_esgf1("host")], CouldNotGetSearchResponseError
+    )
+
+
+def test_search_partial_answer_does_not_stop_it_trying_the_next_host():
+    """A host that fails part way should not count as the first result"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "host-a":
+            # First page fine, then the next page fails.
+            if request.url.params.get("offset") is None:
+                return httpx.Response(
+                    200,
+                    json={
+                        "response": {"numFound": 4, "start": 0, "docs": [solr_doc("a")]}
+                    },
+                )
+            return httpx.Response(404)
+        return solr_response(2)
+
+    selector = build_list_selector(
+        [make_facade_cmip6_esgf1("host-a"), make_facade_cmip6_esgf1("host-b")]
+    )
+
+    outcome = search(QUERY_CMIP6, selector, limit=1, client=client_for(handler))
+
+    # host-a gave a partial answer and a failure; host-b was still asked and answered.
+    assert set(outcome.failures) == {key_cmip6_esgf1("host-a")}
+    assert key_cmip6_esgf1("host-b") in outcome.parsed_docs
+
+
+def test_search_raises_when_the_result_cap_is_exceeded():
+    """The max_results guardrail stops a runaway search"""
+    selector = build_list_selector([make_facade_cmip6_esgf1("host")])
+
+    with pytest.raises(
+        PaginationLimitError,
+        match=re.escape(
+            f"While paging results from {key_cmip6_esgf1('host')}: collected more "
+            "than the max_results safety cap of 3. Raise max_results (or set it to "
+            "None) to fetch more."
+        ),
+    ):
+        search(
+            QUERY_CMIP6,
+            selector,
+            limit=2,
+            max_results=3,
+            client=client_for(paginated_solr(10, 2)),
+        )
+
+
+def test_search_raises_when_an_endpoint_loops():
+    """An endpoint that re-offers a page we already asked for is a loop, and refused"""
+    selector = build_list_selector([make_facade_cmip6_stac()])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        # Always the same token, so the next request never changes: a loop.
+        return httpx.Response(
+            200,
+            json={
+                "numberMatched": 10,
+                "features": [],
+                "links": [stac_next_link("stuck")],
+            },
+        )
+
+    with pytest.raises(
+        PaginationLimitError,
+        match=re.escape(
+            f"While paging results from {get_facade_key(make_facade_cmip6_stac())}: "
+            "the endpoint asked us to re-request a page we had already requested, "
+            "which would page forever."
+        ),
+    ):
+        search(QUERY_CMIP6, selector, limit=1, client=client_for(handler))
+
+
+def test_search_warns_when_it_will_paginate():
+    """A search matching more than one page's worth warns that it will page"""
+    selector = build_list_selector([make_facade_cmip6_esgf1("host")])
+
+    # 6 matches at 2 per page is 3 pages, so it warns and names the numbers.
+    with pytest.warns(
+        PaginationWarning,
+        match=re.escape(
+            "This search of host matched 6 records but fetches 2 per page, so it "
+            "will page through about 3 requests and may take a while. Raise `limit` "
+            "to fetch more records per request, narrow your query, or pass "
+            "warn_on_pagination=False to silence this."
+        ),
+    ):
+        search(
+            QUERY_CMIP6,
+            selector,
+            limit=2,
+            client=client_for(paginated_solr(6, 2)),
+        )
+
+
+def test_warn_on_pagination_false_silences_the_warning(recwarn):
+    """The pagination warning is opt-out: `warn_on_pagination=False` stops it"""
+    selector = build_list_selector([make_facade_cmip6_esgf1("host")])
+
+    search(
+        QUERY_CMIP6,
+        selector,
+        limit=2,
+        warn_on_pagination=False,
+        client=client_for(paginated_solr(6, 2)),
+    )
+
+    assert not [w for w in recwarn if isinstance(w.message, PaginationWarning)]
+
+
+def test_search_does_not_warn_when_the_results_fit_in_one_page(recwarn):
+    """A search whose matches all fit in one page does not warn about paging"""
+    selector = build_list_selector([make_facade_cmip6_esgf1("host")])
+
+    # 2 matches at 5 per page is a single page: no paging, so nothing to warn about.
+    search(
+        QUERY_CMIP6,
+        selector,
+        limit=5,
+        client=client_for(paginated_solr(2, 5)),
+    )
+
+    assert not [w for w in recwarn if isinstance(w.message, PaginationWarning)]
 
 
 def test_search_treats_an_other_terms_clash_as_that_facade_failing():

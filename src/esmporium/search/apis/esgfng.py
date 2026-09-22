@@ -8,6 +8,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
 from tenacity import Retrying
 
@@ -184,6 +185,66 @@ def stac_extract_result_documents(raw: dict[str, Any]) -> list[dict[str, Any]]:
     features: list[dict[str, Any]] = raw["features"]
 
     return list(features)
+
+
+def stac_next_page_request(request: Request, raw: dict[str, Any]) -> Request | None:
+    """
+    Build the request for the page after a STAC-shaped response
+
+    STAC is cursor-based, so the next page is not something we compute: the server
+    hands it back in the response's `links`, as the entry with `rel: "next"`. That
+    entry carries the full request to send for the next page (a continuation token
+    lives in its `body`), so we resend it verbatim. There are no more pages once the
+    response carries no such link, which is how the server says "that was the last
+    page".
+
+    Parameters
+    ----------
+    request
+        The search request that was just sent, i.e. the one `raw` answers
+
+        Not read: STAC describes the next page entirely in `raw`. It is accepted so
+        this matches the shape every API's `next_page_request` takes.
+
+    raw
+        The answer to `request`
+
+    Returns
+    -------
+    :
+        The request for the next page,
+        or `None` if `raw` carries no `next` link (it was the last page)
+
+    Raises
+    ------
+    UnreadableResponseError
+        `raw` carries a `next` link but not in a shape we can resend
+        (it does not carry both the URL and the body to POST)
+    """
+    links = raw.get("links")
+    if not isinstance(links, list):
+        return None
+
+    nxt = next(
+        (
+            link
+            for link in links
+            if isinstance(link, Mapping) and link.get("rel") == "next"
+        ),
+        None,
+    )
+    if nxt is None:
+        return None
+
+    href = read_response_path(
+        dict(nxt), "href", what="the URL of the next page of results"
+    )
+    body = read_response_path(
+        dict(nxt), "body", what="the body to POST for the next page of results"
+    )
+    # The href is a full URL, but we send it via the API's own host, so we keep only
+    # its path (the host on the link matches the host we are already talking to).
+    return Request(nxt.get("method", "POST"), urlsplit(href).path, json_body=body)
 
 
 def stac_read_facet_list_as_strings(
@@ -454,6 +515,14 @@ class SearchAPIESGFNGSTAC:
             json_body["filter"] = {"op": "and", "args": and_clauses}
 
         return Request("POST", "/search", json_body=json_body)
+
+    def next_page_request(
+        self, request: Request, raw: dict[str, Any]
+    ) -> Request | None:
+        """
+        See [SearchAPI.next_page_request][esmporium.search.apis.SearchAPI.next_page_request].
+        """  # noqa: E501
+        return stac_next_page_request(request, raw)
 
     def build_get_facet_values_for_project_request(
         self, facets: set[str], project: str

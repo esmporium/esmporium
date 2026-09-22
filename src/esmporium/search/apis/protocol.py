@@ -657,6 +657,40 @@ class SearchAPI(Protocol):
         """
         ...
 
+    def next_page_request(
+        self, request: Request, raw: dict[str, Any]
+    ) -> Request | None:
+        """
+        Build the request for the page after the one that answered with `raw`
+
+        This is how a search is paged through: send `request`, read `raw`, then keep
+        calling this with the request just sent and the answer it gave until it
+        returns `None`, sending each request you get back along the way.
+
+        How the next page is found is the implementer's API's own concern.
+
+        Parameters
+        ----------
+        request
+            The request that was just sent, i.e. the one `raw` answers
+
+        raw
+            The answer to `request`, i.e. a response from
+            [build_search_request][(c).build_search_request]
+
+        Returns
+        -------
+        :
+            The request to use to get the next page,
+            or `None` if `raw` was the last page.
+
+        Raises
+        ------
+        UnreadableResponseError
+            `raw` says there is a next page but not in a shape we can read.
+        """
+        ...
+
     def build_get_facet_values_for_project_request(
         self, facets: set[str], project: str
     ) -> Request:

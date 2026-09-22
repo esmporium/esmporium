@@ -42,6 +42,23 @@ def test_build_search_request_refuses_an_impossible_limit(limit):
         api().build_search_request({}, limit=limit)
 
 
+def test_next_page_request_advances_the_offset_like_solr():
+    """The bridge pages by offset too, carrying its own comma-OR params along"""
+    request = api().build_search_request({"variable_id": ("tas",)}, limit=10)
+    raw = {"response": {"numFound": 25, "docs": []}}
+
+    nxt = api().next_page_request(request, raw)
+
+    assert nxt is not None
+    assert nxt.params["offset"] == 10
+    assert nxt.path == "/esgf-1-5-bridge/"
+    assert nxt.params["variable_id"] == "tas"
+
+    # ...and stops once the offset reaches the total.
+    assert api().next_page_request(nxt, raw).params["offset"] == 20
+    assert api().next_page_request(api().next_page_request(nxt, raw), raw) is None
+
+
 def test_build_get_facet_values_request_names_the_facets_sorted():
     request = api().build_get_facet_values_for_project_request(
         {"variable_id", "experiment_id"}, "CMIP6"

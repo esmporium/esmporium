@@ -14,6 +14,7 @@ from tenacity import Retrying
 from esmporium.search.apis.esgf1 import (
     solr_extract_result_documents,
     solr_facet_values,
+    solr_next_page_request,
     solr_read_facet_as_string,
     solr_read_facet_list_as_strings,
 )
@@ -80,6 +81,16 @@ class SearchAPIESGF15BridgeSolr:
             params[api_name] = ",".join(values)
 
         return Request("GET", "/esgf-1-5-bridge/", params=params)
+
+    def next_page_request(
+        self, request: Request, raw: dict[str, Any]
+    ) -> Request | None:
+        """
+        See [SearchAPI.next_page_request][esmporium.search.apis.SearchAPI.next_page_request].
+        """  # noqa: E501
+        # The offset semantics are identical to ESGF1 Solr; the differing path and
+        # comma-OR facets are already carried on `request`, so the shared helper does.
+        return solr_next_page_request(request, raw)
 
     def build_get_facet_values_for_project_request(
         self, facets: set[str], project: str

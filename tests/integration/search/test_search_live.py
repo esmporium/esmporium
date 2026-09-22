@@ -329,6 +329,61 @@ def test_search_applies_the_facets_we_send(  # noqa: PLR0913 - parametrised, plu
     assert success.num_results == 0
 
 
+@pytest.mark.parametrize("api, query", LIVE_CASES)
+def test_search_pages_through_all_the_results(
+    client, api, query, search_or_skip, skip_or_fail
+):
+    """
+    Paging reassembles the whole result set from the live APIs
+    """
+    host = api.search_api.host
+    facade_key = (
+        api.search_api.host,
+        type(api.search_api).__name__,
+        api.parameters.base_query_style.__name__,
+    )
+
+    # Probe with the smallest page to learn how much matches, so we can size the
+    # real page to need only a few requests.
+    probe = search_or_skip(query, api, client, limit=1)
+    total = probe.n_matches[facade_key]
+    if total is None or total < 2:
+        pytest.skip(
+            f"{host} matched {total} for this query, too few to need more than one page"
+        )
+
+    # Aim for ~4 pages, but always at least two (page smaller than the total).
+    page_size = min(max(1, total // 4), total - 1)
+
+    pages: list[int] = []
+
+    try:
+        outcome = search(
+            query,
+            build_list_selector([api]),
+            limit=page_size,
+            client=client,
+            processor=lambda _facade, parsed: pages.append(len(parsed)),
+        )
+    except NoFacadeAnsweredError as exc:
+        skip_or_fail(
+            exc.failures,
+            did_not_answer=CouldNotGetSearchResponseError,
+            reason=f"{host} stopped answering part way through paging",
+        )
+
+    # More than one page was actually fetched...
+    assert len(pages) > 1, (
+        f"{host} was paged at {page_size} of {total}, but only one page was fetched"
+    )
+    # ...and every matched record was collected across those pages.
+    assert len(outcome.parsed_docs[facade_key]) == total, (
+        f"{host} said {total} matched but paging collected "
+        f"{len(outcome.parsed_docs[facade_key])} (the index may have shifted mid-scan)"
+    )
+    assert outcome.n_matches[facade_key] == total
+
+
 def master_ids(documents: tuple[ParsedDocument, ...]) -> set[str]:
     """
     Read the unique dataset identifiers out of a host's parsed documents

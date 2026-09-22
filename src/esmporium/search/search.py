@@ -6,10 +6,13 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import shlex
 import time
+import warnings
 from collections.abc import Collection
 from dataclasses import dataclass
+from functools import partial
 from typing import TYPE_CHECKING, Any, TypeAlias
 
 import httpx
@@ -630,6 +633,52 @@ class ClashingFacetsForFacadeError(CouldNotSearchError):
         super().__init__(msg, facade_key=get_facade_key(facade), cause=None)
 
 
+class PaginationLimitError(RuntimeError):
+    """
+    Raised when paging through a search hits a safety limit before it is exhausted
+
+    This is a guardrail, not a normal outcome. It fires either because a search
+    collected more records than the caller allowed (`max_results`), or because an
+    endpoint asked us to re-request a page we had already requested, which would
+    otherwise loop forever.
+    """
+
+    def __init__(self, facade_key: FacadeKey, message: str) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        facade_key
+            The facade we were paging through
+
+        message
+            Why we stopped, phrased to follow on from "while paging results from
+            <facade>: "
+        """
+        self.facade_key = facade_key
+        super().__init__(f"While paging results from {facade_key}: {message}")
+
+
+# Note for developers: A [UserWarning][] so it shows by default,
+# and its own category so it is easy to silence on its own: filter it with
+# `warnings.simplefilter("ignore", PaginationWarning)`,
+# or escalate it to an error in tests, without touching any other warning.
+class PaginationWarning(UserWarning):
+    """
+    Warns that a search is large enough that it will page through several requests
+
+    Emitted (unless `warn_on_pagination` is turned off) when an endpoint reports more
+    matches than fit in one page, so the caller knows the search will make several
+    requests and may take a while before it is done.
+
+    A [UserWarning][] so it shows by default, and its own category so it is easy to
+    silence on its own: filter it with
+    `warnings.simplefilter("ignore", PaginationWarning)`,
+    or escalate it to an error in tests, without touching any other warning.
+    """
+
+
 @dataclass(frozen=True)
 class SearchOutcome:
     """
@@ -659,13 +708,251 @@ class SearchOutcome:
     """Reasons we failed to get search results, keyed by the facade"""
 
 
+@dataclass(frozen=True)
+class FacadePages:
+    """The outcome of paging through one facade's answer to a search"""
+
+    collected: tuple[ParsedDocument, ...]
+    """Every parsed document we fetched, across all pages"""
+
+    n_matches: int | None
+    """The total the endpoint reported matched, read from the first page"""
+
+    completed: bool
+    """Whether we fetched every page (`False` if a page failed part way)"""
+
+    failure: CouldNotSearchError | None
+    """The failure that stopped us, if paging did not complete"""
+
+
+# TODO: In a future PR add this to SearchAPIHealth ?
+def _request_fingerprint(request: Request) -> str:
+    """
+    Render a request as a stable string, so repeats can be spotted
+
+    Used to detect an endpoint that asks us to re-request a page we have already
+    requested, which would otherwise page forever.
+
+    Parameters
+    ----------
+    request
+        The request to render
+
+    Returns
+    -------
+    :
+        A string that is equal for two requests exactly when they would be sent the
+        same way
+    """
+    return json.dumps(
+        {
+            "method": request.method,
+            "path": request.path,
+            "params": request.params,
+            "json_body": request.json_body,
+        },
+        sort_keys=True,
+        default=str,
+    )
+
+
+def _warn_if_paginating(host: str, *, n_matches: int, limit: int) -> None:
+    """
+    Warn that a search will page through several requests, if it will
+
+    A search pages whenever more records match than fit in one page (`limit`), and
+    the number of requests that takes is `ceil(n_matches / limit)`: a big result set
+    with a small page size is many small requests, and a huge result set is many
+    requests even at the largest page size. Either can take a while, so we say so.
+
+    Parameters
+    ----------
+    host
+        The host being searched, named in the warning
+
+    n_matches
+        How many records the endpoint reported matched
+
+    limit
+        The page size that was asked for, i.e. the most records in one response
+
+    Warns
+    -----
+    PaginationWarning
+        `n_matches` exceeds `limit`, so the search will page
+    """
+    if n_matches <= limit:
+        return
+
+    pages = math.ceil(n_matches / limit)
+    warnings.warn(
+        f"This search of {host} matched {n_matches:,} records but fetches "
+        f"{limit:,} per page, so it will page through about {pages:,} requests "
+        "and may take a while. Raise `limit` to fetch more records per request, "
+        "narrow your query, or pass warn_on_pagination=False to silence this.",
+        PaginationWarning,
+        stacklevel=2,
+    )
+
+
+def collect_all_pages(  # noqa: PLR0913 - the keyword-only extras are injection seams
+    client: httpx.Client,
+    facade: SearchAPIFacade,
+    request: Request,
+    *,
+    limit: int,
+    max_results: int | None,
+    warn_on_pagination: bool,
+    api_call_observer: SearchAPICallObserver | None,
+    processor: ResultProcessor | None,
+) -> FacadePages:
+    """
+    Fetch and page through one facade's whole answer, parsing each page as it arrives
+
+    This sends `request`, then follows the endpoint's own pagination page by page (see
+    [esmporium.search.apis.SearchAPI.next_page_request][]) until there are no more,
+    fetching every page itself.
+
+    Each page is handed to `processor` the moment it is parsed, so a failure part way
+    still leaves the earlier pages saved. A failure -- fetching the first page or a
+    later one, or reading any of them -- is returned on the result rather than raised,
+    so the caller can keep the pages we did get and record the failure against the
+    facade.
+
+    Parameters
+    ----------
+    client
+        The HTTP client to fetch the pages with
+
+    facade
+        The facade whose answer we are paging through
+
+    request
+        The search request to send for the first page
+
+    limit
+        The page size that was asked for, i.e. the most records in one response
+
+        Used only to work out (against the total matched) how many requests paging
+        will take, for the [PaginationWarning][(m).].
+
+    max_results
+        The most records to collect before stopping with a
+        [PaginationLimitError][(m).]. `None` disables the cap.
+
+    warn_on_pagination
+        Whether to emit a [PaginationWarning][(m).] when the endpoint reports more
+        matches than fit in one page, so the caller knows paging is happening.
+
+    api_call_observer
+        Told about each further request, as in [fire][(m).]
+
+    processor
+        Handed each page as it is parsed, as in [search][(m).]
+
+    Returns
+    -------
+    :
+        What we collected, the total matched, and whether we got every page
+
+    Raises
+    ------
+    PaginationLimitError
+        We collected more than `max_results`, or the endpoint asked us to
+        re-request a page we had already requested
+    """
+    api = facade.search_api
+    facade_key = get_facade_key(facade)
+    collected: list[ParsedDocument] = []
+    # Stays None if the first fetch fails before we can read a count.
+    n_matches: int | None = None
+    seen: set[str] = set()
+    try:
+        fire_here = partial(
+            fire,
+            client=client,
+            api=api,
+            api_call_observer=api_call_observer,
+            read_n_matches=facade.get_n_matches,
+        )
+        raw = fire_here(request=request)
+        # Read the count directly: a search response
+        # that omits its total is one we cannot use, so let the raise propagate to the
+        # UnreadableResponseError handler below rather than swallowing it to None.
+        n_matches = facade.get_n_matches(raw)
+        if warn_on_pagination:
+            _warn_if_paginating(facade_key[0], n_matches=n_matches, limit=limit)
+        seen = {_request_fingerprint(request)}
+
+        while True:
+            parsed = facade.parse_search_results(raw)
+            collected.extend(parsed)
+            if processor is not None:
+                processor(facade, parsed)
+
+            if max_results is not None and len(collected) > max_results:
+                raise PaginationLimitError(
+                    facade_key,
+                    f"collected more than the max_results safety cap of "
+                    f"{max_results}. Raise max_results (or set it to None) to fetch "
+                    "more.",
+                )
+
+            nxt = api.next_page_request(request, raw)
+            if nxt is None:
+                break
+
+            fingerprint = _request_fingerprint(nxt)
+            if fingerprint in seen:
+                raise PaginationLimitError(
+                    facade_key,
+                    "the endpoint asked us to re-request a page we had already "
+                    "requested, which would page forever.",
+                )
+            seen.add(fingerprint)
+
+            request = nxt
+            raw = fire_here(request=nxt)
+    except SearchAPIRequestError as exc:
+        return FacadePages(
+            tuple(collected),
+            n_matches,
+            completed=False,
+            failure=CouldNotGetSearchResponseError(facade_key, cause=exc),
+        )
+    except UnreadableResponseError as exc:
+        return FacadePages(
+            tuple(collected),
+            n_matches,
+            completed=False,
+            failure=CouldNotUseSearchResultsError(
+                facade_key, cause=exc, url=get_url(api, request)
+            ),
+        )
+
+    # Paged to the end. If the endpoint reported a total, note when what we collected
+    # falls short of it (most likely the index shifted mid-scan): the pages we did get
+    # are still all we could follow, so this is a heads-up, not a failure.
+    if n_matches is not None and len(collected) != n_matches:
+        logger.debug(
+            "%s paged to the end but collected %d of the %d records it reported "
+            "matched (the index may have shifted mid-scan)",
+            facade_key[0],
+            len(collected),
+            n_matches,
+        )
+
+    return FacadePages(tuple(collected), n_matches, completed=True, failure=None)
+
+
 def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection seams
     query: QueryProtocol,
     selector: SearchAPIFacadeSelector = DEFAULT_SELECTOR,
     *,
     stop_at_first_result: bool = True,
-    # Limit handling and pagination will be added in PR2.5
     limit: int = 10_000,
+    max_results: int | None = None,
+    warn_on_pagination: bool = True,
     client: httpx.Client | None = None,
     api_call_observer: SearchAPICallObserver | None = None,
     processor: ResultProcessor | None = None,
@@ -696,6 +983,32 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
         i.e. the most records to get in one response, not the total matched.
         The total matched comes back in the response itself.
 
+        When more records match than fit in one page, we page through the rest:
+        every page is fetched, parsed and handed to `processor` as it arrives, and
+        the parsed documents from all pages end up in the outcome's `parsed_docs`.
+
+    max_results
+        The most records to collect from one endpoint before stopping with a
+        [PaginationLimitError][(m).].
+
+        This is an optional safety guardrail against a runaway search over a huge
+        result set: set it to a number to cap how much one endpoint may return.
+        It defaults to `None` (no cap), so a search fetches every matching record
+        unless you ask it not to.
+
+        Turning this off does not remove the loop protection: an endpoint that asks
+        us to re-request a page we already fetched still stops with a
+        [PaginationLimitError][(m).], because that would otherwise page forever.
+
+    warn_on_pagination
+        Whether to warn (with a [PaginationWarning][(m).]) when a search matches more
+        records than fit in one page, so you know it will make several requests and
+        may take a while.
+
+        On by default; pass `False` to silence it (e.g. once you already expect the
+        search to be large). The warning is its own category, so it can also be
+        silenced or escalated on its own through the [warnings][] machinery.
+
     client
         The HTTP client to search with.
         If `None`, one is built for the call and closed at the end.
@@ -707,7 +1020,7 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
         See [esmporium.search.health][] for how to build one.
 
     processor
-        Called with `(host, parsed_documents)` as soon as each endpoint answers,
+        Called with `(facade, parsed_documents)` as soon as each page is parsed,
         so its results can be acted on (e.g. saved) the moment they arrive
         rather than at the end.
         If `None` (the default),
@@ -728,6 +1041,11 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
     NoFacadeAnsweredError
         The selector offered at least one facade
         and none of them gave us results we could use
+
+    PaginationLimitError
+        Paging through an endpoint hit the `max_results` cap, or the endpoint asked
+        us to re-request a page we had already requested. Pages fetched before this
+        have already been handed to `processor`.
     """
     canonical = to_canonical(query)
 
@@ -748,24 +1066,14 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
 
             try:
                 request = facade.build_search_request(canonical, limit)
-                raw = fire(
-                    client,
-                    facade.search_api,
-                    request,
-                    api_call_observer,
-                    read_n_matches=facade.get_n_matches,
-                )
             except ClashingFacetsError as exc:
                 failures[facade_key] = ClashingFacetsForFacadeError(
                     query=query, facade=facade, clashing=exc.clashing
                 )
-            except SearchAPIRequestError as exc:
-                failures[facade_key] = CouldNotGetSearchResponseError(
-                    facade_key, cause=exc
-                )
             else:
-                # The facade knows this host's format and project, so it turns the raw
-                # answer into datasets here, the moment it arrives.
+                # The facade knows this host's format and project, so it fetches and
+                # turns that answer into datasets here, the moment it arrives, paging
+                # through the rest of the results as it goes.
                 # Note: if the selector offers the same host twice,
                 # the second answer simply replaces the first here.
                 # That is wasteful, because we run the query again, but it is not wrong:
@@ -777,24 +1085,29 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
                 # If either of those assumptions changed, this would break.
                 # We will have to be more careful in higher-level functions
                 # to do queries over multiple projects (PR3).
-                try:
-                    parsed = facade.parse_search_results(raw)
-                except UnreadableResponseError as exc:
-                    failures[facade_key] = CouldNotUseSearchResultsError(
-                        facade_key,
-                        cause=exc,
-                        url=get_url(facade.search_api, request),
-                    )
-                else:
-                    parsed_docs[facade_key] = parsed
-                    n_matches[facade_key] = _result_count_or_none(
-                        facade.get_n_matches, raw
-                    )
-                    if processor is not None:
-                        processor(facade, parsed)
+                pages = collect_all_pages(
+                    client,
+                    facade,
+                    request,
+                    limit=limit,
+                    max_results=max_results,
+                    warn_on_pagination=warn_on_pagination,
+                    api_call_observer=api_call_observer,
+                    processor=processor,
+                )
+                # Keep whatever pages we got, even if paging then failed: an empty
+                # but completed answer (no matches) belongs here too, so we key on
+                # "we parsed at least the first page", not "we collected something".
+                if pages.completed or pages.collected:
+                    parsed_docs[facade_key] = pages.collected
+                    n_matches[facade_key] = pages.n_matches
+                if pages.failure is not None:
+                    failures[facade_key] = pages.failure
 
-                    if stop_at_first_result:
-                        break
+                # Only a facade we fully paged through counts as "a result": a partial
+                # answer should not stop us asking the next endpoint for a complete one.
+                if pages.completed and stop_at_first_result:
+                    break
 
             attempt += 1
 

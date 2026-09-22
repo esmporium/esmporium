@@ -198,6 +198,25 @@ def test_result_count_of_a_recorded_search(name, facade):
     assert facade.get_n_matches(raw) > 0
 
 
+SOLR_RECORDED_CASES = tuple(c for c in RECORDED_CASES if "stac" not in str(c.id))
+"""The recorded cases whose API pages by offset"""
+
+
+@pytest.mark.parametrize("name, facade", SOLR_RECORDED_CASES)
+def test_recorded_solr_next_page_request_advances_the_offset(name, facade):
+    """On a real Solr answer with more matches than one page, we ask for the next"""
+    raw = load(f"{name}-search")
+    api = facade.search_api
+
+    # The recordings hold far more matches than the small page they returned, so
+    # there is always a next page to ask for.
+    request = api.build_search_request({}, limit=2)
+    nxt = api.next_page_request(request, raw)
+
+    assert nxt is not None
+    assert nxt.params["offset"] == 2
+
+
 CMIP5_RECORDED_CASES = tuple(c for c in RECORDED_CASES if "cmip5" in str(c.id))
 """The recorded cases whose project bundles many variables into one document"""
 
@@ -298,6 +317,27 @@ def test_recorded_stac_id_project_specific_is_read_from_title(name, facade):
     assert [doc.esgf_doc_id for doc in documents] == [
         feature["id"] for feature in raw["features"]
     ]
+
+
+@pytest.mark.parametrize("name, facade", STAC_RECORDED_CASES)
+def test_recorded_stac_next_page_request_follows_the_recorded_token(name, facade):
+    """A real STAC answer's `next` link is resent verbatim to page onwards
+
+    The recordings were captured with a small page, so each carries a `next` link
+    with a continuation token: this pins that we resend exactly that request.
+    """
+    raw = load(f"{name}-search")
+    api = facade.search_api
+
+    (next_link,) = [link for link in raw["links"] if link.get("rel") == "next"]
+
+    nxt = api.next_page_request(api.build_search_request({}, limit=2), raw)
+
+    assert nxt is not None
+    assert nxt.method == "POST"
+    assert nxt.path == "/search"
+    # The whole body, continuation token and all, is what we send next.
+    assert nxt.json_body == next_link["body"]
 
 
 @pytest.mark.parametrize("name, facade", RECORDED_CASES)
