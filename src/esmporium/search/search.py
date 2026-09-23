@@ -1187,7 +1187,6 @@ search and torn down after.
 """
 
 
-
 def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection seams
     queries: QueryProtocol | Iterable[QueryProtocol],
     selector: SearchAPIFacadeSelector = DEFAULT_SELECTOR,
