@@ -5,6 +5,7 @@ Writing search results into the database
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, Protocol
 
 from sqlalchemy import func
@@ -35,7 +36,10 @@ from esmporium.search.result_parsing import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping
+    from collections.abc import Callable, Iterable, Iterator, Mapping
+    from contextlib import AbstractContextManager
+
+    from sqlalchemy import Engine
 
     from esmporium.search.search_api_facade import SearchAPIFacade
 
@@ -289,10 +293,13 @@ def build_result_processor(
     """
     Build a processor that persists one facade's parsed results into `session`
 
-    The returned callback can be used by e.g. [`esmporium.search.search`][].
-    Search calls the returned callback as each facade answers
-    so it can ingest that facade's documents and commits,
-    making results are durable as soon as they arrive.
+    The returned callback is what
+    [`esmporium.search.search_single_project`][] calls as each facade
+    answers: it ingests that facade's documents and commits, so results are durable as
+    soon as they arrive. Inject it as
+    `search_single_project(..., processor=build_result_processor(session))`.
+    For the multi-query [`esmporium.search.search`][], which wants a fresh processor per
+    sub-query, use [build_result_processor_factory][(m).] instead.
 
     Parameters
     ----------
@@ -324,6 +331,52 @@ def build_result_processor(
         session.commit()
 
     return processor
+
+
+def build_result_processor_factory(
+    engine: Engine,
+    normalisers: Mapping[str, NormaliseFunc] = DEFAULT_NORMALISERS,
+) -> Callable[[], AbstractContextManager[ResultProcessor]]:
+    """
+    Build a factory that makes a fresh saving processor per sub-query
+
+    This is the database-saving [ProcessorFactory][esmporium.search.ProcessorFactory] to
+    hand to [`esmporium.search.search`][]: it is called once per sub-query and opens a
+    fresh `sqlmodel.Session` (and so a fresh transaction) for that sub-query,
+    yields a [build_result_processor][(m).] bound to it, and closes it afterwards. A
+    session per sub-query is what keeps each sub-query's results in their own
+    transaction, so one that finishes is committed and durable before the next begins,
+    and what lets a parallel search give each worker its own session.
+
+    Parameters
+    ----------
+    engine
+        The database engine each sub-query's session is opened on.
+
+    normalisers
+        Passed through to [build_result_processor][(m).] for each session.
+
+    Returns
+    -------
+    :
+        A factory of the shape [ProcessorFactory][esmporium.search.ProcessorFactory],
+        i.e. a callable that returns a fresh saving processor as a context manager.
+
+    Examples
+    --------
+    >>> from esmporium.search import search  # doctest: +SKIP
+    >>> search(  # doctest: +SKIP
+    ...     queries,
+    ...     processor_factory=build_result_processor_factory(engine),
+    ... )
+    """
+
+    @contextmanager
+    def factory() -> Iterator[ResultProcessor]:
+        with Session(engine) as session:
+            yield build_result_processor(session, normalisers)
+
+    return factory
 
 
 class _SurrogateKeyRow(Protocol):

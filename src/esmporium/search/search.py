@@ -10,18 +10,22 @@ import math
 import shlex
 import time
 import warnings
-from collections.abc import Collection
+from collections.abc import Callable, Collection, Iterable, Mapping
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from functools import partial
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 import httpx
 
 from esmporium.formatting import readable_list
 from esmporium.query import (
     QueryProtocol,
+    as_query_iterable,
     facet_spec,
     to_canonical,
+    translate_to_projects,
 )
 from esmporium.search.apis import (
     NoSearchResultNumberOfMatchesReturnedError,
@@ -495,6 +499,28 @@ class NoFacadeAnsweredError(RuntimeError):
         )
 
 
+class AllSubQueriesFailedError(RuntimeError):
+    """
+    Raised when every sub-query of a multi-query search or value check failed
+    """
+
+    def __init__(self, failures: tuple[NoFacadeAnsweredError, ...]) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        failures
+            Each failed sub-query's error, in the order the sub-queries ran
+        """
+        self.failures = failures
+        joined = "\n".join(f"  - {failure}" for failure in failures)
+        super().__init__(
+            f"All {len(failures)} sub-queries failed to return anything we could use:\n"
+            f"{joined}"
+        )
+
+
 class ClashingFacetsForFacadeError(CouldNotSearchError):
     """
     Raised when `other_terms` sets values for facets that a query already sets
@@ -671,11 +697,6 @@ class PaginationWarning(UserWarning):
     Emitted (unless `warn_on_pagination` is turned off) when an endpoint reports more
     matches than fit in one page, so the caller knows the search will make several
     requests and may take a while before it is done.
-
-    A [UserWarning][] so it shows by default, and its own category so it is easy to
-    silence on its own: filter it with
-    `warnings.simplefilter("ignore", PaginationWarning)`,
-    or escalate it to an error in tests, without touching any other warning.
     """
 
 
@@ -706,6 +727,20 @@ class SearchOutcome:
 
     failures: dict[FacadeKey, CouldNotSearchError]
     """Reasons we failed to get search results, keyed by the facade"""
+
+    @property
+    def answered(self) -> bool:
+        """
+        Whether any facade answered, i.e. this is a real answer and not a pure failure
+
+        `True` for any outcome a search actually returned (even one where every facade
+        matched zero records). `False` only for the empty, failures-only outcome that
+        the multi-query [search][(m).] puts in place of a sub-query whose endpoints all
+        failed, so a caller can tell "this project came back empty" from "this project
+        could not be reached" -- the latter has `answered` `False` and a populated
+        `failures`.
+        """
+        return bool(self.parsed_docs)
 
 
 @dataclass(frozen=True)
@@ -945,7 +980,7 @@ def collect_all_pages(  # noqa: PLR0913 - the keyword-only extras are injection 
     return FacadePages(tuple(collected), n_matches, completed=True, failure=None)
 
 
-def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection seams
+def search_single_project(  # noqa: PLR0913 - the keyword-only extras are deliberate injection seams
     query: QueryProtocol,
     selector: SearchAPIFacadeSelector = DEFAULT_SELECTOR,
     *,
@@ -959,6 +994,11 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
 ) -> SearchOutcome:
     """
     Search the facades the selector yields, and parse their answers into datasets
+
+    This is the low-level, single-project building block: `query` must name exactly
+    one project (the selector and facades enforce that). To search several projects,
+    or to run several queries through one call, use the higher-level [search][(m).],
+    which splits multi-project queries and calls this function once per project.
 
     Parameters
     ----------
@@ -1067,8 +1107,17 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
             try:
                 request = facade.build_search_request(canonical, limit)
             except ClashingFacetsError as exc:
+                # Explain the clash in terms of the query the user actually wrote.
+                # When `search` split a multi-project query, `query` here is the
+                # translated, project-specific one and `source_query` is the original
+                # (e.g. the generic `Query`, or a `QueryCMIP6` re-projected to CMIP7),
+                # so its facet names are the ones the user can act on. A query that was
+                # not translated has no `source_query`, so we fall back to it.
+                report_query = (
+                    query.source_query if query.source_query is not None else query
+                )
                 failures[facade_key] = ClashingFacetsForFacadeError(
-                    query=query, facade=facade, clashing=exc.clashing
+                    query=report_query, facade=facade, clashing=exc.clashing
                 )
             else:
                 # The facade knows this host's format and project, so it fetches and
@@ -1083,8 +1132,9 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
                 # because we only handle a single query in this function
                 # and our facades only support searching a single project at a time.
                 # If either of those assumptions changed, this would break.
-                # We will have to be more careful in higher-level functions
-                # to do queries over multiple projects (PR3).
+                # Queries over multiple projects (and multiple queries at once) are
+                # handled a level up, in `search`, which splits them into
+                # single-project queries and calls this function for each.
                 pages = collect_all_pages(
                     client,
                     facade,
@@ -1122,3 +1172,195 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
         raise NoFacadeAnsweredError(failures)
 
     return SearchOutcome(parsed_docs, n_matches, failures)
+
+
+ProcessorFactory: TypeAlias = Callable[
+    [], AbstractContextManager[ResultProcessor | None]
+]
+"""
+Makes a fresh result processor for one sub-query, as a context manager
+
+[search][(m).] calls this once per sub-query and enters the context around that
+sub-query's search, so each sub-query gets its own processor and anything that
+processor holds (e.g. a database session and its transaction) is set up before the
+search and torn down after.
+"""
+
+
+def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection seams
+    queries: QueryProtocol | Iterable[QueryProtocol],
+    selector: SearchAPIFacadeSelector = DEFAULT_SELECTOR,
+    *,
+    stop_at_first_result: bool = True,
+    limit: int = 10_000,
+    max_results: int | None = None,
+    warn_on_pagination: bool = True,
+    client: httpx.Client | None = None,
+    api_call_observer: SearchAPICallObserver | None = None,
+    processor_factory: ProcessorFactory | None = None,
+    project_query_map: Mapping[str, type[QueryProtocol]] | None = None,
+    max_workers: int | None = None,
+) -> tuple[SearchOutcome, ...]:
+    """
+    Search one or more queries over one or more projects
+
+    This is the high-level entry point. Each query may name one *or more* projects; we
+    split every query into one single-project query per project (via
+    [translate_to_projects][esmporium.query.translate.translate_to_projects]) and run
+    each through [search_single_project][(m).], handing that sub-query's results to a
+    fresh processor as they arrive.
+
+    Each query must still name at least one project, else we raise an error.
+
+    By default the sub-queries run sequentially. Pass `max_workers > 1` to run them
+    concurrently in a thread pool: the work is network-bound, so this is usually a large
+    win when there are several sub-queries.
+
+    Parameters
+    ----------
+    queries
+        A single query, or an iterable of queries. Each query may name one or more
+        projects. A query that names no project is an error (see above).
+
+    selector
+        Passed straight through to [search_single_project][(m).] for every sub-query.
+        The default picks facades by the sub-query's (single) project.
+
+    stop_at_first_result
+        Passed through to each [search_single_project][(m).] call.
+
+    limit
+        Passed through to each [search_single_project][(m).] call.
+
+    max_results
+        Passed through to each [search_single_project][(m).] call.
+
+    warn_on_pagination
+        Passed through to each [search_single_project][(m).] call.
+
+    client
+        The HTTP client to search with, shared across every sub-query. If `None`, one is
+        built for the call and closed at the end.
+
+    api_call_observer
+        Passed through to each [search_single_project][(m).] call. See
+        [esmporium.search.health][] for how to build one; the database-backed one is
+        [record_search_api_calls][esmporium.db.search_health.record_search_api_calls].
+
+    processor_factory
+        Called once per sub-query to make the processor for that sub-query, as a
+        context manager entered around the sub-query's search (see
+        [ProcessorFactory][(m).]). If `None` (the default), no processor is used: the
+        results are still returned in the outcomes, they are just not handed anywhere.
+        To save every result to the database, pass
+        [esmporium.db.build_result_processor_factory][].
+
+    project_query_map
+        Passed through to
+        [translate_to_projects][esmporium.query.translate.translate_to_projects] when
+        splitting a query, to control which query class each project uses. If `None`,
+        the default mapping is used.
+
+    max_workers
+        How many sub-queries to run at once. `None` (the default) or `1` runs them
+        sequentially, one after another. A value greater than `1` runs them concurrently
+        in a thread pool of that size (see "Running sub-queries in parallel" above).
+
+    Returns
+    -------
+    :
+        One [SearchOutcome][(m).] per sub-query, in the order the sub-queries ran
+        (queries in input order; within a query, the projects in the order
+        [translate_to_projects][esmporium.query.translate.translate_to_projects] yields
+        them). Two sub-queries can answer from the same endpoint, which is why these are
+        kept apart rather than merged into one endpoint-keyed outcome.
+
+        A sub-query whose endpoints all failed still gets an entry, in place, so the
+        result stays aligned with the sub-queries: an empty outcome carrying that
+        sub-query's `failures` and reporting `answered` as `False`. This is only reached
+        if at least one sub-query answered (see `Raises`).
+
+    Raises
+    ------
+    NoTargetProjectError
+        A query in `queries` names no project. Raised while splitting, before any search
+        or processor runs.
+
+    NoFacadeAnsweredError
+        Every sub-query failed and there was exactly one, so its failure is re-raised
+        unchanged (a single-project search fails the same way with or without this
+        wrapper).
+
+    AllSubQueriesFailedError
+        Every sub-query failed and there were several, so all their failures are
+        gathered into one error rather than any being lost.
+    """
+    # Split every query up front, so a query with no project blows up before we contact
+    # any endpoint or run any processor.
+    sub_queries: list[QueryProtocol] = []
+    for query in as_query_iterable(queries):
+        by_project = translate_to_projects(query, project_query_map=project_query_map)
+        sub_queries.extend(by_project.values())
+
+    owns_client = client is None
+    client = client if client is not None else httpx.Client(follow_redirects=True)
+
+    def run_one(
+        sub_query: QueryProtocol,
+    ) -> tuple[SearchOutcome, NoFacadeAnsweredError | None]:
+        # A fresh processor (and so, for the saving one, a fresh session and
+        # transaction) per sub-query: entered around this sub-query's search and exited
+        # after. This is the seam that makes a worker independent -- it owns its session
+        # and shares nothing mutable -- so it is safe to call from a thread. `client` is
+        # shared: httpx.Client is thread-safe for concurrent requests.
+        processor_cm: AbstractContextManager[ResultProcessor | None] = (
+            nullcontext(None) if processor_factory is None else processor_factory()
+        )
+        try:
+            with processor_cm as processor:
+                outcome = search_single_project(
+                    sub_query,
+                    selector,
+                    stop_at_first_result=stop_at_first_result,
+                    limit=limit,
+                    max_results=max_results,
+                    warn_on_pagination=warn_on_pagination,
+                    client=client,
+                    api_call_observer=api_call_observer,
+                    processor=processor,
+                )
+        except NoFacadeAnsweredError as exc:
+            # This sub-query's endpoints all failed. Keep going: turn it into an empty
+            # outcome carrying the failures, so a caller still gets the sub-queries that
+            # did answer (and can see this one did not, via `SearchOutcome.answered`).
+            # Anything else (a config error, a pagination-cap breach, a bug) is not a
+            # "node was down" and is left to propagate and stop the whole run.
+            # `exc.failures` came from search_single_project, so it is that variant.
+            failures = cast("dict[FacadeKey, CouldNotSearchError]", exc.failures)
+            return SearchOutcome({}, {}, failures), exc
+        return outcome, None
+
+    try:
+        if max_workers is None or max_workers == 1 or len(sub_queries) <= 1:
+            # Sequential: results are handled and committed one sub-query at a time.
+            results = [run_one(sq) for sq in sub_queries]
+        else:
+            # Parallel: `map` preserves input order and, if a worker raises something
+            # we do not fold in (see run_one), re-raises the first such error only once
+            # the executor has joined the rest, so the others' committed results stay.
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                results = list(executor.map(run_one, sub_queries))
+    finally:
+        if owns_client:
+            client.close()
+
+    caught = [exc for _, exc in results if exc is not None]
+    if caught and len(caught) == len(results):
+        # Every sub-query failed, so there is nothing to return: fail loudly. A lone
+        # failure re-raises as-is, so a single-project search fails exactly as it would
+        # without the wrapper; several failures are gathered so none is lost.
+        if len(caught) == 1:
+            raise caught[0]
+        raise AllSubQueriesFailedError(tuple(caught))
+
+    return tuple(outcome for outcome, _ in results)

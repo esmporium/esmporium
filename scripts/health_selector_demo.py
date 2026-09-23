@@ -12,7 +12,7 @@ What it does:
    gets a health record (real network, like the search demo).
 2. Prints a per-host health table (calls, success rate, median time).
 3. For each project, prints the order `build_health_selector` (which ranks by
-   speed) would hand to `search()`.
+   speed) would hand to `search_single_project()`.
 
 It hits the live nodes, so it needs a network and takes a little while.
 
@@ -41,7 +41,7 @@ from esmporium.query import (
     QueryProtocol,
     to_canonical,
 )
-from esmporium.search import search
+from esmporium.search import search_single_project
 from esmporium.search.search_api_facade import DEFAULT_SEARCH_API_FACADES_BY_PROJECT
 
 # One broad-ish query per project, so several nodes have data to compare.
@@ -63,7 +63,7 @@ def gather_health(engine) -> None:
             print(f"  run {run}/{REPEATS}: {project} ...", flush=True)
             # `stop_at_first_result=False` so every node in the pool is asked,
             # otherwise only the first node would ever get a health record.
-            search(
+            search_single_project(
                 query,
                 limit=2,
                 stop_at_first_result=False,
@@ -87,7 +87,7 @@ def print_health_table(health: dict[str, HostHealth]) -> None:
 
 
 def ranked_hosts(engine, project: str) -> list[str]:
-    """Return the host order the speed-ranked selector would hand `search()`."""
+    """Return the host order the speed-ranked selector would hand to a search."""
     selector = build_health_selector(
         engine, ranker=get_median_response_time_for_ranking
     )

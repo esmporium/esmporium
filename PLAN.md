@@ -128,7 +128,7 @@ Not included:
 
 - parent stuff, that comes later
 
-## PR2.2
+## PR2.2 Done, see https://github.com/esmporium/esmporium/pull/37
 
 Add tests that the same request is built if a user uses `other_terms` instead of our supported names.
 
@@ -136,7 +136,7 @@ They can be unit tests (I think).
 
 This is how we check that `other_terms` will actually end up in requests to search APIs.
 
-## PR2.5
+## PR2.5 Done, see https://github.com/esmporium/esmporium/pull/40
 
 Pagination
 
@@ -149,7 +149,7 @@ Integration tests:
 - Pagination: an explicit integration test for a search that returns around >10 queries when we set limit to 3 (so we need multiple queries to get everything)
     - by fiddling with limits, we should be able to set up an integration test for both SOLR and STAC
 
-## PR3
+## PR3 Done, see https://github.com/esmporium/esmporium/pull/41
 
 Alter our search entrypoint
 
@@ -170,6 +170,8 @@ In PR3.5, we will add handling of parallelisation of calls to `search_single`
 only ever passes queries that specify a single project to `search_single`
 (we are never going to be fancy and put CMIP6 and CMIP6Plus searches together to save one query, because it makes implementation and error handling so much harder).
 
+Add parallelisation in this PR. Parallelisation of search queries and saving (noting that we will not parallelise pagination). Only Solr (not STAC) could parallelised, and the benefits (time saved) would be small. Instead we will focus our attention on optimising other areas of the workflow to parallelise where we can really save.
+
 My instinct is to do it this way. Check this plan with claude first.
 
 Unit tests:
@@ -188,19 +190,21 @@ Integration tests:
 Not included:
 
 - there is no deliberately no attempt to cache in anyway here. If the user says 'search', we search (even if we already ran the same search 2 seconds previously) because the state of the ESGF database might have changed since we last looked (i.e. there is no sensible way to cache).
+-
 
-## PR3.5
+## PR 3.4
 
-Parallelisation of searching and saving
+Split search.py into subfolders for clarity.
 
-Unit tests:
+## PR 3.5
 
-- [ ]
+Concurrent saving to database from multiple parallel workers, dataset clash handling:
 
-Integration tests:
+"Concurrent saves of the same dataset reliably crash — 8/8 trials raised UnhandledDatasetClashError, misdiagnosing "another worker already saved this exact dataset" as a genuine unmodelled-facet clash.
 
-- [ ] parallelisation when we need pagination (i.e. have more than 10 000 results, although there are ways to test this that don't require getting more than 10 000 results e.g. set limit to 3 and get 13 results)
-- [ ] parallelisation of pagination (might be overkill or overload servers (let's see what claude thinks), but might be helpful because we can calculate offset etc. without waiting for the previous query to come back)
+So testing it now does mean fixing it now. And the fix is bigger than it first looks: the race isn't just the Dataset row. When I fixed that, the probe failed one step later on datasetversion. Every get-or-create in the ingest chain — dataset → version → data node → version–node link → raw doc → raw-doc link (~6 of them) — is select-then-insert, so each races. Making it safe is a concurrency-correctness pass over results_to_database, which is a different beast from "parallelise the query loop" — hence the deferral was legitimate, even if my comment undersold why."
+
+See note in `test_health`
 
 ## PR3.6 and friends
 

@@ -16,10 +16,12 @@ from __future__ import annotations
 
 import difflib
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from dataclasses import field as dcfield
 from enum import Enum
+from typing import cast
 
 import httpx
 
@@ -27,8 +29,10 @@ from esmporium.query import (
     CANONICAL_FACETS,
     QueryCanonical,
     QueryProtocol,
+    as_query_iterable,
     facet_spec,
     to_canonical,
+    translate_to_projects,
 )
 from esmporium.search.apis import (
     UncompilableFacetPatternError,
@@ -36,6 +40,7 @@ from esmporium.search.apis import (
 )
 from esmporium.search.health import SearchAPICallObserver
 from esmporium.search.search import (
+    AllSubQueriesFailedError,
     FacadeKey,
     NoFacadeAnsweredError,
     SearchAPIRequestError,
@@ -541,8 +546,20 @@ class ValueCheckOutcome:
     failures: dict[FacadeKey, CouldNotGetAllowedValuesError]
     """Reasons we failed to get allowed values, keyed by the facade"""
 
+    @property
+    def answered(self) -> bool:
+        """
+        Whether any facade answered, i.e. this is a real answer and not a pure failure
 
-def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberate injection seams
+        `False` only for the empty, failures-only outcome that the multi-query
+        [check_query_values][(m).] puts in place of a sub-query whose endpoints all
+        failed, so a caller can tell a project that was checked from one that could not
+        be reached (the latter has `answered` `False` and a populated `failures`).
+        """
+        return bool(self.reports)
+
+
+def check_query_values_single_project(  # noqa: PLR0913 - the keyword-only extras are deliberate injection seams
     query: QueryProtocol,
     selector: SearchAPIFacadeSelector = DEFAULT_SELECTOR,
     *,
@@ -552,11 +569,18 @@ def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberat
     api_call_observer: SearchAPICallObserver | None = None,
 ) -> ValueCheckOutcome:
     """
-    Check a query's values against the APIs which would have served it
+    Check one single-project query's values against the APIs which would have served it
+
+    This is the low-level, single-project building block: `query` must name exactly one
+    project (the selector and facades enforce that). To check a query that names several
+    projects, or several queries at once, use the higher-level
+    [check_query_values][(m).], which splits multi-project queries and calls this
+    function once per project.
 
     The endpoints are worked through in the order
-    [search][esmporium.search.search.search] would have tried them,
-    and this takes the same `stop_at_first_result` as `search` does,
+    [search_single_project][esmporium.search.search.search_single_project]
+    would have tried them,
+    and this takes the same `stop_at_first_result` as `search_single_project` does,
     so the two answer the same question about the same endpoints
     in the same way.
 
@@ -651,6 +675,147 @@ def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberat
         raise NoFacadeAnsweredError(failures)
 
     return ValueCheckOutcome(reports, failures)
+
+
+def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberate injection seams
+    queries: QueryProtocol | Iterable[QueryProtocol],
+    selector: SearchAPIFacadeSelector = DEFAULT_SELECTOR,
+    *,
+    stop_at_first_result: bool = True,
+    close_matches: CloseMatcher = close_matches_difflib,
+    client: httpx.Client | None = None,
+    api_call_observer: SearchAPICallObserver | None = None,
+    project_query_map: Mapping[str, type[QueryProtocol]] | None = None,
+    max_workers: int | None = None,
+) -> tuple[ValueCheckOutcome, ...]:
+    """
+    Check one or more queries, over one or more projects, against the APIs
+
+    This is the high-level entry point, and the value-checking mirror of
+    [`esmporium.search.search`][]: each query must name one *or more* projects,
+    we split every query into one single-project query per project and check
+    each through [check_query_values_single_project][(m).].
+
+    By default the sub-queries run sequentially. Pass `max_workers > 1` to run them
+    concurrently in a thread pool: the work is network-bound, so this is usually a large
+    win when there are several sub-queries.
+
+    Parameters
+    ----------
+    queries
+        A single query, or an iterable of queries. Each query may name one or more
+        projects. A query that names no project is an error (see above).
+
+    selector
+        Passed straight through to [check_query_values_single_project][(m).] for every
+        sub-query. The default picks facades by the sub-query's (single) project.
+
+    stop_at_first_result
+        Passed through to each [check_query_values_single_project][(m).] call.
+
+    close_matches
+        Passed through to each [check_query_values_single_project][(m).] call.
+
+    client
+        The HTTP client to ask the APIs with, shared across every sub-query. If `None`,
+        one is built for the call and closed at the end.
+
+    api_call_observer
+        Passed through to each [check_query_values_single_project][(m).] call. See
+        [esmporium.search.health][] for how to build one.
+
+    project_query_map
+        Passed through to
+        [translate_to_projects][esmporium.query.translate.translate_to_projects] when
+        splitting a query, to control which query class each project uses. If `None`,
+        the default mapping is used.
+
+    max_workers
+        How many sub-queries to check at once. `None` (the default) or `1` runs them
+        sequentially; a value greater than `1` runs them concurrently in a thread pool
+        of that size.
+
+    Returns
+    -------
+    :
+        One [ValueCheckOutcome][(m).] per sub-query, in the order the sub-queries ran
+        (queries in input order; within a query, the projects in the order
+        [translate_to_projects][esmporium.query.translate.translate_to_projects]
+        yields them).
+
+        A sub-query whose endpoints all failed still gets an entry, in place: an empty
+        outcome carrying that sub-query's `failures` and reporting `answered` as
+        `False`. Only a total failure (no sub-query answered) raises instead.
+
+    Raises
+    ------
+    NoTargetProjectError
+        A query in `queries` names no project. Raised while splitting, before any check
+        happens.
+
+    NoFacadeAnsweredError
+        Every sub-query failed and there was exactly one, so its failure is re-raised
+        unchanged.
+
+    AllSubQueriesFailedError
+        Every sub-query failed and there were several, so all their failures are
+        gathered into one error rather than any being lost.
+    """
+    # Split every query up front, so a query with no project blows up before we contact
+    # any endpoint.
+    sub_queries: list[QueryProtocol] = []
+    for query in as_query_iterable(queries):
+        by_project = translate_to_projects(query, project_query_map=project_query_map)
+        sub_queries.extend(by_project.values())
+
+    owns_client = client is None
+    client = client if client is not None else httpx.Client(follow_redirects=True)
+
+    def run_one(
+        sub_query: QueryProtocol,
+    ) -> tuple[ValueCheckOutcome, NoFacadeAnsweredError | None]:
+        # Each check is independent and shares nothing mutable, so it is safe to call
+        # from a thread. `client` is shared: httpx.Client is thread-safe for concurrent
+        # requests.
+        try:
+            outcome = check_query_values_single_project(
+                sub_query,
+                selector,
+                stop_at_first_result=stop_at_first_result,
+                close_matches=close_matches,
+                client=client,
+                api_call_observer=api_call_observer,
+            )
+        except NoFacadeAnsweredError as exc:
+            # This sub-query's endpoints all failed. Keep going: fold it into an empty
+            # outcome carrying the failures, so a caller still gets the sub-queries that
+            # did answer. Anything else propagates and stops the whole run.
+            # `exc.failures` came from the value-check path, hence that variant.
+            failures = cast(
+                "dict[FacadeKey, CouldNotGetAllowedValuesError]", exc.failures
+            )
+            return ValueCheckOutcome({}, failures), exc
+        return outcome, None
+
+    try:
+        if max_workers is None or max_workers == 1 or len(sub_queries) <= 1:
+            results = [run_one(sq) for sq in sub_queries]
+        else:
+            # `map` preserves input order across the pool.
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                results = list(executor.map(run_one, sub_queries))
+    finally:
+        if owns_client:
+            client.close()
+
+    caught = [exc for _, exc in results if exc is not None]
+    if caught and len(caught) == len(results):
+        # Every sub-query failed, so there is nothing to return: fail loudly, as above.
+        if len(caught) == 1:
+            raise caught[0]
+        raise AllSubQueriesFailedError(tuple(caught))
+
+    return tuple(outcome for outcome, _ in results)
 
 
 def check_against_patterns(

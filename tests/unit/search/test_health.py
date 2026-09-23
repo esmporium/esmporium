@@ -5,7 +5,8 @@ These cover what `fire` records on each path: success (with results, with none, 
 with an uncountable body), the failure paths (client error, transient failure
 retried, transport error, unparseable body), retries recording one row per attempt,
 the opt-out when no observer is given, that `fire` fails loudly with a cause, and
-that both callers (`search` and `check_query_values`) thread the observer down.
+that both callers (`search_single_project` and `check_query_values_single_project`)
+thread the observer down.
 `fan_out` is covered here too. The database side of recording is covered in
 `tests/unit/db/test_search_health.py`.
 """
@@ -30,10 +31,10 @@ from esmporium.search import (
     SearchAPIRequestError,
     SolrSingleRowResultParser,
     build_list_selector,
-    check_query_values,
+    check_query_values_single_project,
     fan_out,
     fire,
-    search,
+    search_single_project,
     stac_east_n_matches,
 )
 from esmporium.search.health import SearchAPICall
@@ -41,15 +42,16 @@ from esmporium.search.retry import _is_transient
 from esmporium.search.search import get_facade_key
 
 # NOTE: the mock helpers below are duplicated from
-# `tests/unit/search/test_search.py` and `test_check_query_values.py`. They are
+# `tests/unit/search/test_search_single.py` and `test_check_query_values.py`. They are
 # small, and copying keeps this file self-contained. A future PR (PR3 needs a mock
 # search endpoint of its own) may pull them into a shared `mock_search_api` module.
 
-# NOTE 2: We explicitly do not test parallelism on search calls yet.
-# A concurrency/thread test — without WAL + busy_timeout a
-# concurrent-write SQLite test is flaky, and thread-safety is the deferred parallel
-# PR's concern. Deterministic multi-row behaviour is already covered by the
-# retry / multi-host cases in file 1.
+# NOTE 2: Parallelism over sub-queries now lives in `search`/`check_query_values`
+# (max_workers). Its concurrency is tested in `test_search_multi_project.py`
+# (a barrier proves real concurrency; a WAL + busy_timeout SQLite engine proves parallel
+# writes land) and `test_check_query_values_multi_project.py`. What is still deferred:
+# concurrent writes of the *same* dataset identity across worker transactions, which the
+# get-or-create in `results_to_database` does not yet make race-safe.
 # FROM ZN: "make sure that database writing works, even when calls are made in
 # parallel so can clash/race each other or have other weird parallel side effects"
 
@@ -99,7 +101,7 @@ def record(handler, apis) -> list[SearchAPICall]:
     calls: list[SearchAPICall] = []
     # A total failure still records what it tried; that is what we assert on.
     with contextlib.suppress(NoFacadeAnsweredError):
-        search(
+        search_single_project(
             QUERY,
             build_list_selector(apis),
             client=client_for(handler),
@@ -255,12 +257,16 @@ def test_no_observer_records_nothing_but_still_works():
     selector = build_list_selector([facade])
 
     # Success still parses an answer.
-    outcome = search(QUERY, selector, client=client_for(lambda r: solr_response(1)))
+    outcome = search_single_project(
+        QUERY, selector, client=client_for(lambda r: solr_response(1))
+    )
     assert outcome.n_matches[get_facade_key(facade)] == 1
 
     # Failure still raises.
     with pytest.raises(NoFacadeAnsweredError):
-        search(QUERY, selector, client=client_for(lambda r: httpx.Response(404)))
+        search_single_project(
+            QUERY, selector, client=client_for(lambda r: httpx.Response(404))
+        )
 
 
 def test_fire_fails_loudly_carrying_the_cause():
@@ -297,7 +303,7 @@ def test_check_query_values_records_its_call():
         )
 
     calls: list[SearchAPICall] = []
-    check_query_values(
+    check_query_values_single_project(
         QueryCMIP6(experiment_id="historical"),
         build_list_selector([make_cmip6_facade("node")]),
         client=client_for(handler),

@@ -2,8 +2,8 @@
 Translating between query types
 """
 
-from collections.abc import Collection, Mapping
-from typing import TypeVar
+from collections.abc import Collection, Iterable, Mapping
+from typing import TypeVar, cast
 
 from esmporium.query.canonical_query import CANONICAL_FACETS, QueryCanonical
 from esmporium.query.known_queries import (
@@ -403,3 +403,41 @@ def translate_to_projects(
         )
 
     return res
+
+
+def as_query_iterable(
+    queries: QueryProtocol | Iterable[QueryProtocol],
+) -> tuple[QueryProtocol, ...]:
+    """
+    Normalise a single query or an iterable of queries to a tuple of queries
+
+    A single query is wrapped in a one-tuple; an iterable of queries is materialised.
+    We tell the two apart by duck typing rather than `isinstance`, because
+    [QueryProtocol][esmporium.query.QueryProtocol] is not `runtime_checkable`: a single
+    query carries `other_terms`, an iterable of queries does not.
+
+    This is the shared front door for our functions that take "one or more queries"
+    (e.g. [esmporium.search.search][] and [esmporium.search.check_query_values][]), so
+    they all draw the single-vs-many line in exactly the same place.
+
+    Parameters
+    ----------
+    queries
+        A single query, or an iterable of queries
+
+    Returns
+    -------
+    :
+        The queries as a tuple
+    """
+    # Note: an iterability check does not work here, because our query classes are
+    # pydantic models and pydantic gives every model an `__iter__` (over its fields),
+    # so a single query is itself iterable. We key on `other_terms` instead: a query
+    # carries it, an iterable of queries does not.
+    if hasattr(queries, "other_terms"):
+        # Probably a single query, not an iterable of them. `hasattr` cannot narrow the
+        # type for the checker (it only learns "has other_terms", which is not the same
+        # as "is a QueryProtocol"), so say so explicitly.
+        return (cast("QueryProtocol", queries),)
+
+    return tuple(queries)

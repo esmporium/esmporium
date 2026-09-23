@@ -4,7 +4,7 @@ A runnable example of the search step: QueryCMIP{5,6,7} -> ESGF -> rows -> query
 This walks the whole path end to end: search live ESGF, save the results, then query
 those saved rows straight back out of the database.
 
-It shows two opt-in seams that hang off `search()`:
+It shows two opt-in seams that hang off `search_single_project()`:
 
 - an `api_call_observer` that records every request into a throwaway SQLite database
   (which host, what status, how many results, how long), printed after the searches;
@@ -33,7 +33,7 @@ from esmporium.db import (
 )
 from esmporium.db.migrate import upgrade_to_head
 from esmporium.query import QueryCMIP5, QueryCMIP6, QueryCMIP7
-from esmporium.search import search
+from esmporium.search import search_single_project
 
 EXAMPLE_CMIP5 = QueryCMIP5(
     experiment="historical",
@@ -126,7 +126,7 @@ def main() -> None:
 
             for query in (EXAMPLE_CMIP5, EXAMPLE_CMIP6, EXAMPLE_CMIP7):
                 print(f"\nquery: {query!r}")
-                outcome = search(
+                outcome = search_single_project(
                     query, limit=2, api_call_observer=observer, processor=processor
                 )
                 for facade_key, documents in outcome.parsed_docs.items():

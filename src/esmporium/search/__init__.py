@@ -35,6 +35,7 @@ from esmporium.search.check_query_values import (
     allowed_values_from_api,
     check_query_values,
     check_query_values_low,
+    check_query_values_single_project,
     close_matches_difflib,
     compare_values,
     facets_the_user_set,
@@ -61,6 +62,7 @@ from esmporium.search.result_parsing import (
 )
 from esmporium.search.retry import build_transient_retrying
 from esmporium.search.search import (
+    AllSubQueriesFailedError,
     CouldNotGetSearchResponseError,
     CouldNotSearchError,
     CouldNotUseSearchResultsError,
@@ -68,6 +70,7 @@ from esmporium.search.search import (
     NoFacadeAnsweredError,
     PaginationLimitError,
     PaginationWarning,
+    ProcessorFactory,
     SearchAPIRequestError,
     SearchOutcome,
     collect_all_pages,
@@ -76,6 +79,7 @@ from esmporium.search.search import (
     get_url,
     log_request_as_url_and_curl,
     search,
+    search_single_project,
 )
 from esmporium.search.search_api_facade import (
     DEFAULT_SEARCH_API_FACADES_BY_PROJECT,
@@ -135,6 +139,7 @@ __all__ = [
     "INBUILT_SEARCH_API_FACADE_STORE",
     "SOLR_FORMAT_TAG",
     "STAC_FORMAT_TAG",
+    "AllSubQueriesFailedError",
     "AllowedValues",
     "ClashingFacetsError",
     "CouldNotGetAllowedValuesError",
@@ -169,6 +174,7 @@ __all__ = [
     "PaginationLimitError",
     "PaginationWarning",
     "ParsedDocument",
+    "ProcessorFactory",
     "ProjectPrefixMismatchError",
     "Request",
     "ResultParserProtocol",
@@ -205,6 +211,7 @@ __all__ = [
     "check_facets_expressible",
     "check_query_values",
     "check_query_values_low",
+    "check_query_values_single_project",
     "close_matches_difflib",
     "collect_all_pages",
     "compare_values",
@@ -223,6 +230,7 @@ __all__ = [
     "normalise_stored_document",
     "read_response_path",
     "search",
+    "search_single_project",
     "stac_east_n_matches",
     "stac_west_n_matches",
     "values_set_for",
