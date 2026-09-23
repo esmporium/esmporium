@@ -1186,9 +1186,6 @@ processor holds (e.g. a database session and its transaction) is set up before t
 search and torn down after.
 """
 
-# TODO: in future we will more explicitly handle query logic (AND/OR) across
-# both STAC and Solr, as the APIs are not made equally in their logic
-# handling.
 
 
 def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection seams
