@@ -340,6 +340,49 @@ def test_parallel_writes_land_in_a_shared_sqlite_db(tmp_path):
         engine.dispose()
 
 
+def test_parallel_workers_writing_the_same_dataset_keep_one_row(tmp_path):
+    """
+    Two workers that return the *same* dataset save one row, not a spurious clash
+
+    Two overlapping sub-queries returning the same dataset are held at a barrier so
+    their writes to the one WAL database genuinely race. The get-or-create must reuse
+    the row the winner wrote rather than mistake the loser's collision for an
+    `UnhandledDatasetClashError`.
+    """
+    engine = configure_sqlite_for_concurrency(
+        create_engine(f"sqlite:///{tmp_path / 'esmporium.db'}")
+    )
+    METADATA.create_all(engine)
+
+    barrier = threading.Barrier(2, timeout=5)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        # Both requests reach here together, so both workers ingest the same dataset at
+        # once and race on the insert.
+        barrier.wait()
+        return solr_body([solr_doc("same")])
+
+    # Two identical single-project queries -> two sub-queries, one same dataset.
+    queries = (
+        Query(project=("CMIP6",), variable="tas", reporting_interval="mon"),
+        Query(project=("CMIP6",), variable="tas", reporting_interval="mon"),
+    )
+
+    outcomes = search(
+        queries,
+        build_list_selector([make_facade()]),
+        client=client_for(handler),
+        processor_factory=build_result_processor_factory(engine),
+        max_workers=2,
+    )
+
+    try:
+        assert len(outcomes) == 2
+        assert saved_master_ids(engine) == {"CMIP6.same"}
+    finally:
+        engine.dispose()
+
+
 def failing_for(down_project: str):
     """A handler that answers every project but `down_project`, which it 500s"""
 

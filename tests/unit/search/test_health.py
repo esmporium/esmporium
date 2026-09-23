@@ -49,9 +49,14 @@ from esmporium.search.search import get_facade_key
 # NOTE 2: Parallelism over sub-queries now lives in `search`/`check_query_values`
 # (max_workers). Its concurrency is tested in `test_search_multi_project.py`
 # (a barrier proves real concurrency; a WAL + busy_timeout SQLite engine proves parallel
-# writes land) and `test_check_query_values_multi_project.py`. What is still deferred:
-# concurrent writes of the *same* dataset identity across worker transactions, which the
-# get-or-create in `results_to_database` does not yet make race-safe.
+# writes land) and `test_check_query_values_multi_project.py`. Concurrent writes of the
+# *same* dataset identity across worker transactions are now handled too: the
+# get-or-create in `results_to_database` reuses the row a racing worker committed rather
+# than mistaking it for a clash. See `test_search_multi_project.py`
+# (`test_parallel_workers_writing_the_same_dataset_keep_one_row`) and
+# `test_ingest_parsed_documents.py`
+# (`test_concurrent_workers_ingesting_the_same_dataset_reuse_one_row`, which forces the
+# race deterministically).
 # FROM ZN: "make sure that database writing works, even when calls are made in
 # parallel so can clash/race each other or have other weird parallel side effects"
 

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
@@ -443,6 +443,50 @@ def _ingest_document(
         )
 
 
+_Row = TypeVar("_Row")
+
+
+def _get_or_create(
+    session: Session,
+    lookup: Callable[[], _Row | None],
+    build: Callable[[], _Row],
+) -> _Row:
+    """
+    Return the row `lookup` finds, else insert `build()`, race-safe against workers
+
+    This is the read-then-insert every helper below shares, made safe for parallel
+    search (several workers, each its own session/connection, writing one database).
+    The insert goes in through a savepoint so a losing race can be rolled back cleanly.
+    If the flush trips a uniqueness constraint, another transaction inserted the same
+    row first, so we re-run `lookup` (which now sees the committed row) and reuse it.
+    Only a constraint failure that `lookup` cannot explain -- i.e. `lookup` still finds
+    nothing -- is re-raised.
+
+    `save_dataset` does not use this because a dataset's identity conflict has to be
+    told apart from a genuine unmodelled clash and reported specially;
+    `_get_or_create_dataset` applies the same re-read shape around it.
+    """
+    existing = lookup()
+    if existing is not None:
+        return existing
+
+    savepoint = session.begin_nested()
+    row = build()
+    session.add(row)
+    try:
+        session.flush()
+    except IntegrityError:
+        savepoint.rollback()
+        raced = lookup()
+        if raced is not None:
+            return raced
+        raise
+    else:
+        savepoint.commit()
+
+    return row
+
+
 def _get_or_create_dataset(
     session: Session,
     facets: DatasetFacets,
@@ -461,6 +505,11 @@ def _get_or_create_dataset(
     `parsed` supplies the raw document and `normalisers` the means to read it,
     so a clash on save can report which facets differ
     (see [save_dataset][(m).save_dataset]).
+
+    Race-safe for parallel search: if a worker's lookup misses but its insert then loses
+    to another worker inserting the same dataset, re-running the lookup finds and reuses
+    that row. Only a clash the re-read still cannot find (the genuine `grid_label` NULL-
+    vs-'' case) propagates as an `UnhandledDatasetClashError`.
     """
     facet_values = facets.model_dump()
     conditions = [
@@ -473,37 +522,51 @@ def _get_or_create_dataset(
     existing = session.exec(select(Dataset).where(*conditions)).one_or_none()
     if existing is not None:
         return existing
-    return save_dataset(
-        session,
-        Dataset(**facet_values),
-        raw_doc=_build_raw_doc(parsed),
-        normalisers=normalisers,
-    )
+    try:
+        return save_dataset(
+            session,
+            Dataset(**facet_values),
+            raw_doc=_build_raw_doc(parsed),
+            normalisers=normalisers,
+        )
+    except UnhandledDatasetClashError:
+        # Another worker may have inserted this same dataset between our lookup and our
+        # save (two overlapping sub-queries returning it, run in parallel). Re-run the
+        # lookup on the same plain-equality conditions: if the row is now there it is
+        # that same dataset -- the race is just re-ingestion split across workers,
+        # reused exactly as a second serial ingest would be. If it still is not there,
+        # the clash is genuine (plain equality cannot see a NULL-vs-'' grid_label the
+        # identity index coalesces), so let it propagate.
+        raced = session.exec(select(Dataset).where(*conditions)).one_or_none()
+        if raced is None:
+            raise
+        return raced
 
 
 def _upsert_version(
     session: Session, dataset_id: int, parsed: ParsedDocument
 ) -> DatasetVersion:
     """Insert this dataset's version, or refresh its snapshot flags if seen before."""
-    existing = session.exec(
-        select(DatasetVersion).where(
-            DatasetVersion.dataset_id == dataset_id,
-            DatasetVersion.version == parsed.version,
-        )
-    ).one_or_none()
-    if existing is not None:
-        existing.is_latest = parsed.is_latest
-        existing.retracted = parsed.retracted
-        session.add(existing)
-        session.flush()
-        return existing
-
-    version = DatasetVersion(
-        dataset_id=dataset_id,
-        version=parsed.version,
-        is_latest=parsed.is_latest,
-        retracted=parsed.retracted,
+    version = _get_or_create(
+        session,
+        lambda: session.exec(
+            select(DatasetVersion).where(
+                DatasetVersion.dataset_id == dataset_id,
+                DatasetVersion.version == parsed.version,
+            )
+        ).one_or_none(),
+        lambda: DatasetVersion(
+            dataset_id=dataset_id,
+            version=parsed.version,
+            is_latest=parsed.is_latest,
+            retracted=parsed.retracted,
+        ),
     )
+    # Refresh the snapshot flags on whatever row we ended up with -- one we just made,
+    # one seen on an earlier ingest, or one a parallel worker inserted first -- so a
+    # re-ingest keeps `is_latest`/`retracted` current either way.
+    version.is_latest = parsed.is_latest
+    version.retracted = parsed.retracted
     session.add(version)
     session.flush()
     return version
@@ -511,51 +574,42 @@ def _upsert_version(
 
 def _get_or_create_node(session: Session, data_node: str) -> DataNode:
     """Reuse the row for this data node if we have one, else create it."""
-    existing = session.exec(
-        select(DataNode).where(DataNode.data_node == data_node)
-    ).one_or_none()
-    if existing is not None:
-        return existing
-
-    node = DataNode(data_node=data_node)
-    session.add(node)
-    session.flush()
-    return node
+    return _get_or_create(
+        session,
+        lambda: session.exec(
+            select(DataNode).where(DataNode.data_node == data_node)
+        ).one_or_none(),
+        lambda: DataNode(data_node=data_node),
+    )
 
 
 def _get_or_create_version_node_link(
     session: Session, dataset_version_id: int, data_node_id: int
 ) -> DatasetVersionDataNodeLink:
     """Link a version to a data node, once."""
-    existing = session.exec(
-        select(DatasetVersionDataNodeLink).where(
-            DatasetVersionDataNodeLink.dataset_version_id == dataset_version_id,
-            DatasetVersionDataNodeLink.data_node_id == data_node_id,
-        )
-    ).one_or_none()
-    if existing is not None:
-        return existing
-
-    link = DatasetVersionDataNodeLink(
-        dataset_version_id=dataset_version_id, data_node_id=data_node_id
+    return _get_or_create(
+        session,
+        lambda: session.exec(
+            select(DatasetVersionDataNodeLink).where(
+                DatasetVersionDataNodeLink.dataset_version_id == dataset_version_id,
+                DatasetVersionDataNodeLink.data_node_id == data_node_id,
+            )
+        ).one_or_none(),
+        lambda: DatasetVersionDataNodeLink(
+            dataset_version_id=dataset_version_id, data_node_id=data_node_id
+        ),
     )
-    session.add(link)
-    session.flush()
-    return link
 
 
 def _get_or_create_raw_doc(session: Session, parsed: ParsedDocument) -> DatasetRawDoc:
     """Store the raw JSON once, keyed by `esgf_doc_id`."""
-    existing = session.exec(
-        select(DatasetRawDoc).where(DatasetRawDoc.esgf_doc_id == parsed.esgf_doc_id)
-    ).one_or_none()
-    if existing is not None:
-        return existing
-
-    raw_doc = _build_raw_doc(parsed)
-    session.add(raw_doc)
-    session.flush()
-    return raw_doc
+    return _get_or_create(
+        session,
+        lambda: session.exec(
+            select(DatasetRawDoc).where(DatasetRawDoc.esgf_doc_id == parsed.esgf_doc_id)
+        ).one_or_none(),
+        lambda: _build_raw_doc(parsed),
+    )
 
 
 def _build_raw_doc(parsed: ParsedDocument) -> DatasetRawDoc:
@@ -571,18 +625,15 @@ def _get_or_create_raw_doc_dataset_version_link(
     session: Session, raw_doc_id: int, dataset_version_id: int
 ) -> RawDocVersionLink:
     """Link a raw document to a version, once."""
-    existing = session.exec(
-        select(RawDocVersionLink).where(
-            RawDocVersionLink.raw_doc_id == raw_doc_id,
-            RawDocVersionLink.dataset_version_id == dataset_version_id,
-        )
-    ).one_or_none()
-    if existing is not None:
-        return existing
-
-    link = RawDocVersionLink(
-        raw_doc_id=raw_doc_id, dataset_version_id=dataset_version_id
+    return _get_or_create(
+        session,
+        lambda: session.exec(
+            select(RawDocVersionLink).where(
+                RawDocVersionLink.raw_doc_id == raw_doc_id,
+                RawDocVersionLink.dataset_version_id == dataset_version_id,
+            )
+        ).one_or_none(),
+        lambda: RawDocVersionLink(
+            raw_doc_id=raw_doc_id, dataset_version_id=dataset_version_id
+        ),
     )
-    session.add(link)
-    session.flush()
-    return link

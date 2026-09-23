@@ -5,12 +5,14 @@ Ingesting parsed search documents into the database
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 
 import pytest
-from sqlmodel import Session, select
+from sqlmodel import Session, create_engine, select
 
 from esmporium.db import (
+    METADATA,
     DataNode,
     Dataset,
     DatasetRawDoc,
@@ -18,6 +20,7 @@ from esmporium.db import (
     RawDocVersionLink,
     UnhandledDatasetClashError,
     build_result_processor,
+    configure_sqlite_for_concurrency,
     ingest_parsed_documents,
 )
 from esmporium.search import (
@@ -345,3 +348,157 @@ def test_bypassing_user_must_inject_a_normaliser_for_their_tag(engine):
     assert normalise_stored_document(raw, stored.raw_docs_format_tag, normalisers) == {
         "product": "output1"
     }
+
+
+def _same_cmip6_document(
+    esgf_doc_id: str = "CMIP6.same|node.example",
+) -> ParsedDocument:
+    """One CMIP6 document that two workers can each try to ingest and clash on."""
+    return ParsedDocument(
+        id_project_specific="CMIP6.same",
+        datasets=(
+            DatasetFacets(
+                id_project_specific="CMIP6.same",
+                project="CMIP6",
+                model="ACCESS",
+                institution="CSIRO",
+                experiment="historical",
+                variant_label="r1i1p1f1",
+                variable="tas",
+                reporting_interval="mon",
+                grid_label="gn",
+                processing_id="Amon",
+            ),
+        ),
+        version="20200101",
+        is_latest=True,
+        retracted=False,
+        nodes=(DataNodeInfo("node.example"),),
+        esgf_doc_id=esgf_doc_id,
+        raw_json="{}",
+        raw_docs_format_tag=SOLR_FORMAT_TAG,
+    )
+
+
+def test_concurrent_workers_ingesting_the_same_dataset_reuse_one_row(tmp_path):
+    """
+    Two parallel workers ingesting the *same* dataset keep one row, without erroring
+
+    This is the parallel-search case the get-or-create must survive: two overlapping
+    sub-queries return the same dataset, and their workers (each its own session, its
+    own connection to one WAL SQLite database) race to write it. Each worker reads first
+    (finding nothing) and only then, past the barrier, ingests -- so both see "no such
+    dataset" and both try to insert it, exactly the race a single-threaded re-ingest
+    never hits. The loser must reuse the winner's row (idempotent), not raise
+    `UnhandledDatasetClashError`: it is the same dataset, not two our model cannot tell
+    apart.
+    """
+    engine = configure_sqlite_for_concurrency(
+        create_engine(f"sqlite:///{tmp_path / 'esmporium.db'}")
+    )
+    METADATA.create_all(engine)
+
+    document = _same_cmip6_document()
+    both_have_read = threading.Barrier(2, timeout=5)
+    errors: list[Exception] = []
+    errors_lock = threading.Lock()
+
+    def worker() -> None:
+        try:
+            with Session(engine) as session:
+                # Fix this worker's read snapshot before anyone commits: both workers
+                # see no dataset yet, so both go on to insert and genuinely race.
+                session.exec(select(Dataset)).all()
+                both_have_read.wait()
+                ingest_parsed_documents(session, [document])
+                session.commit()
+        except Exception as exc:  # recorded so the assertion can surface it
+            with errors_lock:
+                errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    try:
+        assert errors == [], f"a worker failed on the race: {errors!r}"
+        with Session(engine) as session:
+            counts = _counts(session)
+        # The whole document collapses to one of each row, exactly as a serial re-ingest
+        # would leave it.
+        assert counts == {
+            "datasets": 1,
+            "versions": 1,
+            "nodes": 1,
+            "raw_docs": 1,
+            "links": 1,
+        }
+    finally:
+        engine.dispose()
+
+
+def test_concurrent_workers_sharing_a_data_node_keep_one_node(tmp_path):
+    """
+    Two workers writing *different* datasets that share a data node keep one node row
+
+    This is the race in the get-or-create helpers below the dataset: the workers insert
+    their own (distinct) datasets fine, but both also try to insert the one shared
+    `DataNode`. As with the dataset, the loser must reuse the node the winner committed
+    rather than fail on its uniqueness constraint.
+    """
+    engine = configure_sqlite_for_concurrency(
+        create_engine(f"sqlite:///{tmp_path / 'esmporium.db'}")
+    )
+    METADATA.create_all(engine)
+
+    def document(variable: str, esgf_doc_id: str) -> ParsedDocument:
+        # Same node on purpose; the datasets differ only by variable.
+        base = _same_cmip6_document(esgf_doc_id)
+        (facets,) = base.datasets
+        return ParsedDocument(
+            id_project_specific=f"CMIP6.{variable}",
+            datasets=(facets.model_copy(update={"variable": variable}),),
+            version=base.version,
+            is_latest=base.is_latest,
+            retracted=base.retracted,
+            nodes=base.nodes,
+            esgf_doc_id=esgf_doc_id,
+            raw_json=base.raw_json,
+            raw_docs_format_tag=base.raw_docs_format_tag,
+        )
+
+    documents = {
+        "tas": document("tas", "CMIP6.tas|node.example"),
+        "pr": document("pr", "CMIP6.pr|node.example"),
+    }
+    both_have_read = threading.Barrier(2, timeout=5)
+    errors: list[Exception] = []
+    errors_lock = threading.Lock()
+
+    def worker(variable: str) -> None:
+        try:
+            with Session(engine) as session:
+                session.exec(select(DataNode)).all()
+                both_have_read.wait()
+                ingest_parsed_documents(session, [documents[variable]])
+                session.commit()
+        except Exception as exc:  # recorded so the assertion can surface it
+            with errors_lock:
+                errors.append(exc)
+
+    threads = [threading.Thread(target=worker, args=(v,)) for v in documents]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    try:
+        assert errors == [], f"a worker failed on the race: {errors!r}"
+        with Session(engine) as session:
+            counts = _counts(session)
+        assert counts["datasets"] == 2
+        assert counts["nodes"] == 1
+    finally:
+        engine.dispose()
