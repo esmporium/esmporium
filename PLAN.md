@@ -149,7 +149,7 @@ Integration tests:
 - Pagination: an explicit integration test for a search that returns around >10 queries when we set limit to 3 (so we need multiple queries to get everything)
     - by fiddling with limits, we should be able to set up an integration test for both SOLR and STAC
 
-## PR3 see https://github.com/esmporium/esmporium/pull/41
+## PR3 Done, see https://github.com/esmporium/esmporium/pull/41
 
 Alter our search entrypoint
 
