@@ -3,7 +3,7 @@ Translating between query types
 """
 
 from collections.abc import Collection, Iterable, Mapping
-from typing import TypeVar
+from typing import TypeVar, cast
 
 from esmporium.query.canonical_query import CANONICAL_FACETS, QueryCanonical
 from esmporium.query.known_queries import (
@@ -435,7 +435,9 @@ def as_query_iterable(
     # so a single query is itself iterable. We key on `other_terms` instead: a query
     # carries it, an iterable of queries does not.
     if hasattr(queries, "other_terms"):
-        # Probably a single query, not an iterable of them.
-        return (queries,)  # type: ignore[return-value]
+        # Probably a single query, not an iterable of them. `hasattr` cannot narrow the
+        # type for the checker (it only learns "has other_terms", which is not the same
+        # as "is a QueryProtocol"), so say so explicitly.
+        return (cast("QueryProtocol", queries),)
 
     return tuple(queries)
