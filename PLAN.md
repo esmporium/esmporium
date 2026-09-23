@@ -192,9 +192,19 @@ Not included:
 - there is no deliberately no attempt to cache in anyway here. If the user says 'search', we search (even if we already ran the same search 2 seconds previously) because the state of the ESGF database might have changed since we last looked (i.e. there is no sensible way to cache).
 -
 
-## PR 3.5
+## PR 3.4
 
 Split search.py into subfolders for clarity.
+
+## PR 3.5
+
+Concurrent saving to database from multiple parallel workers, dataset clash handling:
+
+"Concurrent saves of the same dataset reliably crash — 8/8 trials raised UnhandledDatasetClashError, misdiagnosing "another worker already saved this exact dataset" as a genuine unmodelled-facet clash.
+
+So testing it now does mean fixing it now. And the fix is bigger than it first looks: the race isn't just the Dataset row. When I fixed that, the probe failed one step later on datasetversion. Every get-or-create in the ingest chain — dataset → version → data node → version–node link → raw doc → raw-doc link (~6 of them) — is select-then-insert, so each races. Making it safe is a concurrency-correctness pass over results_to_database, which is a different beast from "parallelise the query loop" — hence the deferral was legitimate, even if my comment undersold why."
+
+See note in `test_health`
 
 ## PR3.6 and friends
 
