@@ -47,7 +47,7 @@ from esmporium.search.search import (
     get_facade_key,
 )
 
-LOGGER_NAME = "esmporium.search.search"
+LOGGER_NAME = "esmporium.search.search.firing"
 
 QUERY_CMIP6 = QueryCMIP6(experiment_id="historical", variable_id="tas", frequency="mon")
 """A CMIP6 query; search_single_project() canonicalises it for us"""
