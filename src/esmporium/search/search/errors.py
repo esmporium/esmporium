@@ -1,12 +1,5 @@
 """
 The failures a search can raise or record
-
-These fall into two families. [SearchAPIRequestError][(m).] is the low-level failure
-of one request to one API. The [CouldNotSearchError][(m).] family (and
-[NoFacadeAnsweredError][(m).]) are the higher-level "this facade, or every facade, gave
-us nothing we could use" failures that a search records or raises.
-[PaginationLimitError][(m).] and [PaginationWarning][(m).] guard paging through a large
-result set.
 """
 
 from __future__ import annotations

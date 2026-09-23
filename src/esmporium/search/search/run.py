@@ -1,11 +1,5 @@
 """
-The search entry points
-
-[search_single_project][(m).] is the low-level, single-project building block: it asks
-the facades a selector yields and parses their answers. [search][(m).] is the
-high-level entry point: it splits one or more (possibly multi-project) queries into
-single-project sub-queries and runs each through [search_single_project][(m).],
-optionally in parallel.
+The search entry points for single project and multi-project queries
 """
 
 from __future__ import annotations

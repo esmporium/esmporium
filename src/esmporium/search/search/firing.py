@@ -1,9 +1,5 @@
 """
 Sending one request to one search API
-
-This is the low-level layer: [fire][(m).] sends a single request (following the API's
-own retry policy and timeout), records how it went, and hands back the raw JSON. The
-helpers here build the URL and render a request as a `curl` command for logging.
 """
 
 from __future__ import annotations

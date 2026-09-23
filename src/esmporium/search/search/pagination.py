@@ -1,9 +1,5 @@
 """
-Paging through one facade's whole answer to a search
-
-A search response may report more matches than fit in one page.
-[collect_all_pages][(m).] follows the endpoint's own pagination page by page, parsing
-each page as it arrives and guarding against runaway or looping pagination.
+Paging through one facade's whole answer to a search query
 """
 
 from __future__ import annotations
