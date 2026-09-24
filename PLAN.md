@@ -483,3 +483,33 @@ Unit tests:
 Integration tests:
 
 - [ ]
+
+## Requirements (R0–R12)
+
+Moving the requirements prototype (`esmporium-processing/src/esmporium_processing/requirements/`)
+into `src/esmporium/requirements/`, in reviewable pieces. Numbered `R0`–`R12` rather than
+continuing `PR1…PR9` because **nothing here depends on PR4–PR9**; this can run in parallel with
+them. Only the follow-up database-backed catalogue is gated on PR6 (parent links) and PR7 (file
+information).
+
+The design note lands first (R0) so every low-level PR can be read against a stated target: see
+[Expressing analysis data requirements](docs/further-background/data-requirements.md).
+
+| PR | Concept added | src | tests | Use cases unlocked |
+|---|---|---|---|---|
+| R0 | The design note, as docs including ascii or other plain text diagram(s) | ~300 | — | — |
+| R1 | Entries, facets and matching | ~310 | ~160 | — |
+| R2 | `Leaf`, `all_of`, `Requirement`, `.where()` | ~565 | ~200 | — |
+| R3 | **`solve` — end to end works here** | ~450 | ~475 | 14 |
+| R4 | `Ancestors` lineage | ~325 | ~260 | 15, 17 |
+| R5 | The `Constraint` protocol (no shipped checks) | ~425 | ~230 | — |
+| R6 | `Covers` | ~190 | ~280 | 01, 03, 04, 05, 11 |
+| R7 | `any_of`, `optional` | ~235 | ~300 | 06, 07, 08, 12, 18 |
+| R8 | `namespace`, `SameTimeRange` | ~215 | ~270 | 02, 16, 16a |
+| R9 | `Sibling` | ~110 | ~170 | 09, 10 |
+| R10 | `Aux` | ~280 | ~400 | 13, 19 |
+| R11 | `to_search_plan` | ~150 | ~135 | — |
+| R12 | Retire the prototype | — | — | — |
+
+Totals: ~3 255 src lines against the prototype's 3 305 — a useful check that the slices cover
+the whole thing.

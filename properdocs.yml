@@ -141,9 +141,15 @@ markdown_extensions:
   # Enable the use of snippets (e.g. taking snippets from README and putting them in docs)
   # https://facelessuser.github.io/pymdown-extensions/extensions/snippets/
   - pymdownx.snippets
-  # Support more complicated indents etc.
+  # Support more complicated indents etc.,
+  # plus mermaid diagrams via a custom fence.
   # https://facelessuser.github.io/pymdown-extensions/extensions/superfences/
-  - pymdownx.superfences
+  # https://squidfunk.github.io/mkdocs-material/reference/diagrams/
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   # Tabbed sections (e.g. for our installation options)
   # https://facelessuser.github.io/pymdown-extensions/extensions/tabbed/
   - pymdownx.tabbed:

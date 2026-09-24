@@ -18,6 +18,9 @@ repos:
       - id: check-merge-conflict
       - id: check-symlinks
       - id: check-yaml
+        # --unsafe checks syntax only, without constructing custom tags.
+        # properdocs.yml uses !!python/name: for the mermaid superfences fence.
+        args: ["--unsafe"]
       - id: debug-statements
       - id: detect-private-key
       - id: end-of-file-fixer
