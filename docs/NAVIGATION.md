@@ -9,6 +9,7 @@ See https://oprypin.github.io/mkdocs-literate-nav/
 - [Tutorials](tutorials/index.md)
 - [Further background](further-background/index.md)
     - [Dependency pinning and testing](further-background/dependency-pinning-and-testing.md)
+    - [Expressing analysis data requirements](further-background/data-requirements.md)
 - [Development](development.md)
 - [API reference](api/esmporium/)
 - [Changelog](changelog.md)
