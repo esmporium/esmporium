@@ -5,6 +5,7 @@ ahead of the implementation (R0 in the *Requirements (R0–R12)* section of `PLA
 so that every later PR can be read against a stated target.
 
 Written: 2026-09-14.
+Updated: 2026-09-24
 
 ## Three kinds of "or"
 
