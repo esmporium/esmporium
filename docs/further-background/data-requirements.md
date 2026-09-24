@@ -18,11 +18,40 @@ Most "or"s in the use cases are fan-outs.
 
 ## The tree
 
-A leaf carries everything about one dataset, because that is where the work happens:
+A requirement is a **tree**: one root node at the top branching downward to *leaves*
+at the tips (drawn upside down, like a family tree). Two general terms recur
+throughout this note:
 
-- **`Leaf.of(query, role=, aux=, lineage=, constraints=)`** — one dataset per group. A bare string means `Query(variable=...)`. A facet with several values is an OR, exactly as in esmporium, so `variable=("fLuc", "fLUC")` takes either. The role says what the dataset is *for*, which is why pattern scaling's nine variables sit in one leaf called `field`, with the variable itself in the group key.
-- **`all_of`, `any_of` (ordered) and `optional`.** An optional part must meet its own constraints, otherwise it is absent.
-- **`namespace(name, child, constraints=)`** — prefixes roles, so the same role can appear twice (`abrupt4x.tas` and `abrupt2x.tas`), and holds checks which compare leaves.
+- a **leaf** is a node with nothing below it — the end of a branch;
+- an **internal node** has children and exists to group or wrap them.
+
+The nesting is the point. A calculation's data needs are naturally "all of these,
+and optionally those, or else that one", and a tree is what expresses that shape:
+
+```text
+Requirement                 ← root (an internal node; always has one child)
+   └── all_of               ← internal node: needs ALL of its children
+       ├── Leaf: tas        ← leaf: one dataset, nothing below it
+       ├── Leaf: rsdt       ← leaf
+       └── namespace        ← internal node: wraps a child, renames its leaves
+           └── ...
+```
+
+The building blocks, from the tips up. Note the capitalisation: **`Leaf` (capital L)
+is a class — the one kind of leaf node; lower-case "leaf" is the general position at
+a tip of the tree.** Everything below `Leaf.of` builds an *internal* node, not a leaf:
+
+- **`Leaf.of(query, role=, aux=, lineage=, constraints=)`** — builds a **leaf**, one
+  dataset per group, because a leaf carries everything about one dataset and that is
+  where the work happens. (`.of(...)` is a factory: a function that hands back a
+  `Leaf`; it takes a query, never other nodes.) A bare string means `Query(variable=...)`. A facet with several values is an OR, exactly as in esmporium, so `variable=("fLuc", "fLUC")` takes either. The role says what the dataset is *for*, which is why pattern scaling's nine variables sit in one leaf called `field`, with the variable itself in the group key.
+- **`all_of`, `any_of` (ordered) and `optional`** — build **internal nodes, not
+  leaves**: each holds child nodes (leaves, or other internal nodes) and says how to
+  combine them. `all_of` needs every child; `any_of` takes the first child that can be
+  satisfied; `optional` includes its child when the child's own constraints are met,
+  otherwise it is absent. They take *nodes* as arguments, whereas `Leaf.of` takes a
+  *query* — the quickest way to tell a container from a leaf.
+- **`namespace(name, child, constraints=)`** — an internal node that prefixes roles, so the same role can appear twice (`abrupt4x.tas` and `abrupt2x.tas`), and holds checks which compare leaves.
 - **`Requirement(tree, name=, where=, group_by=, prefer=, cardinality=, constraints=)`** — the root.
 
 Every node has the same three ways to say something about the leaves below it, and each pushes down to the leaves:
@@ -48,7 +77,9 @@ The diagram below draws one concrete requirement: equilibrium climate sensitivit
 experiment (optionally also 2x and 0.5x), each traced back to its piControl, which
 must cover it. It shows the two things that are easy to miss in prose: the three
 levels a check attaches at (leaf, namespace, requirement), and how role names gain
-their prefixes as they resolve.
+their prefixes as they resolve. **Leaves are green; every other node is an internal
+node (blue) that groups or wraps them** — `all_of` needs all its children, `optional`
+may drop its child, and a `namespace` renames the leaves below it.
 
 ```mermaid
 flowchart TD
@@ -65,6 +96,11 @@ flowchart TD
     A4 --> L["Leaf: rlut"]
     A4 --> S["Leaf: rsut"]
     T -.->|resolves to| RP["roles:<br/>abrupt4x.tas<br/>abrupt4x.control.tas"]
+
+    classDef leaf fill:#e8f5e9,stroke:#43a047,color:#1b5e20;
+    classDef internal fill:#e3f2fd,stroke:#1e88e5,color:#0d47a1;
+    class T,D,L,S leaf;
+    class R,A,NS4,O2,O05,NS2,NS05,A4 internal;
 ```
 
 ## Relations
