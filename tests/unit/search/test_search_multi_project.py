@@ -343,11 +343,6 @@ def test_parallel_writes_land_in_a_shared_sqlite_db(tmp_path):
 def test_parallel_workers_writing_the_same_dataset_keep_one_row(tmp_path):
     """
     Two workers that return the *same* dataset save one row, not a spurious clash
-
-    Two overlapping sub-queries returning the same dataset are held at a barrier so
-    their writes to the one WAL database genuinely race. The get-or-create must reuse
-    the row the winner wrote rather than mistake the loser's collision for an
-    `UnhandledDatasetClashError`.
     """
     engine = configure_sqlite_for_concurrency(
         create_engine(f"sqlite:///{tmp_path / 'esmporium.db'}")

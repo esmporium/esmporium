@@ -454,13 +454,11 @@ def _get_or_create(
     """
     Return the row `lookup` finds, else insert `build()`, race-safe against workers
 
-    This is the read-then-insert every helper below shares, made safe for parallel
-    search (several workers, each its own session/connection, writing one database).
-    The insert goes in through a savepoint so a losing race can be rolled back cleanly.
+    This makes potential dataset clashes safe for parallel search (several workers,
+    each its own session/connection, writing one database). The insert
+    goes in through a savepoint so a losing race can be rolled back cleanly.
     If the flush trips a uniqueness constraint, another transaction inserted the same
     row first, so we re-run `lookup` (which now sees the committed row) and reuse it.
-    Only a constraint failure that `lookup` cannot explain -- i.e. `lookup` still finds
-    nothing -- is re-raised.
 
     `save_dataset` does not use this because a dataset's identity conflict has to be
     told apart from a genuine unmodelled clash and reported specially;

@@ -42,23 +42,11 @@ from esmporium.search.retry import _is_transient
 from esmporium.search.search import get_facade_key
 
 # NOTE: the mock helpers below are duplicated from
-# `tests/unit/search/test_search_single.py` and `test_check_query_values.py`. They are
+# `tests/unit/search/test_search_single.py` and `test_check_query_values_single.py`.
+# They are
 # small, and copying keeps this file self-contained. A future PR (PR3 needs a mock
 # search endpoint of its own) may pull them into a shared `mock_search_api` module.
 
-# NOTE 2: Parallelism over sub-queries now lives in `search`/`check_query_values`
-# (max_workers). Its concurrency is tested in `test_search_multi_project.py`
-# (a barrier proves real concurrency; a WAL + busy_timeout SQLite engine proves parallel
-# writes land) and `test_check_query_values_multi_project.py`. Concurrent writes of the
-# *same* dataset identity across worker transactions are now handled too: the
-# get-or-create in `results_to_database` reuses the row a racing worker committed rather
-# than mistaking it for a clash. See `test_search_multi_project.py`
-# (`test_parallel_workers_writing_the_same_dataset_keep_one_row`) and
-# `test_ingest_parsed_documents.py`
-# (`test_concurrent_workers_ingesting_the_same_dataset_reuse_one_row`, which forces the
-# race deterministically).
-# FROM ZN: "make sure that database writing works, even when calls are made in
-# parallel so can clash/race each other or have other weird parallel side effects"
 
 QUERY = QueryCMIP6(experiment_id="historical", variable_id="tas", frequency="mon")
 """A CMIP6 query the mock APIs answer for"""
