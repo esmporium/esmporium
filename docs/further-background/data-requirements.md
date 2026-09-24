@@ -40,7 +40,9 @@ Requirement                 ← root (an internal node; always has one child)
 
 The building blocks, from the tips up. Note the capitalisation: **`Leaf` (capital L)
 is a class — the one kind of leaf node; lower-case "leaf" is the general position at
-a tip of the tree.** Everything below `Leaf.of` builds an *internal* node, not a leaf:
+a tip of the tree.** The class is the blueprint, not a node itself; each `Leaf` you
+build is one leaf node in the tree, and `Leaf.of(...)` is the factory that builds one.
+Everything below `Leaf.of` builds an *internal* node, not a leaf:
 
 - **`Leaf.of(query, role=, aux=, lineage=, constraints=)`** — builds a **leaf**, one
   dataset per group, because a leaf carries everything about one dataset and that is
