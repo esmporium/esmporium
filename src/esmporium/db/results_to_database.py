@@ -568,14 +568,16 @@ def _get_or_create_dataset(
     parsed: ParsedDocument,
     normalisers: Mapping[str, NormaliseFunc],
 ) -> Dataset:
-    """Reuse an identical dataset if we have one, else save a new one.
+    """
+    Reuse an identical dataset if we have one, else save a new one.
 
     `facets` is the search layer's typed row; `model_dump()` turns it into `Dataset`
     kwargs. Building the `Dataset` here is also the loud boundary check: a field on
     `DatasetFacets` that `Dataset` does not accept fails here, not silently dropped.
 
-    Matching on *every* facet (an equal `grid_label` NULL included) keeps re-ingestion
-    idempotent without merging two datasets that differ on any single column.
+    Matching on *every* facet (e.g. an equal `grid_label` NULL included)
+    keeps re-ingestion idempotent
+    without merging two datasets that differ on any single column.
 
     If the insert trips the identity index and the lookup still finds nothing, the clash
     is genuine (plain equality cannot see a NULL-vs-'' `grid_label` the identity index

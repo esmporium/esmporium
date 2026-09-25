@@ -394,7 +394,7 @@ def test_a_host_that_fails_partway_leaves_nothing_behind(engine):
     A host's results are saved all or nothing
 
     The processor commits once per host, so if ingesting a host's documents fails
-    partway, none of them may be left in the database. Here the second document clashes
+    partway, none of them will be left in the database. Here the second document clashes
     with the first (NULL vs '' `grid_label`), after the first document's rows have all
     been written. Every row goes in through a savepoint, and on a SQLite engine without
     real transactions, releasing a savepoint commits, so the first document's rows would
