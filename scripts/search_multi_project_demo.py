@@ -95,8 +95,8 @@ def run(label: str, *, max_workers: int | None, limit: int) -> None:
     print(f"=== {label} ===")
     with tempfile.TemporaryDirectory() as tmp:
         engine = create_engine(f"sqlite:///{Path(tmp) / 'esmporium-demo.db'}")
-        # A parallel run has several workers committing at once; WAL + busy_timeout
-        # keeps those commits from colliding. Harmless serially, so always applied.
+        # Needed to save results into SQLite at all: it gives real transactions and
+        # makes a parallel run's workers take turns writing instead of colliding.
         configure_sqlite_for_concurrency(engine)
         upgrade_to_head(engine)
 

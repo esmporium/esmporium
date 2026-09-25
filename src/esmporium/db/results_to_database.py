@@ -8,11 +8,12 @@ import json
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
-from sqlalchemy import func
+from sqlalchemy import Engine, func
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, select
 
 from esmporium.db.dataset_uniqueness import facet_differences
+from esmporium.db.engine import is_sqlite_configured_for_concurrency
 from esmporium.db.schema import (
     DATASET_FACET_COLUMNS,
     DATASET_IDENTITY_INDEX,
@@ -38,8 +39,6 @@ from esmporium.search.result_parsing import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator, Mapping
     from contextlib import AbstractContextManager
-
-    from sqlalchemy import Engine
 
     from esmporium.search.search_api_facade import SearchAPIFacade
 
@@ -120,6 +119,15 @@ class UnhandledDatasetClashError(Exception):
         )
 
 
+class UnconfiguredSQLiteEngineError(Exception):
+    """
+    Results were about to be saved into a SQLite engine that has not been configured
+
+    See [`esmporium.db.configure_sqlite_for_concurrency`][]
+    for why this is needed.
+    """
+
+
 def save_dataset(
     session: Session,
     dataset: Dataset,
@@ -160,30 +168,71 @@ def save_dataset(
 
         If `raw_doc` is supplied and the stored dataset has raw documents,
         the error's `differences` holds the facets that differ between them.
-    """
-    # The savepoint is opened *before* the add so that rolling it back on a clash also
-    # expunges the pending dataset; otherwise it would linger and be retried on the next
-    # flush, resurfacing as a confusing error against an unrelated dataset.
-    savepoint = session.begin_nested()
-    session.add(dataset)
-    try:
-        session.flush()
-    except IntegrityError as exc:
-        savepoint.rollback()
-        if DATASET_IDENTITY_INDEX in str(exc.orig):
-            differences = (
-                None
-                if raw_doc is None
-                else _get_clash_facet_differences(
-                    session, dataset, raw_doc, normalisers
-                )
-            )
-            raise UnhandledDatasetClashError(dataset, differences) from exc
-        raise
-    else:
-        savepoint.commit()
 
-    return dataset
+    UnconfiguredSQLiteEngineError
+        `session` is bound to a SQLite engine that has not been configured with
+        [`esmporium.db.configure_sqlite_for_concurrency`][].
+    """
+    _check_engine_is_configured(session)
+
+    return _get_or_create(
+        session,
+        # Nothing to reuse: saving a dataset that is already stored is the clash.
+        lookup=lambda: None,
+        build=lambda: dataset,
+        on_unresolved=lambda row, exc: _raise_if_dataset_clash(
+            session, row, exc, raw_doc, normalisers
+        ),
+    )
+
+
+def _check_engine_is_configured(session: Session) -> None:
+    """
+    Raise if `session` writes to a SQLite engine without real transactions
+
+    Saving uses savepoints,
+    which only behave on SQLite once the engine is configured
+    (see [`esmporium.db.configure_sqlite_for_concurrency`][]).
+    Without that, rows would be committed one by one as they are written,
+    so we fail loudly instead.
+    """
+    bind = session.get_bind()
+    engine = bind if isinstance(bind, Engine) else bind.engine
+    if engine.dialect.name != "sqlite" or is_sqlite_configured_for_concurrency(engine):
+        return
+
+    msg = (
+        f"{engine!r} is a SQLite engine "
+        "that has not been configured for saving results. "
+        "Without configuration, SQLite commits each row as it is written, "
+        "so a failed save would leave partial results behind. "
+        "Call esmporium.db.configure_sqlite_for_concurrency on the engine "
+        "straight after creating it, before it is first used."
+    )
+    raise UnconfiguredSQLiteEngineError(msg)
+
+
+def _raise_if_dataset_clash(
+    session: Session,
+    dataset: Dataset,
+    exc: IntegrityError,
+    raw_doc: DatasetRawDoc | None,
+    normalisers: Mapping[str, NormaliseFunc],
+) -> None:
+    """
+    Turn a violation of the dataset identity index into an `UnhandledDatasetClashError`
+
+    Any other integrity error is left for the caller to re-raise.
+    """
+    if DATASET_IDENTITY_INDEX not in str(exc.orig):
+        return
+
+    differences = (
+        None
+        if raw_doc is None
+        else _get_clash_facet_differences(session, dataset, raw_doc, normalisers)
+    )
+    raise UnhandledDatasetClashError(dataset, differences) from exc
 
 
 def _get_clash_facet_differences(
@@ -265,12 +314,14 @@ def ingest_parsed_documents(
     Parameters
     ----------
     session
-        The session to write into. This does NOT commit; the caller controls the
-        transaction boundary (the processor from
-        [build_result_processor][(m).build_result_processor] commits once per host).
+        The session to write into.
+        This does NOT commit; the caller controls the transaction boundary
+        (the processor from [build_result_processor][(m).build_result_processor]
+        commits once per page of results,
+        so each page is saved all or nothing).
 
     parsed_documents
-        The documents a host answered with, already parsed by the facade's
+        A page of documents a host answered with, already parsed by the facade's
         `parse_search_results`.
 
     normalisers
@@ -281,7 +332,14 @@ def ingest_parsed_documents(
         with its own `raw_docs_format_tag`,
         pass a mapping that includes a normaliser for that tag
         (e.g. `{**DEFAULT_NORMALISERS, <your tag>: <your normaliser>}`).
+
+    Raises
+    ------
+    UnconfiguredSQLiteEngineError
+        `session` is bound to a SQLite engine that has not been configured with
+        [`esmporium.db.configure_sqlite_for_concurrency`][].
     """
+    _check_engine_is_configured(session)
     for parsed in parsed_documents:
         _ingest_document(session, parsed, normalisers)
 
@@ -294,9 +352,12 @@ def build_result_processor(
     Build a processor that persists one facade's parsed results into `session`
 
     The returned callback is what
-    [`esmporium.search.search_single_project`][] calls as each facade
-    answers: it ingests that facade's documents and commits, so results are durable as
-    soon as they arrive. Inject it as
+    [`esmporium.search.search_single_project`][] calls
+    with each page of results as it arrives:
+    it ingests that page's documents and commits,
+    so each page is saved all or nothing
+    and is durable as soon as it arrives.
+    Inject it as
     `search_single_project(..., processor=build_result_processor(session))`.
     For the multi-query [`esmporium.search.search`][], which wants a fresh processor per
     sub-query, use [build_result_processor_factory][(m).] instead.
@@ -343,10 +404,10 @@ def build_result_processor_factory(
     This is the database-saving [ProcessorFactory][esmporium.search.ProcessorFactory] to
     hand to [`esmporium.search.search`][]: it is called once per sub-query and opens a
     fresh `sqlmodel.Session` (and so a fresh transaction) for that sub-query,
-    yields a [build_result_processor][(m).] bound to it, and closes it afterwards. A
-    session per sub-query is what keeps each sub-query's results in their own
-    transaction, so one that finishes is committed and durable before the next begins,
-    and what lets a parallel search give each worker its own session.
+    yields a [build_result_processor][(m).] bound to it, and closes it afterwards.
+    A session per sub-query keeps each sub-query's writes in transactions of its own
+    (one per page, see [build_result_processor][(m).]),
+    and lets a parallel search give each worker its own session.
 
     Parameters
     ----------
@@ -450,34 +511,50 @@ def _get_or_create(
     session: Session,
     lookup: Callable[[], _Row | None],
     build: Callable[[], _Row],
+    on_unresolved: Callable[[_Row, IntegrityError], None] | None = None,
 ) -> _Row:
     """
-    Return the row `lookup` finds, else insert `build()`, race-safe against workers
+    Return the row `lookup` finds, else insert `build()`
 
-    This makes potential dataset clashes safe for parallel search (several workers,
-    each its own session/connection, writing one database). The insert
-    goes in through a savepoint so a losing race can be rolled back cleanly.
-    If the flush trips a uniqueness constraint, another transaction inserted the same
-    row first, so we re-run `lookup` (which now sees the committed row) and reuse it.
+    The insert goes in through a savepoint,
+    so an insert that trips a uniqueness constraint can be rolled back
+    without losing the rest of the transaction.
+    We then re-run `lookup`, and reuse the row if it now finds one.
+    That covers another transaction inserting the same row
+    after our first lookup and committing before our insert,
+    which can happen on backends that let transactions write concurrently
+    and show each statement the latest committed rows
+    (e.g. PostgreSQL's default READ COMMITTED isolation).
+    Under snapshot isolation (REPEATABLE READ or SERIALIZABLE)
+    the re-run cannot see the other transaction's row, so the error propagates.
+    On SQLite the race cannot happen at all,
+    because [`esmporium.db.configure_sqlite_for_concurrency`][]
+    makes writing transactions take turns.
 
-    `save_dataset` does not use this because a dataset's identity conflict has to be
-    told apart from a genuine unmodelled clash and reported specially;
-    `_get_or_create_dataset` applies the same re-read shape around it.
+    If the re-run still finds nothing,
+    `on_unresolved` (if given) is called with the row and the error,
+    so it can raise a more specific error.
+    Otherwise, or if it returns, the integrity error is re-raised.
     """
     existing = lookup()
     if existing is not None:
         return existing
 
+    # The savepoint is opened *before* the add so that rolling it back also expunges the
+    # pending row; otherwise it would linger and be retried on the next flush,
+    # resurfacing as a confusing error against an unrelated row.
     savepoint = session.begin_nested()
     row = build()
     session.add(row)
     try:
         session.flush()
-    except IntegrityError:
+    except IntegrityError as exc:
         savepoint.rollback()
         raced = lookup()
         if raced is not None:
             return raced
+        if on_unresolved is not None:
+            on_unresolved(row, exc)
         raise
     else:
         savepoint.commit()
@@ -500,45 +577,32 @@ def _get_or_create_dataset(
     Matching on *every* facet (an equal `grid_label` NULL included) keeps re-ingestion
     idempotent without merging two datasets that differ on any single column.
 
-    `parsed` supplies the raw document and `normalisers` the means to read it,
-    so a clash on save can report which facets differ
+    If the insert trips the identity index and the lookup still finds nothing, the clash
+    is genuine (plain equality cannot see a NULL-vs-'' `grid_label` the identity index
+    coalesces), so it is raised as an `UnhandledDatasetClashError`, with `parsed` and
+    `normalisers` used to report which facets differ
     (see [save_dataset][(m).save_dataset]).
-
-    Race-safe for parallel search: if a worker's lookup misses but its insert then loses
-    to another worker inserting the same dataset, re-running the lookup finds and reuses
-    that row. Only a clash the re-read still cannot find (the genuine `grid_label` NULL-
-    vs-'' case) propagates as an `UnhandledDatasetClashError`.
     """
     facet_values = facets.model_dump()
     conditions = [
         getattr(Dataset, column) == value for column, value in facet_values.items()
     ]
-    # We match on every column, so the identity index (see `Dataset.__table_args__`)
-    # guarantees at most one row can satisfy this. `one_or_none` encodes exactly that
-    # expectation: it returns the row or `None`, and raises `MultipleResultsFound` if a
-    # second ever exists -- a corrupt or mis-migrated database then fails loudly
-    existing = session.exec(select(Dataset).where(*conditions)).one_or_none()
-    if existing is not None:
-        return existing
-    try:
-        return save_dataset(
-            session,
-            Dataset(**facet_values),
-            raw_doc=_build_raw_doc(parsed),
-            normalisers=normalisers,
-        )
-    except UnhandledDatasetClashError:
-        # Another worker may have inserted this same dataset between our lookup and our
-        # save (two overlapping sub-queries returning it, run in parallel). Re-run the
-        # lookup on the same plain-equality conditions: if the row is now there it is
-        # that same dataset -- the race is just re-ingestion split across workers,
-        # reused exactly as a second serial ingest would be. If it still is not there,
-        # the clash is genuine (plain equality cannot see a NULL-vs-'' grid_label the
-        # identity index coalesces), so let it propagate.
-        raced = session.exec(select(Dataset).where(*conditions)).one_or_none()
-        if raced is None:
-            raise
-        return raced
+
+    return _get_or_create(
+        session,
+        # We match on every column,
+        # so the identity index (see `Dataset.__table_args__`)
+        # guarantees at most one row can satisfy this.
+        # `one_or_none` encodes exactly that expectation:
+        # it returns the row or `None`, and raises `MultipleResultsFound`
+        # if a second ever exists
+        # which means that a corrupt or mis-migrated database fails loudly.
+        lambda: session.exec(select(Dataset).where(*conditions)).one_or_none(),
+        lambda: Dataset(**facet_values),
+        on_unresolved=lambda dataset, exc: _raise_if_dataset_clash(
+            session, dataset, exc, _build_raw_doc(parsed), normalisers
+        ),
+    )
 
 
 def _upsert_version(
@@ -560,13 +624,12 @@ def _upsert_version(
             retracted=parsed.retracted,
         ),
     )
-    # Refresh the snapshot flags on whatever row we ended up with -- one we just made,
-    # one seen on an earlier ingest, or one a parallel worker inserted first -- so a
-    # re-ingest keeps `is_latest`/`retracted` current either way.
+    # Refresh the snapshot flags in case this row was seen on an earlier ingest,
+    # so a re-ingest keeps `is_latest`/`retracted` current.
+    # The row is already in the session,
+    # so the next flush (at the latest, on commit) writes any change.
     version.is_latest = parsed.is_latest
     version.retracted = parsed.retracted
-    session.add(version)
-    session.flush()
     return version
 
 

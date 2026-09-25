@@ -192,7 +192,7 @@ Not included:
 - there is no deliberately no attempt to cache in anyway here. If the user says 'search', we search (even if we already ran the same search 2 seconds previously) because the state of the ESGF database might have changed since we last looked (i.e. there is no sensible way to cache).
 -
 
-## PR 3.3 Done,  see https://github.com/esmporium/esmporium/pull/42
+## PR 3.3 Done, see https://github.com/esmporium/esmporium/pull/42
 
 Split search.py into subfolders for clarity.
 

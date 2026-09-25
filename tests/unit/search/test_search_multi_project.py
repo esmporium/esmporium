@@ -58,10 +58,12 @@ def engine() -> Iterator[Engine]:
     fresh session the processor factory opens per sub-query and the session we read back
     with all see the same tables.
     """
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
+    engine = configure_sqlite_for_concurrency(
+        create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
     )
     METADATA.create_all(engine)
     yield engine
@@ -343,6 +345,9 @@ def test_parallel_writes_land_in_a_shared_sqlite_db(tmp_path):
 def test_parallel_workers_writing_the_same_dataset_keep_one_row(tmp_path):
     """
     Two workers that return the *same* dataset save one row, not a spurious clash
+
+    The configured engine makes the workers' writing transactions take turns,
+    so whichever writes second finds the first worker's row and reuses it.
     """
     engine = configure_sqlite_for_concurrency(
         create_engine(f"sqlite:///{tmp_path / 'esmporium.db'}")
@@ -352,8 +357,8 @@ def test_parallel_workers_writing_the_same_dataset_keep_one_row(tmp_path):
     barrier = threading.Barrier(2, timeout=5)
 
     def handler(request: httpx.Request) -> httpx.Response:
-        # Both requests reach here together, so both workers ingest the same dataset at
-        # once and race on the insert.
+        # Both requests reach here together, so both workers go on to write the same
+        # dataset at the same time.
         barrier.wait()
         return solr_body([solr_doc("same")])
 

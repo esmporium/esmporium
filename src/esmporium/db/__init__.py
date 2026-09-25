@@ -13,6 +13,7 @@ from esmporium.db.dataset_uniqueness import (
 )
 from esmporium.db.engine import configure_sqlite_for_concurrency
 from esmporium.db.results_to_database import (
+    UnconfiguredSQLiteEngineError,
     UnhandledDatasetClashError,
     build_result_processor,
     build_result_processor_factory,
@@ -52,6 +53,7 @@ __all__ = [
     "HostRanker",
     "RawDocVersionLink",
     "SearchAPICallRecord",
+    "UnconfiguredSQLiteEngineError",
     "UnhandledDatasetClashError",
     "aggregate_host_health",
     "build_health_selector",

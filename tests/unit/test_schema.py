@@ -19,6 +19,7 @@ from esmporium.db import (
     DatasetVersionDataNodeLink,
     RawDocVersionLink,
     UnhandledDatasetClashError,
+    configure_sqlite_for_concurrency,
     save_dataset,
 )
 from esmporium.db.schema import DATASET_IDENTITY_INDEX
@@ -67,7 +68,7 @@ def engine():
     Whether the migrations agree with the models is a separate question,
     tested separately.
     """
-    engine = create_engine("sqlite://")
+    engine = configure_sqlite_for_concurrency(create_engine("sqlite://"))
     METADATA.create_all(engine)
 
     return engine
