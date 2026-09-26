@@ -7,8 +7,10 @@ from __future__ import annotations
 import json
 import threading
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, create_engine, select
 
 from esmporium.db import (
@@ -18,11 +20,14 @@ from esmporium.db import (
     DatasetRawDoc,
     DatasetVersion,
     RawDocVersionLink,
+    UnconfiguredSQLiteEngineError,
     UnhandledDatasetClashError,
     build_result_processor,
     configure_sqlite_for_concurrency,
     ingest_parsed_documents,
+    save_dataset,
 )
+from esmporium.db.results_to_database import _get_or_create
 from esmporium.search import (
     DEFAULT_NORMALISERS,
     ESGF1_CMIP5_FACADE_PARAMETERS,
@@ -42,6 +47,9 @@ from esmporium.search import (
     normalise_stored_document,
     stac_east_n_matches,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 RECORDED_DIR = Path(__file__).parents[2] / "test-data" / "search"
 
@@ -350,10 +358,11 @@ def test_bypassing_user_must_inject_a_normaliser_for_their_tag(engine):
     }
 
 
-def _same_cmip6_document(
+def _cmip6_document(
     esgf_doc_id: str = "CMIP6.same|node.example",
+    grid_label: str | None = "gn",
 ) -> ParsedDocument:
-    """One CMIP6 document that two workers can each try to ingest and clash on."""
+    """One CMIP6 document, which several workers or ingests can each try to write."""
     return ParsedDocument(
         id_project_specific="CMIP6.same",
         datasets=(
@@ -366,7 +375,7 @@ def _same_cmip6_document(
                 variant_label="r1i1p1f1",
                 variable="tas",
                 reporting_interval="mon",
-                grid_label="gn",
+                grid_label=grid_label,
                 processing_id="Amon",
             ),
         ),
@@ -380,36 +389,98 @@ def _same_cmip6_document(
     )
 
 
-def test_concurrent_workers_ingesting_the_same_dataset_reuse_one_row(tmp_path):
+def test_a_host_that_fails_partway_leaves_nothing_behind(engine):
+    """
+    A host's results are saved all or nothing
+
+    The processor commits once per host, so if ingesting a host's documents fails
+    partway, none of them will be left in the database. Here the second document clashes
+    with the first (NULL vs '' `grid_label`), after the first document's rows have all
+    been written. Every row goes in through a savepoint, and on a SQLite engine without
+    real transactions, releasing a savepoint commits, so the first document's rows would
+    survive the failure.
+    """
+    documents = (
+        _cmip6_document("CMIP6.same|node.a", grid_label=None),
+        _cmip6_document("CMIP6.same|node.b", grid_label=""),
+    )
+
+    with Session(engine) as session:
+        processor = build_result_processor(session)
+        with pytest.raises(UnhandledDatasetClashError):
+            processor("node.example", documents)
+
+    with Session(engine) as session:
+        assert _counts(session) == {
+            "datasets": 0,
+            "versions": 0,
+            "nodes": 0,
+            "raw_docs": 0,
+            "links": 0,
+        }
+
+
+@pytest.mark.parametrize(
+    "save",
+    (
+        pytest.param(
+            lambda session: ingest_parsed_documents(session, [_cmip6_document()]),
+            id="ingest_parsed_documents",
+        ),
+        pytest.param(
+            lambda session: save_dataset(
+                session, Dataset(**_cmip6_document().datasets[0].model_dump())
+            ),
+            id="save_dataset",
+        ),
+    ),
+)
+def test_saving_into_an_unconfigured_sqlite_engine_is_refused(save):
+    """
+    Saving into a SQLite engine without `configure_sqlite_for_concurrency` fails loudly
+
+    Without it, SQLite commits each row as it is written, so a failed save would
+    silently leave partial results behind.
+    """
+    engine = create_engine("sqlite://")
+    METADATA.create_all(engine)
+
+    try:
+        with Session(engine) as session:
+            with pytest.raises(
+                UnconfiguredSQLiteEngineError, match="configure_sqlite_for_concurrency"
+            ):
+                save(session)
+
+            assert _counts(session)["datasets"] == 0
+    finally:
+        engine.dispose()
+
+
+def test_concurrent_workers_ingesting_the_same_dataset_keep_one_row(tmp_path):
     """
     Two parallel workers ingesting the *same* dataset keep one row, without erroring
 
-    This is the parallel-search case the get-or-create must survive: two overlapping
-    sub-queries return the same dataset, and their workers (each its own session, its
-    own connection to one WAL SQLite database) race to write it. Each worker reads first
-    (finding nothing) and only then, past the barrier, ingests -- so both see "no such
-    dataset" and both try to insert it, exactly the race a single-threaded re-ingest
-    never hits. The loser must reuse the winner's row (idempotent), not raise
-    `UnhandledDatasetClashError`: it is the same dataset, not two our model cannot tell
-    apart.
+    Two overlapping sub-queries in a parallel search can return the same dataset. Their
+    workers (each its own session, its own connection to one SQLite database) then both
+    try to write it. The configured engine makes their transactions take turns, so the
+    second worker finds the row the first committed and reuses it, as a serial
+    re-ingest would, rather than failing on the identity index.
     """
     engine = configure_sqlite_for_concurrency(
         create_engine(f"sqlite:///{tmp_path / 'esmporium.db'}")
     )
     METADATA.create_all(engine)
 
-    document = _same_cmip6_document()
-    both_have_read = threading.Barrier(2, timeout=5)
+    document = _cmip6_document()
+    start_together = threading.Barrier(2, timeout=5)
     errors: list[Exception] = []
     errors_lock = threading.Lock()
 
     def worker() -> None:
         try:
+            start_together.wait()
             with Session(engine) as session:
-                # Fix this worker's read snapshot before anyone commits: both workers
-                # see no dataset yet, so both go on to insert and genuinely race.
-                session.exec(select(Dataset)).all()
-                both_have_read.wait()
                 ingest_parsed_documents(session, [document])
                 session.commit()
         except Exception as exc:  # recorded so the assertion can surface it
@@ -423,7 +494,7 @@ def test_concurrent_workers_ingesting_the_same_dataset_reuse_one_row(tmp_path):
         thread.join()
 
     try:
-        assert errors == [], f"a worker failed on the race: {errors!r}"
+        assert errors == [], f"a worker failed: {errors!r}"
         with Session(engine) as session:
             counts = _counts(session)
         # The whole document collapses to one of each row, exactly as a serial re-ingest
@@ -439,66 +510,89 @@ def test_concurrent_workers_ingesting_the_same_dataset_reuse_one_row(tmp_path):
         engine.dispose()
 
 
-def test_concurrent_workers_sharing_a_data_node_keep_one_node(tmp_path):
+def _misses_once(
+    lookup: Callable[[], DataNode | None],
+) -> Callable[[], DataNode | None]:
     """
-    Two workers writing *different* datasets that share a data node keep one node row
+    Wrap `lookup` so its first call finds nothing
 
-    This is the race in the get-or-create helpers below the dataset: the workers insert
-    their own (distinct) datasets fine, but both also try to insert the one shared
-    `DataNode`. As with the dataset, the loser must reuse the node the winner committed
-    rather than fail on its uniqueness constraint.
+    This simulates another transaction committing the row
+    between our lookup and our insert.
     """
-    engine = configure_sqlite_for_concurrency(
-        create_engine(f"sqlite:///{tmp_path / 'esmporium.db'}")
-    )
-    METADATA.create_all(engine)
+    calls = 0
 
-    def document(variable: str, esgf_doc_id: str) -> ParsedDocument:
-        # Same node on purpose; the datasets differ only by variable.
-        base = _same_cmip6_document(esgf_doc_id)
-        (facets,) = base.datasets
-        return ParsedDocument(
-            id_project_specific=f"CMIP6.{variable}",
-            datasets=(facets.model_copy(update={"variable": variable}),),
-            version=base.version,
-            is_latest=base.is_latest,
-            retracted=base.retracted,
-            nodes=base.nodes,
-            esgf_doc_id=esgf_doc_id,
-            raw_json=base.raw_json,
-            raw_docs_format_tag=base.raw_docs_format_tag,
+    def wrapped() -> DataNode | None:
+        nonlocal calls
+        calls += 1
+        return None if calls == 1 else lookup()
+
+    return wrapped
+
+
+def _find_node(session: Session) -> DataNode | None:
+    return session.exec(
+        select(DataNode).where(DataNode.data_node == "node.example")
+    ).one_or_none()
+
+
+def test_get_or_create_reuses_a_row_another_transaction_inserted_first(engine):
+    """
+    Losing an insert race reuses the row the winner committed
+
+    On backends that let transactions write at once (e.g. PostgreSQL), another
+    transaction can insert and commit the same row between our lookup and our insert.
+    A configured SQLite engine never races like this, so we simulate it: another session
+    commits the row, and our first lookup is made to miss it.
+    """
+    with Session(engine) as other:
+        other.add(DataNode(data_node="node.example"))
+        other.commit()
+
+    unresolved: list[DataNode] = []
+    with Session(engine) as session:
+        node = _get_or_create(
+            session,
+            _misses_once(lambda: _find_node(session)),
+            lambda: DataNode(data_node="node.example"),
+            on_unresolved=lambda row, _exc: unresolved.append(row),
         )
+        session.commit()
 
-    documents = {
-        "tas": document("tas", "CMIP6.tas|node.example"),
-        "pr": document("pr", "CMIP6.pr|node.example"),
-    }
-    both_have_read = threading.Barrier(2, timeout=5)
-    errors: list[Exception] = []
-    errors_lock = threading.Lock()
+        assert node.data_node == "node.example"
+        assert len(session.exec(select(DataNode)).all()) == 1
+        # The race was resolved by the re-lookup, so the hook (which `save_dataset`
+        # uses to diagnose a genuine clash) never runs.
+        assert unresolved == []
 
-    def worker(variable: str) -> None:
-        try:
-            with Session(engine) as session:
-                session.exec(select(DataNode)).all()
-                both_have_read.wait()
-                ingest_parsed_documents(session, [documents[variable]])
-                session.commit()
-        except Exception as exc:  # recorded so the assertion can surface it
-            with errors_lock:
-                errors.append(exc)
 
-    threads = [threading.Thread(target=worker, args=(v,)) for v in documents]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
+def test_get_or_create_hands_an_unresolved_conflict_to_its_hook(engine):
+    """
+    A conflict the re-lookup cannot resolve goes to `on_unresolved`, then propagates
 
-    try:
-        assert errors == [], f"a worker failed on the race: {errors!r}"
-        with Session(engine) as session:
-            counts = _counts(session)
-        assert counts["datasets"] == 2
-        assert counts["nodes"] == 1
-    finally:
-        engine.dispose()
+    Only the failed insert is rolled back: rows the transaction wrote earlier survive.
+    """
+    with Session(engine) as other:
+        other.add(DataNode(data_node="node.example"))
+        other.commit()
+
+    unresolved: list[DataNode] = []
+    with Session(engine) as session:
+        session.add(DataNode(data_node="earlier.example"))
+        session.flush()
+
+        with pytest.raises(IntegrityError):
+            _get_or_create(
+                session,
+                lambda: None,
+                lambda: DataNode(data_node="node.example"),
+                on_unresolved=lambda row, _exc: unresolved.append(row),
+            )
+
+        assert [row.data_node for row in unresolved] == ["node.example"]
+        assert _find_node(session) is not None
+        session.commit()
+
+        assert {node.data_node for node in session.exec(select(DataNode))} == {
+            "earlier.example",
+            "node.example",
+        }
