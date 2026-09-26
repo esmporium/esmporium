@@ -13,7 +13,7 @@ from alembic.autogenerate import compare_metadata
 from alembic.runtime.migration import MigrationContext
 from sqlmodel import create_engine
 
-from esmporium.db import METADATA
+from esmporium.db import METADATA, configure_sqlite_for_concurrency
 
 
 @pytest.fixture
@@ -25,7 +25,7 @@ def database_path(tmp_path):
 @pytest.fixture
 def engine(database_path):
     """Get engine for the database to use in the tests"""
-    return create_engine(f"sqlite:///{database_path}")
+    return configure_sqlite_for_concurrency(create_engine(f"sqlite:///{database_path}"))
 
 
 @pytest.fixture

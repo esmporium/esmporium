@@ -29,6 +29,7 @@ from esmporium.db import (
     Dataset,
     SearchAPICallRecord,
     build_result_processor,
+    configure_sqlite_for_concurrency,
     record_search_api_calls,
 )
 from esmporium.db.migrate import upgrade_to_head
@@ -114,7 +115,9 @@ def main() -> None:
 
     # A throwaway database, migrated to the current schema, just for this demo.
     with tempfile.TemporaryDirectory() as tmp:
-        engine = create_engine(f"sqlite:///{Path(tmp) / 'esmporium-demo.db'}")
+        engine = configure_sqlite_for_concurrency(
+            create_engine(f"sqlite:///{Path(tmp) / 'esmporium-demo.db'}")
+        )
         upgrade_to_head(engine)
 
         with Session(engine) as session:

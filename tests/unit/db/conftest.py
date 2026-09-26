@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy.pool import StaticPool
 from sqlmodel import create_engine
 
-from esmporium.db import METADATA
+from esmporium.db import METADATA, configure_sqlite_for_concurrency
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -27,10 +27,12 @@ def engine() -> Iterator[Engine]:
     with `create_all` rather than migrations: the migrations are covered by
     `tests/integration/test_migrations.py`, and here we only need the tables.
     """
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
+    engine = configure_sqlite_for_concurrency(
+        create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
     )
     METADATA.create_all(engine)
     yield engine
