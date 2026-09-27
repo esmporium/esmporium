@@ -93,7 +93,7 @@ Every node has the same three ways to say something about the leaves below it, a
 | Helper | Sets | Contradiction |
 |---|---|---|
 | `.where(**facets)` | facets on each leaf's query | raises `ConflictingFacetsError` |
-| `.with_lineage(relation)` | how each leaf finds its control | replaces |
+| `.with_lineage(relation)` | how each leaf finds its control | raises `ConflictingLineageError` |
 | `.with_constraints(*checks)` | checks on each leaf, one leaf at a time | adds |
 
 `Requirement.where` does the same thing for the whole tree, and raises the same
