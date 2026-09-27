@@ -174,7 +174,7 @@ Shipped checks:
 
 ## Solving
 
-`solve(requirement, catalog)` is greedy, with no backtracking.
+`solve(requirement, catalog)` is greedy, with no backtracking. This choice means that we need to give clear error messages, to help users be able to spot places where there might be solutions that they could try. The setup below should also keep the door open to doing non-greedy solving too, but we are not implementing that now as we think that the cost of non-greedy search is not worth the benefit (which we expect to be very small). We will re-evaluate that once we start working with real data.
 
 - **Groups** are the union of `group_by` values over every leaf's candidates.
 - **Leaves** apply `prefer`, then resolve their lineage, auxiliary data and own checks. If several candidates remain, the group is `ambiguous`.
