@@ -3,21 +3,6 @@ What the solver needs to know about the datasets available
 
 Throughout this package, *the solver* means the part which takes an analysis's
 requirement and works out which datasets satisfy it, and which are missing.
-It does not exist yet; this module is the ground it will stand on.
-
-A [`Dataset`][esmporium.db.schema.Dataset] row carries everything we recorded when
-we ingested it.
-The solver needs less than that, and it needs one thing that row does not have:
-somewhere to put the facets our columns do not model
-(see [`DatasetRecord.extra`][(m).DatasetRecord.extra]).
-[`DatasetRecord`][(m).DatasetRecord] is that read-side view of a row,
-and [`Catalogue`][(m).Catalogue] is where records come from.
-
-[`Catalogue`][(m).Catalogue] is a protocol, not a class to inherit from,
-because the catalogue we actually want is backed by our database
-and cannot be written until datasets record their parents and their files.
-[`InMemoryCatalogue`][(m).InMemoryCatalogue] stands in until then,
-so everything built on top of this can be written and tested now.
 """
 
 from __future__ import annotations
@@ -131,14 +116,6 @@ class DuplicateRecordIDError(ValueError):
         ----------
         collisions
             Repeated ID -> how many of the catalogue's records carry it
-
-            The ID and nothing else, deliberately. Naming the offending records
-            would mean picking the facets which say who a record is, and that has
-            no answer which holds across projects: one CMIP5 `id_project_specific`
-            covers several variables, so it can print twice identically, while a
-            CMIP6 one already carries the variable. A label needing a label of its
-            own to be useful is the wrong thing to print. The ID is what whoever
-            built the catalogue wrote down, so it is what they can search for.
         """
         self.collisions = dict(sorted(collisions.items()))
         listed = "; ".join(
@@ -163,8 +140,7 @@ class DatasetRecord:
     A dataset, as far as the solver is concerned
 
     The fields mirror the columns of [`Dataset`][esmporium.db.schema.Dataset],
-    so that the two cannot drift apart unnoticed
-    (there is a test which checks exactly that).
+    so that the two cannot drift apart unnoticed.
     [`DatasetFacets`][esmporium.search.DatasetFacets] is the mirror image of this
     class on the write side: parsers produce those, and this is what reading a
     stored row gives back.
@@ -276,12 +252,23 @@ class DatasetRecord:
         raise UnsupportedFacetError([name], self.id)
 
 
-# TODO(R2): decide whether `Leaf` and `Requirement` should refuse `other_terms`
-# on their queries outright. A requirement has to be portable, hashable,
-# canonical-JSON serialisable and re-solvable months later, and `other_terms` is
-# deliberately none of those: it is an outbound escape hatch, written for one search
-# API. `QueryFacet(None)` is the route for a facet a requirement needs. Worth
-# settling at R2 rather than at R11, when `to_search_plan` has to decide what to emit.
+# TODO(R2): two things a requirement's leaves should probably refuse, which this
+# layer is right to allow.
+#
+# 1. `other_terms`. A requirement has to be portable, hashable, canonical-JSON
+#    serialisable and re-solvable months later, and `other_terms` is deliberately
+#    none of those: it is an outbound escape hatch, written for one search API.
+#    `QueryFacet(None)` is the route for a facet a requirement needs. Worth settling
+#    at R2 rather than at R11, when `to_search_plan` has to decide what to emit.
+#
+# 2. A query with no facets at all. Here that means "no constraint", so it matches
+#    every record, which is the only sensible reading of an empty question. On a
+#    `Leaf` it would mean "any dataset in the catalogue fills this role", which is
+#    far more likely to be a half-written requirement than an intention — and it
+#    fails late and confusingly, as an ambiguous group with thousands of candidates
+#    rather than an error where the mistake was made. `Leaf` asking for at least one
+#    facet would catch it at the point of writing. Note this is a question about
+#    `Leaf`, not about `Requirement.where`, which legitimately starts empty.
 def set_facets(query: QueryProtocol) -> dict[str, tuple[str, ...]]:
     """
     Get the facets a query actually constrains, under canonical names, flattened
@@ -406,6 +393,11 @@ def matches(query: QueryProtocol, record: DatasetRecord) -> bool:
     Several values for one facet are therefore an "or",
     exactly as they are when searching.
 
+    A query which sets no facets constrains nothing, so it matches every record.
+    That is the right answer to the question as asked here, but it is a sharp edge
+    one level up: an empty query on a requirement's leaf would quietly select the
+    whole catalogue. See the note above [set_facets][(m).set_facets].
+
     Parameters
     ----------
     query
@@ -435,15 +427,6 @@ def matches(query: QueryProtocol, record: DatasetRecord) -> bool:
 class Catalogue(Protocol):
     """
     The datasets available to the solver, and what is known about them
-
-    A protocol rather than a base class: an implementation counts because it has
-    the methods below, not because it inherits from anything.
-    That is what lets the catalogue we actually want — backed by our database, so
-    living beside [`esmporium.db`][] — and
-    [`InMemoryCatalogue`][(m).InMemoryCatalogue], which is for tests and
-    prototyping, exist without either importing the other or a shared parent.
-    It also means you can write your own, over an intake catalogue or a directory
-    of files, and the solver will take it.
     """
 
     def find(self, query: QueryProtocol) -> tuple[DatasetRecord, ...]:

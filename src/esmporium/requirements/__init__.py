@@ -2,17 +2,14 @@
 Expressing, compiling and solving the data requirements of an analysis
 
 [`esmporium.search`][] answers "what exists that matches these facets?".
-An analysis needs something harder: "do I have everything I need, and if not,
-what is missing?". That question has a shape a single query cannot express
-— all of these and optionally those, or else that one — it reaches across
-datasets (the control an experiment branched from, its sibling experiment, the
+An analysis, for example, is "everything I need to calculate the ECS". This
+needs something more sophisticated than a single search query:
+"do I have everything I need, and if not, what is missing?", i.e.
+all of these and optionally those, or else that one.
+It reaches across datasets (the control an experiment branched from,
+its sibling experiment, the
 cell areas it is weighted by), and it involves judgements rather than matches
 (the control has to actually cover the period being analysed).
-
-This package is being built from the bottom up, so it starts with the nouns:
-what a dataset looks like to the solver, and what it means for one to match a
-query. Where it is going is set out in the *Expressing analysis data
-requirements* design note, under *Further background* in the documentation.
 
 ## Import boundary
 

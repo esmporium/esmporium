@@ -174,15 +174,15 @@ Shipped checks:
 
 ## Solving
 
-`solve(requirement, catalog)` is greedy, with no backtracking. This choice means that we need to give clear error messages, to help users be able to spot places where there might be solutions that they could try. The setup below should also keep the door open to doing non-greedy solving too, but we are not implementing that now as we think that the cost of non-greedy search is not worth the benefit (which we expect to be very small). We will re-evaluate that once we start working with real data.
+`solve(requirement, catalogue)` is greedy, with no backtracking. This choice means that we need to give clear error messages, to help users be able to spot places where there might be solutions that they could try. The setup below should also keep the door open to doing non-greedy solving too, but we are not implementing that now as we think that the cost of non-greedy search is not worth the benefit (which we expect to be very small). We will re-evaluate that once we start working with real data.
 
 - **Groups** are the union of `group_by` values over every leaf's candidates.
 - **Leaves** apply `prefer`, then resolve their lineage, auxiliary data and own checks. If several candidates remain, the group is `ambiguous`.
 - **Ambiguous and undetermined results are never skipped**: `any_of` stops at them, and `optional` passes them on.
 - **Output:** resolved, unsatisfied, ambiguous and undetermined groups, each with an explanation tree (`SolveResult.explain()`). Per node, `Resolved` and `Unresolved` carry the roles, lineages, choices and notes that are merged upwards.
 
-`Catalog` is a protocol with `find`, `parent_of`, `linked` and `metadata`.
-`InMemoryCatalog` stands in until esmporium has parent links and file information.
+`Catalogue` is a protocol with `find`, `parent_of`, `linked` and `metadata`.
+`InMemoryCatalogue` stands in until esmporium has parent links and file information.
 
 ## Flow and storage
 
@@ -196,8 +196,8 @@ flowchart LR
     SP --> Q["queries for every leaf<br/>+ siblings + auxiliary<br/>+ ancestry_until"]
     Q --> SEARCH["esmporium search<br/>(QueryCollection, PR3.7)"]
     SEARCH --> LINK["add parent links<br/>from file headers (PR6)"]
-    LINK --> CAT[("Catalog<br/>find · parent_of · linked · metadata")]
-    REQ --> SOLVE["solve(requirement, catalog)<br/><i>greedy, no backtracking</i>"]
+    LINK --> CAT[("Catalogue<br/>find · parent_of · linked · metadata")]
+    REQ --> SOLVE["solve(requirement, catalogue)<br/><i>greedy, no backtracking</i>"]
     CAT --> SOLVE
     SOLVE --> RES["resolved"]
     SOLVE --> UNS["unsatisfied"]
@@ -217,9 +217,9 @@ escape hatch for facets a query class does not name.
 Naming the same facet twice raises `ClashingFacetError`.
 
 **Project-specific facets are supported, and esmporium decides how.**
-Answering a query which names CMIP5's `product` is `Catalog.find`'s business, and
-nothing here needs to know how it is done. The one thing selection needs is that
-grouping, `prefer` and auxiliary matching compare *records*, so a catalog must put
+Answering a query which names CMIP5's `product` is `Catalogue.find`'s business, and
+nothing here needs to know how it is done. The one thing the solver needs is that
+grouping, `prefer` and auxiliary matching compare *records*, so a catalogue must put
 any facet it wants used that way into each record's `extra`. Requirements therefore
 accept any facet name, and a facet no record knows fails when solving, naming the
 facet and the dataset.
