@@ -230,7 +230,7 @@ These come from the CMIP6 CMOR tables and the CVs (read WCRP-universe, not CMIP7
 
 - **Fractions:** land carbon variables and nbp are `area: mean where land`, so they need sftlf. fgco2, hfds and siconc are `mean where sea`, with areacello, so they need sftof. fCLandToOcean uses areacellr.
 - **Radiation:** there is no `rndt`, so radiation is rsdt, rlut and rsut. `rtmt` is top of *model*.
-- **Parents:**
+- **Parents:** (Important here to note that for CMIP5 and CMIP6 data we have to look at file headers for parent information - although CMIP7 parent information is part of global attrs. For much of CMIP5 and some of CMIP6 parent information cannot be trusted, making ths search plan/execution much more difficult.)
   - esm-bell-\* → esm-piControl.
   - esm-1pct-brch-\* → 1pctCO2 or esm-1pctCO2.
   - esm-flat10 → esm-piControl; esm-flat10-zec and -cdr → esm-flat10, at the end of year 100.
