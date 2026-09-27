@@ -10,7 +10,7 @@ cell areas it is weighted by), and it involves judgements rather than matches
 (the control has to actually cover the period being analysed).
 
 This package is being built from the bottom up, so it starts with the nouns:
-what a dataset looks like to selection, and what it means for one to match a
+what a dataset looks like to the solver, and what it means for one to match a
 query. Where it is going is set out in the *Expressing analysis data
 requirements* design note, under *Further background* in the documentation.
 
@@ -31,6 +31,7 @@ from esmporium.requirements.catalogue import (
     Catalogue,
     ClashingFacetError,
     DatasetRecord,
+    DuplicateRecordIDError,
     InMemoryCatalogue,
     UnsupportedFacetError,
     matches,
@@ -41,6 +42,7 @@ __all__ = [
     "Catalogue",
     "ClashingFacetError",
     "DatasetRecord",
+    "DuplicateRecordIDError",
     "InMemoryCatalogue",
     "UnsupportedFacetError",
     "matches",
