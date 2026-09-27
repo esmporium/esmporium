@@ -32,28 +32,27 @@ and optionally those, or else that one", and a tree is what expresses that shape
 ```text
 Requirement                 ← root (an internal node; always has one child)
    └── all_of               ← internal node: needs ALL of its children
-       ├── Leaf: tas        ← leaf: one dataset, nothing below it
-       ├── Leaf: rsdt       ← leaf
+       ├── leaf: tas        ← leaf: one dataset, nothing below it
+       ├── leaf: rsdt       ← leaf
        └── namespace        ← internal node: wraps a child, renames its leaves
            └── ...
 ```
 
-The building blocks, from the tips up. Note the capitalisation: **`Leaf` (capital L)
-is a class — the one kind of leaf node; lower-case "leaf" is the general position at
-a tip of the tree.** The class is the blueprint, not a node itself; each `Leaf` you
-build is one leaf node in the tree, and `Leaf.of(...)` is the factory that builds one.
-Everything below `Leaf.of` builds an *internal* node, not a leaf:
+The building blocks, from the tips up. Every node is built by calling a lower-case
+function, and the one rule to hold onto is what each of them takes: **`leaf` takes a
+query, everything else takes nodes.** That is the quickest way to tell a leaf from a
+container. (`Leaf`, capital L, is the class those leaves are instances of. It exists
+for type annotations, `isinstance` checks and serialisation; you rarely write it.)
 
-- **`Leaf.of(query, role=, aux=, lineage=, constraints=)`** — builds a **leaf**, one
+- **`leaf(query, role=, aux=, lineage=, constraints=)`** — builds a **leaf**, one
   dataset per group, because a leaf carries everything about one dataset and that is
-  where the work happens. (`.of(...)` is a factory: a function that hands back a
-  `Leaf`; it takes a query, never other nodes.) A bare string means `Query(variable=...)`. A facet with several values is an OR, exactly as in esmporium, so `variable=("fLuc", "fLUC")` takes either. The role says what the dataset is *for*, which is why pattern scaling's nine variables sit in one leaf called `field`, with the variable itself in the group key.
+  where the work happens. A bare string means `Query(variable=...)`. A facet with several values is an OR, exactly as in esmporium, so `variable=("fLuc", "fLUC")` takes either. The role says what the dataset is *for*, which is why pattern scaling's nine variables sit in one leaf called `field`, with the variable itself in the group key.
 - **`all_of`, `any_of` (ordered) and `optional`** — build **internal nodes, not
   leaves**: each holds child nodes (leaves, or other internal nodes) and says how to
   combine them. `all_of` needs every child; `any_of` takes the first child that can be
   satisfied; `optional` includes its child when the child's own constraints are met,
-  otherwise it is absent. They take *nodes* as arguments, whereas `Leaf.of` takes a
-  *query* — the quickest way to tell a container from a leaf.
+  otherwise it is absent. They take *nodes* as arguments, whereas `leaf` takes a
+  *query*.
 - **`namespace(name, child, constraints=)`** — an internal node that prefixes roles, so the same role can appear twice (`abrupt4x.tas` and `abrupt2x.tas`), and holds checks which compare leaves.
 - **`Requirement(tree, name=, where=, group_by=, prefer=, cardinality=, constraints=)`** — the root.
 
@@ -94,10 +93,10 @@ flowchart TD
     O2 --> NS2["namespace: abrupt2x<br/><i>same shape; dropped if its<br/>constraints can't be met</i>"]
     O05 --> NS05["namespace: abrupt0p5x<br/><i>same shape</i>"]
     NS4 --> A4{{"all_of<br/>• where experiment = abrupt-4xCO2 / abrupt4xCO2 <i>(alias 'or')</i><br/>• lineage: Ancestors → role 'control'<br/>• constraint: Covers(control) — <i>leaf level, per leaf</i>"}}
-    A4 --> T["Leaf: tas"]
-    A4 --> D["Leaf: rsdt"]
-    A4 --> L["Leaf: rlut"]
-    A4 --> S["Leaf: rsut"]
+    A4 --> T["leaf: tas"]
+    A4 --> D["leaf: rsdt"]
+    A4 --> L["leaf: rlut"]
+    A4 --> S["leaf: rsut"]
     T -.->|resolves to| RP["roles:<br/>abrupt4x.tas<br/>abrupt4x.control.tas"]
 
     classDef leaf fill:#e8f5e9,stroke:#43a047,color:#1b5e20;
