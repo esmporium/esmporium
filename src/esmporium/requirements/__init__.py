@@ -37,13 +37,35 @@ from esmporium.requirements.catalogue import (
     matches,
     set_facets,
 )
+from esmporium.requirements.tree import (
+    AllOf,
+    ConflictingFacetsError,
+    DuplicateRoleError,
+    EmptyLeafQueryError,
+    Leaf,
+    Node,
+    NotANodeError,
+    Requirement,
+    all_of,
+    leaf,
+)
 
 __all__ = [
+    "AllOf",
     "Catalogue",
     "CatalogueEntry",
+    "ConflictingFacetsError",
     "DuplicateEntryIDError",
+    "DuplicateRoleError",
+    "EmptyLeafQueryError",
     "InMemoryCatalogue",
+    "Leaf",
+    "Node",
+    "NotANodeError",
+    "Requirement",
     "UnrecordedFacetError",
+    "all_of",
+    "leaf",
     "matches",
     "set_facets",
 ]

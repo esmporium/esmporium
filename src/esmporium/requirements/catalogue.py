@@ -237,6 +237,30 @@ class CatalogueEntry:
 # and the facade does the prefixing while `to_canonical` does the translating.
 # See [`QueryFacet`][esmporium.query.QueryFacet] and
 # [`esmporium.query.known_queries`][].
+#
+# Two things a requirement's leaves might have refused, which this layer is right to
+# allow either way. Both were settled at R2; see `tree.py`.
+#
+# 1. `other_terms`. The worry was that a requirement has to be portable, hashable,
+#    canonical-JSON serialisable and re-solvable months later, and `other_terms` is
+#    deliberately none of those: it is an outbound escape hatch, written for one
+#    search API. Decided: a `Leaf` **allows** it, because users need an escape hatch
+#    here as much as they do when searching, and because `Query` has no field for a
+#    project-specific facet, so refusing it would leave no way to name one on a leaf.
+#    What that costs is documented at length on `tree.Leaf.query`: in a requirement,
+#    the keys are compared against a `CatalogueEntry`'s `extra` rather than sent to an
+#    API, so an API parameter name silently matches nothing. `QueryFacet(None)`
+#    remains the better route for a facet which has to work in both directions.
+#
+# 2. A query with no facets at all. Here that means "no constraint", so it matches
+#    every entry, which is the only sensible reading of an empty question. On a
+#    `Leaf` it would mean "any dataset in the catalogue fills this role", which is
+#    far more likely to be a half-written requirement than an intention — and it
+#    fails late and confusingly, as an ambiguous group with thousands of candidates
+#    rather than an error where the mistake was made. Decided: a `Leaf` **refuses**
+#    it, loudly, with `tree.EmptyLeafQueryError`, catching it at the point of writing.
+#    Note this was only ever a question about `Leaf`, not about `Requirement.where`,
+#    which legitimately starts empty.
 def set_facets(query: QueryProtocol) -> dict[str, tuple[str, ...]]:
     """
     Get the facets a query actually constrains, under canonical names, flattened
