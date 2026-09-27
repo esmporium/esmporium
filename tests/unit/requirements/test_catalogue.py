@@ -4,8 +4,6 @@ Tests of the catalogue: records, the facets a query sets, and matching
 Three things here are worth more than the rest, because they are what breaks
 quietly:
 
-- the drift test, which fails when a facet column is added to `Dataset` and not to
-  `DatasetRecord`;
 - the import-boundary test, which fails when this package reaches into
   `esmporium.search` or the rest of `esmporium.db`;
 - the flatten-once test, which fails when `find` goes back to re-reading the query
@@ -17,14 +15,13 @@ from __future__ import annotations
 import ast
 import inspect
 import pathlib
-import typing
 from typing import Annotated
 
 import pytest
 from pydantic import BaseModel
 
 from esmporium import requirements
-from esmporium.db.schema import DATASET_FACET_COLUMNS, Dataset
+from esmporium.db.schema import DATASET_FACET_COLUMNS
 from esmporium.query import (
     FacetValues,
     FacetValuesByName,
@@ -47,14 +44,6 @@ from esmporium.requirements import (
     set_facets,
 )
 from esmporium.requirements import catalogue as catalogue_module
-
-# `DatasetRecord.id` is the one place the record deliberately differs from the
-# column it mirrors: a record describes a row which is already stored, so its ID
-# has been assigned, whereas `Dataset.id` is `None` until the database assigns it.
-DRIFT_EXCEPTIONS = {"id": (int, int | None)}
-
-# Only the record's own fields mirror `Dataset`; `extra` is the record's addition.
-RECORD_ONLY_FIELDS = {"extra"}
 
 
 class QueryWithNativeRealm(BaseModel):
@@ -279,6 +268,35 @@ def test_an_empty_query_matches_everything(make_record):
     assert matches(Query(), make_record(1))
 
 
+def test_matching_an_unrecorded_facet_raises(make_record):
+    # The failure has to survive the trip out through `matches`, not just be raised
+    # inside `facet`: swallowing it here would quietly turn "we cannot answer that"
+    # into "nothing matched", which is the one answer we must never invent.
+    with pytest.raises(UnsupportedFacetError):
+        matches(Query(activity="CMIP"), make_record(1))
+
+
+def test_finding_an_unrecorded_facet_raises(make_record):
+    catalogue = InMemoryCatalogue(records=(make_record(1), make_record(2)))
+
+    with pytest.raises(UnsupportedFacetError):
+        catalogue.find(Query(activity="CMIP"))
+
+
+def test_other_terms_are_facets_too(make_record):
+    # `other_terms` names a facet no query class models, so a record can only answer
+    # it from `extra` -- but once it does, it narrows a search like any other facet.
+    records = (
+        make_record(1, extra={"driving_model": "ACCESS-CM2"}),
+        make_record(2, extra={"driving_model": "MIROC6"}),
+    )
+    query = Query(other_terms={"driving_model": ("ACCESS-CM2",)})
+
+    found = InMemoryCatalogue(records=records).find(query)
+
+    assert [record.id for record in found] == [1]
+
+
 def test_a_dataset_with_no_grid_never_matches_a_grid_label(make_record):
     # Facet values are strings, so there is nothing a query could say that means
     # "the grid label is absent".
@@ -373,33 +391,6 @@ def test_find_reads_the_query_once_not_once_per_record(monkeypatch, make_record)
 
 
 # -------------------------------------------------------------------------- structural
-
-
-def test_record_fields_mirror_the_dataset_columns():
-    """
-    `DatasetRecord` records every column of `Dataset`, under the same name and type
-
-    This is the test which fails when a facet column is added to `Dataset` and the
-    record is not updated to match. `DATASET_FACET_COLUMNS` has
-    `test_facet_columns_are_the_declared_facets` playing the same role for it.
-    """
-    record_hints = typing.get_type_hints(DatasetRecord)
-    mirrored = {
-        name: hint
-        for name, hint in record_hints.items()
-        if name not in RECORD_ONLY_FIELDS
-    }
-
-    # Same columns, in the same order, so the two read as the same list side by side.
-    assert list(mirrored) == list(Dataset.model_fields)
-
-    for name, hint in mirrored.items():
-        column_hint = Dataset.model_fields[name].annotation
-        if name in DRIFT_EXCEPTIONS:
-            assert (hint, column_hint) == DRIFT_EXCEPTIONS[name]
-            continue
-
-        assert hint == column_hint, f"{name} differs from Dataset.{name}"
 
 
 def test_in_memory_catalogue_satisfies_the_catalogue_protocol():
