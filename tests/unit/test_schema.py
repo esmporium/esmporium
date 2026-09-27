@@ -25,7 +25,7 @@ from esmporium.db import (
     save_dataset,
 )
 from esmporium.db.schema import DATASET_IDENTITY_INDEX
-from esmporium.requirements import DatasetRecord
+from esmporium.requirements import CatalogueEntry
 from esmporium.search import SOLR_FORMAT_TAG, DatasetFacets
 
 VALID_DATASET_KWARGS = {
@@ -333,23 +333,23 @@ def test_dataset_facets_mirror_dataset_columns():
     }
 
 
-# `DatasetRecord.id` is the one place the record deliberately differs from the column
-# it mirrors: a record describes a row which is already stored, so its ID has been
+# `CatalogueEntry.id` is the one place the entry deliberately differs from the column
+# it mirrors: an entry describes a row which is already stored, so its ID has been
 # assigned, whereas `Dataset.id` is `None` until the database assigns it.
-DATASET_RECORD_EXCEPTIONS = {"id": (int, int | None)}
+CATALOGUE_ENTRY_EXCEPTIONS = {"id": (int, int | None)}
 
-# `extra` is the record's own addition, with no column behind it: it is where a
+# `extra` is the entry's own addition, with no column behind it: it is where a
 # catalogue puts facets we have no column for.
-DATASET_RECORD_ONLY_FIELDS = {"extra"}
+CATALOGUE_ENTRY_ONLY_FIELDS = {"extra"}
 
 
-def test_dataset_record_mirrors_dataset_columns():
-    """`DatasetRecord` declares every column of `Dataset`, same name and same type.
+def test_catalogue_entry_mirrors_dataset_columns():
+    """`CatalogueEntry` declares every column of `Dataset`, same name and same type.
 
     The sibling of the test above, for the read side. `DatasetFacets` is what a parser
-    produces on the way in; `DatasetRecord` is what reading a stored row gives back,
+    produces on the way in; `CatalogueEntry` is what reading a stored row gives back,
     and what the requirements layer compares. So a facet added to `Dataset` and not to
-    the record means requirements silently cannot select on it.
+    the entry means requirements silently cannot select on it.
 
     It lives here, beside its sibling and `test_facet_columns_are_the_declared_facets`,
     because this is the file someone opens when they change `Dataset`. Split across
@@ -359,11 +359,11 @@ def test_dataset_record_mirrors_dataset_columns():
     types as well, with `id` the single exception, named above so that the exception
     is a decision rather than an omission.
     """
-    record_hints = typing.get_type_hints(DatasetRecord)
+    entry_hints = typing.get_type_hints(CatalogueEntry)
     mirrored = {
         name: hint
-        for name, hint in record_hints.items()
-        if name not in DATASET_RECORD_ONLY_FIELDS
+        for name, hint in entry_hints.items()
+        if name not in CATALOGUE_ENTRY_ONLY_FIELDS
     }
 
     # Same columns, in the same order, so the two read as one list side by side.
@@ -371,8 +371,8 @@ def test_dataset_record_mirrors_dataset_columns():
 
     for name, hint in mirrored.items():
         column_hint = Dataset.model_fields[name].annotation
-        if name in DATASET_RECORD_EXCEPTIONS:
-            assert (hint, column_hint) == DATASET_RECORD_EXCEPTIONS[name]
+        if name in CATALOGUE_ENTRY_EXCEPTIONS:
+            assert (hint, column_hint) == CATALOGUE_ENTRY_EXCEPTIONS[name]
             continue
 
         assert hint == column_hint, f"{name} differs from Dataset.{name}"

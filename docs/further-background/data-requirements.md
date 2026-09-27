@@ -219,9 +219,9 @@ Naming the same facet twice raises `ClashingFacetError`.
 **Project-specific facets are supported, and esmporium decides how.**
 Answering a query which names CMIP5's `product` is `Catalogue.find`'s business, and
 nothing here needs to know how it is done. The one thing the solver needs is that
-grouping, `prefer` and auxiliary matching compare *records*, so a catalogue must put
-any facet it wants used that way into each record's `extra`. Requirements therefore
-accept any facet name, and a facet no record knows fails when solving, naming the
+grouping, `prefer` and auxiliary matching compare *entries*, so a catalogue must put
+any facet it wants used that way into each entry's `extra`. Requirements therefore
+accept any facet name, and a facet no entry knows fails when solving, naming the
 facet and the dataset.
 
 ## Findings worth remembering

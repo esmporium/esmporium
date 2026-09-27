@@ -42,61 +42,37 @@ class ClashingFacetError(ValueError):
 
 
 class UnsupportedFacetError(ValueError):
-    """Raised when a record does not know a facet it was asked about."""
+    """Raised when an entry does not know a facet it was asked about."""
 
-    def __init__(self, facets: Iterable[str], record_id: int | None = None) -> None:
+    def __init__(self, facets: Iterable[str], entry_id: int | None = None) -> None:
         """
         Initialise the error
 
         Parameters
         ----------
         facets
-            The facets the record does not know
+            The facets the entry does not know
 
-        record_id
-            ID of the record which was asked, if there was one
+        entry_id
+            ID of the entry which was asked, if there was one
         """
         self.facets = tuple(sorted(facets))
-        self.record_id = record_id
-        asked = f" (asked of record {record_id})" if record_id is not None else ""
+        self.entry_id = entry_id
+        asked = f" (asked of entry {entry_id})" if entry_id is not None else ""
         recorded = ", ".join(DATASET_FACET_COLUMNS)
-
-        # An API parameter name is the one wrong name worth calling out by itself.
-        # `other_terms` is sent to a search API exactly as written, prefixes and all,
-        # so reaching for the same spelling here is an easy habit to fall into.
-        # A `:` is tell enough, and needs no knowledge of the prefixes themselves;
-        # those belong to `esmporium.search`, which this package does not import.
-        prefixed = [facet for facet in self.facets if ":" in facet]
-        if prefixed:
-            # Deliberately no suggested replacement: dropping the prefix leaves the
-            # query style's own name (`cmip6:experiment_id` -> `experiment_id`), which
-            # a record does not know either, and which name to use instead depends on
-            # the query style this came from. Naming the mechanism is honest; naming a
-            # facet would send the reader straight into the same error again.
-            api_name_msg = (
-                f" {', '.join(prefixed)} looks like a search API parameter name. "
-                "`other_terms` reaches a search API exactly as it is written, "
-                "prefixes included, but a catalogue matches datasets "
-                "we have already stored, which carry no API prefix. "
-                "Name the facet as this package does (listed above), "
-                "or set it on the query itself, where the query style names it."
-            )
-        else:
-            api_name_msg = ""
-
         super().__init__(
             f"Cannot select datasets on {', '.join(self.facets)}{asked}: "
             f"every dataset records {recorded}. "
             "For project-specific facets (e.g. CMIP5 `product`), "
             "or facets we can search but do not store "
             "(e.g. `activity`, `realm` and `resolution`), "
-            f"the catalogue has to put it in each record's `extra`.{api_name_msg}"
+            "the catalogue has to put it in each entry's `extra`."
         )
 
 
-class DuplicateRecordIDError(ValueError):
+class DuplicateEntryIDError(ValueError):
     """
-    Two or more of a catalogue's records share an ID
+    Two or more of a catalogue's entries share an ID
 
     Not to be confused with
     [`UnhandledDatasetClashError`][esmporium.db.UnhandledDatasetClashError],
@@ -115,17 +91,17 @@ class DuplicateRecordIDError(ValueError):
         Parameters
         ----------
         collisions
-            Repeated ID -> how many of the catalogue's records carry it
+            Repeated ID -> how many of the catalogue's entries carry it
         """
         self.collisions = dict(sorted(collisions.items()))
         listed = "; ".join(
-            f"id {record_id} is used by {count} records"
-            for record_id, count in self.collisions.items()
+            f"id {entry_id} is used by {count} entries"
+            for entry_id, count in self.collisions.items()
         )
         super().__init__(
-            f"A catalogue's records must have unique IDs, but {listed}. "
+            f"A catalogue's entries must have unique IDs, but {listed}. "
             "An ID identifies one dataset row, "
-            "so a repeat makes two records indistinguishable. "
+            "so a repeat makes two entries indistinguishable. "
             "This is a mistake in whatever built the catalogue: "
             "read from the database, `id` is a primary key and cannot repeat. "
             "Two rows which describe the same data "
@@ -135,7 +111,7 @@ class DuplicateRecordIDError(ValueError):
 
 
 @dataclass(frozen=True)
-class DatasetRecord:
+class CatalogueEntry:
     """
     A dataset, as far as the solver is concerned
 
@@ -145,7 +121,7 @@ class DatasetRecord:
     class on the write side: parsers produce those, and this is what reading a
     stored row gives back.
 
-    A record is compared by value but is not hashable, because `extra` is a mapping.
+    An entry is compared by value but is not hashable, because `extra` is a mapping.
     Anything which needs a key should use `id`.
     """
 
@@ -154,9 +130,9 @@ class DatasetRecord:
     See [`Dataset.id`][esmporium.db.schema.Dataset.id]
 
     Not optional, unlike the column it mirrors:
-    a record describes a row which is already in the database,
+    an entry describes a row which is already in the database,
     so its ID has been assigned.
-    A dataset which has not been saved yet has no record.
+    A dataset which has not been saved yet has no entry.
     """
 
     id_project_specific: str
@@ -205,7 +181,7 @@ class DatasetRecord:
     How a catalogue answers a query which names a facet we have no column for is
     its own business. What the solver needs is this: anything it should be able to
     group by, prefer on, or match auxiliary data on has to appear here, because
-    those comparisons happen on the record rather than in the query.
+    those comparisons happen on the entry rather than in the query.
 
     Two kinds of facet live here.
     Project-specific ones, which have no canonical name at all
@@ -240,7 +216,7 @@ class DatasetRecord:
         UnsupportedFacetError
             `name` is neither one of
             [`DATASET_FACET_COLUMNS`][esmporium.db.schema.DATASET_FACET_COLUMNS]
-            nor a key of this record's `extra`
+            nor a key of this entry's `extra`
         """
         if name in DATASET_FACET_COLUMNS:
             value: str | None = getattr(self, name)
@@ -262,7 +238,7 @@ class DatasetRecord:
 #    at R2 rather than at R11, when `to_search_plan` has to decide what to emit.
 #
 # 2. A query with no facets at all. Here that means "no constraint", so it matches
-#    every record, which is the only sensible reading of an empty question. On a
+#    every entry, which is the only sensible reading of an empty question. On a
 #    `Leaf` it would mean "any dataset in the catalogue fills this role", which is
 #    far more likely to be a half-written requirement than an intention — and it
 #    fails late and confusingly, as an ambiguous group with thousands of candidates
@@ -287,12 +263,12 @@ def set_facets(query: QueryProtocol) -> dict[str, tuple[str, ...]]:
     `other_terms` is deliberately not translated: it is the escape hatch for facets
     no query class names, and its keys reach a search API exactly as written.
     That makes it outbound-only in practice, so its keys here have to be facet names
-    a record can answer — a canonical name, or a key of the record's `extra` — never
+    an entry can answer — a canonical name, or a key of the entry's `extra` — never
     an API parameter name such as `cmip6:experiment_id`.
     Note too that a facet a query class *does* name is translated while the same
     facet in `other_terms` is not, so `QueryCMIP6(table_id="Amon")` asks for
     `processing_id`, whereas `QueryCMIP6(other_terms={"table_id": ("Amon",)})` asks
-    for `table_id` and finds no record which knows it.
+    for `table_id` and finds no entry which knows it.
     A facet which has to work in both directions belongs on the query class,
     annotated `QueryFacet(None)` the way CMIP5's `product` is: those are translated,
     and arrive here through `query_specific_facets`.
@@ -352,15 +328,15 @@ def set_facets(query: QueryProtocol) -> dict[str, tuple[str, ...]]:
 
 
 def _matches_facets(
-    facets: Mapping[str, tuple[str, ...]], record: DatasetRecord
+    facets: Mapping[str, tuple[str, ...]], entry: CatalogueEntry
 ) -> bool:
     """
-    Determine whether a record matches already-flattened facets
+    Determine whether an entry matches already-flattened facets
 
     Separate from [matches][(m).matches] so that
     [InMemoryCatalogue.find][(m).InMemoryCatalogue.find] can flatten a query once
-    and then check every record against the result, rather than re-flattening the
-    same query for each record.
+    and then check every entry against the result, rather than re-flattening the
+    same query for each entry.
 
     Parameters
     ----------
@@ -368,32 +344,32 @@ def _matches_facets(
         Facet name -> the values which are acceptable,
         as returned by [set_facets][(m).set_facets]
 
-    record
-        Record to check
+    entry
+        Entry to check
 
     Returns
     -------
     :
-        `True` if `record` matches every facet in `facets`
+        `True` if `entry` matches every facet in `facets`
 
     Raises
     ------
     UnsupportedFacetError
-        `facets` names a facet `record` does not know
+        `facets` names a facet `entry` does not know
     """
-    return all(record.facet(name) in values for name, values in facets.items())
+    return all(entry.facet(name) in values for name, values in facets.items())
 
 
-def matches(query: QueryProtocol, record: DatasetRecord) -> bool:
+def matches(query: QueryProtocol, entry: CatalogueEntry) -> bool:
     """
     Determine whether a dataset matches a query
 
-    A record matches if, for every facet the query sets,
-    the record's value is one of the query's values.
+    An entry matches if, for every facet the query sets,
+    the entry's value is one of the query's values.
     Several values for one facet are therefore an "or",
     exactly as they are when searching.
 
-    A query which sets no facets constrains nothing, so it matches every record.
+    A query which sets no facets constrains nothing, so it matches every entry.
     That is the right answer to the question as asked here, but it is a sharp edge
     one level up: an empty query on a requirement's leaf would quietly select the
     whole catalogue. See the note above [set_facets][(m).set_facets].
@@ -403,25 +379,25 @@ def matches(query: QueryProtocol, record: DatasetRecord) -> bool:
     query
         Query to match against
 
-    record
-        Record to check
+    entry
+        Entry to check
 
     Returns
     -------
     :
-        `True` if `record` matches `query`
+        `True` if `entry` matches `query`
 
     Raises
     ------
     UnsupportedFacetError
-        `query` sets a facet `record` does not know, i.e. one which is neither one of
+        `query` sets a facet `entry` does not know, i.e. one which is neither one of
         [`DATASET_FACET_COLUMNS`][esmporium.db.schema.DATASET_FACET_COLUMNS]
-        nor in the record's `extra`
+        nor in the entry's `extra`
 
     ClashingFacetError
         `query` sets the same facet in more than one place
     """
-    return _matches_facets(set_facets(query), record)
+    return _matches_facets(set_facets(query), entry)
 
 
 class Catalogue(Protocol):
@@ -429,13 +405,13 @@ class Catalogue(Protocol):
     The datasets available to the solver, and what is known about them
     """
 
-    def find(self, query: QueryProtocol) -> tuple[DatasetRecord, ...]:
+    def find(self, query: QueryProtocol) -> tuple[CatalogueEntry, ...]:
         """
         Find every dataset which matches a query
 
         Matching on a facet we have no column for already works: a query naming
-        `product` or `realm` matches whenever the record's `extra` carries it
-        (see [`DatasetRecord.extra`][(m).DatasetRecord.extra]).
+        `product` or `realm` matches whenever the entry's `extra` carries it
+        (see [`CatalogueEntry.extra`][(m).CatalogueEntry.extra]).
         What is up to each catalogue is where `extra` comes from — one backed by our
         database would read it out of the raw search documents, another might consult
         a project-specific table, or simply know.
@@ -466,34 +442,34 @@ class InMemoryCatalogue:
     [`Catalogue`][(m).Catalogue] be written and tested without one.
     """
 
-    records: tuple[DatasetRecord, ...]
+    entries: tuple[CatalogueEntry, ...]
     """The datasets available"""
 
     def __post_init__(self) -> None:
         """
-        Check that no two records share an ID
+        Check that no two entries share an ID
 
         Raises
         ------
-        DuplicateRecordIDError
-            Two or more records have the same `id`
+        DuplicateEntryIDError
+            Two or more entries have the same `id`
         """
         # `Counter` rather than counting each ID against the whole list, which rescans
-        # it once per record. This class stands in for a real catalogue, so it should
+        # it once per entry. This class stands in for a real catalogue, so it should
         # not go quadratic on the number of datasets.
-        counts = Counter(record.id for record in self.records)
-        # The count is the whole report. Saying *which* records collided means
+        counts = Counter(entry.id for entry in self.entries)
+        # The count is the whole report. Saying *which* entries collided means
         # choosing the facets which identify one, and no such choice survives moving
-        # between projects (see `DuplicateRecordIDError`). A repeated ID is a mistake
+        # between projects (see `DuplicateEntryIDError`). A repeated ID is a mistake
         # in the code which built the catalogue, and the ID is the literal that code
         # wrote, so it is the thing to go and look for.
         collisions = {
-            record_id: count for record_id, count in counts.items() if count > 1
+            entry_id: count for entry_id, count in counts.items() if count > 1
         }
         if collisions:
-            raise DuplicateRecordIDError(collisions)
+            raise DuplicateEntryIDError(collisions)
 
-    def find(self, query: QueryProtocol) -> tuple[DatasetRecord, ...]:
+    def find(self, query: QueryProtocol) -> tuple[CatalogueEntry, ...]:
         """
         Find every dataset which matches a query
 
@@ -510,13 +486,11 @@ class InMemoryCatalogue:
         Raises
         ------
         UnsupportedFacetError
-            `query` sets a facet a record does not know
+            `query` sets a facet an entry does not know
 
         ClashingFacetError
             `query` sets the same facet in more than one place
         """
         facets = set_facets(query)
 
-        return tuple(
-            record for record in self.records if _matches_facets(facets, record)
-        )
+        return tuple(entry for entry in self.entries if _matches_facets(facets, entry))

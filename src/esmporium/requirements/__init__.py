@@ -10,25 +10,22 @@ It reaches across datasets (the control an experiment branched from,
 its sibling experiment, the
 cell areas it is weighted by), and it involves judgements rather than matches
 (the control has to actually cover the period being analysed).
-
-## Import boundary
-
-This package imports from [`esmporium.query`][] and takes
-[`DATASET_FACET_COLUMNS`][esmporium.db.schema.DATASET_FACET_COLUMNS] from
-[`esmporium.db.schema`][], and nothing else from
-[`esmporium.db`][] or [`esmporium.search`][]. There is a test which checks this.
-
-The boundary is deliberate. Requirements describe what an analysis needs; they
-do not search, and they do not write to the database. Keeping that true is what
-lets a requirement be solved against any catalogue, an in-memory one included,
-rather than only against a live database.
 """
+# A note for developers:
+# This package imports from [`esmporium.query`][] and takes
+# [`DATASET_FACET_COLUMNS`][esmporium.db.schema.DATASET_FACET_COLUMNS] from
+# [`esmporium.db.schema`][], and nothing else from
+# [`esmporium.db`][] or [`esmporium.search`][]. There is a test which checks this.
 
+# The boundary is deliberate. Requirements describe what an analysis needs; they
+# do not search, and they do not write to the database. Keeping that true is what
+# lets a requirement be solved against any catalogue, an in-memory one included,
+# rather than only against a live database.
 from esmporium.requirements.catalogue import (
     Catalogue,
+    CatalogueEntry,
     ClashingFacetError,
-    DatasetRecord,
-    DuplicateRecordIDError,
+    DuplicateEntryIDError,
     InMemoryCatalogue,
     UnsupportedFacetError,
     matches,
@@ -37,9 +34,9 @@ from esmporium.requirements.catalogue import (
 
 __all__ = [
     "Catalogue",
+    "CatalogueEntry",
     "ClashingFacetError",
-    "DatasetRecord",
-    "DuplicateRecordIDError",
+    "DuplicateEntryIDError",
     "InMemoryCatalogue",
     "UnsupportedFacetError",
     "matches",
