@@ -505,7 +505,7 @@ The design note lands first (R0) so every low-level PR can be read against a sta
 | R5 | The `Constraint` protocol (no shipped checks) | ~425 | ~230 | — |
 | R6 | `Covers` | ~190 | ~280 | 01, 03, 04, 05, 11 |
 | R7 | `any_of`, `optional` | ~235 | ~300 | 06, 07, 08, 12, 18 |
-| R8 | `namespace`, `SameTimeRange` | ~215 | ~270 | 02, 16, 16a |
+| R8 | `scope`, `SameTimeRange` | ~215 | ~270 | 02, 16, 16a |
 | R9 | `Sibling` | ~110 | ~170 | 09, 10 |
 | R10 | `Aux` | ~280 | ~400 | 13, 19 |
 | R11 | `to_search_plan` | ~150 | ~135 | — |

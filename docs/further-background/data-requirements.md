@@ -66,7 +66,7 @@ Requirement                 ← root (an internal node; always has one child)
    └── all_of               ← internal node: needs ALL of its children
        ├── leaf: tas        ← leaf: one dataset, nothing below it
        ├── leaf: rsdt       ← leaf
-       └── namespace        ← internal node: wraps a child, renames its leaves
+       └── scope            ← internal node: wraps a child, renames its leaves
            └── ...
 ```
 
@@ -78,14 +78,14 @@ for type annotations, `isinstance` checks and serialisation; you rarely write it
 
 - **`leaf(query, role=, aux=, lineage=, constraints=)`** — builds a **leaf**, exactly
   one dataset per [group](#groups), because a leaf carries everything about one
-  dataset and that is where the work happens. A bare string means `Query(variable=...)`. A facet with several values is an OR, exactly as in esmporium, so `variable=("fLuc", "fLUC")` takes either. The role says what the dataset is *for*, which is why pattern scaling's nine variables sit in one leaf called `field`, with the variable itself in the group key.
+  dataset and that is where the work happens. A facet with several values is an OR, exactly as in esmporium, so `variable=("fLuc", "fLUC")` takes either. The role says what the dataset is *for*, which is why pattern scaling's nine variables sit in one leaf called `field`, with the variable itself in the group key.
 - **`all_of`, `any_of` (ordered) and `optional`** — build **internal nodes, not
   leaves**: each holds child nodes (leaves, or other internal nodes) and says how to
   combine them. `all_of` needs every child; `any_of` takes the first child that can be
   satisfied; `optional` includes its child when the child's own constraints are met,
   otherwise it is absent. They take *nodes* as arguments, whereas `leaf` takes a
   *query*.
-- **`namespace(name, child, constraints=)`** — an internal node that prefixes roles, so the same role can appear twice (`abrupt4x.tas` and `abrupt2x.tas`), and holds checks which compare leaves.
+- **`scope(name, child, constraints=)`** — an internal node that prefixes roles, so the same role can appear twice (`abrupt4x.tas` and `abrupt2x.tas`), and holds checks which compare leaves.
 - **`Requirement(tree, name=, where=, group_by=, prefer=, cardinality=, constraints=)`** — the root.
 
 Every node has the same three ways to say something about the leaves below it, and each pushes down to the leaves:
@@ -104,26 +104,26 @@ things in a trench coat (shared facets, a lineage, scoped checks and a role
 prefix), and each now has one home.
 
 Resolved roles look like `tas`, `control.tas`, `chain.0.tas`, `nbp.sftlf`
-and, inside a namespace, `abrupt4x.control.tas`.
+and, inside a scope, `abrupt4x.control.tas`.
 
 The diagram below draws one concrete requirement: equilibrium climate sensitivity
 (ECS) — temperature and top-of-atmosphere radiation from the abrupt-4xCO2
 experiment (optionally also 2x and 0.5x), each traced back to its piControl, which
 must cover it. It shows the two things that are easy to miss in prose: the three
-levels a check attaches at (leaf, namespace, requirement), and how role names gain
+levels a check attaches at (leaf, scope, requirement), and how role names gain
 their prefixes as they resolve. **Leaves are green; every other node is an internal
 node (blue) that groups or wraps them** — `all_of` needs all its children, `optional`
-may drop its child, and a `namespace` renames the leaves below it.
+may drop its child, and a `scope` renames the leaves below it.
 
 ```mermaid
 flowchart TD
     R["<b>Requirement: ecs</b><br/>where reporting_interval = mon<br/><i>(requirement-level facet)</i>"]
     R --> A{{all_of}}
-    A --> NS4["<b>namespace: abrupt4x</b><br/>constraint: SameTimeRange<br/><i>namespace level — compares the leaves below</i>"]
+    A --> NS4["<b>scope: abrupt4x</b><br/>constraint: SameTimeRange<br/><i>scope level — compares the leaves below</i>"]
     A --> O2(["optional"])
     A --> O05(["optional"])
-    O2 --> NS2["namespace: abrupt2x<br/><i>same shape; dropped if its<br/>constraints can't be met</i>"]
-    O05 --> NS05["namespace: abrupt0p5x<br/><i>same shape</i>"]
+    O2 --> NS2["scope: abrupt2x<br/><i>same shape; dropped if its<br/>constraints can't be met</i>"]
+    O05 --> NS05["scope: abrupt0p5x<br/><i>same shape</i>"]
     NS4 --> A4{{"all_of<br/>• where experiment = abrupt-4xCO2 / abrupt4xCO2 <i>(alias 'or')</i><br/>• lineage: Ancestors → role 'control'<br/>• constraint: Covers(control) — <i>leaf level, per leaf</i>"}}
     A4 --> T["leaf: tas"]
     A4 --> D["leaf: rsdt"]
@@ -141,7 +141,7 @@ flowchart TD
 
 `group_by` applies to the datasets a leaf selects. Everything else hangs off one of those:
 
-- **`Ancestors(until=..., role=...)`** walks parent links, which come from file headers (esmporium PR6). `until` is a query, so `("piControl", "esm-piControl")` works. `role` is **required**, names the dataset it stops at, and is what constraints refer to: write `role="control"` when walking back to piControl, `role="historical"` when that is where you stop.
+- **`Ancestors(until=..., role=...)`** walks parent links, which come from file headers (esmporium PR6). `until` is a query (noting also that until only relates to the experiments facet), so `("piControl", "esm-piControl")` works. `role` is **required**, names the dataset it stops at, and is what constraints refer to: e.g. write `role="piControl"` when walking back to piControl, `role="historical"` when that is where you stop. The experiment (facet) value should be written correctly. No hardcoding of where to stop, that is the user's role.
 - **`Sibling(query, match_on=..., role=...)`** matches facets instead. piClim-histall and piClim-control are both children of piControl, so ERF needs this.
 - **`Aux(query, required=, match=, via=, also_for_lineage=)`** is auxiliary data, **named explicitly** by the user: sftlf for land variables, sftof for ocean ones, and areacella, areacello or areacellr. There is no built-in mapping.
   - `via="match"` (the default) compares facets level by level. The default is a **single strict level** (model, grid, experiment, variant), so fallbacks are opt-in: see `FX_FALLBACK` in the use cases.
@@ -161,14 +161,14 @@ attaching them at three levels:
 
 - **On a leaf** (most checks): it sees that dataset and its lineage. A failure
   fails that leaf, so an `optional` part around it is simply dropped.
-- **On a namespace**: it sees everything inside. This is the home for checks
+- **On a scope**: it sees everything inside. This is the home for checks
   which compare leaves.
 - **On the requirement**: it sees the whole group.
 
 Shipped checks:
 
 - **`Covers(role, target, align="branch" | "calendar", pad_years=, ideal_pad_years=)`** — e.g. the control covers the dataset's span, mapped through branch times along the whole chain. `pad_years=None` makes it soft. `role` and `target` name datasets **as the lineage names them**, which is why a lineage's `role` is required: `Covers(role="control")` and `Ancestors(role="control")` are visibly the same thing. `"self"` is the anchor, `"chain.<i>"` an intermediate parent, `"end"` works without knowing the name.
-- **`SameTimeRange(roles)`** — a cross-leaf check: a Gregory regression uses temperature and radiation together, so ECS puts this on its namespace. Identical periods pass, overlapping ones degrade (naming the overlap), disjoint ones fail.
+- **`SameTimeRange(roles)`** — a cross-leaf check: a Gregory regression uses temperature and radiation together, so ECS puts this on its scope. Identical periods pass, overlapping ones degrade (naming the overlap), disjoint ones fail.
 
 **Serialisation:** constraints are stored with their import path, so they must be pydantic models to serialise.
 
