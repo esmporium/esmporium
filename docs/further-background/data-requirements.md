@@ -17,6 +17,38 @@ Updated: 2026-09-24
 
 Most "or"s in the use cases are fan-outs.
 
+## Groups
+
+A requirement is solved **once per group**, and a group is one run of the analysis:
+ECS across forty models is forty groups, each resolved and reported on its own.
+
+`group_by` on the `Requirement` names the facets to split on, so `group_by=("model",)`
+gives one group per model. The groups are not listed up front. They are discovered
+from what the search found — the distinct combinations of those facet values across
+every leaf's candidates — so if twelve models published the variables you asked for,
+you get twelve groups.
+
+```text
+group_by = ("model",)
+
+  the tree                          the groups
+  (written once)                    (discovered from the candidates)
+
+      all_of                        ┌── CanESM5      ─┐
+      /  |  \                       ├── MPI-ESM-LR   ─┤   the tree is solved
+   tas  rsdt rlut                   └── ACCESS-CM2   ─┘   once for each
+```
+
+This is the difference between data an analysis needs *together* and data it repeats
+*over*. Datasets needed together are separate leaves: ECS wants tas, rsdt, rlut and
+rsut in the same run, so it has four. A facet the analysis simply repeats over goes
+in `group_by` instead: pattern scaling's nine variables are nine separate runs, so
+they are one leaf with `variable` in the group key, not nine leaves.
+
+Within a group, a leaf resolves to **exactly one** dataset. Several surviving
+candidates make the group `ambiguous`, none makes it `unsatisfied`, and every group
+is judged on its own — one model can resolve while the next does not.
+
 ## The tree
 
 A requirement is a **tree**: one root node at the top branching downward to *leaves*
@@ -44,9 +76,9 @@ query, everything else takes nodes.** That is the quickest way to tell a leaf fr
 container. (`Leaf`, capital L, is the class those leaves are instances of. It exists
 for type annotations, `isinstance` checks and serialisation; you rarely write it.)
 
-- **`leaf(query, role=, aux=, lineage=, constraints=)`** — builds a **leaf**, one
-  dataset per group, because a leaf carries everything about one dataset and that is
-  where the work happens. A bare string means `Query(variable=...)`. A facet with several values is an OR, exactly as in esmporium, so `variable=("fLuc", "fLUC")` takes either. The role says what the dataset is *for*, which is why pattern scaling's nine variables sit in one leaf called `field`, with the variable itself in the group key.
+- **`leaf(query, role=, aux=, lineage=, constraints=)`** — builds a **leaf**, exactly
+  one dataset per [group](#groups), because a leaf carries everything about one
+  dataset and that is where the work happens. A bare string means `Query(variable=...)`. A facet with several values is an OR, exactly as in esmporium, so `variable=("fLuc", "fLUC")` takes either. The role says what the dataset is *for*, which is why pattern scaling's nine variables sit in one leaf called `field`, with the variable itself in the group key.
 - **`all_of`, `any_of` (ordered) and `optional`** — build **internal nodes, not
   leaves**: each holds child nodes (leaves, or other internal nodes) and says how to
   combine them. `all_of` needs every child; `any_of` takes the first child that can be
