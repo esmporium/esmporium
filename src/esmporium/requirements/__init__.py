@@ -24,10 +24,9 @@ cell areas it is weighted by), and it involves judgements rather than matches
 from esmporium.requirements.catalogue import (
     Catalogue,
     CatalogueEntry,
-    ClashingFacetError,
     DuplicateEntryIDError,
     InMemoryCatalogue,
-    UnsupportedFacetError,
+    UnrecordedFacetError,
     matches,
     set_facets,
 )
@@ -35,10 +34,9 @@ from esmporium.requirements.catalogue import (
 __all__ = [
     "Catalogue",
     "CatalogueEntry",
-    "ClashingFacetError",
     "DuplicateEntryIDError",
     "InMemoryCatalogue",
-    "UnsupportedFacetError",
+    "UnrecordedFacetError",
     "matches",
     "set_facets",
 ]

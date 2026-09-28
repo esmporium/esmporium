@@ -19,13 +19,13 @@ Known facade parameter definitions
 
 from __future__ import annotations
 
-from collections.abc import Callable, Collection, Mapping
+from collections.abc import Callable, Mapping
 from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, PlainValidator
 
-from esmporium.formatting import readable_list
 from esmporium.query import (
+    ClashingFacetsError,
     FacetValues,
     FacetValuesByName,
     QueryCanonical,
@@ -83,43 +83,6 @@ def get_mapping_to_query_style_facet_names(
         # We expect the caller to check for and handle this.
 
     return res
-
-
-class ClashingFacetsError(ValueError):
-    """
-    Raised when `other_terms` sets values for facets that a query already sets
-
-    `other_terms` is the escape hatch for facets we do not model,
-    so a name in other_terms which lands on a facet the query already sets is ambiguous:
-    there is no way to tell which value should win, so we refuse to guess.
-
-    Note that, we expect this error to be raised when the query's names
-    have already been translated to API names.
-    See
-    [ClashingFacetsForFacadeError][esmporium.search.search.ClashingFacetsForFacadeError]
-    for an error that contains more context.
-    """
-
-    def __init__(self, clashing: Collection[str]) -> None:
-        """
-        Initialise the error
-
-        Parameters
-        ----------
-        clashing
-            The other_terms names which clash with a facet already set,
-            named as the user gave them in other_terms
-        """
-        self.clashing = tuple(sorted(clashing))
-
-        named = readable_list(self.clashing)
-        noun = "facet" if len(self.clashing) == 1 else "facets"
-        conjugation = "clashes" if len(self.clashing) == 1 else "clash"
-        msg = (
-            f"`other_terms` {noun} {named} {conjugation} with the query's facet names. "
-            "Set each facet either as a query facet or in `other_terms`, not both."
-        )
-        super().__init__(msg)
 
 
 def merge_other_terms(

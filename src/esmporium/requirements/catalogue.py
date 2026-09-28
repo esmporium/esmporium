@@ -15,33 +15,28 @@ from typing import Protocol
 from esmporium.db.schema import DATASET_FACET_COLUMNS
 from esmporium.query import (
     CANONICAL_FACETS,
+    ClashingFacetsError,
     QueryCanonical,
     QueryProtocol,
     to_canonical,
 )
 
 
-class ClashingFacetError(ValueError):
-    """Raised when a query sets the same facet in more than one place."""
-
-    def __init__(self, facets: Iterable[str]) -> None:
-        """
-        Initialise the error
-
-        Parameters
-        ----------
-        facets
-            The facets which are set more than once
-        """
-        self.facets = tuple(sorted(facets))
-        super().__init__(
-            f"{', '.join(self.facets)} set in more than one of a query's facets, "
-            "its query-specific facets and its `other_terms`. "
-            "Set each facet once, so which value applies is unambiguous."
-        )
-
-
-class UnsupportedFacetError(ValueError):
+# A note for developers:
+# This looks like a duplicate of
+# [`UnaskableFacetError`][esmporium.search.UnaskableFacetError] and is not one.
+# That error is an `AssertionError`: reaching it means a request was
+# built naming a facet a query style has no parameter for, i.e. a guard was bypassed
+# and the bug is ours. This one is a `ValueError`, because asking is reasonable and
+# the answer is simply no: `Query(realm="atmos")` is a fair question that a catalogue
+# which did not fill `extra` cannot answer.
+#
+# The two also describe different things. `UnaskableFacetError` is about *names*,
+# whether a query style has a parameter for a facet. This is about *recorded values*,
+# whether one stored dataset knows a facet -- hence "unrecorded". Search has no
+# equivalent, because it asks an API and the API either knows the parameter or errors;
+# "what does this stored row know?" only exists on this side of the boundary.
+class UnrecordedFacetError(ValueError):
     """Raised when an entry does not know a facet it was asked about."""
 
     def __init__(self, facets: Iterable[str], entry_id: int | None = None) -> None:
@@ -213,7 +208,7 @@ class CatalogueEntry:
 
         Raises
         ------
-        UnsupportedFacetError
+        UnrecordedFacetError
             `name` is neither one of
             [`DATASET_FACET_COLUMNS`][esmporium.db.schema.DATASET_FACET_COLUMNS]
             nor a key of this entry's `extra`
@@ -225,7 +220,7 @@ class CatalogueEntry:
         if name in self.extra:
             return self.extra[name]
 
-        raise UnsupportedFacetError([name], self.id)
+        raise UnrecordedFacetError([name], self.id)
 
 
 # TODO(R2): two things a requirement's leaves should probably refuse, which this
@@ -287,7 +282,7 @@ def set_facets(query: QueryProtocol) -> dict[str, tuple[str, ...]]:
 
     Raises
     ------
-    ClashingFacetError
+    ClashingFacetsError
         The same facet is set in more than one of the three places
 
     Examples
@@ -322,7 +317,7 @@ def set_facets(query: QueryProtocol) -> dict[str, tuple[str, ...]]:
         | (set(query_specific) & set(other))
     )
     if clashes:
-        raise ClashingFacetError(clashes)
+        raise ClashingFacetsError(clashes)
 
     return {**declared, **query_specific, **other}
 
@@ -354,7 +349,7 @@ def _matches_facets(
 
     Raises
     ------
-    UnsupportedFacetError
+    UnrecordedFacetError
         `facets` names a facet `entry` does not know
     """
     return all(entry.facet(name) in values for name, values in facets.items())
@@ -389,12 +384,12 @@ def matches(query: QueryProtocol, entry: CatalogueEntry) -> bool:
 
     Raises
     ------
-    UnsupportedFacetError
+    UnrecordedFacetError
         `query` sets a facet `entry` does not know, i.e. one which is neither one of
         [`DATASET_FACET_COLUMNS`][esmporium.db.schema.DATASET_FACET_COLUMNS]
         nor in the entry's `extra`
 
-    ClashingFacetError
+    ClashingFacetsError
         `query` sets the same facet in more than one place
     """
     return _matches_facets(set_facets(query), entry)
@@ -485,10 +480,10 @@ class InMemoryCatalogue:
 
         Raises
         ------
-        UnsupportedFacetError
+        UnrecordedFacetError
             `query` sets a facet an entry does not know
 
-        ClashingFacetError
+        ClashingFacetsError
             `query` sets the same facet in more than one place
         """
         facets = set_facets(query)

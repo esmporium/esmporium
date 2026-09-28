@@ -21,6 +21,7 @@ import pytest
 
 from esmporium.db.schema import DATASET_FACET_COLUMNS
 from esmporium.query import (
+    ClashingFacetsError,
     Query,
     QueryCanonical,
     QueryCMIP5,
@@ -29,10 +30,9 @@ from esmporium.query import (
 )
 from esmporium.requirements import (
     Catalogue,
-    ClashingFacetError,
     DuplicateEntryIDError,
     InMemoryCatalogue,
-    UnsupportedFacetError,
+    UnrecordedFacetError,
     matches,
     set_facets,
 )
@@ -67,7 +67,7 @@ def test_facet_reads_extra(make_entry):
 def test_facet_error_names_the_columns_and_extra(make_entry):
     entry = make_entry(7)
 
-    with pytest.raises(UnsupportedFacetError) as excinfo:
+    with pytest.raises(UnrecordedFacetError) as excinfo:
         entry.facet("nonsense")
 
     error = excinfo.value
@@ -84,7 +84,7 @@ def test_facet_error_names_the_columns_and_extra(make_entry):
 def test_facet_refuses_identifiers(name: str, make_entry):
     # These say *which* dataset an entry is, not what it is like, so selecting on
     # them is not what `facet` is for.
-    with pytest.raises(UnsupportedFacetError):
+    with pytest.raises(UnrecordedFacetError):
         make_entry(1).facet(name)
 
 
@@ -159,10 +159,10 @@ def test_set_facets_includes_other_terms_and_drops_empty_ones():
     ],
 )
 def test_set_facets_refuses_a_facet_set_twice(query, expected):
-    with pytest.raises(ClashingFacetError) as excinfo:
+    with pytest.raises(ClashingFacetsError) as excinfo:
         set_facets(query)
 
-    assert excinfo.value.facets == expected
+    assert excinfo.value.clashing == expected
 
 
 # ----------------------------------------------------------------------------- matches
@@ -202,7 +202,7 @@ def test_finding_an_unrecorded_facet_raises(make_entry):
     # that" into "nothing matched", which is the one answer we must never invent.
     catalogue = InMemoryCatalogue(entries=(make_entry(1), make_entry(2)))
 
-    with pytest.raises(UnsupportedFacetError):
+    with pytest.raises(UnrecordedFacetError):
         catalogue.find(Query(activity="CMIP"))
 
 
