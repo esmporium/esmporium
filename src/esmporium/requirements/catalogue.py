@@ -223,6 +223,20 @@ class CatalogueEntry:
         raise UnrecordedFacetError([name], self.id)
 
 
+# A note for developers:
+# `other_terms` is an escape hatch for facet names we do not translate or model,
+# and it is a short-term one. The difficulty is that it carries two incompatible
+# contracts in one field. Outbound, its keys reach a search API exactly as written,
+# prefixes included, so `cmip6:experiment_id` is correct for one STAC endpoint and
+# wrong everywhere else. Inbound, a catalogue needs a facet name an entry can
+# answer, which is `experiment`. No single spelling satisfies both, which is why
+# `other_terms` is hard to handle well anywhere in the stack.
+#
+# For anything longer-lived than a one-off, declare the facet on a query class of
+# your own instead: annotate it `QueryFacet(None)` the way CMIP5's `product` is,
+# and the facade does the prefixing while `to_canonical` does the translating.
+# See [`QueryFacet`][esmporium.query.QueryFacet] and
+# [`esmporium.query.known_queries`][].
 def set_facets(query: QueryProtocol) -> dict[str, tuple[str, ...]]:
     """
     Get the facets a query actually constrains, under canonical names, flattened
