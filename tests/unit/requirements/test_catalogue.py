@@ -3,7 +3,7 @@ Tests of the catalogue: entries, the facets a query sets, and matching
 
 Two of these are worth more than the rest, because they are what breaks quietly:
 the import-boundary test, which fails when this package reaches into
-`esmporium.search` or the rest of `esmporium.db`, and the protocol-conformance test,
+`esmporium.search`, and the protocol-conformance test,
 which fails when `InMemoryCatalogue` stops fitting `Catalogue`.
 
 `CatalogueEntry` is checked against `Dataset` in `tests/unit/test_schema.py`, beside
@@ -16,6 +16,7 @@ from __future__ import annotations
 import ast
 import inspect
 import pathlib
+import re
 
 import pytest
 
@@ -73,18 +74,28 @@ def test_facet_error_names_the_columns_and_extra(make_entry):
     error = excinfo.value
     assert error.facets == ("nonsense",)
     assert error.entry_id == 7
-    message = str(error)
-    assert "asked of entry 7" in message
-    for column in DATASET_FACET_COLUMNS:
-        assert column in message
-    assert "`extra`" in message
+    # The columns are interpolated rather than spelled out, so adding a facet to
+    # `Dataset` does not mean editing this string.
+    assert str(error) == (
+        "Cannot select datasets on nonsense (asked of entry 7): "
+        f"every dataset records {', '.join(DATASET_FACET_COLUMNS)}. "
+        "For project-specific facets (e.g. CMIP5 `product`), "
+        "or facets we can search but do not store "
+        "(e.g. `activity`, `realm` and `resolution`), "
+        "the catalogue has to put it in each entry's `extra`."
+    )
 
 
 @pytest.mark.parametrize("name", ["id", "id_project_specific"])
 def test_facet_refuses_identifiers(name: str, make_entry):
     # These say *which* dataset an entry is, not what it is like, so selecting on
     # them is not what `facet` is for.
-    with pytest.raises(UnrecordedFacetError):
+    #
+    # The trailing space in the match matters: without it, `id` would also match the
+    # message about `id_project_specific`.
+    with pytest.raises(
+        UnrecordedFacetError, match=re.escape(f"Cannot select datasets on {name} ")
+    ):
         make_entry(1).facet(name)
 
 
@@ -113,6 +124,13 @@ def test_set_facets_keeps_canonical_names_and_drops_empties():
         pytest.param(
             QueryCMIP7(experiment_id="historical", frequency="mon"), id="cmip7"
         ),
+        # Already canonical, so it has to be recognised and used as it is:
+        # `QueryCanonical`'s fields carry no `QueryFacet`, so translating it would
+        # raise rather than come back with the same facets.
+        pytest.param(
+            QueryCanonical(experiment="historical", reporting_interval="mon"),
+            id="already-canonical",
+        ),
     ],
 )
 def test_set_facets_translates_any_query_style(query):
@@ -121,12 +139,6 @@ def test_set_facets_translates_any_query_style(query):
     # Whatever the style called them, they come back under the names our columns use.
     assert facets["experiment"] == ("historical",)
     assert facets["reporting_interval"] == ("mon",)
-
-
-def test_set_facets_accepts_an_already_canonical_query():
-    # `QueryCanonical`'s fields carry no `QueryFacet`, so translating it would fail;
-    # it has to be recognised and used as it is.
-    assert set_facets(QueryCanonical(variable="tas")) == {"variable": ("tas",)}
 
 
 def test_set_facets_includes_query_specific_facets():
@@ -144,7 +156,7 @@ def test_set_facets_includes_other_terms_and_drops_empty_ones():
 
 
 @pytest.mark.parametrize(
-    "query, expected",
+    "query, clashing",
     [
         pytest.param(
             Query(experiment="historical", other_terms={"experiment": ("ssp585",)}),
@@ -158,11 +170,18 @@ def test_set_facets_includes_other_terms_and_drops_empty_ones():
         ),
     ],
 )
-def test_set_facets_refuses_a_facet_set_twice(query, expected):
-    with pytest.raises(ClashingFacetsError) as excinfo:
+def test_set_facets_refuses_a_facet_set_twice(query, clashing):
+    # The message comes from `esmporium.query`, which `search` raises it from too, so
+    # pinning it here also pins what a search user sees.
+    expected = (
+        f"`other_terms` facet {clashing[0]!r} clashes with the query's facet names. "
+        "Set each facet either as a query facet or in `other_terms`, not both."
+    )
+
+    with pytest.raises(ClashingFacetsError, match=re.escape(expected)) as excinfo:
         set_facets(query)
 
-    assert excinfo.value.clashing == expected
+    assert excinfo.value.clashing == clashing
 
 
 # ----------------------------------------------------------------------------- matches
@@ -202,7 +221,9 @@ def test_finding_an_unrecorded_facet_raises(make_entry):
     # that" into "nothing matched", which is the one answer we must never invent.
     catalogue = InMemoryCatalogue(entries=(make_entry(1), make_entry(2)))
 
-    with pytest.raises(UnrecordedFacetError):
+    # Only enough of the message to show it is about the facet we asked for; the
+    # whole message is pinned in `test_facet_error_names_the_columns_and_extra`.
+    with pytest.raises(UnrecordedFacetError, match="activity"):
         catalogue.find(Query(activity="CMIP"))
 
 
@@ -303,6 +324,10 @@ def esmporium_modules_imported_by(module) -> set[str]:
 def test_catalogue_never_imports_search():
     """
     The hard half of the import boundary: nothing from `esmporium.search`
+
+    Only `esmporium.search` is refused. What this package takes from `esmporium.db`
+    is expected to grow, because the database-backed catalogue will need a session
+    and the `Dataset` table.
     """
     offending = {
         name
@@ -314,18 +339,3 @@ def test_catalogue_never_imports_search():
         f"{sorted(offending)} would make a circular import once `search` takes "
         "`Requirement` objects. Put anything shared in `esmporium.query` instead."
     )
-
-
-def test_catalogue_imports_only_the_esmporium_it_needs():
-    """
-    The soft half: exactly which esmporium modules this package leans on today
-
-    Written out by hand, so that widening it is a decision rather than a drift. The
-    `esmporium.db` entry is the one expected to grow: the database-backed catalogue
-    will need a session and the `Dataset` table. Widening it to `esmporium.search`
-    is what the test above refuses.
-    """
-    assert esmporium_modules_imported_by(catalogue_module) == {
-        "esmporium.query",
-        "esmporium.db.schema",
-    }
