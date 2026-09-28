@@ -68,23 +68,29 @@ def test_facet_reads_extra(make_entry):
 def test_facet_error_names_the_columns_and_extra(make_entry):
     entry = make_entry(7)
 
-    with pytest.raises(
-        UnrecordedFacetError,
-        match=re.escape("Cannot select datasets on nonsense (asked of entry 7)"),
-    ) as excinfo:
+    with pytest.raises(UnrecordedFacetError) as excinfo:
         entry.facet("nonsense")
 
-    # The attributes are the contract code can depend on, so they are pinned exactly.
-    # The message is prose for a person, so the chunk which has to be right is matched
-    # above and the rest is left free to be reworded.
     error = excinfo.value
     assert error.facets == ("nonsense",)
     assert error.entry_id == 7
 
-    message = str(error)
-    for column in DATASET_FACET_COLUMNS:
-        assert column in message
-    assert "`extra`" in message
+    # The whole message, pinned once, here. `match=` is `re.search`, so it cannot
+    # notice text added to either end of a message; this can. The other tests use
+    # `match=` on a fragment and lean on this one for the wording, so there is one
+    # place to edit when the wording changes rather than four.
+    #
+    # The columns are interpolated rather than spelled out, so adding a facet to
+    # `Dataset` does not mean editing this. Their *order* is pinned by
+    # `test_catalogue_entry_mirrors_dataset_columns`, not here.
+    assert str(error) == (
+        "Cannot select datasets on nonsense (asked of entry 7): "
+        f"every dataset records {', '.join(DATASET_FACET_COLUMNS)}. "
+        "For project-specific facets (e.g. CMIP5 `product`), "
+        "or facets we can search but do not store "
+        "(e.g. `activity`, `realm` and `resolution`), "
+        "the catalogue has to put it in each entry's `extra`."
+    )
 
 
 @pytest.mark.parametrize("name", ["id", "id_project_specific"])
