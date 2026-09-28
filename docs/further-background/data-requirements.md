@@ -174,15 +174,15 @@ Shipped checks:
 
 ## Solving
 
-`solve(requirement, catalog)` is greedy, with no backtracking. This choice means that we need to give clear error messages, to help users be able to spot places where there might be solutions that they could try. The setup below should also keep the door open to doing non-greedy solving too, but we are not implementing that now as we think that the cost of non-greedy search is not worth the benefit (which we expect to be very small). We will re-evaluate that once we start working with real data.
+`solve(requirement, catalogue)` is greedy, with no backtracking. This choice means that we need to give clear error messages, to help users be able to spot places where there might be solutions that they could try. The setup below should also keep the door open to doing non-greedy solving too, but we are not implementing that now as we think that the cost of non-greedy search is not worth the benefit (which we expect to be very small). We will re-evaluate that once we start working with real data.
 
 - **Groups** are the union of `group_by` values over every leaf's candidates.
 - **Leaves** apply `prefer`, then resolve their lineage, auxiliary data and own checks. If several candidates remain, the group is `ambiguous`.
 - **Ambiguous and undetermined results are never skipped**: `any_of` stops at them, and `optional` passes them on.
 - **Output:** resolved, unsatisfied, ambiguous and undetermined groups, each with an explanation tree (`SolveResult.explain()`). Per node, `Resolved` and `Unresolved` carry the roles, lineages, choices and notes that are merged upwards.
 
-`Catalog` is a protocol with `find`, `parent_of`, `linked` and `metadata`.
-`InMemoryCatalog` stands in until esmporium has parent links and file information.
+`Catalogue` is a protocol with `find`, `parent_of`, `linked` and `metadata`.
+`InMemoryCatalogue` stands in until esmporium has parent links and file information.
 
 ## Flow and storage
 
@@ -196,14 +196,42 @@ flowchart LR
     SP --> Q["queries for every leaf<br/>+ siblings + auxiliary<br/>+ ancestry_until"]
     Q --> SEARCH["esmporium search<br/>(QueryCollection, PR3.7)"]
     SEARCH --> LINK["add parent links<br/>from file headers (PR6)"]
-    LINK --> CAT[("Catalog<br/>find · parent_of · linked · metadata")]
-    REQ --> SOLVE["solve(requirement, catalog)<br/><i>greedy, no backtracking</i>"]
+    LINK --> CAT[("Catalogue<br/>find · parent_of · linked · metadata")]
+    REQ --> SOLVE["solve(requirement, catalogue)<br/><i>greedy, no backtracking</i>"]
     CAT --> SOLVE
     SOLVE --> RES["resolved"]
     SOLVE --> UNS["unsatisfied"]
     SOLVE --> AMB["ambiguous"]
     SOLVE --> UND["undetermined"]
 ```
+
+### Which way the dependency runs
+
+`search` will import `requirements`, never the other way round.
+
+Step 2 above is the reason: `search` is going to take `Requirement` objects (PR3.7),
+so it has to import them. That fixes the direction of the dependency for good, and
+makes the reverse an error rather than a preference — `requirements` importing
+`search` is a circular import, and both packages then fail to import at all with
+*"cannot import name ... from partially initialized module"*.
+
+This is worth stating plainly because the pull to do it is real. `search` and
+`requirements` ask overlapping questions, so they want the same vocabulary, and the
+obvious move when you find something defined twice is to import it from wherever it
+already lives. Do not.
+
+**When both need the same thing, it goes in `esmporium.query`.** Both already depend
+on it, so neither has to depend on the other. `ClashingFacetsError` is the worked
+example: a query naming one facet twice is ambiguous whether you are about to send it
+to an API or match it against stored datasets, so it was defined twice, once in each
+package. It now lives in `esmporium.query` and both import it from there. It is still
+importable from `esmporium.search` for anyone who was already doing that.
+
+What `requirements` may import from esmporium, then, is `esmporium.query` and
+`DATASET_FACET_COLUMNS` from `esmporium.db.schema` — which is the whole surface every
+remaining piece of this design needs. The `esmporium.db` side will grow when the
+database-backed catalogue lands, since that needs a session and the `Dataset` table.
+The `esmporium.search` side will not. There is a test which checks both.
 
 A `QueryCollection` that is a plain union is enough.
 "Requirement became satisfiable" is the difference between `solve` at t1 and at t2.
@@ -217,11 +245,11 @@ escape hatch for facets a query class does not name.
 Naming the same facet twice raises `ClashingFacetError`.
 
 **Project-specific facets are supported, and esmporium decides how.**
-Answering a query which names CMIP5's `product` is `Catalog.find`'s business, and
-nothing here needs to know how it is done. The one thing selection needs is that
-grouping, `prefer` and auxiliary matching compare *records*, so a catalog must put
-any facet it wants used that way into each record's `extra`. Requirements therefore
-accept any facet name, and a facet no record knows fails when solving, naming the
+Answering a query which names CMIP5's `product` is `Catalogue.find`'s business, and
+nothing here needs to know how it is done. The one thing the solver needs is that
+grouping, `prefer` and auxiliary matching compare *entries*, so a catalogue must put
+any facet it wants used that way into each entry's `extra`. Requirements therefore
+accept any facet name, and a facet no entry knows fails when solving, naming the
 facet and the dataset.
 
 ## Findings worth remembering
@@ -230,7 +258,7 @@ These come from the CMIP6 CMOR tables and the CVs (read WCRP-universe, not CMIP7
 
 - **Fractions:** land carbon variables and nbp are `area: mean where land`, so they need sftlf. fgco2, hfds and siconc are `mean where sea`, with areacello, so they need sftof. fCLandToOcean uses areacellr.
 - **Radiation:** there is no `rndt`, so radiation is rsdt, rlut and rsut. `rtmt` is top of *model*.
-- **Parents:** (Important here to note that for CMIP5 and CMIP6 data we have to look at file headers for parent information - although CMIP7 parent information is part of global attrs. For much of CMIP5 and some of CMIP6 parent information cannot be trusted, making ths search plan/execution much more difficult.)
+- **Parents:** (Important here to note that for CMIP5 and CMIP6 data we have to look at file headers for parent information - although CMIP7 parent information is part of global attributes. For much of CMIP5 and some of CMIP6 parent information cannot be trusted, making ths search plan/execution much more difficult.)
   - esm-bell-\* → esm-piControl.
   - esm-1pct-brch-\* → 1pctCO2 or esm-1pctCO2.
   - esm-flat10 → esm-piControl; esm-flat10-zec and -cdr → esm-flat10, at the end of year 100.

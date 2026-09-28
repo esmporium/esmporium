@@ -2,13 +2,13 @@
 Parameter parsing support for the search API facades
 """
 
+from esmporium.query import ClashingFacetsError
 from esmporium.search.search_api_facade.parameters.known_facade_parameters import (
     ESGF1_CMIP5_FACADE_PARAMETERS,
     ESGF1_CMIP6_FACADE_PARAMETERS,
     ESGF1_CMIP7_FACADE_PARAMETERS,
     ESGFNG_CMIP6_FACADE_PARAMETERS,
     ESGFNG_CMIP7_FACADE_PARAMETERS,
-    ClashingFacetsError,
     DirectMappingFacadeParameters,
     ESGF1CMIP5ParametersQueryStyle,
     ESGF1CMIP6ParametersQueryStyle,
