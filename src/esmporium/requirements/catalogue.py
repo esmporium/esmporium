@@ -239,17 +239,12 @@ def set_facets(query: QueryProtocol) -> dict[str, tuple[str, ...]]:
     know that our columns are named `experiment` rather than `experiment_id`.
 
     `other_terms` is deliberately not translated: it is the escape hatch for facets
-    no query class names, and its keys reach a search API exactly as written.
-    That makes it outbound-only in practice, so its keys here have to be facet names
-    an entry can answer — a canonical name, or a key of the entry's `extra` — never
-    an API parameter name such as `cmip6:experiment_id`.
+    no query class names. Its keys here have to be facet names
+    a catalogue can use.
     Note too that a facet a query class *does* name is translated while the same
     facet in `other_terms` is not, so `QueryCMIP6(table_id="Amon")` asks for
     `processing_id`, whereas `QueryCMIP6(other_terms={"table_id": ("Amon",)})` asks
-    for `table_id` and finds no entry which knows it.
-    A facet which has to work in both directions belongs on the query class,
-    annotated `QueryFacet(None)` the way CMIP5's `product` is: those are translated,
-    and arrive here through `query_specific_facets`.
+    for `table_id` (and likely finds no entry which knows it).
 
     Parameters
     ----------
