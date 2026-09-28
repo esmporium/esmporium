@@ -279,15 +279,16 @@ def test_in_memory_catalogue_satisfies_the_catalogue_protocol():
     assert catalogue.find(Query()) == ()
 
 
-def test_catalogue_imports_nothing_else_from_esmporium():
+def esmporium_modules_imported_by(module) -> set[str]:
     """
-    The package's import boundary holds
+    Get the esmporium modules a module imports, read off its source
 
-    Read off the source rather than `sys.modules`: `esmporium.db.schema` itself
-    imports `esmporium.search.health`, so anything which followed imports
-    transitively would fail for a reason that has nothing to do with this package.
+    Read off the source rather than `sys.modules`, because `esmporium.db.schema`
+    itself imports `esmporium.search.health`: anything which followed imports
+    transitively would report `esmporium.search` for a reason that has nothing to do
+    with this package.
     """
-    tree = ast.parse(pathlib.Path(catalogue_module.__file__).read_text())
+    tree = ast.parse(pathlib.Path(module.__file__).read_text())
 
     imported = set()
     for node in ast.walk(tree):
@@ -296,8 +297,35 @@ def test_catalogue_imports_nothing_else_from_esmporium():
         elif isinstance(node, ast.Import):
             imported.update(alias.name for alias in node.names)
 
-    from_esmporium = {
-        module for module in imported if module.split(".")[0] == "esmporium"
+    return {name for name in imported if name.split(".")[0] == "esmporium"}
+
+
+def test_catalogue_never_imports_search():
+    """
+    The hard half of the import boundary: nothing from `esmporium.search`
+    """
+    offending = {
+        name
+        for name in esmporium_modules_imported_by(catalogue_module)
+        if name.split(".")[:2] == ["esmporium", "search"]
     }
 
-    assert from_esmporium == {"esmporium.query", "esmporium.db.schema"}
+    assert not offending, (
+        f"{sorted(offending)} would make a circular import once `search` takes "
+        "`Requirement` objects. Put anything shared in `esmporium.query` instead."
+    )
+
+
+def test_catalogue_imports_only_the_esmporium_it_needs():
+    """
+    The soft half: exactly which esmporium modules this package leans on today
+
+    Written out by hand, so that widening it is a decision rather than a drift. The
+    `esmporium.db` entry is the one expected to grow: the database-backed catalogue
+    will need a session and the `Dataset` table. Widening it to `esmporium.search`
+    is what the test above refuses.
+    """
+    assert esmporium_modules_imported_by(catalogue_module) == {
+        "esmporium.query",
+        "esmporium.db.schema",
+    }

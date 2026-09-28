@@ -11,16 +11,23 @@ its sibling experiment, the
 cell areas it is weighted by), and it involves judgements rather than matches
 (the control has to actually cover the period being analysed).
 """
-# A note for developers:
-# This package imports from [`esmporium.query`][] and takes
-# [`DATASET_FACET_COLUMNS`][esmporium.db.schema.DATASET_FACET_COLUMNS] from
-# [`esmporium.db.schema`][], and nothing else from
-# [`esmporium.db`][] or [`esmporium.search`][]. There is a test which checks this.
 
-# The boundary is deliberate. Requirements describe what an analysis needs; they
-# do not search, and they do not write to the database. Keeping that true is what
-# lets a requirement be solved against any catalogue, an in-memory one included,
-# rather than only against a live database.
+# A note for developers:
+# This package must never import from [`esmporium.search`][]. That is a hard rule,
+# and the reason is circular imports: `search` will take `Requirement` objects. Add an
+# import the other way and both packages stop importing at all, with
+# "cannot import name ... from partially initialized module".
+#
+# It is not a rule against sharing. When `search` and this package need the same
+# thing, it goes in [`esmporium.query`][], which both already depend on, and both
+# import it from there. That is how
+# [`ClashingFacetsError`][esmporium.query.ClashingFacetsError] is shared: it started
+# out defined twice, once here and once in `search`, and moved to `query` rather than
+# one side importing the other. Do the same with the next one.
+#
+# Today the whole esmporium surface this package uses is [`esmporium.query`][] plus
+# [`DATASET_FACET_COLUMNS`][esmporium.db.schema.DATASET_FACET_COLUMNS] from
+# [`esmporium.db.schema`][].
 from esmporium.requirements.catalogue import (
     Catalogue,
     CatalogueEntry,

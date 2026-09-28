@@ -205,6 +205,34 @@ flowchart LR
     SOLVE --> UND["undetermined"]
 ```
 
+### Which way the dependency runs
+
+`search` will import `requirements`, never the other way round.
+
+Step 2 above is the reason: `search` is going to take `Requirement` objects (PR3.7),
+so it has to import them. That fixes the direction of the dependency for good, and
+makes the reverse an error rather than a preference — `requirements` importing
+`search` is a circular import, and both packages then fail to import at all with
+*"cannot import name ... from partially initialized module"*.
+
+This is worth stating plainly because the pull to do it is real. `search` and
+`requirements` ask overlapping questions, so they want the same vocabulary, and the
+obvious move when you find something defined twice is to import it from wherever it
+already lives. Do not.
+
+**When both need the same thing, it goes in `esmporium.query`.** Both already depend
+on it, so neither has to depend on the other. `ClashingFacetsError` is the worked
+example: a query naming one facet twice is ambiguous whether you are about to send it
+to an API or match it against stored datasets, so it was defined twice, once in each
+package. It now lives in `esmporium.query` and both import it from there. It is still
+importable from `esmporium.search` for anyone who was already doing that.
+
+What `requirements` may import from esmporium, then, is `esmporium.query` and
+`DATASET_FACET_COLUMNS` from `esmporium.db.schema` — which is the whole surface every
+remaining piece of this design needs. The `esmporium.db` side will grow when the
+database-backed catalogue lands, since that needs a session and the `Dataset` table.
+The `esmporium.search` side will not. There is a test which checks both.
+
 A `QueryCollection` that is a plain union is enough.
 "Requirement became satisfiable" is the difference between `solve` at t1 and at t2.
 Storing requirements (their canonical JSON and hash) and solve snapshots only matters for that comparison.
