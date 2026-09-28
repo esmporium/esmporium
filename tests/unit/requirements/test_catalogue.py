@@ -68,22 +68,23 @@ def test_facet_reads_extra(make_entry):
 def test_facet_error_names_the_columns_and_extra(make_entry):
     entry = make_entry(7)
 
-    with pytest.raises(UnrecordedFacetError) as excinfo:
+    with pytest.raises(
+        UnrecordedFacetError,
+        match=re.escape("Cannot select datasets on nonsense (asked of entry 7)"),
+    ) as excinfo:
         entry.facet("nonsense")
 
+    # The attributes are the contract code can depend on, so they are pinned exactly.
+    # The message is prose for a person, so the chunk which has to be right is matched
+    # above and the rest is left free to be reworded.
     error = excinfo.value
     assert error.facets == ("nonsense",)
     assert error.entry_id == 7
-    # The columns are interpolated rather than spelled out, so adding a facet to
-    # `Dataset` does not mean editing this string.
-    assert str(error) == (
-        "Cannot select datasets on nonsense (asked of entry 7): "
-        f"every dataset records {', '.join(DATASET_FACET_COLUMNS)}. "
-        "For project-specific facets (e.g. CMIP5 `product`), "
-        "or facets we can search but do not store "
-        "(e.g. `activity`, `realm` and `resolution`), "
-        "the catalogue has to put it in each entry's `extra`."
-    )
+
+    message = str(error)
+    for column in DATASET_FACET_COLUMNS:
+        assert column in message
+    assert "`extra`" in message
 
 
 @pytest.mark.parametrize("name", ["id", "id_project_specific"])
@@ -204,14 +205,6 @@ def test_several_values_for_one_facet_are_an_or(make_entry):
 def test_an_empty_query_matches_everything(make_entry):
     # Deliberately no facets at all, `project` included: a query which asks for
     # nothing constrains nothing. Setting any facet here would test something else.
-    #
-    # Correct at this level, and a sharp edge one level up: see the `TODO(R2)` note
-    # in `catalogue.py`. An empty query on a requirement's leaf would mean "any
-    # dataset in the catalogue fills this role", which is much more likely to be a
-    # half-written requirement than an intention, and which surfaces late — as an
-    # ambiguous group with thousands of candidates — rather than where the mistake
-    # was made. If `Leaf` grows that check at R2, this test stays as it is: the
-    # catalogue is still right to answer the question as asked.
     assert matches(Query(), make_entry(1))
 
 
