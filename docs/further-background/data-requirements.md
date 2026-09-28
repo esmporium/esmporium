@@ -70,20 +70,26 @@ Requirement                 ← root (an internal node; always has one child)
            └── ...
 ```
 
-The building blocks, from the tips up. Every node is built by calling a lower-case
-function, and the one rule to hold onto is what each of them takes: **`leaf` takes a
-query, everything else takes nodes.** That is the quickest way to tell a leaf from a
-container. (`Leaf`, capital L, is the class those leaves are instances of. It exists
-for type annotations, `isinstance` checks and serialisation; you rarely write it.)
+The building blocks, from the tips up. The one rule to hold onto is what each of them
+takes: **`Leaf` takes a query, everything else takes nodes.** That is the quickest way
+to tell a leaf from a container.
 
-- **`leaf(query, role=, aux=, lineage=, constraints=)`** — builds a **leaf**, exactly
+A leaf is written out in full, as `Leaf(query=..., role=...)`, and the internal nodes
+are built by lower-case functions. The asymmetry is deliberate. `Leaf` is the one node
+you write by naming its parts, so both of them are on the page every time: a leaf is
+where every fact about a dataset ends up, and neither what it asks for nor what it is
+called is worth inferring. The lower-case functions exist because they earn it —
+`all_of` and `any_of` take any number of children, and `scope` takes a name as well as
+a child.
+
+- **`Leaf(query=..., role=..., aux=, lineage=, constraints=)`** — exactly
   one dataset per [group](#groups), because a leaf carries everything about one
-  dataset and that is where the work happens. A facet with several values is an OR, exactly as in esmporium, so `variable=("fLuc", "fLUC")` takes either. The role says what the dataset is *for*, which is why pattern scaling's nine variables sit in one leaf called `field`, with the variable itself in the group key.
+  dataset and that is where the work happens. A facet with several values is an OR, exactly as in esmporium, so `variable=("fLuc", "fLUC")` takes either. The role says what the dataset is *for*, which is why pattern scaling's nine variables sit in one leaf called `field`, with the variable itself in the group key. See [A role is not a variable](#a-role-is-not-a-variable) below.
 - **`all_of`, `any_of` (ordered) and `optional`** — build **internal nodes, not
   leaves**: each holds child nodes (leaves, or other internal nodes) and says how to
   combine them. `all_of` needs every child; `any_of` takes the first child that can be
   satisfied; `optional` includes its child when the child's own constraints are met,
-  otherwise it is absent. They take *nodes* as arguments, whereas `leaf` takes a
+  otherwise it is absent. They take *nodes* as arguments, whereas `Leaf` takes a
   *query*.
 - **`scope(name, child, constraints=)`** — an internal node that prefixes roles, so the same role can appear twice (`abrupt4x.tas` and `abrupt2x.tas`), and holds checks which compare leaves.
 - **`Requirement(tree, name=, where=, group_by=, prefer=, cardinality=, constraints=)`** — the root.
@@ -105,6 +111,56 @@ prefix), and each now has one home.
 
 Resolved roles look like `tas`, `control.tas`, `chain.0.tas`, `nbp.sftlf`
 and, inside a scope, `abrupt4x.control.tas`.
+
+### A role is not a variable
+
+Most of the roles above read like variable names, and that is a coincidence of the
+analyses which happen to be drawn here, not what a role is. It is worth pinning down,
+because `variable` does two completely different jobs depending on where it is put,
+and only one of them has anything to do with roles.
+
+Pattern scaling is the clearest case. It scales *a* field against global mean
+temperature, and there are nine candidate fields. It does not need nine datasets
+together — it needs one at a time, nine times over. So it is **one leaf, with nine
+variables in its query, and a role which is not a variable name at all**:
+
+```text
+Leaf(
+    query=Query(variable=("tas", "tasmax", "tasmin", "huss", "pr",
+                          "sfcWind", "ps", "rsds", "rlds")),   ← an OR: any one of these
+    role="field",                                              ← ONE slot, named for
+)                                                                what it is FOR
+
+group_by = ("model", "variant_label", "experiment", "variable")
+                                                   └────┬───┘
+                                                 variable SPLITS the analysis
+
+  role paths: {"field"}          one slot, not nine
+
+  and the tree is solved once per combination:
+      CanESM5 / r1i1p1f1 / ssp126 / tas    → field = one dataset
+      CanESM5 / r1i1p1f1 / ssp126 / pr     → field = one dataset
+      CanESM5 / r1i1p1f1 / ssp245 / tas    → field = one dataset
+      ...
+```
+
+The two homes of `variable`, side by side:
+
+```text
+   variable in the LEAF'S QUERY          variable in GROUP_BY
+   ────────────────────────────          ────────────────────
+   "any of these will do"                "run the whole analysis
+   pick ONE per group                     once per value"
+   → one dataset                         → many runs
+```
+
+ECS is the other case, and the reason roles so often *look* like variables. It needs
+tas, rsdt, rlut and rsut **in the same run**, to regress one against the others — four
+different datasets, so four leaves. Naming each role after its variable is then simply
+the clearest thing to call it. That is a fact about ECS, not a rule about leaves.
+
+The test to apply: if the analysis wants these datasets *together*, they are separate
+leaves; if it repeats *over* them, they are one leaf and a `group_by` entry.
 
 The diagram below draws one concrete requirement: equilibrium climate sensitivity
 (ECS) — temperature and top-of-atmosphere radiation from the abrupt-4xCO2
@@ -227,11 +283,17 @@ to an API or match it against stored datasets, so it was defined twice, once in 
 package. It now lives in `esmporium.query` and both import it from there. It is still
 importable from `esmporium.search` for anyone who was already doing that.
 
-What `requirements` may import from esmporium, then, is `esmporium.query` and
-`DATASET_FACET_COLUMNS` from `esmporium.db.schema` — which is the whole surface every
+What `requirements` may import from esmporium, then, is `esmporium.query`,
+`DATASET_FACET_COLUMNS` from `esmporium.db.schema`, and `esmporium.formatting` for the
+helpers which render error messages — which is the whole surface every
 remaining piece of this design needs. The `esmporium.db` side will grow when the
 database-backed catalogue lands, since that needs a session and the `Dataset` table.
 The `esmporium.search` side will not. There is a test which checks both.
+
+`esmporium.formatting` is a safe third entry because it depends on nothing but the
+standard library, so it cannot be half of a cycle. That is the test to apply to
+anything else proposed for this list: not "is it useful here?" but "could importing it
+ever point back this way?".
 
 A `QueryCollection` that is a plain union is enough.
 "Requirement became satisfiable" is the difference between `solve` at t1 and at t2.

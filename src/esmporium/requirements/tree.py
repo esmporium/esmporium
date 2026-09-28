@@ -14,26 +14,32 @@ the tips (drawn upside down, like a family tree). Two words carry the weight:
   identifies it;
 - an **internal node** has children and exists to group or wrap them.
 
-Every node is built by calling a lower-case function, and the one rule to hold onto
-is what each of them takes: **[leaf][(m).leaf] takes a query, everything else takes
-nodes.**
+The one rule to hold onto is what each of them takes: **[Leaf][(m).Leaf] takes a
+query, everything else takes nodes.**
+
+A leaf is written out in full, `Leaf(query=..., role=...)`. The internal nodes are
+built by lower-case functions ([all_of][(m).all_of]) which earn their keep by taking
+any number of children.
 
 ```text
-Requirement                 <- the root: also says how datasets are grouped
-   └── all_of               <- internal node: needs ALL of its children
-       ├── leaf: tas        <- leaf: one dataset, nothing below it
-       └── leaf: rsdt       <- leaf
+Requirement                        <- the root: also says how datasets are grouped
+   └── all_of                      <- internal node: needs ALL of its children
+       ├── Leaf role="field"       <- leaf: one dataset, nothing below it
+       └── Leaf role="land_fraction"  <- leaf
 ```
+
+A role names what the dataset is *for*, which is usually not a variable name: see
+[Leaf.role][(m).Leaf.role].
 
 `.where(**facets)` is the one way to say something about the leaves below a node, and
 it does **not** get stored on the node: it is pushed straight down into each leaf's
 query, because the leaf is where the work happens.
 
 ```text
-   all_of                                 all_of
-     ├── leaf(variable=tas)    .where(      ├── leaf(variable=tas,  experiment=1pctCO2)
-     └── leaf(variable=rsdt)  experiment=   └── leaf(variable=rsdt, experiment=1pctCO2)
-                              "1pctCO2")
+   all_of                            all_of
+     ├── Leaf(variable=tas)   .where(    ├── Leaf(variable=tas,  experiment=1pctCO2)
+     └── Leaf(variable=rsdt) experiment= └── Leaf(variable=rsdt, experiment=1pctCO2)
+                             "1pctCO2")
 ```
 
 That is why a contradiction raises [ConflictingFacetsError][(m).ConflictingFacetsError]
@@ -62,6 +68,7 @@ from typing import Annotated, Any, Literal, TypeVar, Union, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from esmporium.formatting import readable_list
 from esmporium.query import CANONICAL_FACETS, Query
 from esmporium.requirements.catalogue import set_facets
 
@@ -77,6 +84,21 @@ in place (see the note on [Leaf.query][(m).Leaf.query]).
 """
 
 
+# A note for developers:
+# This looks like a duplicate of
+# [`ClashingFacetsError`][esmporium.query.ClashingFacetsError] and is not one, so it
+# stays here rather than moving to `esmporium.query` the way that one did.
+#
+# `ClashingFacetsError` is about *one* query naming the same facet twice, once as a
+# field and once in `other_terms`: there is no way to tell which value should win, so
+# any double-set is refused. This is about *two* sources -- a leaf and the `where` above
+# it -- and it refuses only a disagreement: setting the same facet to the same values in
+# both places is fine and common, because `where` exists precisely to say something
+# about leaves which may already say it themselves.
+#
+# It also carries what only this side knows: which leaf, by role, and which source. The
+# design note names this error in its table of what `.where()` raises, so the name is
+# pinned there rather than chosen here.
 class ConflictingFacetsError(ValueError):
     """Raised when a facet is set to different values for the same dataset."""
 
@@ -98,7 +120,8 @@ class ConflictingFacetsError(ValueError):
         self.role = role
         self.facets = tuple(sorted(facets))
         super().__init__(
-            f"{source} sets {', '.join(self.facets)} differently to leaf {role!r}. "
+            f"{source} sets {readable_list(self.facets)} "
+            f"differently to leaf {role!r}. "
             f"Set each facet once: on the leaf or in {source}, not both. "
             "Setting it to the same values in both places is fine, "
             "it is only a disagreement which is refused."
@@ -119,10 +142,10 @@ class DuplicateRoleError(ValueError):
         """
         self.roles = tuple(sorted(roles))
         super().__init__(
-            f"Roles {', '.join(map(repr, self.roles))} are used more than once. "
+            f"Roles {readable_list(self.roles)} are used more than once. "
             "A role names one dataset, so a repeat leaves no way to say which "
             "dataset is meant. "
-            "Give the leaves distinct roles, with `leaf(query, role=...)`."
+            "Give the leaves distinct roles, with `Leaf(query=..., role=...)`."
         )
 
 
@@ -131,7 +154,7 @@ class NotANodeError(TypeError):
     Raised when something which is not a node is used where a node is needed
 
     Most often a facet value written where a leaf was meant.
-    [leaf][(m).leaf] takes a query; everything else takes nodes.
+    [Leaf][(m).Leaf] takes a query; everything else takes nodes.
     """
 
     def __init__(self, value: object) -> None:
@@ -144,17 +167,18 @@ class NotANodeError(TypeError):
             What was passed
         """
         self.value = value
-        allowed = ", ".join(node_type.__name__ for node_type in NODE_TYPES)
+        allowed = readable_list([node_type.__name__ for node_type in NODE_TYPES])
         hint = ""
         if isinstance(value, str):
             hint = (
                 " A facet value is not a node: "
-                f"write `leaf(Query(variable={value!r}), role={value!r})` "
-                "if that is what was meant."
+                f"write `Leaf(query=Query(variable={value!r}), role=...)`, "
+                "with a role saying what the dataset is for."
             )
         super().__init__(
-            f"Expected a node ({allowed}), got {type(value).__name__}: {value!r}. "
-            "`leaf` takes a query, everything else takes nodes." + hint
+            f"Expected a node, i.e. one of {allowed}, "
+            f"got {type(value).__name__}: {value!r}. "
+            "`Leaf` takes a query, everything else takes nodes." + hint
         )
 
 
@@ -327,7 +351,7 @@ def add_facets(
     >>> from esmporium.query import Query
     >>> from esmporium.requirements import set_facets
     >>> added = add_facets(
-    ...     Query(variable="tas"), {"experiment": ("1pctCO2",)}, "tas", "where"
+    ...     Query(variable="tas"), {"experiment": ("1pctCO2",)}, "field", "where"
     ... )
     >>> set_facets(added)
     {'experiment': ('1pctCO2',), 'variable': ('tas',)}
@@ -335,7 +359,7 @@ def add_facets(
     A facet we have no field for lands in `other_terms`, and survives being stored:
 
     >>> added = add_facets(
-    ...     Query(variable="tas"), {"product": ("output1",)}, "tas", "where"
+    ...     Query(variable="tas"), {"product": ("output1",)}, "field", "where"
     ... )
     >>> added.other_terms
     {'product': ('output1',)}
@@ -356,7 +380,51 @@ class Leaf(BaseModel):
     """
     One dataset (per group) in a role, and everything about that dataset
 
-    Build one with [leaf][(m).leaf].
+    Written out in full, `Leaf(query=..., role=...)`, unlike the internal nodes, which
+    are built by lower-case functions such as [all_of][(m).all_of]. A leaf is where
+    every fact about a dataset ends up, so both of its parts are worth having on the
+    page rather than inferred: what it asks for, and what it is for.
+
+    Examples
+    --------
+    The role says what the dataset is *for*, which is not the same as which variable
+    it happens to be. Pattern scaling scales *a* field against global mean
+    temperature, and any one of nine variables will do, so it is one leaf whose query
+    offers all nine and whose role is not a variable name at all:
+
+    >>> from esmporium.query import Query
+    >>> from esmporium.requirements import Leaf, set_facets
+    >>> field = Leaf(
+    ...     query=Query(variable=("tas", "tasmax", "tasmin", "pr", "sfcWind")),
+    ...     role="field",
+    ... )
+    >>> field.role
+    'field'
+    >>> len(set_facets(field.query)["variable"])
+    5
+
+    A leaf resolves to exactly one dataset per group, so which of those five it is has
+    to be settled somewhere. That somewhere is `group_by` on the
+    [Requirement][(m).Requirement]: putting `variable` there runs the analysis once
+    per variable, rather than picking one and discarding the other four. The two homes
+    of a facet are worth keeping straight — in a leaf's query it means "any of these
+    will do", in `group_by` it means "do this once for each".
+
+    Roles which *do* read like variable names are a fact about the analysis, not a
+    rule about leaves. Equilibrium climate sensitivity regresses tas against
+    top-of-atmosphere radiation, so it needs four different datasets in the *same*
+    run, which is four leaves — and naming each role after its variable is then simply
+    the clearest thing to call it:
+
+    >>> radiation = tuple(
+    ...     Leaf(query=Query(variable=name), role=name)
+    ...     for name in ("tas", "rsdt", "rlut", "rsut")
+    ... )
+    >>> [node.role for node in radiation]
+    ['tas', 'rsdt', 'rlut', 'rsut']
+
+    The test to apply: datasets the analysis needs *together* are separate leaves;
+    a facet it repeats *over* is one leaf and a `group_by` entry.
     """
 
     model_config = NODE_MODEL_CONFIG
@@ -415,10 +483,55 @@ class Leaf(BaseModel):
     """
     Role the dataset is resolved into
 
-    Say what the dataset is *for*, not which variable it happens to be: the variable
-    is already in the query, and, when fanning out, in the group key. Pattern
-    scaling's nine variables sit in one leaf called `field` for exactly this reason.
+    Say what the dataset is *for*, not which variable it happens to be. A role is the
+    named slot the resolved dataset is filed under, and it is what a constraint refers
+    to later, so it wants to read as a job rather than as a value.
+
+    The variable is not the leaf's identity. It has two other homes, and which one it
+    is in is the whole question:
+
+    - in this leaf's `query`, several variables mean "any one of these will do", and
+      the leaf still resolves to exactly one dataset;
+    - in `group_by` on the [Requirement][(m).Requirement], a variable means "run the
+      whole analysis once per value".
+
+    Pattern scaling puts nine variables in one leaf called `field` and `variable` in
+    `group_by`, which is nine runs of one dataset each. Roles which do read like
+    variable names, as equilibrium climate sensitivity's `tas` and `rsdt` do, are a
+    fact about that analysis needing those datasets *together* -- not a rule about
+    leaves.
     """
+
+    def __init__(self, **data: Any) -> None:
+        """
+        Initialise
+
+        Parameters
+        ----------
+        **data
+            The fields
+
+        Raises
+        ------
+        EmptyLeafQueryError
+            `query` sets no facets
+        """
+        # Checked here as well as in `_query_sets_a_facet` so that the error arrives as
+        # itself. Raised from a validator, pydantic wraps it in a `ValidationError`,
+        # which is the right answer for a requirement being *loaded* -- one bad leaf
+        # should be reported alongside everything else wrong with the document -- but
+        # buries the message for someone writing one by hand. `model_validate` and
+        # `model_validate_json` do not call `__init__`, so loading still goes through
+        # the validator.
+        #
+        # Only when both parts are already the right types: anything else is pydantic's
+        # to complain about, in its own words.
+        query = data.get("query")
+        role = data.get("role")
+        if isinstance(query, Query) and isinstance(role, str) and not set_facets(query):
+            raise EmptyLeafQueryError(role)
+
+        super().__init__(**data)
 
     @field_validator("query")
     @classmethod
@@ -821,60 +934,6 @@ def distinct_role_paths(nodes: Iterable[Node]) -> frozenset[str]:
     return frozenset(seen)
 
 
-def leaf(query: Query, role: str) -> Leaf:
-    """
-    Require one dataset, in a role
-
-    Both arguments are written out every time, on purpose. A leaf is the unit
-    everything else hangs off, so what it asks for and what it is called are worth
-    reading off the page rather than inferring.
-
-    Parameters
-    ----------
-    query
-        Query identifying the dataset
-
-    role
-        Role the dataset is resolved into.
-        Say what the dataset is *for*, not which variable it happens to be.
-
-    Returns
-    -------
-    :
-        Leaf
-
-    Raises
-    ------
-    EmptyLeafQueryError
-        `query` sets no facets
-
-    Examples
-    --------
-    >>> from esmporium.query import Query
-    >>> from esmporium.requirements import leaf, set_facets
-    >>> node = leaf(Query(variable="tas"), role="tas")
-    >>> node.role
-    'tas'
-    >>> set_facets(node.query)
-    {'variable': ('tas',)}
-
-    A facet with several values is an "or", so a role is what tells two such leaves
-    apart:
-
-    >>> aliased = leaf(Query(variable=("fLuc", "fLUC")), role="fLuc")
-    >>> set_facets(aliased.query)
-    {'variable': ('fLuc', 'fLUC')}
-    """
-    # Checked here as well as on the model so that the error arrives as itself.
-    # Raised from a validator, pydantic wraps it in a `ValidationError`, which is the
-    # right backstop for a requirement being loaded but buries the message for
-    # someone writing one.
-    if not set_facets(query):
-        raise EmptyLeafQueryError(role)
-
-    return Leaf(query=query, role=role)
-
-
 def all_of(*nodes: Node) -> AllOf:
     """
     Require all of the given nodes
@@ -899,12 +958,18 @@ def all_of(*nodes: Node) -> AllOf:
 
     Examples
     --------
+    Children are the datasets an analysis needs *together*. An energy balance wants a
+    field and the surface fractions to weight it by, in the same run, so they are two
+    leaves — and neither role is a variable name:
+
     >>> from esmporium.query import Query
-    >>> from esmporium.requirements import all_of, leaf, set_facets
+    >>> from esmporium.requirements import Leaf, all_of, set_facets
     >>> node = all_of(
-    ...     leaf(Query(variable="tas"), role="tas"),
-    ...     leaf(Query(variable="rsdt"), role="rsdt"),
+    ...     Leaf(query=Query(variable=("tas", "ts")), role="temperature"),
+    ...     Leaf(query=Query(variable="sftlf"), role="land_fraction"),
     ... )
+    >>> [child.role for child in node.children]
+    ['temperature', 'land_fraction']
 
     `.where()` pushes down to every leaf, rather than being stored on the node:
 
@@ -913,19 +978,19 @@ def all_of(*nodes: Node) -> AllOf:
     [('1pctCO2',), ('1pctCO2',)]
 
     A facet value is not a node, and saying so is the whole point of
-    [NotANodeError][(m).NotANodeError]. Its message goes on to spell out the
-    `leaf(Query(variable="tas"), role="tas")` which was probably meant:
+    [NotANodeError][(m).NotANodeError]. Its message goes on to name the
+    `Leaf(query=..., role=...)` which was probably meant:
 
     >>> all_of("tas", "rsdt")  # doctest: +ELLIPSIS
     Traceback (most recent call last):
     ...
-    esmporium.requirements.tree.NotANodeError: Expected a node (Leaf, AllOf), ...
+    esmporium.requirements.tree.NotANodeError: Expected a node, i.e. one of ...
     """
     for node in nodes:
         if not isinstance(node, NODE_TYPES):
             raise NotANodeError(node)
 
-    # As with `leaf`, checked here so the error arrives as itself rather than wrapped
+    # As with `Leaf`, checked here so the error arrives as itself rather than wrapped
     # in a `ValidationError` by the model validator which backs it up.
     distinct_role_paths(nodes)
 

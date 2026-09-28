@@ -47,7 +47,6 @@ from esmporium.requirements.tree import (
     NotANodeError,
     Requirement,
     all_of,
-    leaf,
 )
 
 __all__ = [
@@ -65,7 +64,6 @@ __all__ = [
     "Requirement",
     "UnrecordedFacetError",
     "all_of",
-    "leaf",
     "matches",
     "set_facets",
 ]
