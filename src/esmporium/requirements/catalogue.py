@@ -223,23 +223,6 @@ class CatalogueEntry:
         raise UnrecordedFacetError([name], self.id)
 
 
-# TODO(R2): two things a requirement's leaves should probably refuse, which this
-# layer is right to allow.
-#
-# 1. `other_terms`. A requirement has to be portable, hashable, canonical-JSON
-#    serialisable and re-solvable months later, and `other_terms` is deliberately
-#    none of those: it is an outbound escape hatch, written for one search API.
-#    `QueryFacet(None)` is the route for a facet a requirement needs. Worth settling
-#    at R2 rather than at R11, when `to_search_plan` has to decide what to emit.
-#
-# 2. A query with no facets at all. Here that means "no constraint", so it matches
-#    every entry, which is the only sensible reading of an empty question. On a
-#    `Leaf` it would mean "any dataset in the catalogue fills this role", which is
-#    far more likely to be a half-written requirement than an intention — and it
-#    fails late and confusingly, as an ambiguous group with thousands of candidates
-#    rather than an error where the mistake was made. `Leaf` asking for at least one
-#    facet would catch it at the point of writing. Note this is a question about
-#    `Leaf`, not about `Requirement.where`, which legitimately starts empty.
 def set_facets(query: QueryProtocol) -> dict[str, tuple[str, ...]]:
     """
     Get the facets a query actually constrains, under canonical names, flattened
