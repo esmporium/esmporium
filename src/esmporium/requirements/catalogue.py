@@ -404,8 +404,9 @@ class Catalogue(Protocol):
         """
         Find every dataset which matches a query
 
-        Matching on a facet we have no column for already works: a query naming
-        `product` or `realm` matches whenever the entry's `extra` carries it
+        Note for implementers: Matching on a facet we have no column for is essential.
+        For example, a query naming
+        `product` or `realm` must match whenever the entry's `extra` carries it
         (see [`CatalogueEntry.extra`][(m).CatalogueEntry.extra]).
         What is up to each catalogue is where `extra` comes from — one backed by our
         database would read it out of the raw search documents, another might consult
