@@ -304,11 +304,34 @@ Once requirements are in esmporium, those are ordinary esmporium tables.
 
 `set_facets` flattens a query, including `other_terms`, because that is esmporium's
 escape hatch for facets a query class does not name.
-Naming the same facet twice raises `ClashingFacetError`.
+Naming the same facet twice raises `ClashingFacetsError`.
+
+**A leaf's query may be written in any style** — `Query`, `QueryCMIP5`, `QueryCMIP6`,
+`QueryCMIP7` — and is translated on the way in, then stored as a `QueryCanonical`.
+Three things need that single stored form: a stored requirement has to reload into a
+known class, one question has to hash the same whichever style it was written in, and
+`to_search_plan` converts *from* canonical when it turns a requirement back into
+searches. So what a leaf gives back is not the object that went in, which is worth
+knowing before comparing the two with `==`.
+
+Translation normalises the *style*; it does not move facets about. Each one keeps its
+home, and there are three:
+
+| Home | Holds | Example |
+|---|---|---|
+| a declared field | the facets esmporium models | `variable`, `experiment` |
+| `query_specific_facets` | facets a query style names, with no canonical name | CMIP5's `product` |
+| `other_terms` | facets esmporium does not model at all | `table_id` |
+
+This is why `other_terms` stays a genuine escape hatch: a facet written there stays
+there, even one we do model. The consequence is that home is part of the question, so
+moving a facet between homes changes the requirement's hash, whereas rewriting it in
+another query style does not.
 
 **Project-specific facets are supported, and esmporium decides how.**
 Answering a query which names CMIP5's `product` is `Catalogue.find`'s business, and
-nothing here needs to know how it is done. The one thing the solver needs is that
+nothing here needs to know how it is done. The requirement's side of it is only to
+keep the facet where it was written, which `query_specific_facets` above is for. The one thing the solver needs is that
 grouping, `prefer` and auxiliary matching compare *entries*, so a catalogue must put
 any facet it wants used that way into each entry's `extra`. Requirements therefore
 accept any facet name, and a facet no entry knows fails when solving, naming the
