@@ -1,63 +1,40 @@
 """
 The requirement tree: what an analysis needs, and in what shape
 
-[`catalogue`][esmporium.requirements.catalogue] answers "which datasets match this
-one query?". This module is the other half of the pincer: the *shape of a need*.
-Neither knows about the other, which is what lets a requirement be solved against
-any catalogue. Joining them is the solver's job (a later step).
-
-A requirement is a **tree**: one root at the top, branching downward to *leaves* at
-the tips (drawn upside down, like a family tree). Two words carry the weight:
-
-- a **leaf** is a node with nothing below it, and resolves to exactly one dataset
-  per group. It carries everything about that dataset, starting with the query which
-  identifies it;
-- an **internal node** has children and exists to group or wrap them.
+A requirement is a tree: one root at the top, branching at each internal node
+downward to leaves at the tips (a leaf is a node with no children).
 
 The one rule to hold onto is what each of them takes: **[Leaf][(m).Leaf] takes a
 query, everything else takes nodes.**
 
-A leaf is written out in full, `Leaf(query=..., role=...)`. The internal nodes are
-built by lower-case functions ([all_of][(m).all_of]) which earn their keep by taking
-any number of children.
+Two words are used throughout, and neither means quite what it might elsewhere.
+
+A **group** is one run of the analysis. A requirement is solved once per group, and
+which datasets belong to the same run is set by `group_by` on the
+[Requirement][(m).Requirement]. Asking for forty models gives forty groups, each
+resolved and reported on its own, so one can succeed where the next fails.
+
+A **role** is the named slot one dataset is filed under inside a group. Each leaf
+fills exactly one. A role says what the dataset is *for*, so it reads as a job rather
+than as a value, and it is how a check refers to a dataset later.
 
 ```text
-Requirement                        <- the root: also says how datasets are grouped
-   └── all_of                      <- internal node: needs ALL of its children
-       ├── Leaf role="field"       <- leaf: one dataset, nothing below it
-       └── Leaf role="land_fraction"  <- leaf
+   Requirement            name  = "the analysis"      <- what is being calculated
+        |                 group_by = ("model", ...)   <- what counts as one run
+        |
+        +-- all_of
+             +-- Leaf     role  = "field"             <- what one dataset is FOR
+             +-- Leaf     role  = "land_fraction"
 ```
-
-A role names what the dataset is *for*, which is usually not a variable name: see
-[Leaf.role][(m).Leaf.role].
-
-`.where(**facets)` is the one way to say something about the leaves below a node, and
-it does **not** get stored on the node: it is pushed straight down into each leaf's
-query, because the leaf is where the work happens.
-
-```text
-   all_of                            all_of
-     ├── Leaf(variable=tas)   .where(    ├── Leaf(variable=tas,  experiment=1pctCO2)
-     └── Leaf(variable=rsdt) experiment= └── Leaf(variable=rsdt, experiment=1pctCO2)
-                             "1pctCO2")
-```
-
-That is why a contradiction raises [ConflictingFacetsError][(m).ConflictingFacetsError]
-at the moment it is written, rather than a long way away when the requirement is
-solved. Set each facet once.
-
-Two other kinds of "or" are deliberately not nodes: aliases are tuple facet values in
-a query (`variable=("fLuc", "fLUC")` takes either), and fanning out over a facet's
-values is `group_by` on the [Requirement][(m).Requirement].
-
-A note for whoever adds the next node type. The node types are purely additive: a new
-one is one more member of the [Node][(m).Node] union, one more entry in
-[NODE_TYPES][(m).NODE_TYPES], and one more branch in each of
-[apply_to_leaves][(m).apply_to_leaves], [walk_leaves][(m).walk_leaves] and
-[role_paths][(m).role_paths]. Nothing already here is reshaped. Those three functions
-each end in a `TypeError` rather than a silent fallthrough, so a forgotten branch
-fails loudly.
 """
+
+# TODO: A note for whoever adds the next node type. The node types are purely additive:
+# a new one is one more member of the [Node][(m).Node] union, one more entry in
+# [NODE_TYPES][(m).NODE_TYPES], and one more branch in each of
+# [apply_to_leaves][(m).apply_to_leaves], [walk_leaves][(m).walk_leaves] and
+# [role_paths][(m).role_paths]. Nothing already here is reshaped. Those three functions
+# each end in a `TypeError` rather than a silent fallthrough, so a forgotten branch
+# fails loudly.
 
 from __future__ import annotations
 
@@ -69,25 +46,38 @@ from typing import Annotated, Any, Literal, TypeVar, Union, cast
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from esmporium.formatting import readable_list
-from esmporium.query import CANONICAL_FACETS, Query
+from esmporium.query import (
+    CANONICAL_FACETS,
+    ClashingFacetsError,
+    Query,
+    QueryCanonical,
+    QueryProtocol,
+    to_canonical,
+)
 from esmporium.requirements.catalogue import set_facets
 
 NODE_MODEL_CONFIG = ConfigDict(frozen=True, extra="forbid")
 """
 Model config shared by the nodes of a tree
 
-Frozen because a requirement is stored, hashed and re-solved later, so a node which
-could be edited in place would let its hash go stale.
-Note that this promise is only as strong as the objects a node holds: a leaf's
-[`Query`][esmporium.query.Query] is not itself frozen, so it can still be mutated
-in place (see the note on [Leaf.query][(m).Leaf.query]).
+*Frozen* means the object cannot be changed once it is made: the language refuses,
+rather than it being a rule people are asked to follow. To "change" a node you make a
+new one, which is what `.where()` does. The reason is
+[requirement_hash][(m).Requirement.requirement_hash]: a requirement is fingerprinted
+and stored, and anything which could be edited afterwards would leave that fingerprint
+describing something which no longer exists.
+
+The promise is only as strong as what a node holds, which is why a leaf stores a
+[`QueryCanonical`][esmporium.query.QueryCanonical]. That one is frozen too.
+[`Query`][esmporium.query.Query] is not, so a leaf which held one would be a locked
+box with editable contents.
 """
 
 
 # A note for developers:
 # This looks like a duplicate of
 # [`ClashingFacetsError`][esmporium.query.ClashingFacetsError] and is not one, so it
-# stays here rather than moving to `esmporium.query` the way that one did.
+# stays here rather than moving to `esmporium.query`.
 #
 # `ClashingFacetsError` is about *one* query naming the same facet twice, once as a
 # field and once in `other_terms`: there is no way to tell which value should win, so
@@ -186,7 +176,7 @@ class EmptyLeafQueryError(ValueError):
     """
     Raised when a leaf's query sets no facets
 
-    Deliberately *not* an error one level down:
+    Deliberately *not* an error one level down: the catalogue's
     [matches][esmporium.requirements.matches] treats a query which sets no facets as
     "no constraint", and so matches every entry. That is the right answer to the
     question as asked there. Asking nothing and requiring nothing are different
@@ -231,77 +221,111 @@ NodeT = TypeVar("NodeT", bound=Union["Leaf", "AllOf"])
 """Any node type, kept as itself by the helpers which update leaves"""
 
 
-def _as_query(facets: Mapping[str, tuple[str, ...]]) -> Query:
+def _canonical(query: QueryProtocol) -> QueryCanonical:
     """
-    Build a query from flattened facets
+    Put a query into the form a requirement stores
 
-    The inverse of [set_facets][esmporium.requirements.set_facets], and the reason a
-    leaf's query is always in one predictable shape. A facet we model goes in its own
-    field, and everything else goes in `other_terms`. Two consequences are worth
-    knowing:
+    Two things happen here, and both are about a requirement being *stored* rather
+    than used once and forgotten.
 
-    - the query is built by **validating** rather than by copying, so a facet cannot
-      be set on a query which has no field for it. Setting one by copying looks like
-      it worked and is then silently dropped when the query is serialised, which for
-      a requirement means it hashes and reloads as something other than what was
-      written;
-    - a facet we *do* model is moved out of `other_terms` into its field, so
-      `Query(other_terms={"variable": ("tas",)})` and `Query(variable="tas")` become
-      the same stored query, and hash the same.
+    It is **translated**, so a leaf can be written in whichever query style suits the
+    project -- [`QueryCMIP6`][esmporium.query.QueryCMIP6] and the rest all work -- and
+    still be stored one way. That matters because a stored requirement has to reload
+    into a known class, because two spellings of the same question must hash the same,
+    and because turning a requirement back into searches (a later step) converts *from*
+    canonical.
 
-    `source_query` is dropped, deliberately: it exists for debugging a translation,
-    so keeping it would make two queries which mean the same thing hash differently.
+    Its `source_query` is **dropped**. That field records which query a translation
+    came from, for debugging, so keeping it would make two queries which mean the same
+    thing hash differently.
 
-    Parameters
-    ----------
-    facets
-        Facet name -> values, as
-        [set_facets][esmporium.requirements.set_facets] returns them
-
-    Returns
-    -------
-    :
-        The query
-    """
-    declared = {
-        name: values for name, values in facets.items() if name in CANONICAL_FACETS
-    }
-    other = {
-        name: values for name, values in facets.items() if name not in CANONICAL_FACETS
-    }
-
-    # `model_validate` rather than `Query(**declared, ...)` because expanding a
-    # `dict[str, tuple[str, ...]]` into the keywords has to type-check against every
-    # parameter, `source_query` included, which it cannot.
-    return Query.model_validate({**declared, "other_terms": other})
-
-
-def _canonical_query(query: Query) -> Query:
-    """
-    Put a query into the shape a requirement stores
+    Nothing else is moved. Each of the three kinds of facet stays in the home the
+    writer chose for it: the ones we model under their own names as fields, the ones a
+    query style names but we have no canonical name for (CMIP5's `product`) in
+    `query_specific_facets`, and the ones we do not model at all in `other_terms`.
 
     Parameters
     ----------
     query
-        Query to canonicalise
+        Query to canonicalise, in any style
 
     Returns
     -------
     :
-        The same facets, in one predictable shape (see `_as_query`)
+        The query, under canonical names and with no `source_query`
     """
-    return _as_query(set_facets(query))
+    canonical = query if isinstance(query, QueryCanonical) else to_canonical(query)
+
+    if canonical.source_query is None:
+        return canonical
+
+    return canonical.model_copy(update={"source_query": None})
 
 
-def _normalise(facets: dict[str, Any]) -> dict[str, tuple[str, ...]]:
+def _accept_any_query_style(value: Any) -> Any:
     """
-    Flatten keyword facets, validating them as esmporium would
+    Translate whatever was passed for a query field, on the way in
+
+    Parameters
+    ----------
+    value
+        What was passed
+
+    Returns
+    -------
+    :
+        A [`QueryCanonical`][esmporium.query.QueryCanonical] if `value` was a query of
+        some kind, and `value` untouched otherwise, so that pydantic reports anything
+        unusable in its own words.
+
+        A mapping is left alone too: that is a stored requirement being loaded, where
+        pydantic builds the query from JSON and there is nothing to translate.
+    """
+    # Duck-typed rather than `isinstance(value, QueryProtocol)`, because a `Protocol`
+    # is only checkable at runtime when it says so, and this one does not.
+    if isinstance(value, Mapping) or not hasattr(value, "other_terms"):
+        return value
+
+    return _canonical(value)
+
+
+def _homes(query: QueryCanonical) -> tuple[dict[str, tuple[str, ...]], ...]:
+    """
+    Get a query's facets, kept in the three places it holds them
+
+    Parameters
+    ----------
+    query
+        Query to split
+
+    Returns
+    -------
+    :
+        The facets it declares as fields, its query-specific facets, and its
+        `other_terms`, in that order
+    """
+    declared = {
+        name: values
+        for name in sorted(CANONICAL_FACETS)
+        if (values := getattr(query, name))
+    }
+
+    return declared, dict(query.query_specific_facets), dict(query.other_terms)
+
+
+def _normalise(facets: dict[str, Any]) -> QueryCanonical:
+    """
+    Turn keyword facets into a query, validating them as esmporium would
 
     Going through [`Query`][esmporium.query.Query] is what makes
     `.where(variable="tas")` and `.where(variable=("tas",))` the same thing, and what
     makes a misspelt facet name an error rather than a facet nothing will ever match.
     It is also how `.where(other_terms={...})` is accepted, `other_terms` being a
     field of `Query`.
+
+    It is also the limit of this route: `Query` has no field for a facet like CMIP5's
+    `product`, so `.where(product=...)` is an error. Pass a query which does name it,
+    or use `other_terms`.
 
     Parameters
     ----------
@@ -311,24 +335,30 @@ def _normalise(facets: dict[str, Any]) -> dict[str, tuple[str, ...]]:
     Returns
     -------
     :
-        Facet name -> values
+        The facets, as a query
     """
-    return set_facets(Query(**facets))
+    return _canonical(Query(**facets))
 
 
 def add_facets(
-    query: Query, facets: Mapping[str, tuple[str, ...]], role: str, source: str
-) -> Query:
+    query: QueryCanonical, adding: QueryCanonical, role: str, source: str
+) -> QueryCanonical:
     """
-    Add facets to a leaf's query
+    Add one query's facets to a leaf's query
+
+    Each facet keeps the home its writer gave it, so a facet in `other_terms` stays in
+    `other_terms` even when we do model it. `other_terms` is an escape hatch, and an
+    escape hatch which quietly rewrites what you put in it is not one. The cost is
+    that two spellings of the same facet are two different questions, and hash
+    differently, which is the honest answer: they were written differently on purpose.
 
     Parameters
     ----------
     query
         The leaf's query
 
-    facets
-        Facets to add, flattened
+    adding
+        Facets to add
 
     role
         Role of the leaf, used in error messages
@@ -339,41 +369,77 @@ def add_facets(
     Returns
     -------
     :
-        `query` with `facets` added
+        `query` with `adding`'s facets added
 
     Raises
     ------
     ConflictingFacetsError
-        `facets` and `query` set the same facet to different values
+        `adding` and `query` set the same facet to different values
+
+    ClashingFacetsError
+        Between them they set one facet in two different homes, so which value applies
+        would be ambiguous
 
     Examples
     --------
-    >>> from esmporium.query import Query
+    >>> from esmporium.query import Query, QueryCanonical
     >>> from esmporium.requirements import set_facets
     >>> added = add_facets(
-    ...     Query(variable="tas"), {"experiment": ("1pctCO2",)}, "field", "where"
+    ...     QueryCanonical(variable=("tas",)),
+    ...     QueryCanonical(experiment=("1pctCO2",)),
+    ...     "field",
+    ...     "where",
     ... )
     >>> set_facets(added)
     {'experiment': ('1pctCO2',), 'variable': ('tas',)}
 
-    A facet we have no field for lands in `other_terms`, and survives being stored:
+    A facet a query style names but we have no canonical name for keeps its own home,
+    rather than being pushed into the escape hatch:
 
+    >>> from esmporium.query import QueryCMIP5, to_canonical
     >>> added = add_facets(
-    ...     Query(variable="tas"), {"product": ("output1",)}, "field", "where"
+    ...     to_canonical(QueryCMIP5(variable="tas")),
+    ...     to_canonical(QueryCMIP5(product="output1")),
+    ...     "field",
+    ...     "where",
     ... )
-    >>> added.other_terms
+    >>> added.query_specific_facets
     {'product': ('output1',)}
-    >>> set_facets(Query.model_validate_json(added.model_dump_json()))
-    {'variable': ('tas',), 'product': ('output1',)}
+    >>> added.other_terms
+    {}
     """
     already = set_facets(query)
+    incoming = set_facets(adding)
+
     conflicts = {
-        name for name, values in facets.items() if already.get(name, values) != values
+        name for name, values in incoming.items() if already.get(name, values) != values
     }
     if conflicts:
         raise ConflictingFacetsError(role, conflicts, source)
 
-    return _as_query({**already, **facets})
+    merged = tuple(
+        {**mine, **theirs} for mine, theirs in zip(_homes(query), _homes(adding))
+    )
+    declared, query_specific, other = merged
+
+    # One facet, two homes: the leaf put it in `other_terms` and `source` declares it,
+    # say. Nothing can decide which wins, and it is the same ambiguity a single query
+    # naming a facet twice would raise, so it raises the same error.
+    seen = [name for home in merged for name in home]
+    doubled = {name for name in seen if seen.count(name) > 1}
+    if doubled:
+        raise ClashingFacetsError(doubled)
+
+    # `model_validate` rather than `QueryCanonical(**declared, ...)` because expanding
+    # a `dict[str, tuple[str, ...]]` into the keywords has to type-check against every
+    # parameter, `source_query` included, which it cannot.
+    return QueryCanonical.model_validate(
+        {
+            **declared,
+            "query_specific_facets": query_specific,
+            "other_terms": other,
+        }
+    )
 
 
 class Leaf(BaseModel):
@@ -387,51 +453,55 @@ class Leaf(BaseModel):
 
     Examples
     --------
-    The role says what the dataset is *for*, which is not the same as which variable
-    it happens to be. Pattern scaling scales *a* field against global mean
-    temperature, and any one of nine variables will do, so it is one leaf whose query
-    offers all nine and whose role is not a variable name at all:
+    A role says what the dataset is *for*, which is not the same as which variable it
+    happens to be. Where an analysis works on any one of several variables, and repeats
+    itself for each, that is one leaf whose query offers all of them and whose role is
+    not a variable name at all:
 
     >>> from esmporium.query import Query
     >>> from esmporium.requirements import Leaf, set_facets
     >>> field = Leaf(
-    ...     query=Query(variable=("tas", "tasmax", "tasmin", "pr", "sfcWind")),
+    ...     query=Query(variable=("tas", "tasmax", "pr", "sfcWind")),
     ...     role="field",
     ... )
     >>> field.role
     'field'
     >>> len(set_facets(field.query)["variable"])
-    5
+    4
 
-    A leaf resolves to exactly one dataset per group, so which of those five it is has
-    to be settled somewhere. That somewhere is `group_by` on the
-    [Requirement][(m).Requirement]: putting `variable` there runs the analysis once
-    per variable, rather than picking one and discarding the other four. The two homes
-    of a facet are worth keeping straight — in a leaf's query it means "any of these
-    will do", in `group_by` it means "do this once for each".
+    A leaf resolves to one dataset per group, so which of those four it is has to be
+    settled somewhere, and that somewhere is `group_by` on the
+    [Requirement][(m).Requirement]. Naming `variable` there runs the analysis once per
+    variable rather than picking one and discarding the rest.
 
-    Roles which *do* read like variable names are a fact about the analysis, not a
-    rule about leaves. Equilibrium climate sensitivity regresses tas against
-    top-of-atmosphere radiation, so it needs four different datasets in the *same*
-    run, which is four leaves — and naming each role after its variable is then simply
-    the clearest thing to call it:
+    Roles which do read like variable names are a fact about the analysis, not a rule
+    about leaves. Where an analysis needs several *different* datasets in the same run,
+    they are separate leaves, and naming each role after its variable is often the
+    clearest thing to call it:
 
-    >>> radiation = tuple(
+    >>> together = tuple(
     ...     Leaf(query=Query(variable=name), role=name)
-    ...     for name in ("tas", "rsdt", "rlut", "rsut")
+    ...     for name in ("tas", "rsdt", "rlut")
     ... )
-    >>> [node.role for node in radiation]
-    ['tas', 'rsdt', 'rlut', 'rsut']
+    >>> [node.role for node in together]
+    ['tas', 'rsdt', 'rlut']
 
-    The test to apply: datasets the analysis needs *together* are separate leaves;
-    a facet it repeats *over* is one leaf and a `group_by` entry.
+    The test to apply: datasets needed *together* are separate leaves; a facet the
+    analysis repeats *over* is one leaf and a `group_by` entry.
+
+    A query may be written in any style, and is stored translated:
+
+    >>> from esmporium.query import QueryCMIP6
+    >>> in_cmip6_names = Leaf(query=QueryCMIP6(variable_id="tas"), role="field")
+    >>> set_facets(in_cmip6_names.query)
+    {'project': ('CMIP6',), 'variable': ('tas',)}
     """
 
     model_config = NODE_MODEL_CONFIG
 
     kind: Literal["leaf"] = "leaf"
 
-    query: Query
+    query: QueryCanonical
     """
     Query identifying the dataset
 
@@ -440,52 +510,42 @@ class Leaf(BaseModel):
     [Requirement][(m).Requirement] to turn such a list into one group per value
     instead.
 
-    The query is stored in one predictable shape: a facet we model goes in its own
-    field, everything else goes in `other_terms`, and `source_query` is dropped. So
-    two ways of writing the same question hash the same, and
-    `Query(other_terms={"variable": ("tas",)})` is stored as `Query(variable="tas")`.
+    Write it in whichever style suits the project --
+    [`Query`][esmporium.query.Query], [`QueryCMIP5`][esmporium.query.QueryCMIP5] and
+    the rest all work. It is translated on the way in and stored as a
+    [`QueryCanonical`][esmporium.query.QueryCanonical]: a stored requirement has to
+    reload into a known class, two spellings of one question must hash alike, and
+    turning a requirement back into searches converts *from* canonical. So what comes
+    back out is not the object that went in. A leaf built from
+    `Query(variable="tas")` holds a `QueryCanonical` saying the same thing, so
+    comparing its `query` with that `Query` gives `False`. Compare with
+    [set_facets][esmporium.requirements.set_facets] rather than with `==`.
 
-    ## When to reach for `other_terms`
-
-    `other_terms` is esmporium's escape hatch for facets no query class names, and it
-    stays an escape hatch here. It behaves differently inside a requirement than it
-    does in a one-off search, in ways worth knowing before using it.
-
-    **Two facets, two homes.** A facet a query class names is *translated* and then
-    compared under its canonical name. The same facet in `other_terms` is *not*
-    translated at all. So `QueryCMIP6(table_id="Amon")` asks about `processing_id`,
-    whereas `Query(other_terms={"table_id": ("Amon",)})` asks about `table_id`, and
-    finds nothing unless a catalogue puts `table_id` into each entry's
-    [`extra`][esmporium.requirements.CatalogueEntry.extra].
-
-    **What it costs in a requirement is not what it costs in a search.** A search is
-    written once and sent. A requirement is stored, hashed and re-solved months
-    later, and its facets are compared against stored entries rather than sent to an
-    API. So keys here have to be facet names an *entry* can answer: a canonical name,
-    or a key of that entry's `extra`. An API parameter name such as
-    `cmip6:experiment_id` will simply never match anything, quietly.
-
-    **When to use it anyway.** Two cases, both real: a facet esmporium has not
-    modelled yet, and a project-specific facet no query class names. Those are why it
-    is still here.
-
-    **The better route, when there is one.** A facet which has to work in *both*
-    directions — outbound to a search API and inbound against stored entries —
-    belongs on a query class, annotated `QueryFacet(None)` the way CMIP5's `product`
-    is. Those are translated, and arrive as `query_specific_facets`.
+    Whatever you put in `other_terms` stays there, including a facet we do model. It
+    is an escape hatch, and one which rewrites what you put in it is not an escape
+    hatch. Do note that its keys are compared against each stored dataset's
+    [`extra`][esmporium.requirements.CatalogueEntry.extra] rather than sent to a search
+    API, so an API parameter name such as `cmip6:experiment_id` matches nothing at all,
+    quietly.
     """
-    # TODO: `Query` is not frozen (its config is `extra="forbid"` only), so a leaf's
-    # query can be mutated in place even though the leaf itself is frozen, which
-    # would let `requirement_hash` go stale. Freezing `Query` is the fix, but it
-    # belongs in `esmporium.query` and has its own blast radius, so it is its own PR.
 
     role: str
     """
     Role the dataset is resolved into
 
     Say what the dataset is *for*, not which variable it happens to be. A role is the
-    named slot the resolved dataset is filed under, and it is what a constraint refers
-    to later, so it wants to read as a job rather than as a value.
+    named slot the resolved dataset is filed under, and it is what a check refers to
+    later, so it wants to read as a job rather than as a value.
+
+    You choose it, freely, subject only to three rules: it cannot be empty, it cannot
+    contain a `.` (that separates the nested paths which arrive with lineage and
+    scopes, as in `control.field`), and no two leaves used together may share one.
+
+    It names one *dataset*, not the analysis. The analysis is
+    [Requirement.name][(m).Requirement.name] -- "pattern-scaling", say -- and there is
+    one of those per requirement and many roles beneath it. `name` answers "what am I
+    calculating?"; `role` answers "what is this particular dataset for, inside that
+    calculation?".
 
     The variable is not the leaf's identity. It has two other homes, and which one it
     is in is the whole question:
@@ -495,11 +555,6 @@ class Leaf(BaseModel):
     - in `group_by` on the [Requirement][(m).Requirement], a variable means "run the
       whole analysis once per value".
 
-    Pattern scaling puts nine variables in one leaf called `field` and `variable` in
-    `group_by`, which is nine runs of one dataset each. Roles which do read like
-    variable names, as equilibrium climate sensitivity's `tas` and `rsdt` do, are a
-    fact about that analysis needing those datasets *together* -- not a rule about
-    leaves.
     """
 
     def __init__(self, **data: Any) -> None:
@@ -528,15 +583,18 @@ class Leaf(BaseModel):
         # to complain about, in its own words.
         query = data.get("query")
         role = data.get("role")
-        if isinstance(query, Query) and isinstance(role, str) and not set_facets(query):
+        asks_nothing = (
+            query is not None
+            and not isinstance(query, Mapping)
+            and hasattr(query, "other_terms")
+            and not set_facets(query)
+        )
+        if asks_nothing and isinstance(role, str):
             raise EmptyLeafQueryError(role)
 
         super().__init__(**data)
 
-    @field_validator("query")
-    @classmethod
-    def _canonicalise_query(cls, value: Query) -> Query:
-        return _canonical_query(value)
+    _accept_any_style = field_validator("query", mode="before")(_accept_any_query_style)
 
     @field_validator("role")
     @classmethod
@@ -584,7 +642,7 @@ class Leaf(BaseModel):
 
 class AllOf(BaseModel):
     """
-    All children are needed
+    All children (nodes) are needed
 
     Build one with [all_of][(m).all_of].
     """
@@ -646,7 +704,9 @@ class Requirement(BaseModel):
     The root of a requirement: the tree, plus how datasets are grouped
 
     A requirement is solved once per **group**, and a group is one run of the
-    analysis: the equilibrium climate sensitivity across forty models is forty
+    analysis.
+
+    For example, the equilibrium climate sensitivity across forty models is forty
     groups, each resolved and reported on its own. `group_by` names the facets to
     split on; the groups themselves are not listed up front, but discovered from what
     the search found.
@@ -655,12 +715,18 @@ class Requirement(BaseModel):
     model_config = NODE_MODEL_CONFIG
 
     name: str
-    """Name of the requirement, e.g. used to name its query collection"""
+    """
+    Name of the analysis, e.g. used to name its query collection
+
+    Yours to choose, and the counterpart to [Leaf.role][(m).Leaf.role]: this names the
+    whole calculation ("pattern-scaling", "gregory-method"), a role names one dataset's
+    job inside it. One `name` per requirement, many roles beneath it.
+    """
 
     tree: Node
     """The datasets needed"""
 
-    where: Query = Field(default_factory=Query)
+    where: QueryCanonical = Field(default_factory=QueryCanonical)
     """
     Facets added to every leaf's query
 
@@ -671,10 +737,18 @@ class Requirement(BaseModel):
 
     group_by: tuple[str, ...] = ("model", "variant_label")
     """
-    Facets which define a group
+    Facets which define a group, i.e. what counts as one run of the analysis
 
     Include e.g. `experiment` or `variable` to fan out over their values, so that the
     tree is written once and solved once per value.
+
+    The default is one run per model per ensemble member. That is not a guess at what
+    is usually wanted: it is the floor below which nothing is physical, because no
+    calculation can mix one model's output with another's. Across the twenty use cases
+    this design was written against, every single `group_by` begins with these two and
+    only ever adds to them -- most add `experiment`, one also adds `variable`. So in
+    practice this field answers "what *else*, beyond model and member, splits the
+    runs?".
 
     Any facet name is accepted, project-specific ones included, as long as the
     catalogue puts the facet into each entry's
@@ -716,10 +790,7 @@ class Requirement(BaseModel):
 
         super().__init__(**data)
 
-    @field_validator("where")
-    @classmethod
-    def _canonicalise_where(cls, value: Query) -> Query:
-        return _canonical_query(value)
+    _accept_any_style = field_validator("where", mode="before")(_accept_any_query_style)
 
     @model_validator(mode="after")
     def _check_tree(self) -> Requirement:
@@ -735,8 +806,11 @@ class Requirement(BaseModel):
         """
         Get a canonical JSON representation
 
-        Sorted keys, so that the order `prefer`'s mapping happens to be written in
-        does not change the answer, and no insignificant whitespace.
+        "Canonical" here means one exact string per requirement: sorted keys, so the
+        order `prefer`'s mapping happens to be written in does not change the answer,
+        and no insignificant whitespace. That is what lets two requirements which ask
+        the same thing come out byte for byte identical, which is the whole basis of
+        [requirement_hash][(m).Requirement.requirement_hash].
 
         Returns
         -------
@@ -751,9 +825,30 @@ class Requirement(BaseModel):
         """
         Get a hash which identifies this requirement
 
-        Two requirements which ask for the same thing have the same hash, whichever
-        way each was written, which is what makes "has this requirement become
-        satisfiable?" answerable by comparing solves of the same hash over time.
+        A *hash* is a fingerprint: a short, fixed-length string computed from content,
+        where the same content always gives the same string and a change anywhere gives
+        a completely different one. This one is 64 characters whatever the size of the
+        requirement.
+
+        ```text
+        the whole requirement        canonical_json()          this
+        (tree, name, where,     ->   one exact string    ->    64 characters
+         group_by, prefer, ...)      with sorted keys          "dfc9350f9bd3...".
+
+            same question, written differently  ->  the SAME 64 characters
+            anything at all changed             ->  completely different ones
+        ```
+
+        What it is for: a requirement is solved now and again later, and the useful
+        question is "has this become satisfiable since?". That only means something if
+        both solves were of the *same* requirement, and the fingerprint is how that is
+        known -- if it matches, an improvement is new data arriving rather than someone
+        having quietly edited what was asked for. It also makes a short, stable key for
+        the requirement in a database, instead of storing the whole tree again just to
+        identify it.
+
+        (SHA-256 is the particular recipe used. Which one matters far less than it
+        being the same one every time.)
 
         Returns
         -------
@@ -763,7 +858,7 @@ class Requirement(BaseModel):
         return hashlib.sha256(self.canonical_json().encode()).hexdigest()
 
 
-def effective_query(node: Leaf, where: Query | None) -> Query:
+def effective_query(node: Leaf, where: QueryCanonical | None) -> QueryCanonical:
     """
     Get the query which identifies a leaf's datasets
 
@@ -788,7 +883,7 @@ def effective_query(node: Leaf, where: Query | None) -> Query:
     if where is None:
         return node.query
 
-    return add_facets(node.query, set_facets(where), node.role, "where")
+    return add_facets(node.query, where, node.role, "where")
 
 
 def apply_to_leaves(node: NodeT, update: LeafUpdate) -> NodeT:
@@ -824,7 +919,7 @@ def apply_to_leaves(node: NodeT, update: LeafUpdate) -> NodeT:
     raise NotANodeError(node)
 
 
-def walk_leaves(node: Node, prefix: str = "") -> Iterator[tuple[str, Leaf]]:
+def walk_leaves(node: Node, role_prefix: str = "") -> Iterator[tuple[str, Leaf]]:
     """
     Iterate over every leaf in a tree
 
@@ -833,17 +928,22 @@ def walk_leaves(node: Node, prefix: str = "") -> Iterator[tuple[str, Leaf]]:
     node
         Node to walk
 
-    prefix
-        Role prefix the node sits under
+    role_prefix
+        Role path prefix the node sits under, e.g. `"abrupt4x."` giving
+        `abrupt4x.field`
 
-        Always empty for now. It is here because a node which renames the leaves
-        below it is what makes the same role usable twice, and that node is the point
-        of this parameter.
+        Named in full because `prefix` means something else in
+        [`esmporium.search`][esmporium.search]: the `cmipN:` and collection prefixes an
+        API puts on its parameter names. This one is about role paths and nothing else.
+
+        Always empty for now. It is here because a node which renames the leaves below
+        it is what makes the same role usable twice, and that node is the point of this
+        parameter.
 
     Yields
     ------
     :
-        The prefix each leaf sits under, and the leaf
+        The role path prefix each leaf sits under, and the leaf
 
     Raises
     ------
@@ -851,10 +951,10 @@ def walk_leaves(node: Node, prefix: str = "") -> Iterator[tuple[str, Leaf]]:
         `node` is not a node
     """
     if isinstance(node, Leaf):
-        yield prefix, node
+        yield role_prefix, node
     elif isinstance(node, AllOf):
         for child in node.children:
-            yield from walk_leaves(child, prefix)
+            yield from walk_leaves(child, role_prefix)
     else:
         raise NotANodeError(node)
 
@@ -862,14 +962,6 @@ def walk_leaves(node: Node, prefix: str = "") -> Iterator[tuple[str, Leaf]]:
 def role_paths(node: Node) -> frozenset[str]:
     """
     Get the role paths a node can resolve
-
-    Flat for now: a leaf resolves its own role and nothing else. The dotted paths a
-    requirement ends up with (`control.tas`, `abrupt4x.tas`) come from a leaf's
-    lineage and from nodes which rename what is below them, and this is the function
-    which will build them.
-
-    Doubling as the duplicate-role check is not incidental: working out the roles and
-    checking them for repeats is the same walk.
 
     Parameters
     ----------
