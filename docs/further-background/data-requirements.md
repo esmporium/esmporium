@@ -74,11 +74,10 @@ The building blocks, from the tips up. The one rule to hold onto is what each of
 takes: **`Leaf` takes a query, everything else takes nodes.** That is the quickest way
 to tell a leaf from a container.
 
-A leaf is written out in full, as `Leaf(query=..., role=...)`, and the internal nodes
-are built by lower-case functions. The asymmetry is deliberate. `Leaf` is the one node
+A leaf is written out in full, as `Leaf(query=..., role=...)`. `Leaf` is the one node
 you write by naming its parts, so both of them are on the page every time: a leaf is
 where every fact about a dataset ends up, and neither what it asks for nor what it is
-called is worth inferring. The lower-case functions exist because they earn it —
+called is worth inferring. Internal nodes, which handle some of the logic, such as
 `all_of` and `any_of` take any number of children, and `scope` takes a name as well as
 a child.
 
