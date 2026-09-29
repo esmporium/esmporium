@@ -497,8 +497,15 @@ class Leaf(BaseModel):
     @field_validator("role")
     @classmethod
     def _valid_role(cls, value: str) -> str:
-        if not value or "." in value:
-            msg = f"Roles must be non-empty and contain no '.', got {value!r}"
+        # `strip()` because a role of only whitespace is indistinguishable from an
+        # empty one in any message which quotes it, and is never what was meant.
+        # Capitals, spaces within, and length are all left alone: a role is a label
+        # someone chose, and this is not the place to have opinions about their naming.
+        if not value.strip() or "." in value:
+            msg = (
+                "Roles must have some non-whitespace content "
+                f"and contain no '.', got {value!r}"
+            )
             raise ValueError(msg)
 
         return value
