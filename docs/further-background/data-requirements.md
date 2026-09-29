@@ -340,7 +340,7 @@ The `esmporium.search` side will not. There is a test which checks both.
 `esmporium.formatting` is a safe third entry because it depends on nothing but the
 standard library, so it cannot be half of a cycle. That is the test to apply to
 anything else proposed for this list: not "is it useful here?" but "could importing it
-ever point back this way?".
+ever point back this way?". If it is useful and importing it could point back this way, then maybe we have to move it.
 
 A `QueryCollection` that is a plain union is enough.
 "Requirement became satisfiable" is the difference between `solve` at t1 and at t2.
