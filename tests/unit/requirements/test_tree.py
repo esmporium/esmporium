@@ -101,12 +101,18 @@ def test_the_stored_query_is_frozen():
     # holds is frozen too.
     leaf = a_leaf()
 
-    with pytest.raises(ValidationError, match="frozen"):
+    with pytest.raises(ValidationError, match=r"variable\s*\n\s*Instance is frozen"):
         leaf.query.variable = ("pr",)
 
 
 def test_a_query_with_no_facets_is_refused():
-    with pytest.raises(EmptyLeafQueryError, match="sets no facets") as excinfo:
+    with pytest.raises(
+        EmptyLeafQueryError,
+        match=re.escape(
+            "sets no facets, so it identifies no particular dataset "
+            "and would claim every dataset in the catalogue"
+        ),
+    ) as excinfo:
         Leaf(query=Query(), role="field")
 
     assert excinfo.value.role == "field"
@@ -119,7 +125,13 @@ def test_an_empty_query_is_still_refused_when_loading():
     # Written by hand the error arrives as itself; loaded, pydantic wraps it, so that
     # one bad leaf is reported alongside everything else wrong with the document.
     # Both paths have to refuse it.
-    with pytest.raises(ValidationError, match="sets no facets"):
+    with pytest.raises(
+        ValidationError,
+        match=re.escape(
+            "The query on leaf 'field' sets no facets, so it identifies no "
+            "particular dataset and would claim every dataset in the catalogue"
+        ),
+    ):
         Leaf.model_validate_json('{"kind":"leaf","query":{},"role":"field"}')
 
 
@@ -131,7 +143,12 @@ def test_an_empty_query_is_still_refused_when_loading():
     [pytest.param("", id="empty"), pytest.param("   ", id="whitespace")],
 )
 def test_role_must_say_something(role):
-    with pytest.raises(ValidationError, match="non-whitespace content") as excinfo:
+    with pytest.raises(
+        ValidationError,
+        match=re.escape(
+            "Roles must have some non-whitespace content and contain no '.'"
+        ),
+    ) as excinfo:
         Leaf(query=Query(variable="tas"), role=role)
 
     # Our own message echoes the role back, which for whitespace is the only way the
@@ -142,7 +159,13 @@ def test_role_must_say_something(role):
 
 def test_role_cannot_contain_a_dot():
     # `.` separates the nested paths which arrive with lineage and scopes.
-    with pytest.raises(ValidationError, match=re.escape("contain no '.'")):
+    with pytest.raises(
+        ValidationError,
+        match=re.escape(
+            "Roles must have some non-whitespace content and contain no '.', "
+            "got 'control.field'"
+        ),
+    ):
         Leaf(query=Query(variable="tas"), role="control.field")
 
 
@@ -157,7 +180,13 @@ def test_a_role_is_a_label_and_not_policed_further():
 def test_all_of_needs_nodes_not_facet_values():
     # The message is the point: it names the `Leaf(...)` which was probably meant.
     with pytest.raises(
-        NotANodeError, match=re.escape("write `Leaf(query=Query(variable='tas')")
+        NotANodeError,
+        match=re.escape(
+            "Expected a node, i.e. one of 'Leaf' and 'AllOf', got str: 'tas'. "
+            "`Leaf` takes a query, everything else takes nodes. "
+            "A facet value is not a node: "
+            "write `Leaf(query=Query(variable='tas'), role=...)`"
+        ),
     ) as excinfo:
         all_of("tas")
 
@@ -165,7 +194,13 @@ def test_all_of_needs_nodes_not_facet_values():
 
 
 def test_all_of_needs_at_least_one_child():
-    with pytest.raises(ValidationError, match="at least 1 item"):
+    with pytest.raises(
+        ValidationError,
+        match=(
+            r"children\s*\n\s*"
+            r"Tuple should have at least 1 item after validation, not 0"
+        ),
+    ):
         all_of()
 
 
@@ -182,7 +217,13 @@ def test_all_of_needs_at_least_one_child():
 def test_duplicate_roles_are_refused(build):
     # Raised by `all_of` before pydantic sees the children, so it arrives as itself
     # rather than buried in a `ValidationError`.
-    with pytest.raises(DuplicateRoleError, match="used more than once") as excinfo:
+    with pytest.raises(
+        DuplicateRoleError,
+        match=re.escape(
+            "are used more than once. A role names one dataset, so a repeat "
+            "leaves no way to say which dataset is meant"
+        ),
+    ) as excinfo:
         build(a_leaf(role="field"), a_leaf(role="field"))
 
     assert excinfo.value.roles == ("field",)
@@ -210,7 +251,13 @@ def test_role_paths_are_flat_for_now():
 def test_the_walkers_refuse_a_non_node(walker):
     # Each walker ends in a raise rather than falling through, so that a node type
     # added later without a branch fails loudly instead of being skipped.
-    with pytest.raises(NotANodeError, match="Expected a node"):
+    with pytest.raises(
+        NotANodeError,
+        match=re.escape(
+            "Expected a node, i.e. one of 'Leaf' and 'AllOf', got str: 'tas'. "
+            "`Leaf` takes a query, everything else takes nodes"
+        ),
+    ):
         walker("tas")
 
 
@@ -235,7 +282,11 @@ def test_where_contradicting_a_leaf_is_an_error():
     tree = all_of(a_leaf(role="field", reporting_interval="day"))
 
     with pytest.raises(
-        ConflictingFacetsError, match="where sets 'reporting_interval' differently"
+        ConflictingFacetsError,
+        match=(
+            r"where sets 'reporting_interval' differently to leaf .*\. "
+            r"Set each facet once: on the leaf or in where, not both"
+        ),
     ) as excinfo:
         tree.where(reporting_interval="mon")
 
@@ -251,7 +302,13 @@ def test_where_contradicting_a_leaf_is_an_error():
 
 def test_requirement_where_contradicting_a_leaf_is_an_error():
     # Checked when the requirement is built, rather than when the facets are used.
-    with pytest.raises(ValidationError, match="where sets 'reporting_interval'"):
+    with pytest.raises(
+        ValidationError,
+        match=re.escape(
+            "where sets 'reporting_interval' differently to leaf 'field'. "
+            "Set each facet once: on the leaf or in where, not both"
+        ),
+    ):
         Requirement(
             all_of(a_leaf(role="field", reporting_interval="day")),
             name="clash",
@@ -274,7 +331,14 @@ def test_agreeing_in_a_different_home_is_a_clash():
         Leaf(query=Query(other_terms={"experiment": ("historical",)}), role="field")
     )
 
-    with pytest.raises(ClashingFacetsError, match="clashes with the query's facet"):
+    with pytest.raises(
+        ClashingFacetsError,
+        match=re.escape(
+            "`other_terms` facet 'experiment' clashes with the query's facet "
+            "names. Set each facet either as a query facet or in `other_terms`, "
+            "not both"
+        ),
+    ):
         tree.where(experiment="historical")
 
 
@@ -285,7 +349,13 @@ def test_a_value_disagreement_is_reported_before_a_home_one():
         Leaf(query=Query(other_terms={"experiment": ("historical",)}), role="field")
     )
 
-    with pytest.raises(ConflictingFacetsError, match="'experiment'"):
+    with pytest.raises(
+        ConflictingFacetsError,
+        match=re.escape(
+            "where sets 'experiment' differently to leaf 'field'. "
+            "Set each facet once: on the leaf or in where, not both"
+        ),
+    ):
         tree.where(experiment="1pctCO2")
 
 
