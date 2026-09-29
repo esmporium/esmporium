@@ -368,7 +368,7 @@ home, and there are three:
 |---|---|---|
 | a declared field | the facets esmporium models | `variable`, `experiment` |
 | `query_specific_facets` | facets a query style names, with no canonical name | CMIP5's `product` |
-| `other_terms` | facets esmporium does not model at all | `table_id` |
+| `other_terms` | facets esmporium does not model at all | `variable_long_name` |
 
 This is why `other_terms` stays a genuine escape hatch: a facet written there stays
 there, even one we do model. The consequence is that home is part of the question, so
