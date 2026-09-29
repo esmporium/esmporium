@@ -5,7 +5,7 @@ ahead of the implementation (R0 in the *Requirements (R0–R12)* section of `PLA
 so that every later PR can be read against a stated target.
 
 Written: 2026-09-14.
-Updated: 2026-09-24
+Updated: 2026-09-30
 
 ## Three kinds of "or"
 
@@ -159,7 +159,55 @@ different datasets, so four leaves. Naming each role after its variable is then 
 the clearest thing to call it. That is a fact about ECS, not a rule about leaves.
 
 The test to apply: if the analysis wants these datasets *together*, they are separate
-leaves; if it repeats *over* them, they are one leaf and a `group_by` entry. If you have multiple variable values in a leaf, and more than one option is found, then your requirement's prefer rules will decide which to use.
+leaves; if it repeats *over* them, they are one leaf and a `group_by` entry.
+
+#### Which one gets picked
+
+"Any of these will do" still has to end in one dataset, so when a leaf's query lists
+several values and the search finds more than one of them in a group, something has to
+choose. Two settings on the `Requirement` do it, in this order:
+
+1. **`prefer`** decides. It is a mapping of facet to values in order of preference,
+   `prefer={"variable": ("sfcWind", "uas")}`, and the earliest value listed wins. It is
+   not special to `variable` — `prefer={"grid_label": ("gn", "gr")}` breaks the same
+   kind of tie on any facet, project-specific ones included.
+2. **`cardinality`** says what happens if a tie *survives* `prefer` — because no
+   `prefer` entry covers the facet they differ on, or because they are equal on it.
+   `"one"` (the default) makes the group **ambiguous**; `"all"` keeps every remaining
+   candidate.
+
+```text
+   group: CanESM5 / r1i1p1f1 / ssp126
+   leaf query: variable = ("sfcWind", "uas", "vas")   ← any of these will do
+
+   found in this group        prefer = {"variable": ("uas", "sfcWind")}
+   ──────────────────         ────────────────────────────────────────
+     sfcWind  ─┐
+     uas      ─┼──► prefer ──►  uas is listed first
+     vas      ─┘                → uas, and the group RESOLVES
+
+                              no prefer entry for variable
+                              ────────────────────────────
+     sfcWind  ─┐                cardinality = "one"  → AMBIGUOUS
+     uas      ─┼──►  tie   ──►                         (nothing is picked)
+     vas      ─┘                cardinality = "all"  → all three are kept
+```
+
+The important half of that is the second one: **ambiguity is an outcome, not a pick.**
+A group is never resolved by guessing, and an ambiguous group is reported rather than
+quietly dropped, so the fix is yours to make — add a `prefer` entry, narrow the leaf's
+query, or move the facet into `group_by` so the values stop competing.
+
+Which is the case that does not arise: with `variable` in `group_by`, as in pattern
+scaling above, several variables never tie, because each one is a group of its own.
+
+Still to decide, and it needs the solver to be real before it is worth settling: what
+happens when two `prefer` entries disagree, one facet favouring one candidate and
+another facet favouring the other. `prefer` is written as a mapping, whose order is
+deliberately not part of the requirement's hash, so it does not currently say which
+facet outranks which.
+
+#### One requirement, drawn in full
 
 The diagram below draws one concrete requirement: equilibrium climate sensitivity
 (ECS) — temperature and top-of-atmosphere radiation from the abrupt-4xCO2
