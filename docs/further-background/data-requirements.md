@@ -373,7 +373,7 @@ home, and there are three:
 This is why `other_terms` stays a genuine escape hatch: a facet written there stays
 there, even one we do model. The consequence is that home is part of the question, so
 moving a facet between homes changes the requirement's hash, whereas rewriting it in
-another query style does not.
+another query style does not. In general, `other_terms` should be used only if absolutely needed because of quirks like this.
 
 **Project-specific facets are supported, and esmporium decides how.**
 Answering a query which names CMIP5's `product` is `Catalogue.find`'s business, and
