@@ -159,7 +159,7 @@ different datasets, so four leaves. Naming each role after its variable is then 
 the clearest thing to call it. That is a fact about ECS, not a rule about leaves.
 
 The test to apply: if the analysis wants these datasets *together*, they are separate
-leaves; if it repeats *over* them, they are one leaf and a `group_by` entry.
+leaves; if it repeats *over* them, they are one leaf and a `group_by` entry. If you have multiple variable values in a leaf, and more than one option is found, then your requirement's prefer rules will decide which to use.
 
 The diagram below draws one concrete requirement: equilibrium climate sensitivity
 (ECS) — temperature and top-of-atmosphere radiation from the abrupt-4xCO2
