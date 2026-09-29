@@ -17,6 +17,9 @@ The one rule to hold onto is what each of them takes: **a leaf takes a query
 # [role_paths][(m).role_paths]. Nothing already here is reshaped. Those three functions
 # each end in a `TypeError` rather than a silent fallthrough, so a forgotten branch
 # fails loudly.
+# There is a fourth, in another module: `_eval` in
+# [`esmporium.requirements.solve`][], which dispatches on the node type and fails the
+# same way.
 
 from __future__ import annotations
 
@@ -623,6 +626,8 @@ class Requirement(BaseModel):
     survives `prefer` is settled by [cardinality][(m).Requirement.cardinality].
 
     Project-specific facets can be used, on the same terms as `group_by`.
+
+    A value not listed here is not refused, only ranked behind every value which is.
     """
     # A note on why this is a mapping rather than a callable, which would let a user
     # inject their own ranking. A requirement is fingerprinted by
