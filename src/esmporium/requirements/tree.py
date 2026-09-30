@@ -502,10 +502,6 @@ class AllOf(BaseModel):
     children: tuple[Node, ...] = Field(min_length=1)
     """
     What is needed, all of it
-
-    At least one: a node with no children needs nothing, which is as useless as a
-    leaf whose query sets no facets
-    (see [EmptyLeafQueryError][(m).EmptyLeafQueryError]).
     """
 
     @model_validator(mode="after")
