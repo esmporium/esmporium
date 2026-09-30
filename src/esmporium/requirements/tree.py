@@ -576,8 +576,7 @@ class Requirement(BaseModel):
 
     For example, the equilibrium climate sensitivity across forty models is forty
     groups, each resolved and reported on its own. `group_by` names the facets to
-    split on; the groups themselves are not listed up front, but discovered from what
-    the search found.
+    split on; the groups themselves are not listed up front, but discovered during the solve process.
     """
 
     model_config = NODE_MODEL_CONFIG
