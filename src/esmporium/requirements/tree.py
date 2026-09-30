@@ -391,7 +391,7 @@ class Leaf(BaseModel):
 
     A facet with several values is an OR, exactly as it is when searching:
     `Query(variable=("fLuc", "fLUC"))` matches either spelling. Use `group_by` on the
-    [Requirement][(m).Requirement] to turn such a list into one group per value
+    [Requirement][(m).Requirement] to turn such a list into one solved group per value
     instead.
 
     Write it in whichever style suits the project --
