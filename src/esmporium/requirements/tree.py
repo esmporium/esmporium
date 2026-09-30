@@ -816,7 +816,8 @@ def walk_leaves(node: Node, role_prefix: str = "") -> Iterator[tuple[str, Leaf]]
 
     role_prefix
         Role path prefix the node sits under, e.g. `"abrupt4x."` giving
-        `abrupt4x.field`, joined with [ROLE_SEPARATOR][(m).ROLE_SEPARATOR]
+        `abrupt4x.field`, for a `node` that has `role="field"`,
+        joined with [ROLE_SEPARATOR][(m).ROLE_SEPARATOR]
 
         Always empty for now. It is here because a node which renames the leaves below
         it is what makes the same role usable twice.
