@@ -108,19 +108,19 @@ def test_the_stored_query_is_frozen():
 
 
 def test_a_query_with_no_facets_is_refused():
+    # The role is named in the match rather than checked afterwards: carrying it is
+    # only worth anything if it reaches the message, because a tree has many leaves
+    # and the reader has to be told which one.
     with pytest.raises(
         EmptyLeafQueryError,
         match=re.escape(
-            "sets no facets, so it identifies no particular dataset "
-            "and would claim every dataset in the catalogue"
+            "The query on leaf 'field' sets no facets, so it identifies no "
+            "particular dataset and would claim every dataset in the catalogue"
         ),
     ) as excinfo:
         leaf(Query(), "field")
 
     assert excinfo.value.role == "field"
-    # Carrying the role is only worth anything if it reaches the message: a tree has
-    # many leaves and the reader has to be told which one.
-    assert "leaf 'field'" in str(excinfo.value)
 
 
 def test_an_empty_query_is_still_refused_when_loading():
@@ -222,14 +222,13 @@ def test_duplicate_roles_are_refused(build):
     with pytest.raises(
         DuplicateRoleError,
         match=re.escape(
-            "are used more than once. A role names one dataset, so a repeat "
-            "leaves no way to say which dataset is meant"
+            "Roles 'field' are used more than once. A role names one dataset, "
+            "so a repeat leaves no way to say which dataset is meant"
         ),
     ) as excinfo:
         build(a_leaf(role="field"), a_leaf(role="field"))
 
     assert excinfo.value.roles == ("field",)
-    assert "Roles 'field' are used" in str(excinfo.value)
 
 
 def test_role_paths_are_flat_for_now():
@@ -258,7 +257,7 @@ def test_the_walkers_refuse_a_non_node(walker):
         NotANodeError,
         match=re.escape(
             "Expected a node, i.e. one of 'Leaf' and 'AllOf', got str: 'tas'. "
-            "A leaf takes a query, everything else takes nodes"
+            "A leaf takes a query, everything else takes nodes."
         ),
     ):
         walker("tas")
@@ -301,16 +300,14 @@ def test_where_contradicting_a_leaf_is_an_error():
 
     with pytest.raises(
         ConflictingFacetsError,
-        match=(
-            r"where sets 'reporting_interval' differently to leaf .*\. "
-            r"Set each facet once: on the leaf or in where, not both"
+        match=re.escape(
+            "where sets 'reporting_interval' differently to leaf 'field'. "
+            "Set each facet once: on the leaf or in where, not both"
         ),
     ) as excinfo:
         tree.where(Query(reporting_interval="mon"))
 
-    # Which facet disagrees is in the `match` above; this is which leaf it was on.
     assert excinfo.value.role == "field"
-    assert "leaf 'field'" in str(excinfo.value)
 
     # The half most likely to regress: `where` exists to say something about every
     # leaf, so a leaf which already says the same thing is fine, not a clash.
