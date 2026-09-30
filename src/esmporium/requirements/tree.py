@@ -407,16 +407,17 @@ class Leaf(BaseModel):
 
     role: str
     """
-    Role the dataset is resolved into
+    """
+    The role this leaf plays
 
-    Say what the dataset is *for*, not which variable it happens to be. A role is the
-    named slot the resolved dataset is filed under, and it is what a check refers to
-    later, so it wants to read as a job rather than as a value.
+    Say what the leaf (i.e. dataset) is *for*.
+    A role is the named slot the resolved dataset is filed under,
+    and it is what a check refers to later,
+    so it wants to read as a job e.g. 'control', 'reference', 'scenario-data'.
 
     You choose it, freely, subject only to three rules: it cannot be empty, it cannot
-    contain a [ROLE_SEPARATOR][(m).ROLE_SEPARATOR] (that separates the nested paths
-    which arrive with lineage and scopes, as in `control.field`), and no two leaves
-    used together may share one.
+    contain a `.` (that separates the nested paths which arrive with lineage and
+    scopes, as in `control.field`), and no two leaves used together may share the same role.
     """
 
     _accept_any_style = field_validator("query", mode="before")(_accept_any_query_style)
