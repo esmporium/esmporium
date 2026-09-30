@@ -47,16 +47,15 @@ requirement is fingerprinted and stored, and anything which could be
 edited afterwards would leave that fingerprint
 describing something which no longer exists.
 """
-
+# TODO future note:
+# One constant with two users, which is the reason it is not written out at either of
+# them: a role may not contain it (see [Leaf.role][(m).Leaf.role]), *because* it is
+# what joins the parts of a path together. A lineage or a scope makes those paths (R4
+# and R8), and the rule and the joining have to agree or a role could be written which
+# silently splits into two.
 ROLE_SEPARATOR = "."
 """
 Separator between the parts of a role path, e.g. the `.` in `abrupt4x.control.tas`
-
-One constant with two users, which is the reason it is not written out at either of
-them: a role may not contain it (see [Leaf.role][(m).Leaf.role]), *because* it is
-what joins the parts of a path together. A lineage or a scope makes those paths (R4
-and R8), and the rule and the joining have to agree or a role could be written which
-silently splits into two.
 """
 
 
@@ -119,7 +118,7 @@ class DuplicateRoleError(ValueError):
             f"Roles {readable_list(self.roles)} are used more than once. "
             "A role names one dataset, so a repeat leaves no way to say which "
             "dataset is meant. "
-            "Give the leaves distinct roles, with `Leaf(query=..., role=...)`."
+            "Give the leaves distinct roles, with `leaf(query=..., role=...)`."
         )
 
 
@@ -182,22 +181,6 @@ class EmptyLeafQueryError(ValueError):
         )
 
 
-Node = Annotated[Union["Leaf", "AllOf"], Field(discriminator="kind")]
-"""
-Any node of a requirement tree
-
-`discriminator="kind"` tells pydantic to pick the member of the union by reading the
-literal `kind` field, rather than trying each in turn. That makes validation errors
-specific, and is what lets a stored requirement load back into the right node class.
-"""
-
-LeafUpdate = Callable[["Leaf"], "Leaf"]
-"""An update applied to every leaf below a node"""
-
-NodeT = TypeVar("NodeT", bound=Union["Leaf", "AllOf"])
-"""Any node type, kept as itself by the helpers which update leaves"""
-
-
 def _canonical(query: QueryProtocol) -> QueryCanonical:
     """
     Put a query into the form a requirement stores
@@ -206,8 +189,8 @@ def _canonical(query: QueryProtocol) -> QueryCanonical:
     so that it is stored in a consistent way.
     That matters because a stored requirement has to reload
     into a known class, because one question must hash the same whichever style it was
-    written in, and because turning a requirement back into searches (a later step)
-    converts *from* canonical.
+    written in, and because turning a requirement back into searches converts *from*
+    canonical.
 
     Parameters
     ----------
@@ -393,10 +376,9 @@ class Leaf(BaseModel):
     """
     One dataset (per group) in a role, and everything about that dataset
 
-    Written out in full, `Leaf(query=..., role=...)`, unlike the internal nodes, which
-    are built by lower-case functions such as [all_of][(m).all_of]. A leaf is where
-    every fact about a dataset ends up, so both of its parts are worth having on the
-    page rather than inferred: what it asks for, and what it is for.
+    Build one with [leaf][(m).leaf], naming both of its parts. A leaf is where every
+    fact about a dataset ends up, so what it asks for and what it is for are both worth
+    having on the page rather than inferred.
     """
 
     model_config = NODE_MODEL_CONFIG
@@ -433,50 +415,6 @@ class Leaf(BaseModel):
     which arrive with lineage and scopes, as in `control.field`), and no two leaves
     used together may share one.
     """
-
-    def __init__(self, **data: Any) -> None:
-        """
-        Initialise
-
-        Parameters
-        ----------
-        **data
-            The fields
-
-        Raises
-        ------
-        EmptyLeafQueryError
-            `query` sets no facets
-        """
-        # Checked here as well as in `_query_sets_a_facet` so that the error arrives as
-        # itself. Raised from a validator, pydantic wraps it in a `ValidationError`,
-        # which is the right answer for a requirement being *loaded* -- one bad leaf
-        # should be reported alongside everything else wrong with the document -- but
-        # buries the message for someone writing one by hand.
-        #
-        # Note that defining `__init__` at all sets pydantic's
-        # `__pydantic_custom_init__`, which routes *every* path through it:
-        # `model_validate` and `model_validate_json` call this too, and pass every
-        # field, `kind` included. So `__init__` cannot be the thing which separates
-        # writing from loading, and the guard below is.
-        #
-        # It raises only when there is a query object to ask and a role to name it by.
-        # On the loading path `query` is a mapping, so `asks_nothing` is False however
-        # empty it is, and `_query_sets_a_facet` refuses it a moment later -- wrapped,
-        # which is what loading wants. Anything else is pydantic's to complain about,
-        # in its own words.
-        query = data.get("query")
-        role = data.get("role")
-        asks_nothing = (
-            query is not None
-            and not isinstance(query, Mapping)
-            and hasattr(query, "other_terms")
-            and not set_facets(query)
-        )
-        if asks_nothing and isinstance(role, str):
-            raise EmptyLeafQueryError(role)
-
-        super().__init__(**data)
 
     _accept_any_style = field_validator("query", mode="before")(_accept_any_query_style)
 
@@ -601,6 +539,21 @@ class AllOf(BaseModel):
         return apply_to_leaves(self, lambda each_leaf: each_leaf.where(query))
 
 
+Node = Annotated[Union[Leaf, AllOf], Field(discriminator="kind")]
+"""
+Any node of a requirement tree
+
+`discriminator="kind"` tells pydantic to pick the member of the union by reading the
+literal `kind` field, rather than trying each in turn. That makes validation errors
+specific, and is what lets a stored requirement load back into the right node class.
+"""
+
+LeafUpdate = Callable[[Leaf], Leaf]
+"""An update applied to every leaf below a node"""
+
+NodeT = TypeVar("NodeT", bound=Union[Leaf, AllOf])
+"""Any node type, kept as itself by the helpers which update leaves"""
+
 NODE_TYPES: tuple[type, ...] = (Leaf, AllOf)
 """
 The concrete node types, i.e. the members of [Node][(m).Node]
@@ -614,8 +567,9 @@ class Requirement(BaseModel):
     """
     The root of a requirement: the tree, plus how solving splits it into groups
 
-    A requirement is solved once per **group**, and a group is one run of the
-    analysis.
+    Build one with [requirement][(m).requirement].
+
+    A requirement is solved once per **group**.
 
     For example, the equilibrium climate sensitivity across forty models is forty
     groups, each resolved and reported on its own. `group_by` names the facets to
@@ -694,27 +648,11 @@ class Requirement(BaseModel):
     first. `prefer` is how a tie is settled on purpose.
 
     `"all"` is for an analysis whose subject *is* the spread across candidates.
-    Ensemble spread is the worked example: the variance across a model's variants is
-    one number computed from every variant together, so the leaf wants all of them.
+    Ensemble member (variant) spread is the worked example: the variance across a
+    model's variants is one number computed from every variant together, so the leaf
+    wants all of them.
     Written with `group_by=("model",)` and `cardinality="all"`, that is one run per
     model, each holding however many variants that model published.
-
-    It is worth contrasting with the other way to write something variant-shaped,
-    because they are easy to confuse and answer different questions:
-
-    ```text
-      group_by = ("model", "variant_label")   |  group_by = ("model",)
-      cardinality = "one"                     |  cardinality = "all"
-      ----------------------------------------+---------------------------------
-      one run PER variant                     |  one run per MODEL
-      each run sees a single variant          |  each run sees every variant
-      "do this for r1, then for r2, ..."      |  "compare r1, r2, ... to each
-                                              |   other"
-    ```
-
-    So the test to apply is the one the tree itself uses: a facet the analysis
-    repeats *over* belongs in `group_by`, and candidates it needs *together* are what
-    `"all"` is for.
     """
 
     _accept_any_style = field_validator("where", mode="before")(_accept_any_query_style)
@@ -996,6 +934,42 @@ def check_roles_are_distinct(node: Node) -> None:
     role_paths(node)
 
 
+def leaf(query: QueryProtocol, role: str) -> Leaf:
+    """
+    Require one dataset, in a role
+
+    Parameters
+    ----------
+    query
+        Query identifying the dataset, in any query style.
+        Stored canonical, see [Leaf.query][(m).Leaf.query].
+
+    role
+        Role the dataset is resolved into, see [Leaf.role][(m).Leaf.role]
+
+    Returns
+    -------
+    :
+        Leaf
+
+    Raises
+    ------
+    EmptyLeafQueryError
+        `query` sets no facets
+    """
+    # Translated here rather than left to the field's own validator, so that what is
+    # handed over is what the field says it holds. The validator does it again on the
+    # way in, which costs nothing: canonicalising is idempotent.
+    canonical = _canonical(query)
+
+    # As with `all_of`, checked here so the error arrives as itself rather than wrapped
+    # in a `ValidationError` by the model validator which backs it up.
+    if not set_facets(canonical):
+        raise EmptyLeafQueryError(role)
+
+    return Leaf(query=canonical, role=role)
+
+
 def all_of(*nodes: Node) -> AllOf:
     """
     Require all of the given nodes
@@ -1027,6 +1001,84 @@ def all_of(*nodes: Node) -> AllOf:
     distinct_role_paths(nodes)
 
     return AllOf(children=nodes)
+
+
+def requirement(  # noqa: PLR0913 - one argument per field of the requirement
+    name: str,
+    tree: Node,
+    group_by: tuple[str, ...],
+    *,
+    where: QueryProtocol | None = None,
+    prefer: Mapping[str, tuple[str, ...]] | None = None,
+    cardinality: Literal["one", "all"] = "one",
+) -> Requirement:
+    """
+    Require a tree of datasets, grouped into runs of an analysis
+
+    `where`, `prefer` and `cardinality` are keyword-only: each is a refinement of what
+    the first three already say, and read at a call site as a bare value none of them
+    would say which it was.
+
+    Parameters
+    ----------
+    name
+        Name of the analysis, see [Requirement.name][(m).Requirement.name]
+
+    tree
+        The datasets needed
+
+    group_by
+        Facets which define a group, i.e. what counts as one run of the analysis.
+        See [Requirement.group_by][(m).Requirement.group_by]; it has no default
+        deliberately.
+
+    where
+        Facets added to every leaf's query, in any query style. Stored canonical, see
+        [Requirement.where][(m).Requirement.where]. `None`, the default, adds nothing.
+
+    prefer
+        Facet -> values in order of preference, used to break ties between candidates.
+        See [Requirement.prefer][(m).Requirement.prefer].
+
+    cardinality
+        How many datasets each leaf resolves to per group.
+        See [Requirement.cardinality][(m).Requirement.cardinality].
+
+    Returns
+    -------
+    :
+        Requirement
+
+    Raises
+    ------
+    NotANodeError
+        `tree` is not a node
+
+    DuplicateRoleError
+        Two leaves which are both used resolve the same role
+
+    ConflictingFacetsError
+        `where` and a leaf set the same facet to different values
+
+    ClashingFacetsError
+        `where` and a leaf agree on a facet's value but keep it in different homes
+    """
+    canonical_where = QueryCanonical() if where is None else _canonical(where)
+
+    # As with `all_of`, checked here so the errors arrive as themselves rather than
+    # wrapped in a `ValidationError` by the model validator which backs them up.
+    # Same order as that validator, so the two agree on which complaint comes first.
+    check_roles_are_distinct(tree)
+    check_where_agrees_with_leaves(tree, canonical_where)
+
+    return Requirement(
+        name=name,
+        tree=tree,
+        where=canonical_where,
+        group_by=group_by,
+        prefer={} if prefer is None else dict(prefer),
+        cardinality=cardinality,
+    )
 
 
 for _model in (Leaf, AllOf, Requirement):

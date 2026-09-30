@@ -25,6 +25,8 @@ from esmporium.requirements import (
     NotANodeError,
     Requirement,
     all_of,
+    leaf,
+    requirement,
     set_facets,
 )
 from esmporium.requirements.tree import (
@@ -37,7 +39,7 @@ from esmporium.requirements.tree import (
 
 def a_leaf(role: str = "field", **facets) -> Leaf:
     """Get a leaf which asks for something, when what it asks is not the point."""
-    return Leaf(query=Query(variable="tas", **facets), role=role)
+    return leaf(Query(variable="tas", **facets), role)
 
 
 # ------------------------------------------------------------------ the stored query
@@ -60,49 +62,49 @@ def a_leaf(role: str = "field", **facets) -> Leaf:
     ],
 )
 def test_any_query_style_is_accepted_and_stored_canonical(query, expected):
-    leaf = Leaf(query=query, role="field")
+    stored = leaf(query, "field")
 
     # Translated on the way in, so what comes back out is not what went in.
-    assert isinstance(leaf.query, QueryCanonical)
-    assert set_facets(leaf.query) == expected
+    assert isinstance(stored.query, QueryCanonical)
+    assert set_facets(stored.query) == expected
 
 
 def test_a_project_specific_facet_keeps_its_own_home():
     # CMIP5's `product` is modelled, just not under a canonical name, so it has a
     # home of its own and does not belong in the escape hatch.
-    leaf = Leaf(query=QueryCMIP5(variable="tas", product="output1"), role="field")
+    stored = leaf(QueryCMIP5(variable="tas", product="output1"), "field")
 
-    assert leaf.query.query_specific_facets == {"product": ("output1",)}
-    assert leaf.query.other_terms == {}
+    assert stored.query.query_specific_facets == {"product": ("output1",)}
+    assert stored.query.other_terms == {}
 
 
 def test_other_terms_is_not_relocated():
     # `variable` is a facet we model, but it was written in the escape hatch, so it
     # stays in the escape hatch. An escape hatch which rewrites what you put in it
     # is not one.
-    leaf = Leaf(query=Query(other_terms={"variable": ("tas",)}), role="field")
+    stored = leaf(Query(other_terms={"variable": ("tas",)}), "field")
 
-    assert leaf.query.other_terms == {"variable": ("tas",)}
-    assert leaf.query.variable == ()
+    assert stored.query.other_terms == {"variable": ("tas",)}
+    assert stored.query.variable == ()
 
 
 def test_an_already_canonical_query_passes_through_untouched():
     # Canonicalising is idempotent, which matters because `.where()` feeds its own
     # output back in on every call.
     query = QueryCanonical(variable=("tas",))
-    leaf = Leaf(query=query, role="field")
+    stored = leaf(query, "field")
 
-    assert leaf.query == query
-    assert leaf.query.source_query is None
+    assert stored.query == query
+    assert stored.query.source_query is None
 
 
 def test_the_stored_query_is_frozen():
     # A leaf is frozen so its hash cannot go stale; that is only true if what it
     # holds is frozen too.
-    leaf = a_leaf()
+    stored = a_leaf()
 
     with pytest.raises(ValidationError, match=r"variable\s*\n\s*Instance is frozen"):
-        leaf.query.variable = ("pr",)
+        stored.query.variable = ("pr",)
 
 
 def test_a_query_with_no_facets_is_refused():
@@ -113,7 +115,7 @@ def test_a_query_with_no_facets_is_refused():
             "and would claim every dataset in the catalogue"
         ),
     ) as excinfo:
-        Leaf(query=Query(), role="field")
+        leaf(Query(), "field")
 
     assert excinfo.value.role == "field"
     # Carrying the role is only worth anything if it reaches the message: a tree has
@@ -149,7 +151,7 @@ def test_role_must_say_something(role):
             "Roles must have some non-whitespace content and contain no '.'"
         ),
     ) as excinfo:
-        Leaf(query=Query(variable="tas"), role=role)
+        leaf(Query(variable="tas"), role)
 
     # Our own message echoes the role back, which for whitespace is the only way the
     # reader sees what they wrote. `got ...` rather than a bare `repr`, because
@@ -166,7 +168,7 @@ def test_role_cannot_contain_a_dot():
             "got 'control.field'"
         ),
     ):
-        Leaf(query=Query(variable="tas"), role="control.field")
+        leaf(Query(variable="tas"), "control.field")
 
 
 def test_a_role_is_a_label_and_not_policed_further():
@@ -244,7 +246,8 @@ def test_role_paths_are_flat_for_now():
         pytest.param(role_paths, id="role_paths"),
         pytest.param(lambda node: list(walk_leaves(node)), id="walk_leaves"),
         pytest.param(
-            lambda node: apply_to_leaves(node, lambda leaf: leaf), id="apply_to_leaves"
+            lambda node: apply_to_leaves(node, lambda each_leaf: each_leaf),
+            id="apply_to_leaves",
         ),
     ],
 )
@@ -267,13 +270,13 @@ def test_the_walkers_refuse_a_non_node(walker):
 def test_where_adds_facets_to_every_leaf():
     tree = all_of(
         a_leaf(role="field"),
-        all_of(Leaf(query=Query(variable="sftlf"), role="land_fraction")),
+        all_of(leaf(Query(variable="sftlf"), "land_fraction")),
     )
 
     updated = tree.where(Query(experiment="1pctCO2", reporting_interval="mon"))
 
-    for _, leaf in walk_leaves(updated):
-        facets = set_facets(leaf.query)
+    for _, each_leaf in walk_leaves(updated):
+        facets = set_facets(each_leaf.query)
         assert facets["experiment"] == ("1pctCO2",)
         assert facets["reporting_interval"] == ("mon",)
 
@@ -318,13 +321,13 @@ def test_where_contradicting_a_leaf_is_an_error():
 def test_requirement_where_contradicting_a_leaf_is_an_error():
     # Checked when the requirement is built, rather than when the facets are used.
     with pytest.raises(
-        ValidationError,
+        ConflictingFacetsError,
         match=re.escape(
             "where sets 'reporting_interval' differently to leaf 'field'. "
             "Set each facet once: on the leaf or in where, not both"
         ),
     ):
-        Requirement(
+        requirement(
             tree=all_of(a_leaf(role="field", reporting_interval="day")),
             name="clash",
             group_by=("model",),
@@ -335,17 +338,15 @@ def test_requirement_where_contradicting_a_leaf_is_an_error():
 def test_a_leaf_with_nothing_above_it_keeps_its_own_query():
     # `effective_query` takes `where` as optional, so it has to answer for a leaf
     # which has no requirement above it.
-    leaf = a_leaf(role="field")
+    only_leaf = a_leaf(role="field")
 
-    assert effective_query(leaf, None) == leaf.query
+    assert effective_query(only_leaf, None) == only_leaf.query
 
 
 def test_agreeing_in_a_different_home_is_a_clash():
     # Same facet, same value, two different homes. Nothing disagrees about the value,
     # so it is not a conflict -- it is that where the facet belongs is ambiguous.
-    tree = all_of(
-        Leaf(query=Query(other_terms={"experiment": ("historical",)}), role="field")
-    )
+    tree = all_of(leaf(Query(other_terms={"experiment": ("historical",)}), "field"))
 
     with pytest.raises(
         ClashingFacetsError,
@@ -361,9 +362,7 @@ def test_agreeing_in_a_different_home_is_a_clash():
 def test_a_value_disagreement_is_reported_before_a_home_one():
     # Both are wrong here. The value disagreement is the more useful complaint, so it
     # is the one raised.
-    tree = all_of(
-        Leaf(query=Query(other_terms={"experiment": ("historical",)}), role="field")
-    )
+    tree = all_of(leaf(Query(other_terms={"experiment": ("historical",)}), "field"))
 
     with pytest.raises(
         ConflictingFacetsError,
@@ -389,7 +388,7 @@ def a_requirement(**overrides) -> Requirement:
         **overrides,
     }
 
-    return Requirement(tree=all_of(a_leaf(role="field")), **settings)
+    return requirement(tree=all_of(a_leaf(role="field")), **settings)
 
 
 def test_round_trip():
@@ -421,8 +420,8 @@ def test_hash_changes_with_content(change):
 
 def test_hash_ignores_query_style_but_not_home():
     def with_query(query):
-        return Requirement(
-            tree=all_of(Leaf(query=query, role="field")),
+        return requirement(
+            tree=all_of(leaf(query, "field")),
             name="x",
             group_by=("model",),
         )

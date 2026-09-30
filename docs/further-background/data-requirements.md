@@ -75,27 +75,26 @@ Requirement                 ← root (an internal node; always has one child)
 ```
 
 The building blocks, from the tips up. The one rule to hold onto is what each of them
-takes: **`Leaf` takes a query, everything else takes nodes.** That is the quickest way
+takes: **a leaf takes a query, everything else takes nodes.** That is the quickest way
 to tell a leaf from a container.
 
-A leaf is written out in full, as `Leaf(query=..., role=...)`. `Leaf` is the one node
-you write by naming its parts, so both of them are on the page every time: a leaf is
-where every fact about a dataset ends up, and neither what it asks for nor what it is
-called is worth inferring. Internal nodes, which handle some of the logic, such as
-`all_of` and `any_of` take any number of children, and `scope` takes a name as well as
-a child.
+A leaf is built with `leaf(query=..., role=...)`, naming both of its parts rather than
+inferring either: a leaf is where every fact about a dataset ends up, and neither what
+it asks for nor what it is called is worth guessing at. Internal nodes, which handle
+some of the logic, such as `all_of` and `any_of` take any number of children, and
+`scope` takes a name as well as a child.
 
-- **`Leaf(query=..., role=..., aux=, lineage=, constraints=)`** — exactly
+- **`leaf(query=..., role=..., aux=, lineage=, constraints=)`** — exactly
   one dataset per [group](#groups), because a leaf carries everything about one
   dataset and that is where the work happens. A facet with several values is an OR, exactly as in esmporium, so `variable=("fLuc", "fLUC")` takes either. The role says what the dataset is *for*, which is why pattern scaling's nine variables sit in one leaf called `field`, with the variable itself in the group key. See [A role is not a variable](#a-role-is-not-a-variable) below.
 - **`all_of`, `any_of` (ordered) and `optional`** — build **internal nodes, not
   leaves**: each holds child nodes (leaves, or other internal nodes) and says how to
   combine them. `all_of` needs every child; `any_of` takes the first child that can be
   satisfied; `optional` includes its child when the child's own constraints are met,
-  otherwise it is absent. They take *nodes* as arguments, whereas `Leaf` takes a
+  otherwise it is absent. They take *nodes* as arguments, whereas a leaf takes a
   *query*.
 - **`scope(name, child, constraints=)`** — an internal node that prefixes roles, so the same role can appear twice (`abrupt4x.tas` and `abrupt2x.tas`), and holds checks which compare leaves.
-- **`Requirement(tree=, name=, group_by=, where=, prefer=, cardinality=, constraints=)`** — the root.
+- **`requirement(tree=, name=, group_by=, where=, prefer=, cardinality=, constraints=)`** — the root.
   `tree`, `name` and `group_by` are required: a grouping decides what "one run" means, so it is
   stated rather than defaulted. Write `group_by=("model", "variant_label")` when that is what you want.
 
@@ -136,7 +135,7 @@ together — it needs one at a time, nine times over. So it is **one leaf, with 
 variables in its query, and a role which is not a variable name at all**:
 
 ```text
-Leaf(
+leaf(
     query=Query(variable=("tas", "tasmax", "tasmin", "huss", "pr",
                           "sfcWind", "ps", "rsds", "rlds")),   ← an OR: any one of these
     role="field",                                              ← ONE slot, named for
