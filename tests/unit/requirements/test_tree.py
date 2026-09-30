@@ -178,14 +178,14 @@ def test_a_role_is_a_label_and_not_policed_further():
 
 
 def test_all_of_needs_nodes_not_facet_values():
-    # The message is the point: it names the `Leaf(...)` which was probably meant.
+    # Writing a facet value where a leaf was meant is the likely mistake, so the
+    # message names what arrived and what a node is, and `all_of` raises rather than
+    # letting pydantic reject it against the discriminated union.
     with pytest.raises(
         NotANodeError,
         match=re.escape(
             "Expected a node, i.e. one of 'Leaf' and 'AllOf', got str: 'tas'. "
-            "`Leaf` takes a query, everything else takes nodes. "
-            "A facet value is not a node: "
-            "write `Leaf(query=Query(variable='tas'), role=...)`"
+            "`Leaf` takes a query, everything else takes nodes."
         ),
     ) as excinfo:
         all_of("tas")

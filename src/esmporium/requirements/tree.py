@@ -143,17 +143,10 @@ class NotANodeError(TypeError):
         """
         self.value = value
         allowed = readable_list([node_type.__name__ for node_type in NODE_TYPES])
-        hint = ""
-        if isinstance(value, str):
-            hint = (
-                " A facet value is not a node: "
-                f"write `Leaf(query=Query(variable={value!r}), role=...)`, "
-                "with a role saying what the dataset is for."
-            )
         super().__init__(
             f"Expected a node, i.e. one of {allowed}, "
             f"got {type(value).__name__}: {value!r}. "
-            "`Leaf` takes a query, everything else takes nodes." + hint
+            "`Leaf` takes a query, everything else takes nodes."
         )
 
 
@@ -594,9 +587,7 @@ class AllOf(BaseModel):
 
     @model_validator(mode="after")
     def _distinct_roles(self) -> AllOf:
-        # `role_paths` is what raises, because working out the roles is the same walk
-        # as checking them for repeats.
-        role_paths(self)
+        check_roles_are_distinct(self)
 
         return self
 
@@ -759,11 +750,8 @@ class Requirement(BaseModel):
 
     @model_validator(mode="after")
     def _check_tree(self) -> Requirement:
-        role_paths(self.tree)
-        # Fail here, where the requirement is written, rather than when the facets
-        # are actually used.
-        for _, node in walk_leaves(self.tree):
-            effective_query(node, self.where)
+        check_roles_are_distinct(self.tree)
+        check_where_agrees_with_leaves(self.tree, self.where)
 
         return self
 
@@ -841,6 +829,38 @@ def effective_query(node: Leaf, where: QueryCanonical | None) -> QueryCanonical:
         return node.query
 
     return add_facets(node.query, where, node.role, "where")
+
+
+def check_where_agrees_with_leaves(tree: Node, where: QueryCanonical | None) -> None:
+    """
+    Check that a requirement's `where` can be added to every leaf below it
+
+    Returns nothing: this is here to raise. Combining the queries is what finds a
+    disagreement, so [effective_query][(m).effective_query] does the work and the
+    combined queries are thrown away -- they are wanted when the requirement is
+    solved, not now.
+
+    Called when a requirement is built so that the complaint arrives where the
+    mistake was written, rather than later, when the facets are first used.
+
+    Parameters
+    ----------
+    tree
+        The tree whose leaves to check
+
+    where
+        Facets the requirement adds to every leaf, if any
+
+    Raises
+    ------
+    ConflictingFacetsError
+        `where` and a leaf set the same facet to different values
+
+    ClashingFacetsError
+        `where` and a leaf agree on a facet's value but keep it in different homes
+    """
+    for _, leaf in walk_leaves(tree):
+        effective_query(leaf, where)
 
 
 def apply_to_leaves(node: NodeT, update: LeafUpdate) -> NodeT:
@@ -977,6 +997,32 @@ def distinct_role_paths(nodes: Iterable[Node]) -> frozenset[str]:
         raise DuplicateRoleError(duplicated)
 
     return frozenset(seen)
+
+
+def check_roles_are_distinct(node: Node) -> None:
+    """
+    Check that no two leaves below a node resolve the same role
+
+    Returns nothing: this is here to raise, and exists so that a caller which wants
+    the check can ask for the check. Working out the role paths is the same walk as
+    checking them for repeats, so [role_paths][(m).role_paths] does both and its
+    answer is discarded here -- but a call which reads as though it wanted that
+    answer hides what it was really for.
+
+    Parameters
+    ----------
+    node
+        Node to check, together with everything below it
+
+    Raises
+    ------
+    DuplicateRoleError
+        Two leaves which are both used resolve the same role
+
+    TypeError
+        `node` is not a node
+    """
+    role_paths(node)
 
 
 def all_of(*nodes: Node) -> AllOf:
