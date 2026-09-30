@@ -86,7 +86,9 @@ some of the logic, such as `all_of` and `any_of` take any number of children, an
 
 - **`leaf(query=..., role=..., aux=, lineage=, constraints=)`** — exactly
   one dataset per [group](#groups), because a leaf carries everything about one
-  dataset and that is where the work happens. A facet with several values is an OR, exactly as in esmporium, so `variable=("fLuc", "fLUC")` takes either. The role says what the dataset is *for*, which is why pattern scaling's nine variables sit in one leaf called `field`, with the variable itself in the group key. See [A role is not a variable](#a-role-is-not-a-variable) below.
+  dataset and that is where the work happens. A facet with several values is an OR, exactly as in esmporium, so `variable=("fLuc", "fLUC")` takes either.
+  The role says what the dataset is *for*, which is why pattern scaling's nine variables sit in one leaf called `field`,
+  with the variable itself in the group key. See [A role is not a variable](#a-role-is-not-a-variable) below.
 - **`all_of`, `any_of` (ordered) and `optional`** — build **internal nodes, not
   leaves**: each holds child nodes (leaves, or other internal nodes) and says how to
   combine them. `all_of` needs every child; `any_of` takes the first child that can be
@@ -322,6 +324,8 @@ flowchart LR
 ### Which way the dependency runs
 
 `search` will import `requirements`, never the other way round.
+We currently test this explicitly in [test_package.py](https://github.com/esmporium/esmporium/blob/main/tests/unit/requirements/test_package.py).
+We will likely remove this explicit testing in the future once search imports requirements.
 
 Step 2 above is the reason: `search` is going to take `Requirement` objects (PR3.7),
 so it has to import them. That fixes the direction of the dependency for good, and
