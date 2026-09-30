@@ -397,10 +397,13 @@ class Leaf(BaseModel):
     Write it in whichever style suits the project --
     [`Query`][esmporium.query.Query], [`QueryCMIP5`][esmporium.query.QueryCMIP5] and
     the rest all work. It is translated on the way in and stored as a
-    [`QueryCanonical`][esmporium.query.QueryCanonical]: a stored requirement has to
-    reload into a known class, one question must hash the same whichever style it was
-    written in, and turning a requirement back into searches converts *from* canonical.
+    [`QueryCanonical`][esmporium.query.QueryCanonical]
+    (to make the rest of the package and functionality work)
     """
+    # For developers: the reason we store this as `QueryCanonical`
+    # is that a stored requirement has to
+    # reload into a known class, one question must hash the same whichever style it was
+    # written in, and turning a requirement back into searches converts *from* canonical.
 
     role: str
     """
