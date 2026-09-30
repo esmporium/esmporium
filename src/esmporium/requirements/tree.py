@@ -400,13 +400,12 @@ class Leaf(BaseModel):
     [`QueryCanonical`][esmporium.query.QueryCanonical]
     (to make the rest of the package and functionality work)
     """
-    # For developers: the reason we store this as `QueryCanonical`
-    # is that a stored requirement has to
-    # reload into a known class, one question must hash the same whichever style it was
-    # written in, and turning a requirement back into searches converts *from* canonical.
+    # For developers: the reason we store this as `QueryCanonical` is that a stored
+    # requirement has to reload into a known class, one question must hash the same
+    # whichever style it was written in, and turning a requirement back into searches
+    # converts *from* canonical.
 
     role: str
-    """
     """
     The role this leaf plays
 
@@ -417,7 +416,8 @@ class Leaf(BaseModel):
 
     You choose it, freely, subject only to three rules: it cannot be empty, it cannot
     contain a `.` (that separates the nested paths which arrive with lineage and
-    scopes, as in `control.field`), and no two leaves used together may share the same role.
+    scopes, as in `control.field`), and no two leaves used together may share the same
+    role.
     """
 
     _accept_any_style = field_validator("query", mode="before")(_accept_any_query_style)
@@ -573,7 +573,8 @@ class Requirement(BaseModel):
 
     For example, the equilibrium climate sensitivity across forty models is forty
     groups, each resolved and reported on its own. `group_by` names the facets to
-    split on; the groups themselves are not listed up front, but discovered during the solve process.
+    split on; the groups themselves are not listed up front, but discovered during the
+    solve process.
     """
 
     model_config = NODE_MODEL_CONFIG
