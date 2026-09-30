@@ -49,6 +49,17 @@ edited afterwards would leave that fingerprint
 describing something which no longer exists.
 """
 
+ROLE_SEPARATOR = "."
+"""
+Separator between the parts of a role path, e.g. the `.` in `abrupt4x.control.tas`
+
+One constant with two users, which is the reason it is not written out at either of
+them: a role may not contain it (see [Leaf.role][(m).Leaf.role]), *because* it is
+what joins the parts of a path together. A lineage or a scope makes those paths (R4
+and R8), and the rule and the joining have to agree or a role could be written which
+silently splits into two.
+"""
+
 
 # A note for developers:
 # This looks like a duplicate of
@@ -65,7 +76,7 @@ class ConflictingFacetsError(ValueError):
     [`ClashingFacetsError`][esmporium.query.ClashingFacetsError] instead.
     """
 
-    def __init__(self, role: str, facets: Iterable[str], source: str) -> None:
+    def __init__(self, role: str, facets: Iterable[str], source_name: str) -> None:
         """
         Initialise the error
 
@@ -77,15 +88,16 @@ class ConflictingFacetsError(ValueError):
         facets
             Facets which are set differently
 
-        source
-            Where the other values come from, e.g. `"where"`
+        source_name
+            What to call, in the message, the thing the other values came from,
+            e.g. `"where"`. A label for the reader, not the values themselves.
         """
         self.role = role
         self.facets = tuple(sorted(facets))
         super().__init__(
-            f"{source} sets {readable_list(self.facets)} "
+            f"{source_name} sets {readable_list(self.facets)} "
             f"differently to leaf {role!r}. "
-            f"Set each facet once: on the leaf or in {source}, not both. "
+            f"Set each facet once: on the leaf or in {source_name}, not both. "
             "Repeating a facet with the same values is fine, "
             "it is only a disagreement which is refused."
         )
@@ -306,7 +318,10 @@ def _normalise(facets: dict[str, Any]) -> QueryCanonical:
 
 
 def add_facets(
-    query: QueryCanonical, adding: QueryCanonical, role: str, source: str
+    query: QueryCanonical,
+    incoming: QueryCanonical,
+    role: str,
+    source_name: str,
 ) -> QueryCanonical:
     """
     Add one query's facets to a leaf's query
@@ -322,26 +337,27 @@ def add_facets(
     Parameters
     ----------
     query
-        The leaf's query
+        The leaf's query, i.e. the one being added to
 
-    adding
-        Facets to add
+    incoming
+        Query whose facets are added to `query`
 
     role
         Role of the leaf, used in error messages
 
-    source
-        Where the facets come from, used in error messages
+    source_name
+        What to call `incoming` in error messages, e.g. `"where"`.
+        A label for the reader; `incoming` carries the facets themselves.
 
     Returns
     -------
     :
-        `query` with `adding`'s facets added
+        `query` with `incoming`'s facets added
 
     Raises
     ------
     ConflictingFacetsError
-        `adding` and `query` set the same facet to different values
+        `incoming` and `query` set the same facet to different values
 
     ClashingFacetsError
         Between them they set one facet in two different homes, so where the facet
@@ -377,20 +393,21 @@ def add_facets(
     {}
     """
     already = set_facets(query)
-    incoming = set_facets(adding)
+    to_add = set_facets(incoming)
 
     conflicts = {
-        name for name, values in incoming.items() if already.get(name, values) != values
+        name for name, values in to_add.items() if already.get(name, values) != values
     }
     if conflicts:
-        raise ConflictingFacetsError(role, conflicts, source)
+        raise ConflictingFacetsError(role, conflicts, source_name)
 
     merged = tuple(
-        {**mine, **theirs} for mine, theirs in zip(_homes(query), _homes(adding))
+        {**mine, **theirs} for mine, theirs in zip(_homes(query), _homes(incoming))
     )
     declared, query_specific, other = merged
 
-    # One facet, two homes: the leaf put it in `other_terms` and `source` declares it,
+    # One facet, two homes: the leaf put it in `other_terms` and `incoming` declares
+    # it,
     # say. Nothing can decide which wins, and it is the same ambiguity a single query
     # naming a facet twice would raise, so it raises the same error.
     seen = [name for home in merged for name in home]
@@ -450,8 +467,9 @@ class Leaf(BaseModel):
     later, so it wants to read as a job rather than as a value.
 
     You choose it, freely, subject only to three rules: it cannot be empty, it cannot
-    contain a `.` (that separates the nested paths which arrive with lineage and
-    scopes, as in `control.field`), and no two leaves used together may share one.
+    contain a [ROLE_SEPARATOR][(m).ROLE_SEPARATOR] (that separates the nested paths
+    which arrive with lineage and scopes, as in `control.field`), and no two leaves
+    used together may share one.
     """
 
     def __init__(self, **data: Any) -> None:
@@ -472,13 +490,19 @@ class Leaf(BaseModel):
         # itself. Raised from a validator, pydantic wraps it in a `ValidationError`,
         # which is the right answer for a requirement being *loaded* -- one bad leaf
         # should be reported alongside everything else wrong with the document -- but
-        # buries the message for someone writing one by hand. `model_validate` and
-        # `model_validate_json` do not call `__init__`, so loading still goes through
-        # the validator.
+        # buries the message for someone writing one by hand.
         #
-        # Only when there is a query object to ask and a role to name it by. A mapping
-        # is a requirement being loaded rather than written, and anything else is
-        # pydantic's to complain about, in its own words.
+        # Note that defining `__init__` at all sets pydantic's
+        # `__pydantic_custom_init__`, which routes *every* path through it:
+        # `model_validate` and `model_validate_json` call this too, and pass every
+        # field, `kind` included. So `__init__` cannot be the thing which separates
+        # writing from loading, and the guard below is.
+        #
+        # It raises only when there is a query object to ask and a role to name it by.
+        # On the loading path `query` is a mapping, so `asks_nothing` is False however
+        # empty it is, and `_query_sets_a_facet` refuses it a moment later -- wrapped,
+        # which is what loading wants. Anything else is pydantic's to complain about,
+        # in its own words.
         query = data.get("query")
         role = data.get("role")
         asks_nothing = (
@@ -501,10 +525,10 @@ class Leaf(BaseModel):
         # empty one in any message which quotes it, and is never what was meant.
         # Capitals, spaces within, and length are all left alone: a role is a label
         # someone chose, and this is not the place to have opinions about their naming.
-        if not value.strip() or "." in value:
+        if not value.strip() or ROLE_SEPARATOR in value:
             msg = (
                 "Roles must have some non-whitespace content "
-                f"and contain no '.', got {value!r}"
+                f"and contain no {ROLE_SEPARATOR!r}, got {value!r}"
             )
             raise ValueError(msg)
 
@@ -613,7 +637,7 @@ A new node type is added here as well as to the union.
 
 class Requirement(BaseModel):
     """
-    The root of a requirement: the tree, plus how datasets are grouped
+    The root of a requirement: the tree, plus how solving splits it into groups
 
     A requirement is solved once per **group**, and a group is one run of the
     analysis.
@@ -661,14 +685,56 @@ class Requirement(BaseModel):
     """
     Facet -> values in order of preference, used to break ties between candidates
 
+    The earliest value listed wins, and this is not special to `variable`:
+    `prefer={"grid_label": ("gn", "gr")}` breaks the same kind of tie. A tie which
+    survives `prefer` is settled by [cardinality][(m).Requirement.cardinality].
+
     Project-specific facets can be used, on the same terms as `group_by`.
     """
+    # A note on why this is a mapping rather than a callable, which would let a user
+    # inject their own ranking. A requirement is fingerprinted by
+    # `requirement_hash`, via `canonical_json`, and a function has no canonical form:
+    # `model_dump(mode="json")` raises `PydanticSerializationError` on one. Losing the
+    # fingerprint would lose the only question it exists to answer, which is whether
+    # two solves were of the same requirement.
+    #
+    # So pluggable ranking is possible, but it has to arrive the way `Constraint`
+    # does: a pydantic model stored with its import path. That pattern lands in R5,
+    # and nothing reads `prefer` until R3, so this waits for it rather than guessing
+    # at it now.
 
     cardinality: Literal["one", "all"] = "one"
     """
     How many datasets each leaf resolves to per group
 
-    `"one"` treats several remaining candidates as ambiguous.
+    `"one"`, the default, is the usual case: a leaf fills one slot, so several
+    surviving candidates are a question nobody has answered rather than a result.
+    The group is reported `ambiguous` and nothing is picked, which is the point --
+    guessing would make the analysis depend on which dataset happened to be listed
+    first. `prefer` is how a tie is settled on purpose.
+
+    `"all"` is for an analysis whose subject *is* the spread across candidates.
+    Ensemble spread is the worked example: the variance across a model's variants is
+    one number computed from every variant together, so the leaf wants all of them.
+    Written with `group_by=("model",)` and `cardinality="all"`, that is one run per
+    model, each holding however many variants that model published.
+
+    It is worth contrasting with the other way to write something variant-shaped,
+    because they are easy to confuse and answer different questions:
+
+    ```text
+      group_by = ("model", "variant_label")   |  group_by = ("model",)
+      cardinality = "one"                     |  cardinality = "all"
+      ----------------------------------------+---------------------------------
+      one run PER variant                     |  one run per MODEL
+      each run sees a single variant          |  each run sees every variant
+      "do this for r1, then for r2, ..."      |  "compare r1, r2, ... to each
+                                              |   other"
+    ```
+
+    So the test to apply is the one the tree itself uses: a facet the analysis
+    repeats *over* belongs in `group_by`, and candidates it needs *together* are what
+    `"all"` is for.
     """
 
     def __init__(self, tree: Node | None = None, /, **data: Any) -> None:
@@ -821,7 +887,7 @@ def walk_leaves(node: Node, role_prefix: str = "") -> Iterator[tuple[str, Leaf]]
 
     role_prefix
         Role path prefix the node sits under, e.g. `"abrupt4x."` giving
-        `abrupt4x.field`
+        `abrupt4x.field`, joined with [ROLE_SEPARATOR][(m).ROLE_SEPARATOR]
 
         Always empty for now. It is here because a node which renames the leaves below
         it is what makes the same role usable twice, and that node is the point of this
