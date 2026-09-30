@@ -324,7 +324,7 @@ flowchart LR
 ### Which way the dependency runs
 
 `search` will import `requirements`, never the other way round.
-We currently test this explicitly in [test_package.py](https://github.com/esmporium/esmporium/blob/main/tests/unit/requirements/test_package.py).
+We currently test this explicitly in [test_package.py].
 We will likely remove this explicit testing in the future once search imports requirements.
 
 Step 2 above is the reason: `search` is going to take `Requirement` objects (PR3.7),
