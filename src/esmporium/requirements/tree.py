@@ -6,8 +6,8 @@ downward to leaves at the tips (a leaf is a node with no children). Each require
 tree represents one run of an analysis: solved once per group. For example,
 grouped by model means one requirement tree per model.
 
-The one rule to hold onto is what each of them takes: **[Leaf][(m).Leaf] takes a
-query (in any query style), everything else takes nodes.**
+The one rule to hold onto is what each of them takes: **a leaf takes a query
+(in any query style), everything else takes nodes.**
 """
 
 # TODO: A note for whoever adds the next node type. The node types are purely additive:
@@ -127,7 +127,7 @@ class NotANodeError(TypeError):
     Raised when something which is not a node is used where a node is needed
 
     Most often a facet value written where a leaf was meant.
-    [Leaf][(m).Leaf] takes a query; everything else takes nodes.
+    A leaf takes a query; everything else takes nodes.
     """
 
     def __init__(self, value: object) -> None:
@@ -144,7 +144,7 @@ class NotANodeError(TypeError):
         super().__init__(
             f"Expected a node, i.e. one of {allowed}, "
             f"got {type(value).__name__}: {value!r}. "
-            "`Leaf` takes a query, everything else takes nodes."
+            "A leaf takes a query, everything else takes nodes."
         )
 
 
@@ -352,8 +352,7 @@ def add_facets(
     declared, query_specific, other = merged
 
     # One facet, two homes: the leaf put it in `other_terms` and `incoming` declares
-    # it,
-    # say. Nothing can decide which wins, and it is the same ambiguity a single query
+    # it. Nothing can decide which wins, and it is the same ambiguity a single query
     # naming a facet twice would raise, so it raises the same error.
     seen = [name for home in merged for name in home]
     doubled = {name for name in seen if seen.count(name) > 1}
@@ -607,7 +606,7 @@ class Requirement(BaseModel):
 
     group_by: tuple[str, ...]
     """
-    Facets which define a group, i.e. what counts as one run of the analysis
+    Facets which define a group, i.e. what counts as one requirement tree
 
     Required, deliberately. `("model", "variant_label")` is what most analyses want,
     and is the reason this has no default: a grouping decides what "one run" means,
@@ -740,14 +739,18 @@ def effective_query(node: Leaf, where: QueryCanonical | None) -> QueryCanonical:
     return add_facets(node.query, where, node.role, "where")
 
 
+# TODO for future: R3 brings the solver, which needs these combined queries for
+# real. They are
+# worked out here and thrown away because this is a check rather than a
+# calculation; if that double work ever matters, the seam is a variant which
+# returns them.
 def check_where_agrees_with_leaves(tree: Node, where: QueryCanonical | None) -> None:
     """
     Check that a requirement's `where` can be added to every leaf below it
 
     Returns nothing: this is here to raise. Combining the queries is what finds a
     disagreement, so [effective_query][(m).effective_query] does the work and the
-    combined queries are thrown away -- they are wanted when the requirement is
-    solved, not now.
+    combined queries are thrown away.
 
     Called when a requirement is built so that the complaint arrives where the
     mistake was written, rather than later, when the facets are first used.
@@ -908,6 +911,11 @@ def distinct_role_paths(nodes: Iterable[Node]) -> frozenset[str]:
     return frozenset(seen)
 
 
+# TODO future: Distinct *roles* is today's rule because every leaf sits at the
+# top level. R4
+# and R8 bring scopes, which rename the leaves below them, so one role becomes
+# legal in two scopes and only the role *path* has to stay distinct. That is why
+# this is built on `role_paths` rather than on roles.
 def check_roles_are_distinct(node: Node) -> None:
     """
     Check that no two leaves below a node resolve the same role

@@ -187,7 +187,7 @@ def test_all_of_needs_nodes_not_facet_values():
         NotANodeError,
         match=re.escape(
             "Expected a node, i.e. one of 'Leaf' and 'AllOf', got str: 'tas'. "
-            "`Leaf` takes a query, everything else takes nodes."
+            "A leaf takes a query, everything else takes nodes."
         ),
     ) as excinfo:
         all_of("tas")
@@ -258,7 +258,7 @@ def test_the_walkers_refuse_a_non_node(walker):
         NotANodeError,
         match=re.escape(
             "Expected a node, i.e. one of 'Leaf' and 'AllOf', got str: 'tas'. "
-            "`Leaf` takes a query, everything else takes nodes"
+            "A leaf takes a query, everything else takes nodes"
         ),
     ):
         walker("tas")
