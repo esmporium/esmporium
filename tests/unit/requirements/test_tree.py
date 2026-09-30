@@ -270,12 +270,27 @@ def test_where_adds_facets_to_every_leaf():
         all_of(Leaf(query=Query(variable="sftlf"), role="land_fraction")),
     )
 
-    updated = tree.where(experiment="1pctCO2", reporting_interval="mon")
+    updated = tree.where(Query(experiment="1pctCO2", reporting_interval="mon"))
 
     for _, leaf in walk_leaves(updated):
         facets = set_facets(leaf.query)
         assert facets["experiment"] == ("1pctCO2",)
         assert facets["reporting_interval"] == ("mon",)
+
+
+def test_where_can_add_a_project_specific_facet():
+    # The reason `.where()` takes a query rather than keyword facets. Keywords could
+    # only name what `Query` declares, so CMIP5's `product` -- which a leaf holds
+    # perfectly well -- was a facet no node above it could add.
+    tree = all_of(a_leaf(role="field"))
+
+    updated = tree.where(QueryCMIP5(product="output1"))
+
+    # And it lands in its own home, not shoved into the escape hatch, which matters
+    # because home is part of the question: the two hash differently.
+    query = updated.children[0].query
+    assert query.query_specific_facets == {"product": ("output1",)}
+    assert query.other_terms == {}
 
 
 def test_where_contradicting_a_leaf_is_an_error():
@@ -288,7 +303,7 @@ def test_where_contradicting_a_leaf_is_an_error():
             r"Set each facet once: on the leaf or in where, not both"
         ),
     ) as excinfo:
-        tree.where(reporting_interval="mon")
+        tree.where(Query(reporting_interval="mon"))
 
     # Which facet disagrees is in the `match` above; this is which leaf it was on.
     assert excinfo.value.role == "field"
@@ -296,7 +311,7 @@ def test_where_contradicting_a_leaf_is_an_error():
 
     # The half most likely to regress: `where` exists to say something about every
     # leaf, so a leaf which already says the same thing is fine, not a clash.
-    agreed = tree.where(reporting_interval="day")
+    agreed = tree.where(Query(reporting_interval="day"))
     assert set_facets(agreed.children[0].query)["reporting_interval"] == ("day",)
 
 
@@ -310,8 +325,9 @@ def test_requirement_where_contradicting_a_leaf_is_an_error():
         ),
     ):
         Requirement(
-            all_of(a_leaf(role="field", reporting_interval="day")),
+            tree=all_of(a_leaf(role="field", reporting_interval="day")),
             name="clash",
+            group_by=("model",),
             where=Query(reporting_interval="mon"),
         )
 
@@ -339,7 +355,7 @@ def test_agreeing_in_a_different_home_is_a_clash():
             "not both"
         ),
     ):
-        tree.where(experiment="historical")
+        tree.where(Query(experiment="historical"))
 
 
 def test_a_value_disagreement_is_reported_before_a_home_one():
@@ -356,7 +372,7 @@ def test_a_value_disagreement_is_reported_before_a_home_one():
             "Set each facet once: on the leaf or in where, not both"
         ),
     ):
-        tree.where(experiment="1pctCO2")
+        tree.where(Query(experiment="1pctCO2"))
 
 
 # ---------------------------------------------------------- Requirement: storing it
@@ -373,7 +389,7 @@ def a_requirement(**overrides) -> Requirement:
         **overrides,
     }
 
-    return Requirement(all_of(a_leaf(role="field")), **settings)
+    return Requirement(tree=all_of(a_leaf(role="field")), **settings)
 
 
 def test_round_trip():
@@ -405,7 +421,11 @@ def test_hash_changes_with_content(change):
 
 def test_hash_ignores_query_style_but_not_home():
     def with_query(query):
-        return Requirement(all_of(Leaf(query=query, role="field")), name="x")
+        return Requirement(
+            tree=all_of(Leaf(query=query, role="field")),
+            name="x",
+            group_by=("model",),
+        )
 
     # Style is normalised away: these are one question written two ways.
     in_cmip6_names = with_query(QueryCMIP6(variable_id="tas"))
@@ -427,12 +447,6 @@ def test_project_specific_facets_are_allowed_when_building():
     )
 
     assert requirement.group_by == ("model", "product")
-
-
-def test_the_tree_reads_better_positionally():
-    tree = all_of(a_leaf(role="field"))
-
-    assert Requirement(tree, name="x") == Requirement(name="x", tree=tree)
 
 
 def test_a_requirement_is_a_root_and_not_a_node():

@@ -49,6 +49,10 @@ Within a group, a leaf resolves to **exactly one** dataset. Several surviving
 candidates make the group `ambiguous`, none makes it `unsatisfied`, and every group
 is judged on its own — one model can resolve while the next does not.
 
+(That is `cardinality="one"`, the default. `cardinality="all"` is for an analysis
+whose subject *is* the spread across candidates — see
+[Which one gets picked](#which-one-gets-picked).)
+
 ## The tree
 
 A requirement is a **tree**: one root node at the top branching downward to *leaves*
@@ -91,15 +95,23 @@ a child.
   otherwise it is absent. They take *nodes* as arguments, whereas `Leaf` takes a
   *query*.
 - **`scope(name, child, constraints=)`** — an internal node that prefixes roles, so the same role can appear twice (`abrupt4x.tas` and `abrupt2x.tas`), and holds checks which compare leaves.
-- **`Requirement(tree, name=, where=, group_by=, prefer=, cardinality=, constraints=)`** — the root.
+- **`Requirement(tree=, name=, group_by=, where=, prefer=, cardinality=, constraints=)`** — the root.
+  `tree`, `name` and `group_by` are required: a grouping decides what "one run" means, so it is
+  stated rather than defaulted. Write `group_by=("model", "variant_label")` when that is what you want.
 
 Every node has the same three ways to say something about the leaves below it, and each pushes down to the leaves:
 
 | Helper | Sets | Contradiction |
 |---|---|---|
-| `.where(**facets)` | facets on each leaf's query | raises `ConflictingFacetsError` |
+| `.where(query)` | facets on each leaf's query | raises `ConflictingFacetsError` |
 | `.with_lineage(relation)` | how each leaf finds its control | raises `ConflictingLineageError` |
 | `.with_constraints(*checks)` | checks on each leaf, one leaf at a time | adds |
+
+`.where()` takes a query, in any style, rather than keyword facets — for the same
+reason a leaf does. A query can name any facet, including one only a project names,
+so `.where(QueryCMIP5(product="output1"))` works; keywords could only have reached
+the facets `Query` declares, which made CMIP5's `product` a facet a leaf could hold
+but nothing above it could add.
 
 `Requirement.where` does the same thing for the whole tree, and raises the same
 error when a leaf already sets a facet differently: **set each facet once.**

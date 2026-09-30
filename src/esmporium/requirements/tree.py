@@ -31,7 +31,6 @@ from esmporium.formatting import readable_list
 from esmporium.query import (
     CANONICAL_FACETS,
     ClashingFacetsError,
-    Query,
     QueryCanonical,
     QueryProtocol,
     to_canonical,
@@ -280,36 +279,6 @@ def _homes(query: QueryCanonical) -> tuple[dict[str, tuple[str, ...]], ...]:
     return declared, dict(query.query_specific_facets), dict(query.other_terms)
 
 
-def _normalise(facets: dict[str, Any]) -> QueryCanonical:
-    """
-    Turn the keyword arguments of `.where()` into a query
-
-    Nothing is checked here. The facets are handed straight to
-    [`Query`][esmporium.query.Query], so that `.where()` obeys the same rules as
-    writing a query anywhere else and this module never grows a second opinion about
-    what a facet is. Three things follow from that: a single value becomes a tuple, so
-    `.where(variable="tas")` and `.where(variable=("tas",))` are the same thing; a
-    misspelt known facet name is an error rather than a facet which silently matches
-    nothing for ever; and `other_terms` is accepted, because it is a field of `Query`
-    like any other.
-
-    It is also the limit of this route. `Query` has no field for a facet like CMIP5's
-    `product`, so `.where(product=...)` is an error: pass a query which does name it,
-    or put it in `other_terms`.
-
-    Parameters
-    ----------
-    facets
-        Facet values, as given to `.where()`
-
-    Returns
-    -------
-    :
-        The facets, as a query
-    """
-    return _canonical(Query(**facets))
-
-
 def add_facets(
     query: QueryCanonical,
     incoming: QueryCanonical,
@@ -536,14 +505,26 @@ class Leaf(BaseModel):
 
         return self
 
-    def where(self, **facets: Any) -> Leaf:
+    def where(self, query: QueryProtocol) -> Leaf:
         """
-        Add facets to this leaf's query
+        Add a query's facets to this leaf's query
+
+        Takes a query rather than keyword facets, for the same reason
+        [Leaf.query][(m).Leaf.query] does: a query in any style can name any facet,
+        including one only a project names. Keywords could only reach the facets
+        [`Query`][esmporium.query.Query] declares, so a facet a leaf could hold --
+        CMIP5's `product` -- was one `.where()` could not add.
+
+        Whatever `Query` decides about a facet still applies, because the query is
+        built before it arrives here: a single value becomes a tuple, so
+        `Query(variable="tas")` and `Query(variable=("tas",))` are the same thing, and
+        a misspelt known facet name is an error rather than a facet which silently
+        matches nothing for ever.
 
         Parameters
         ----------
-        **facets
-            Facet values
+        query
+            Query whose facets to add, in any style
 
         Returns
         -------
@@ -560,7 +541,7 @@ class Leaf(BaseModel):
         """
         return self.model_copy(
             update={
-                "query": add_facets(self.query, _normalise(facets), self.role, "where")
+                "query": add_facets(self.query, _canonical(query), self.role, "where")
             }
         )
 
@@ -591,14 +572,17 @@ class AllOf(BaseModel):
 
         return self
 
-    def where(self, **facets: Any) -> AllOf:
+    def where(self, query: QueryProtocol) -> AllOf:
         """
-        Add facets to every leaf below this node
+        Add a query's facets to every leaf below this node
+
+        Takes a query for the reason [Leaf.where][(m).Leaf.where] does, and hands it
+        to each leaf unchanged.
 
         Parameters
         ----------
-        **facets
-            Facet values
+        query
+            Query whose facets to add, in any style
 
         Returns
         -------
@@ -614,7 +598,7 @@ class AllOf(BaseModel):
             A leaf already sets one of these facets to the same value, but in a
             different home
         """
-        return apply_to_leaves(self, lambda each_leaf: each_leaf.where(**facets))
+        return apply_to_leaves(self, lambda each_leaf: each_leaf.where(query))
 
 
 NODE_TYPES: tuple[type, ...] = (Leaf, AllOf)
@@ -667,9 +651,14 @@ class Requirement(BaseModel):
     default.
     """
 
-    group_by: tuple[str, ...] = ("model", "variant_label")
+    group_by: tuple[str, ...]
     """
     Facets which define a group, i.e. what counts as one run of the analysis
+
+    Required, deliberately. `("model", "variant_label")` is what most analyses want,
+    and is the reason this has no default: a grouping decides what "one run" means,
+    and an analysis which never said so is indistinguishable from one which meant
+    something else. Write the usual pair out when it is what you want.
     """
 
     prefer: dict[str, tuple[str, ...]] = Field(default_factory=dict)
@@ -727,24 +716,6 @@ class Requirement(BaseModel):
     repeats *over* belongs in `group_by`, and candidates it needs *together* are what
     `"all"` is for.
     """
-
-    def __init__(self, tree: Node | None = None, /, **data: Any) -> None:
-        """
-        Initialise
-
-        Parameters
-        ----------
-        tree
-            The tree, which reads better positionally than as a keyword.
-            Can also be passed by keyword.
-
-        **data
-            The other fields
-        """
-        if tree is not None:
-            data["tree"] = tree
-
-        super().__init__(**data)
 
     _accept_any_style = field_validator("where", mode="before")(_accept_any_query_style)
 
