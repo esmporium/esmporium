@@ -37,6 +37,14 @@ from esmporium.requirements.catalogue import (
     matches,
     set_facets,
 )
+from esmporium.requirements.solve import (
+    Explanation,
+    ResolvedGroup,
+    SolveResult,
+    UnresolvedGroup,
+    describe_query,
+    solve,
+)
 from esmporium.requirements.tree import (
     AllOf,
     ConflictingFacetsError,
@@ -59,15 +67,21 @@ __all__ = [
     "DuplicateEntryIDError",
     "DuplicateRoleError",
     "EmptyLeafQueryError",
+    "Explanation",
     "InMemoryCatalogue",
     "Leaf",
     "Node",
     "NotANodeError",
     "Requirement",
+    "ResolvedGroup",
+    "SolveResult",
     "UnrecordedFacetError",
+    "UnresolvedGroup",
     "all_of",
+    "describe_query",
     "leaf",
     "matches",
     "requirement",
     "set_facets",
+    "solve",
 ]
