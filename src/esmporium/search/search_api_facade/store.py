@@ -30,8 +30,7 @@ from esmporium.search.search_api_facade.result_parsers import (
     ResultParserProtocol,
     SolrSingleRowResultParser,
     SolrVariableBundleResultParser,
-    stac_east_n_matches,
-    stac_west_n_matches,
+    stac_n_matches,
 )
 
 RetryingBuilder = Callable[[], Retrying]
@@ -166,14 +165,14 @@ def get_default_facade_definition(project: str, host: str) -> FacadeDefinition: 
         elif host in esgfng_east_hosts:
             facade_parameters = ESGFNG_CMIP6_FACADE_PARAMETERS
             result_parser = ESGFNGResultParser(
-                read_n_matches=stac_east_n_matches,
+                read_n_matches=stac_n_matches,
             )
             search_api_type = SearchAPIESGFNGSTAC
 
         elif host in esgfng_west_hosts:
             facade_parameters = ESGFNG_CMIP6_FACADE_PARAMETERS
             result_parser = ESGFNGResultParser(
-                read_n_matches=stac_west_n_matches,
+                read_n_matches=stac_n_matches,
             )
             search_api_type = SearchAPIESGFNGSTAC
 
@@ -196,14 +195,14 @@ def get_default_facade_definition(project: str, host: str) -> FacadeDefinition: 
         elif host in esgfng_east_hosts:
             facade_parameters = ESGFNG_CMIP7_FACADE_PARAMETERS
             result_parser = ESGFNGResultParser(
-                read_n_matches=stac_east_n_matches,
+                read_n_matches=stac_n_matches,
             )
             search_api_type = SearchAPIESGFNGSTAC
 
         elif host in esgfng_west_hosts:
             facade_parameters = ESGFNG_CMIP7_FACADE_PARAMETERS
             result_parser = ESGFNGResultParser(
-                read_n_matches=stac_west_n_matches,
+                read_n_matches=stac_n_matches,
             )
             search_api_type = SearchAPIESGFNGSTAC
 

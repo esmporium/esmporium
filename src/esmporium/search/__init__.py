@@ -123,8 +123,7 @@ from esmporium.search.search_api_facade import (
     get_unexpressible_facets,
     identity_string,
     merge_other_terms,
-    stac_east_n_matches,
-    stac_west_n_matches,
+    stac_n_matches,
 )
 
 __all__ = [
@@ -231,7 +230,6 @@ __all__ = [
     "read_response_path",
     "search",
     "search_single_project",
-    "stac_east_n_matches",
-    "stac_west_n_matches",
+    "stac_n_matches",
     "values_set_for",
 ]

@@ -663,14 +663,19 @@ def test_search_ors_within_a_facet(client, facade, make_query):
 # Our STAC result parsing leans on a few things the two ESGF-NG deployments (east and
 # west) publish: the project specific id in `properties.title`,
 # the project in a top-level `collection` key
-# and the match count in `numberMatched` or `numMatched`/`context.matched`.
+# and the match count in `numberMatched`.
 # Those are pinned against fabricated docs in `tests/unit/search/test_result_parsers.py`
 # and against recorded responses in `tests/unit/search/test_recorded_responses.py`,
 # but a recording only notices a change when it is refreshed by hand.
-# ESGF plans to converge east and west,
-# so these assert the assumptions against the *live* responses: the day a
-# deployment changes shape (or the two converge), the relevant test fails loudly rather
+# So these assert the assumptions against the *live* responses: the day a
+# deployment changes shape, the relevant test fails loudly rather
 # than our parsers silently reading the wrong field.
+#
+# The deployments used to differ on the count, and these tests are what told us they
+# had stopped: west used to write `numMatched` and `context.matched` and no
+# `numberMatched` at all, which is why there was a reader per deployment. It now
+# writes the STAC spelling like east does, so one reader serves both and the
+# assumption below is the same for every case.
 
 EAST_HOST = "search.east.esgf.io"
 WEST_HOST = "search.west.esgf.io"
@@ -735,27 +740,18 @@ def test_live_stac_project_lives_in_collection(client, project, host, query):
 
 
 @pytest.mark.parametrize("project, host, query", NG_STAC_CASES)
-def test_live_stac_match_count_key_matches_the_deployment(client, project, host, query):
-    """East reports the count as `numberMatched`; west uses `numMatched`/`context`.
+def test_live_stac_match_count_key_reports_the_stac_spelling(
+    client, project, host, query
+):
+    """Every deployment reports the count as `numberMatched`, which is STAC's spelling
 
-    The count is read by a deployment-specific reader (`stac_east_n_matches` vs
-    `stac_west_n_matches`). If east dropped `numberMatched`, or west started sending it,
-    that split -- and the readers that depend on it -- would be wrong.
+    `stac_n_matches` reads that key first for all of them, and only falls back to the
+    spellings west used to send. A deployment dropping it would mean we are reading
+    the count out of a fallback without knowing, or not at all.
     """
     raw, _ = fetch_raw_stac_or_skip(client, project, host, query)
 
-    if host == EAST_HOST:
-        assert "numberMatched" in raw, (
-            f"{host} no longer reports the count as `numberMatched`"
-        )
-    else:
-        assert "numberMatched" not in raw, (
-            f"{host} now reports `numberMatched` (have east and west converged?)"
-        )
-        context = raw.get("context")
-        has_west_count = "numMatched" in raw or (
-            isinstance(context, dict) and "matched" in context
-        )
-        assert has_west_count, (
-            f"{host} reports neither `numMatched` nor `context.matched`"
-        )
+    assert "numberMatched" in raw, (
+        f"{host} does not report the count as `numberMatched`, only: "
+        f"{sorted(key for key in raw if key != 'features')}"
+    )
