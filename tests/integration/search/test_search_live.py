@@ -395,52 +395,6 @@ def test_search_applies_the_facets_we_send(  # noqa: PLR0913 - parametrised, plu
     assert success.num_results == 0
 
 
-PAGING_DRIFT_TOLERANCE = 0.02
-"""
-How far the records collected by paging may fall from the total reported, as a fraction
-
-The total is read from the first page, but the index keeps being published to while we
-page through the rest, so the two disagree by however much moved during the scan. We
-have seen this live: a CMIP7 scan reported 569 and collected 571, and that same query
-reported 664 a fortnight later.
-
-The tolerance has to stay well under one page, because the bugs this is guarding
-against are page-sized: paging that stops early loses a whole page, and paging that
-re-walks loses or repeats one. We page in about four, so a page is ~25% of the total
-and a couple of percent of drift cannot hide one.
-"""
-
-
-def assert_paging_covered_the_result_set(
-    host: str, *, collected: int, total: int | None
-) -> None:
-    """
-    Check that paging collected the whole result set, give or take a moving index
-
-    Parameters
-    ----------
-    host
-        The host that was paged through, named in the failure
-
-    collected
-        How many records paging actually collected, across every page
-
-    total
-        How many records the first page reported matched,
-        or `None` if that response carried no count we could read
-    """
-    if total is None:
-        pytest.skip(f"{host} reported no total, so there is nothing to compare against")
-
-    allowed = max(1, round(total * PAGING_DRIFT_TOLERANCE))
-
-    assert abs(collected - total) <= allowed, (
-        f"{host} said {total} matched but paging collected {collected}, "
-        f"which is more than the {allowed} record(s) of drift we allow for the index "
-        "shifting mid-scan: paging is losing or repeating records"
-    )
-
-
 @pytest.mark.parametrize("api, query", LIVE_CASES)
 def test_search_pages_through_all_the_results(client, api, query, skip_or_fail):
     """
@@ -492,8 +446,19 @@ def test_search_pages_through_all_the_results(client, api, query, skip_or_fail):
         f"{host} was paged at {page_size} of {total}, but only one page was fetched"
     )
     # ...and the pages between them covered the whole result set.
-    assert_paging_covered_the_result_set(
-        host, collected=len(outcome.parsed_docs[facade_key]), total=total
+    collected = len(outcome.parsed_docs[facade_key])
+    # It is possible to do a search and get the total,
+    # then get a different result once you've paged through
+    # because results are published in the meantime.
+    # This gives some tolerance for this (unlikely) possibility.
+    drift_tolerance = 0.02
+    assert total is not None, "No total reported"
+    allowed_delta = drift_tolerance * total
+    assert abs(collected - total) <= allowed_delta, (
+        f"{host} said {total} matched but paging collected {collected}, "
+        f"which differs by more than the {allowed_delta} record(s) of drift "
+        "we allow for the index shifting mid-scan: "
+        "paging is losing or repeating records"
     )
 
 
