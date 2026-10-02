@@ -453,11 +453,12 @@ def test_search_pages_through_all_the_results(client, api, query, skip_or_fail):
     # This gives some tolerance for this (unlikely) possibility.
     drift_tolerance = 0.02
     assert total is not None, "No total reported"
-    allowed = total * (1 + drift_tolerance)
-    assert collected <= allowed, (
+    allowed_delta = drift_tolerance * total
+    assert abs(collected - total) <= allowed_delta, (
         f"{host} said {total} matched but paging collected {collected}, "
-        f"which is more than the {allowed} record(s) of drift we allow for the index "
-        "shifting mid-scan: paging is losing or repeating records"
+        f"which differs by more than the {allowed_delta} record(s) of drift "
+        "we allow for the index shifting mid-scan: "
+        "paging is losing or repeating records"
     )
 
 
