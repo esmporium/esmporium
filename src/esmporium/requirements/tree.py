@@ -657,6 +657,19 @@ class Requirement(BaseModel):
     wants all of them.
     Written with `group_by=("model",)` and `cardinality="all"`, that is one run per
     model, each holding however many variants that model published.
+
+    Why `"one"` cannot express that, however it is grouped: `group_by` splits the work
+    into runs, and `cardinality` says how many datasets a role holds *inside* one run.
+    They are different questions, and grouping does not answer the second. Adding
+    `variant_label` to `group_by` does give each of a model's variants a home, but a
+    run of its own, which is one answer per variant where the analysis wants a single
+    answer computed from all of them. Leaving it out puts them in one run, where
+    `"one"` finds several candidates for a slot which holds one, has nothing to choose
+    between them, and reports the group `ambiguous` -- correctly, because it cannot
+    tell this case from a genuine tie. `"all"` is how the requirement says it is not
+    a tie.
+
+    The three cases are worked through side by side in [requirement][(m).requirement].
     """
 
     _accept_any_style = field_validator("where", mode="before")(_accept_any_query_style)
@@ -1075,6 +1088,85 @@ def requirement(  # noqa: PLR0913 - one argument per field of the requirement
 
     ClashingFacetsError
         `where` and a leaf agree on a facet's value but keep it in different homes
+
+    Examples
+    --------
+    Two arguments decide the *shape* of the answer: `group_by`, which splits the
+    work into runs, and `cardinality`, which says how many datasets one role holds
+    inside a run. Here is the difference, over one model which published `tas` three
+    times, once per variant:
+
+    >>> from esmporium.query import Query
+    >>> from esmporium.requirements import CatalogueEntry, InMemoryCatalogue, solve
+    >>> def published(entry_id: int, variant_label: str) -> CatalogueEntry:
+    ...     return CatalogueEntry(
+    ...         id=entry_id,
+    ...         id_project_specific=f"CMIP6.CanESM5.historical.tas.{variant_label}",
+    ...         project="CMIP6",
+    ...         model="CanESM5",
+    ...         institution="CCCma",
+    ...         experiment="historical",
+    ...         variant_label=variant_label,
+    ...         variable="tas",
+    ...         reporting_interval="mon",
+    ...         grid_label="gn",
+    ...         processing_id="Amon",
+    ...     )
+    >>> catalogue = InMemoryCatalogue(
+    ...     entries=tuple(
+    ...         published(index, label)
+    ...         for index, label in enumerate(("r1i1p1f1", "r2i1p1f1", "r3i1p1f1"))
+    ...     )
+    ... )
+
+    Grouping on the variant, with the default `cardinality="one"`, is three runs of
+    one dataset each. This is the right answer when the analysis is per-variant and
+    simply repeats itself:
+
+    >>> per_variant = requirement(
+    ...     name="variant-spread",
+    ...     tree=leaf(Query(variable="tas"), "tas"),
+    ...     group_by=("model", "variant_label"),
+    ... )
+    >>> solved = solve(per_variant, catalogue)
+    >>> len(solved.resolved)
+    3
+    >>> [len(group.roles["tas"]) for group in solved.resolved.values()]
+    [1, 1, 1]
+
+    Dropping `variant_label` from `group_by` asks for one run instead, but leaves
+    `cardinality="one"`, so the single `tas` slot now has three candidates and
+    nothing to choose between them. The group is `ambiguous` rather than resolved:
+
+    >>> still_one = requirement(
+    ...     name="variant-spread",
+    ...     tree=leaf(Query(variable="tas"), "tas"),
+    ...     group_by=("model",),
+    ... )
+    >>> solved = solve(still_one, catalogue)
+    >>> len(solved.resolved), len(solved.ambiguous)
+    (0, 1)
+
+    `cardinality="all"` is what that group was missing: one run, with every variant
+    in it. An analysis which takes the variance across a model's ensemble needs its
+    datasets this way round, because the answer is one number computed from all of
+    them, not three numbers computed one at a time:
+
+    >>> together = requirement(
+    ...     name="variant-spread",
+    ...     tree=leaf(Query(variable="tas"), "tas"),
+    ...     group_by=("model",),
+    ...     cardinality="all",
+    ... )
+    >>> solved = solve(together, catalogue)
+    >>> len(solved.resolved)
+    1
+    >>> [len(group.roles["tas"]) for group in solved.resolved.values()]
+    [3]
+
+    `roles` holds a tuple whichever cardinality was used, so reading the result does
+    not change shape. [ResolvedGroup.one][esmporium.requirements.ResolvedGroup.one] is
+    the way to ask for the single dataset in a role, and refuses when there are three.
     """
     canonical_where = QueryCanonical() if where is None else _canonical(where)
 
