@@ -5,7 +5,7 @@ ahead of the implementation (R0 in the *Requirements (R0–R12)* section of `PLA
 so that every later PR can be read against a stated target.
 
 Written: 2026-09-14.
-Updated: 2026-09-24
+Updated: 2026-09-30
 
 ## Three kinds of "or"
 
@@ -49,6 +49,10 @@ Within a group, a leaf resolves to **exactly one** dataset. Several surviving
 candidates make the group `ambiguous`, none makes it `unsatisfied`, and every group
 is judged on its own — one model can resolve while the next does not.
 
+(That is `cardinality="one"`, the default. `cardinality="all"` is for an analysis
+whose subject *is* the spread across candidates — see
+[Which one gets picked](#which-one-gets-picked).)
+
 ## The tree
 
 A requirement is a **tree**: one root node at the top branching downward to *leaves*
@@ -70,31 +74,45 @@ Requirement                 ← root (an internal node; always has one child)
            └── ...
 ```
 
-The building blocks, from the tips up. Every node is built by calling a lower-case
-function, and the one rule to hold onto is what each of them takes: **`leaf` takes a
-query, everything else takes nodes.** That is the quickest way to tell a leaf from a
-container. (`Leaf`, capital L, is the class those leaves are instances of. It exists
-for type annotations, `isinstance` checks and serialisation; you rarely write it.)
+The building blocks, from the tips up. The one rule to hold onto is what each of them
+takes: **a leaf takes a query, everything else takes nodes.** That is the quickest way
+to tell a leaf from a container.
 
-- **`leaf(query, role=, aux=, lineage=, constraints=)`** — builds a **leaf**, exactly
+A leaf is built with `leaf(query=..., role=...)`, naming both of its parts rather than
+inferring either: a leaf is where every fact about a dataset ends up, and neither what
+it asks for nor what it is called is worth guessing at. Internal nodes, which handle
+some of the logic, such as `all_of` and `any_of` take any number of children, and
+`scope` takes a name as well as a child.
+
+- **`leaf(query=..., role=..., aux=, lineage=, constraints=)`** — exactly
   one dataset per [group](#groups), because a leaf carries everything about one
-  dataset and that is where the work happens. A facet with several values is an OR, exactly as in esmporium, so `variable=("fLuc", "fLUC")` takes either. The role says what the dataset is *for*, which is why pattern scaling's nine variables sit in one leaf called `field`, with the variable itself in the group key.
+  dataset and that is where the work happens. A facet with several values is an OR, exactly as in esmporium, so `variable=("fLuc", "fLUC")` takes either.
+  The role says what the dataset is *for*, which is why pattern scaling's nine variables sit in one leaf called `field`,
+  with the variable itself in the group key. See [A role is not a variable](#a-role-is-not-a-variable) below.
 - **`all_of`, `any_of` (ordered) and `optional`** — build **internal nodes, not
   leaves**: each holds child nodes (leaves, or other internal nodes) and says how to
   combine them. `all_of` needs every child; `any_of` takes the first child that can be
   satisfied; `optional` includes its child when the child's own constraints are met,
-  otherwise it is absent. They take *nodes* as arguments, whereas `leaf` takes a
+  otherwise it is absent. They take *nodes* as arguments, whereas a leaf takes a
   *query*.
 - **`scope(name, child, constraints=)`** — an internal node that prefixes roles, so the same role can appear twice (`abrupt4x.tas` and `abrupt2x.tas`), and holds checks which compare leaves.
-- **`Requirement(tree, name=, where=, group_by=, prefer=, cardinality=, constraints=)`** — the root.
+- **`requirement(tree=, name=, group_by=, where=, prefer=, cardinality=, constraints=)`** — the root.
+  `tree`, `name` and `group_by` are required: a grouping decides what "one run" means, so it is
+  stated rather than defaulted. Write `group_by=("model", "variant_label")` when that is what you want.
 
 Every node has the same three ways to say something about the leaves below it, and each pushes down to the leaves:
 
 | Helper | Sets | Contradiction |
 |---|---|---|
-| `.where(**facets)` | facets on each leaf's query | raises `ConflictingFacetsError` |
+| `.where(query)` | facets on each leaf's query | raises `ConflictingFacetsError` |
 | `.with_lineage(relation)` | how each leaf finds its control | raises `ConflictingLineageError` |
 | `.with_constraints(*checks)` | checks on each leaf, one leaf at a time | adds |
+
+`.where()` takes a query, in any style, rather than keyword facets — for the same
+reason a leaf does. A query can name any facet, including one only a project names,
+so `.where(QueryCMIP5(product="output1"))` works; keywords could only have reached
+the facets `Query` declares, which made CMIP5's `product` a facet a leaf could hold
+but nothing above it could add.
 
 `Requirement.where` does the same thing for the whole tree, and raises the same
 error when a leaf already sets a facet differently: **set each facet once.**
@@ -105,6 +123,104 @@ prefix), and each now has one home.
 
 Resolved roles look like `tas`, `control.tas`, `chain.0.tas`, `nbp.sftlf`
 and, inside a scope, `abrupt4x.control.tas`.
+
+### A role is not a variable
+
+Most of the roles above read like variable names, and that is a coincidence of the
+analyses which happen to be drawn here, not what a role is. It is worth pinning down,
+because `variable` does two completely different jobs depending on where it is put,
+and only one of them has anything to do with roles.
+
+Pattern scaling is the clearest case. It scales *a* field against global mean
+temperature, and there are nine candidate fields. It does not need nine datasets
+together — it needs one at a time, nine times over. So it is **one leaf, with nine
+variables in its query, and a role which is not a variable name at all**:
+
+```text
+leaf(
+    query=Query(variable=("tas", "tasmax", "tasmin", "huss", "pr",
+                          "sfcWind", "ps", "rsds", "rlds")),   ← an OR: any one of these
+    role="field",                                              ← ONE slot, named for
+)                                                                what it is FOR
+
+group_by = ("model", "variant_label", "experiment", "variable")
+                                                   └────┬───┘
+                                                 variable SPLITS the analysis
+
+  role paths: {"field"}          one slot, not nine
+
+  and the tree is solved once per combination:
+      CanESM5 / r1i1p1f1 / ssp126 / tas    → field = one dataset
+      CanESM5 / r1i1p1f1 / ssp126 / pr     → field = one dataset
+      CanESM5 / r1i1p1f1 / ssp245 / tas    → field = one dataset
+      ...
+```
+
+The two homes of `variable`, side by side:
+
+```text
+   variable in the LEAF'S QUERY          variable in GROUP_BY
+   ────────────────────────────          ────────────────────
+   "any of these will do"                "run the whole analysis
+   pick ONE per group                     once per value"
+   → one dataset                         → many runs
+```
+
+ECS is the other case, and the reason roles so often *look* like variables. It needs
+tas, rsdt, rlut and rsut **in the same run**, to regress one against the others — four
+different datasets, so four leaves. Naming each role after its variable is then simply
+the clearest thing to call it. That is a fact about ECS, not a rule about leaves.
+
+The test to apply: if the analysis wants these datasets *together*, they are separate
+leaves; if it repeats *over* them, they are one leaf and a `group_by` entry.
+
+#### Which one gets picked
+
+"Any of these will do" still has to end in one dataset, so when a leaf's query lists
+several values and the search finds more than one of them in a group, something has to
+choose. Two settings on the `Requirement` do it, in this order:
+
+1. **`prefer`** decides. It is a mapping of facet to values in order of preference,
+   `prefer={"variable": ("sfcWind", "uas")}`, and the earliest value listed wins. It is
+   not special to `variable` — `prefer={"grid_label": ("gn", "gr")}` breaks the same
+   kind of tie on any facet, project-specific ones included.
+2. **`cardinality`** says what happens if a tie *survives* `prefer` — because no
+   `prefer` entry covers the facet they differ on, or because they are equal on it.
+   `"one"` (the default) makes the group **ambiguous**; `"all"` keeps every remaining
+   candidate.
+
+```text
+   group: CanESM5 / r1i1p1f1 / ssp126
+   leaf query: variable = ("sfcWind", "uas", "vas")   ← any of these will do
+
+   found in this group        prefer = {"variable": ("uas", "sfcWind")}
+   ──────────────────         ────────────────────────────────────────
+     sfcWind  ─┐
+     uas      ─┼──► prefer ──►  uas is listed first
+     vas      ─┘                → uas, and the group RESOLVES
+
+                              no prefer entry for variable
+                              ────────────────────────────
+     sfcWind  ─┐                cardinality = "one"  → AMBIGUOUS
+     uas      ─┼──►  tie   ──►                         (nothing is picked)
+     vas      ─┘                cardinality = "all"  → all three are kept
+```
+
+The important half of that is the second one: **ambiguity is an outcome, not a pick.**
+A group is never resolved by guessing, and an ambiguous group is reported rather than
+quietly dropped, so the fix is yours to make — add a `prefer` entry, narrow the leaf's
+query, or move the facet into `group_by` so the values stop competing.
+
+Which is the case that does not arise: with `variable` in `group_by`, as in pattern
+scaling above, several variables never tie, because each one is a group of its own.
+
+Still to decide, and it needs the solver to be real before it is worth settling: what
+happens when two `prefer` entries disagree, one facet favouring one candidate and
+another facet favouring the other. `prefer` is written as a mapping, whose order is
+deliberately not part of the requirement's hash, so it does not currently say which
+facet outranks which.
+
+#### One requirement, drawn in full
 
 The diagram below draws one concrete requirement: equilibrium climate sensitivity
 (ECS) — temperature and top-of-atmosphere radiation from the abrupt-4xCO2
@@ -208,6 +324,8 @@ flowchart LR
 ### Which way the dependency runs
 
 `search` will import `requirements`, never the other way round.
+We currently test this explicitly in [test_package.py].
+We will likely remove this explicit testing in the future once search imports requirements.
 
 Step 2 above is the reason: `search` is going to take `Requirement` objects (PR3.7),
 so it has to import them. That fixes the direction of the dependency for good, and
@@ -227,11 +345,17 @@ to an API or match it against stored datasets, so it was defined twice, once in 
 package. It now lives in `esmporium.query` and both import it from there. It is still
 importable from `esmporium.search` for anyone who was already doing that.
 
-What `requirements` may import from esmporium, then, is `esmporium.query` and
-`DATASET_FACET_COLUMNS` from `esmporium.db.schema` — which is the whole surface every
+What `requirements` may import from esmporium, then, is `esmporium.query`,
+`DATASET_FACET_COLUMNS` from `esmporium.db.schema`, and `esmporium.formatting` for the
+helpers which render error messages — which is the whole surface every
 remaining piece of this design needs. The `esmporium.db` side will grow when the
 database-backed catalogue lands, since that needs a session and the `Dataset` table.
 The `esmporium.search` side will not. There is a test which checks both.
+
+`esmporium.formatting` is a safe third entry because it depends on nothing but the
+standard library, so it cannot be half of a cycle. That is the test to apply to
+anything else proposed for this list: not "is it useful here?" but "could importing it
+ever point back this way?". If it is useful and importing it could point back this way, then maybe we have to move it.
 
 A `QueryCollection` that is a plain union is enough.
 "Requirement became satisfiable" is the difference between `solve` at t1 and at t2.
@@ -242,11 +366,34 @@ Once requirements are in esmporium, those are ordinary esmporium tables.
 
 `set_facets` flattens a query, including `other_terms`, because that is esmporium's
 escape hatch for facets a query class does not name.
-Naming the same facet twice raises `ClashingFacetError`.
+Naming the same facet twice raises `ClashingFacetsError`.
+
+**A leaf's query may be written in any style** — `Query`, `QueryCMIP5`, `QueryCMIP6`,
+`QueryCMIP7` — and is translated on the way in, then stored as a `QueryCanonical`.
+Three things need that single stored form: a stored requirement has to reload into a
+known class, one question has to hash the same whichever style it was written in, and
+`to_search_plan` converts *from* canonical when it turns a requirement back into
+searches. So what a leaf gives back is not the object that went in, which is worth
+knowing before comparing the two with `==`.
+
+Translation normalises the *style*; it does not move facets about. Each one keeps its
+home, and there are three:
+
+| Home | Holds | Example |
+|---|---|---|
+| a declared field | the facets esmporium models | `variable`, `experiment` |
+| `query_specific_facets` | facets a query style names, with no canonical name | CMIP5's `product` |
+| `other_terms` | facets esmporium does not model at all | `variable_long_name` |
+
+This is why `other_terms` stays a genuine escape hatch: a facet written there stays
+there, even one we do model. The consequence is that home is part of the question, so
+moving a facet between homes changes the requirement's hash, whereas rewriting it in
+another query style does not. In general, `other_terms` should be used only if absolutely needed because of quirks like this.
 
 **Project-specific facets are supported, and esmporium decides how.**
 Answering a query which names CMIP5's `product` is `Catalogue.find`'s business, and
-nothing here needs to know how it is done. The one thing the solver needs is that
+nothing here needs to know how it is done. The requirement's side of it is only to
+keep the facet where it was written, which `query_specific_facets` above is for. The one thing the solver needs is that
 grouping, `prefer` and auxiliary matching compare *entries*, so a catalogue must put
 any facet it wants used that way into each entry's `extra`. Requirements therefore
 accept any facet name, and a facet no entry knows fails when solving, naming the

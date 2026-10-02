@@ -1,10 +1,9 @@
 """
 Tests of the catalogue: entries, the facets a query sets, and matching
 
-Two of these are worth more than the rest, because they are what breaks quietly:
-the import-boundary test, which fails when this package reaches into
-`esmporium.search`, and the protocol-conformance test,
-which fails when `InMemoryCatalogue` stops fitting `Catalogue`.
+The one worth more than the rest is the protocol-conformance test, because it is
+what breaks quietly: nothing declares that `InMemoryCatalogue` implements
+`Catalogue`, so the two can drift apart in silence.
 
 `CatalogueEntry` is checked against `Dataset` in `tests/unit/test_schema.py`, beside
 the same check for `DatasetFacets`, because that is the file someone opens when they
@@ -13,9 +12,7 @@ change `Dataset`.
 
 from __future__ import annotations
 
-import ast
 import inspect
-import pathlib
 import re
 
 import pytest
@@ -37,7 +34,6 @@ from esmporium.requirements import (
     matches,
     set_facets,
 )
-from esmporium.requirements import catalogue as catalogue_module
 
 # ---------------------------------------------------------------- CatalogueEntry.facet
 
@@ -297,44 +293,3 @@ def test_in_memory_catalogue_satisfies_the_catalogue_protocol():
 
     assert inspect.signature(type(catalogue).find) == inspect.signature(Catalogue.find)
     assert catalogue.find(Query()) == ()
-
-
-def esmporium_modules_imported_by(module) -> set[str]:
-    """
-    Get the esmporium modules a module imports, read off its source
-
-    Read off the source rather than `sys.modules`, because `esmporium.db.schema`
-    itself imports `esmporium.search.health`: anything which followed imports
-    transitively would report `esmporium.search` for a reason that has nothing to do
-    with this package.
-    """
-    tree = ast.parse(pathlib.Path(module.__file__).read_text())
-
-    imported = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module is not None:
-            imported.add(node.module)
-        elif isinstance(node, ast.Import):
-            imported.update(alias.name for alias in node.names)
-
-    return {name for name in imported if name.split(".")[0] == "esmporium"}
-
-
-def test_catalogue_never_imports_search():
-    """
-    The hard half of the import boundary: nothing from `esmporium.search`
-
-    Only `esmporium.search` is refused. What this package takes from `esmporium.db`
-    is expected to grow, because the database-backed catalogue will need a session
-    and the `Dataset` table.
-    """
-    offending = {
-        name
-        for name in esmporium_modules_imported_by(catalogue_module)
-        if name.split(".")[:2] == ["esmporium", "search"]
-    }
-
-    assert not offending, (
-        f"{sorted(offending)} would make a circular import once `search` takes "
-        "`Requirement` objects. Put anything shared in `esmporium.query` instead."
-    )

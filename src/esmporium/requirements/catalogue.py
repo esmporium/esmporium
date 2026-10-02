@@ -237,6 +237,8 @@ class CatalogueEntry:
 # and the facade does the prefixing while `to_canonical` does the translating.
 # See [`QueryFacet`][esmporium.query.QueryFacet] and
 # [`esmporium.query.known_queries`][].
+
+
 def set_facets(query: QueryProtocol) -> dict[str, tuple[str, ...]]:
     """
     Get the facets a query actually constrains, under canonical names, flattened
