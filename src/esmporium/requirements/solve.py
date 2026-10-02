@@ -177,8 +177,8 @@ class Resolved:
     """
     What one node of the tree resolved to, within one group
 
-    Nodes resolve from the leaves up and are merged as they go (see
-    [_merge][(m)._merge]), so a group's result is the `Resolved` of the tree's root.
+    Nodes resolve from the leaves up and are merged as they go (see `_merge`),
+    so a group's result is the `Resolved` of the tree's root.
 
     Three more fields join `roles` as the tree grows, each carrying what its own node
     type produces: `lineages` (the chain of parents behind each dataset), `choices`
