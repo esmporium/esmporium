@@ -18,7 +18,7 @@ from esmporium.db import SearchAPICallRecord, record_search_api_calls
 from esmporium.db.migrate import upgrade_to_head
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Iterator
+    from collections.abc import Callable, Iterator, Mapping
     from typing import NoReturn
 
     from sqlalchemy import Engine
@@ -60,9 +60,8 @@ def skip_or_fail() -> Callable[..., NoReturn]:
     """
     Get a function which turns every endpoint failing into a skip or a failure
 
-    Call it with an iterable of failures
-    (e.g. those carried by an error saying nobody answered
-    e.g. `NoAPIAnsweredError.failures`),
+    Call it with the failures carried by an error saying nobody answered
+    (`NoFacadeAnsweredError.failures`),
     the failure type to skip,
     and the reason to skip with.
 
@@ -73,13 +72,21 @@ def skip_or_fail() -> Callable[..., NoReturn]:
 
     Failing on anything but certain exceptions
     means a kind of failure we add later fails loudly instead of quietly skipping.
+
+    Note that `failures` is the mapping as the error carries it, keyed by facade.
+    It is taken whole rather than as an iterable of the failures themselves because
+    iterating the mapping gives its keys: a previous version of this took an iterable
+    and was passed the mapping, so it compared facade keys against the exception type,
+    found none of them matching, and failed every time instead of ever skipping.
     """
 
     def check(
-        failures: Iterable[Exception], *, skippable: type[Exception], reason: str
+        failures: Mapping[object, Exception], *, skippable: type[Exception], reason: str
     ) -> NoReturn:
         other_failures = [
-            failure for failure in failures if not isinstance(failure, skippable)
+            failure
+            for failure in failures.values()
+            if not isinstance(failure, skippable)
         ]
         if other_failures:
             pytest.fail(

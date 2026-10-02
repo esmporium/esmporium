@@ -172,36 +172,19 @@ def _n_matches_from(
     )
 
 
-def stac_east_n_matches(raw: dict[str, Any]) -> int:
+def stac_n_matches(raw: dict[str, Any]) -> int:
     """
-    Get the number of records that matched a search from an ESGF-NG east response
+    Get the number of records that matched a search from an ESGF-NG response
 
-    East writes the count as `numberMatched`, which is what STAC calls it.
+    Both ESGF-NG deployments now write the count as `numberMatched`, which is what
+    STAC calls it, so that is what we read first.
 
-    Parameters
-    ----------
-    raw
-        The raw search result to read
-
-    Returns
-    -------
-    :
-        The number of records that matched the search
-
-    Raises
-    ------
-    NoSearchResultNumberOfMatchesReturnedError
-        `raw` does not report the number of records that matched the search
-    """
-    return _n_matches_from(raw, (("numberMatched", raw.get("numberMatched")),))
-
-
-def stac_west_n_matches(raw: dict[str, Any]) -> int:
-    """
-    Get the number of records that matched a search from an ESGF-NG west response
-
-    West does not write `numberMatched` at all. It writes the count twice, as
-    `numMatched` and as `context.matched`, neither of which is the STAC spelling.
+    West's own spellings are kept as fallbacks, after the STAC one. They are what the
+    recorded responses in `tests/test-data/search` carry until each is refreshed, and
+    any node still answering the old way is read correctly rather than not at all.
+    The live assumption is asserted against both deployments by
+    `test_live_stac_match_count_key_matches_the_deployment`, so a deployment going
+    back to only its old spellings is something we hear about.
 
     Parameters
     ----------
@@ -223,6 +206,7 @@ def stac_west_n_matches(raw: dict[str, Any]) -> int:
     return _n_matches_from(
         raw,
         (
+            ("numberMatched", raw.get("numberMatched")),
             ("numMatched", raw.get("numMatched")),
             (
                 "context.matched",
@@ -560,11 +544,11 @@ class ESGFNGResultParser:
     """
     Reads how many records matched a search out of one of this endpoint's responses
 
-    Deliberately has no default: east and west should answer the same way and do not
-    (see [stac_east_n_matches][(m).] and [stac_west_n_matches][(m).]), so whoever builds
-    a parser has to say which deployment it is for rather than getting a reader that
-    quietly tries every spelling. If the two ever agree, this can go and the count can
-    move back onto the search API, where a format-level concern belongs.
+    Kept as a field, rather than folded into the parser, because it is the seam the
+    tests use to hand in a reader of their own. Now that the deployments agree, the
+    count could instead move onto the search API, where a format-level concern
+    belongs; that is a larger change than retiring the per-deployment readers was, so
+    it has not been made yet.
     """
 
     def get_n_matches(self, raw: dict[str, Any]) -> int:

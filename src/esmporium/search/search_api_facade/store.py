@@ -30,8 +30,7 @@ from esmporium.search.search_api_facade.result_parsers import (
     ResultParserProtocol,
     SolrSingleRowResultParser,
     SolrVariableBundleResultParser,
-    stac_east_n_matches,
-    stac_west_n_matches,
+    stac_n_matches,
 )
 
 RetryingBuilder = Callable[[], Retrying]
@@ -153,21 +152,27 @@ def get_default_facade_definition(project: str, host: str) -> FacadeDefinition: 
             search_api_type = SearchAPIESGF1Solr
 
         elif host in solr_esgf15_bridge_hosts:
-            facade_parameters = ESGF1_CMIP5_FACADE_PARAMETERS
+            # The bridge serves CMIP6 under CMIP6's own facet names, so these are
+            # the CMIP6 parameters and not CMIP5's. Sending CMIP5's spellings
+            # (`variable`, `experiment`, `time_frequency`) asks a CMIP6 index for
+            # names it does not have: Solr ignores them and the search comes back
+            # empty rather than failing, so getting this wrong loses every result
+            # silently.
+            facade_parameters = ESGF1_CMIP6_FACADE_PARAMETERS
             result_parser = SolrSingleRowResultParser()
             search_api_type = SearchAPIESGF15BridgeSolr
 
         elif host in esgfng_east_hosts:
             facade_parameters = ESGFNG_CMIP6_FACADE_PARAMETERS
             result_parser = ESGFNGResultParser(
-                read_n_matches=stac_east_n_matches,
+                read_n_matches=stac_n_matches,
             )
             search_api_type = SearchAPIESGFNGSTAC
 
         elif host in esgfng_west_hosts:
             facade_parameters = ESGFNG_CMIP6_FACADE_PARAMETERS
             result_parser = ESGFNGResultParser(
-                read_n_matches=stac_west_n_matches,
+                read_n_matches=stac_n_matches,
             )
             search_api_type = SearchAPIESGFNGSTAC
 
@@ -190,14 +195,14 @@ def get_default_facade_definition(project: str, host: str) -> FacadeDefinition: 
         elif host in esgfng_east_hosts:
             facade_parameters = ESGFNG_CMIP7_FACADE_PARAMETERS
             result_parser = ESGFNGResultParser(
-                read_n_matches=stac_east_n_matches,
+                read_n_matches=stac_n_matches,
             )
             search_api_type = SearchAPIESGFNGSTAC
 
         elif host in esgfng_west_hosts:
             facade_parameters = ESGFNG_CMIP7_FACADE_PARAMETERS
             result_parser = ESGFNGResultParser(
-                read_n_matches=stac_west_n_matches,
+                read_n_matches=stac_n_matches,
             )
             search_api_type = SearchAPIESGFNGSTAC
 

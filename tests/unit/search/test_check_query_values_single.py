@@ -33,7 +33,7 @@ from esmporium.search import (
     check_query_values_single_project,
     compare_values,
     facets_the_user_set,
-    stac_east_n_matches,
+    stac_n_matches,
     values_set_for,
 )
 
@@ -721,7 +721,7 @@ def test_a_facet_the_apis_query_style_cannot_express_is_not_asked_about():
         parameters=ESGFNG_CMIP6_FACADE_PARAMETERS,
         search_api=SearchAPIESGFNGSTAC("stac.example", once()),
         result_parser=ESGFNGResultParser(
-            read_n_matches=stac_east_n_matches,
+            read_n_matches=stac_n_matches,
         ),
     )
     canonical = canonical_cmip6(experiment_id="Historical")

@@ -81,9 +81,11 @@ CASES = (
         ),
         QueryCMIP6(experiment_id="historical", variable_id="tas", frequency="mon"),
     ),
-    # West is recorded alongside east because the two are not identical:
-    # e.g. they disagree on where the match count lives,
-    # so a real west response is worth parsing against.
+    # West is recorded alongside east because the two are not identical.
+    # They used to disagree on where the match count lives, and that is no longer the
+    # difference between them, but a real west response is still worth parsing against:
+    # whether they have converged on the rest of the shape is exactly the sort of thing
+    # a recording is here to show.
     (
         "esgf-ng-stac-cmip6-west",
         INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
