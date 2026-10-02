@@ -46,7 +46,7 @@ def only_report(skip_or_fail):
         except NoFacadeAnsweredError as exc:
             skip_or_fail(
                 exc.failures,
-                did_not_answer=CouldNotGetAllowedValuesResponseError,
+                skippable=CouldNotGetAllowedValuesResponseError,
                 reason="no endpoint answered today, so there is nothing to assert",
             )
 

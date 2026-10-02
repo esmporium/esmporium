@@ -4,6 +4,7 @@ Unit tests for recording search-API health, driven against a mock search API
 These cover what `fire` records on each path: success (with results, with none, and
 with an uncountable body), the failure paths (client error, transient failure
 retried, transport error, unparseable body), retries recording one row per attempt,
+paging recording one row per page (and numbering each page's attempts from 1),
 the opt-out when no observer is given, that `fire` fails loudly with a cause, and
 that both callers (`search_single_project` and `check_query_values_single_project`)
 thread the observer down.
@@ -69,6 +70,33 @@ def client_for(handler) -> httpx.Client:
 def solr_response(num_found: int) -> httpx.Response:
     """Build a Solr-shaped 200 response reporting `num_found` matches."""
     return httpx.Response(200, json={"response": {"numFound": num_found, "docs": []}})
+
+
+def stac_page(*, n_matches: int, continuation: str | None) -> httpx.Response:
+    """
+    Build a STAC-shaped 200 response, carrying a `next` link unless it is the last
+
+    STAC is paged by following the server's `next` link until it is gone, so
+    `continuation` is what makes this a page with more after it
+    (`None` makes it the last one).
+
+    The pages carry no features on purpose: what these tests assert is which rows get
+    recorded, and parsing the features is covered in `test_search_single.py`.
+    """
+    links = []
+    if continuation is not None:
+        links = [
+            {
+                "rel": "next",
+                "method": "POST",
+                "href": "https://search.example.io/search",
+                "body": {"filter-lang": "cql2-json", "limit": 1, "token": continuation},
+            }
+        ]
+
+    return httpx.Response(
+        200, json={"numberMatched": n_matches, "features": [], "links": links}
+    )
 
 
 def make_cmip6_facade(host, *, stac=False, attempts=1) -> SearchAPIFacade:
@@ -209,6 +237,58 @@ def test_a_retry_that_succeeds_records_the_failure_then_the_success():
 
     assert (fail.attempt_number, fail.success) == (1, False)
     assert (ok.attempt_number, ok.success, ok.num_results) == (2, True, 5)
+
+
+def test_every_page_of_a_paged_search_records_its_own_row():
+    """
+    A search which pages leaves one row per page, every one of them attempt 1
+
+    `attempt_number` counts the attempts at a single page, not the pages fetched, so
+    it restarts for each new page: several rows numbered 1 is the normal shape of a
+    paged search rather than a sign anything went wrong
+    (see `SearchAPICallRecord.attempt_number`).
+
+    The live tests cannot assert this -- how a live host pages is up to the host --
+    so it is pinned here, where the pages are ours to decide.
+    """
+    responses = iter(
+        [
+            stac_page(n_matches=3, continuation="t1"),
+            stac_page(n_matches=3, continuation="t2"),
+            stac_page(n_matches=3, continuation=None),
+        ]
+    )
+
+    calls = record(lambda r: next(responses), [make_cmip6_facade("host", stac=True)])
+
+    assert len(calls) == 3
+    assert [c.attempt_number for c in calls] == [1, 1, 1]
+    # Every page succeeded, and every page reported the same total, so a result count
+    # is not something only the last row carries.
+    assert all(c.success is True for c in calls)
+    assert [c.num_results for c in calls] == [3, 3, 3]
+
+
+def test_a_retry_part_way_through_paging_numbers_that_page_from_one():
+    """A retried page numbers its own attempts; the page after it starts again at 1"""
+    responses = iter(
+        [
+            stac_page(n_matches=3, continuation="t1"),  # page 1, answered first time
+            httpx.Response(503),  # page 2, transient failure
+            stac_page(n_matches=3, continuation=None),  # page 2, answered on the retry
+        ]
+    )
+
+    calls = record(
+        lambda r: next(responses),
+        [make_cmip6_facade("host", stac=True, attempts=3)],
+    )
+
+    assert [(c.attempt_number, c.success) for c in calls] == [
+        (1, True),  # page 1
+        (1, False),  # page 2, first attempt
+        (2, True),  # page 2, retried
+    ]
 
 
 def test_a_transport_error_records_no_status_code():

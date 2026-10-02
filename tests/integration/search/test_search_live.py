@@ -223,6 +223,46 @@ def client():
         yield res
 
 
+def count_or_skip(client, facade, query):
+    """
+    Ask one live node how many records match, in a single request
+
+    `search` cannot do this: its `limit` is the page size, not a cap, so it follows
+    the endpoint's pagination to the end however small `limit` is. A test which only
+    wants the total would therefore fetch the whole result set to learn it, which on
+    a large query is thousands of requests. The total is in the first response, so we
+    send one request and read it.
+
+    A node which will not answer skips the test, as in `search_or_skip`: it is down or
+    unwell, which says nothing about the behaviour under test. A node which answers
+    without a count we can read still raises, because that is a change in response
+    shape, which is exactly what the live tests exist to notice.
+
+    Parameters
+    ----------
+    client
+        The HTTP client to ask with
+
+    facade
+        The facade to ask
+
+    query
+        The query to count the matches for
+
+    Returns
+    -------
+    :
+        How many records the node reported matched `query`
+    """
+    request = facade.build_search_request(to_canonical(query), 1)
+    try:
+        raw = fire(client, facade.search_api, request)
+    except SearchAPIRequestError:
+        pytest.skip(f"{facade.search_api.host} did not answer, so it is down or unwell")
+
+    return facade.get_n_matches(raw)
+
+
 @pytest.fixture
 def search_or_skip(skip_or_fail):
     """
@@ -232,8 +272,11 @@ def search_or_skip(skip_or_fail):
     e.g. by answering with something we could not read,
     fails the test instead.
 
-    The function takes `(query, api, client, limit, observer=None)`.
+    The function takes `(query, facade, client, limit, observer=None)`.
     If `observer` is given it is passed through to `search`.
+
+    Note that `limit` is the page size, not a cap: a search which matches more than
+    `limit` pages through the rest. Use `count_or_skip` where only the total is wanted.
     """
 
     def search_one(query, facade, client, limit, observer=None):
@@ -248,7 +291,7 @@ def search_or_skip(skip_or_fail):
         except NoFacadeAnsweredError as exc:
             skip_or_fail(
                 exc.failures,
-                did_not_answer=CouldNotGetSearchResponseError,
+                skippable=CouldNotGetSearchResponseError,
                 reason=(
                     f"{facade.search_api.host} did not answer, so it is down or unwell"
                 ),
@@ -262,13 +305,23 @@ def test_search_returns_results(client, facade, query, recorded, search_or_skip)
     """
     A query we expect to match something comes back with matches
 
-    Also checks that the search-API health was recorded: one row per attempt (a
-    healthy node answers first try, but a flaky one may be retried), all for this
-    host, with the final, successful attempt carrying the result count and timing.
+    Also checks that the search-API health was recorded: one row per request, all for
+    this host and all timed, with the last one the success that carries the count.
+
+    A request is not the same as a row. A row is recorded per *HTTP request*, which is
+    one per page plus one per retry within a page, and `attempt_number` counts only
+    the retries, restarting at 1 for each new page. So the rows here are not a `1..N`
+    run: how many there are, and which numbers they carry, is up to how the host
+    chose to page and whether it had to be retried. `tests/unit/search/test_health.py`
+    pins both shapes against a stub, which is where that belongs; here we assert only
+    what holds however the live host behaved.
     """
     observer, read_calls = recorded
 
-    outcome = search_or_skip(query, facade, client, limit=5, observer=observer)
+    # A page big enough for the whole result set, so this is normally one request.
+    # Paging is not what this test is about, and at a small page size a popular
+    # query is hundreds of requests.
+    outcome = search_or_skip(query, facade, client, limit=10_000, observer=observer)
 
     facade_key = (
         facade.search_api.host,
@@ -277,12 +330,12 @@ def test_search_returns_results(client, facade, query, recorded, search_or_skip)
     )
     assert outcome.n_matches[facade_key] > 0
 
-    # One row per attempt, all for this host, timed; the last is the success.
+    # All for this host, all timed, all numbered; the last is the success.
     calls = read_calls()
     assert calls, "expected at least one recorded call"
     assert all(call.host == facade.search_api.host for call in calls)
     assert all(call.response_time_seconds > 0.0 for call in calls)
-    assert [call.attempt_number for call in calls] == list(range(1, len(calls) + 1))
+    assert all(call.attempt_number >= 1 for call in calls)
     success = calls[-1]
     assert success.success is True
     assert success.response_code == 200
@@ -303,10 +356,22 @@ def test_search_applies_the_facets_we_send(  # noqa: PLR0913 - parametrised, plu
     which means our name for that facet is wrong
     and every search we build with it is quietly unfiltered.
 
+    The unpoisoned query is counted first, as a control. Without it this test passes
+    on any host which matches nothing anyway, and so proves nothing: `0 == 0` whether
+    the facet was applied or ignored. That is not hypothetical -- the CMIP6 bridge
+    facade spent a while asking ORNL for CMIP5's facet names, which matched nothing at
+    all, and this test passed throughout.
+
     This also exercises the health path where a request succeeds but matches
     nothing: the call is recorded as a success with a zero result count.
     """
     observer, read_calls = recorded
+
+    if count_or_skip(client, facade, query) == 0:
+        pytest.skip(
+            f"{facade.search_api.host} matches nothing for this query even unpoisoned, "
+            "so a poisoned facet matching nothing cannot show the facet was applied"
+        )
 
     nonsense = query.model_copy(update={poison_field: (NOT_A_REAL_VALUE,)})
     outcome = search_or_skip(nonsense, facade, client, limit=5, observer=observer)
@@ -319,7 +384,8 @@ def test_search_applies_the_facets_we_send(  # noqa: PLR0913 - parametrised, plu
     assert outcome.n_matches[facade_key] == 0
 
     # A response that matched nothing is still a successful call, and recorded.
-    # One row per attempt; the final, successful one carries the zero count.
+    # Matching nothing is one page, so the last row is the only one unless the host
+    # had to be retried; either way it is the success, and it carries the zero count.
     calls = read_calls()
     assert calls, "expected at least one recorded call"
     assert all(call.host == facade.search_api.host for call in calls)
@@ -329,10 +395,54 @@ def test_search_applies_the_facets_we_send(  # noqa: PLR0913 - parametrised, plu
     assert success.num_results == 0
 
 
+PAGING_DRIFT_TOLERANCE = 0.02
+"""
+How far the records collected by paging may fall from the total reported, as a fraction
+
+The total is read from the first page, but the index keeps being published to while we
+page through the rest, so the two disagree by however much moved during the scan. We
+have seen this live: a CMIP7 scan reported 569 and collected 571, and that same query
+reported 664 a fortnight later.
+
+The tolerance has to stay well under one page, because the bugs this is guarding
+against are page-sized: paging that stops early loses a whole page, and paging that
+re-walks loses or repeats one. We page in about four, so a page is ~25% of the total
+and a couple of percent of drift cannot hide one.
+"""
+
+
+def assert_paging_covered_the_result_set(
+    host: str, *, collected: int, total: int | None
+) -> None:
+    """
+    Check that paging collected the whole result set, give or take a moving index
+
+    Parameters
+    ----------
+    host
+        The host that was paged through, named in the failure
+
+    collected
+        How many records paging actually collected, across every page
+
+    total
+        How many records the first page reported matched,
+        or `None` if that response carried no count we could read
+    """
+    if total is None:
+        pytest.skip(f"{host} reported no total, so there is nothing to compare against")
+
+    allowed = max(1, round(total * PAGING_DRIFT_TOLERANCE))
+
+    assert abs(collected - total) <= allowed, (
+        f"{host} said {total} matched but paging collected {collected}, "
+        f"which is more than the {allowed} record(s) of drift we allow for the index "
+        "shifting mid-scan: paging is losing or repeating records"
+    )
+
+
 @pytest.mark.parametrize("api, query", LIVE_CASES)
-def test_search_pages_through_all_the_results(
-    client, api, query, search_or_skip, skip_or_fail
-):
+def test_search_pages_through_all_the_results(client, api, query, skip_or_fail):
     """
     Paging reassembles the whole result set from the live APIs
     """
@@ -343,17 +453,18 @@ def test_search_pages_through_all_the_results(
         api.parameters.base_query_style.__name__,
     )
 
-    # Probe with the smallest page to learn how much matches, so we can size the
-    # real page to need only a few requests.
-    probe = search_or_skip(query, api, client, limit=1)
-    total = probe.n_matches[facade_key]
-    if total is None or total < 2:
+    # Ask how much matches in one request, so we can size the page to need only a
+    # few. A search cannot tell us this cheaply: its `limit` is the page size, not a
+    # cap, so sizing the page from a search would mean fetching everything first.
+    matched = count_or_skip(client, api, query)
+    if matched < 2:
         pytest.skip(
-            f"{host} matched {total} for this query, too few to need more than one page"
+            f"{host} matched {matched} for this query, "
+            "too few to need more than one page"
         )
 
     # Aim for ~4 pages, but always at least two (page smaller than the total).
-    page_size = min(max(1, total // 4), total - 1)
+    page_size = min(max(1, matched // 4), matched - 1)
 
     pages: list[int] = []
 
@@ -368,20 +479,22 @@ def test_search_pages_through_all_the_results(
     except NoFacadeAnsweredError as exc:
         skip_or_fail(
             exc.failures,
-            did_not_answer=CouldNotGetSearchResponseError,
+            skippable=CouldNotGetSearchResponseError,
             reason=f"{host} stopped answering part way through paging",
         )
+
+    # The count this scan itself was told, rather than the one the sizing request got:
+    # the two are separate requests, so on a live index they can already disagree.
+    total = outcome.n_matches[facade_key]
 
     # More than one page was actually fetched...
     assert len(pages) > 1, (
         f"{host} was paged at {page_size} of {total}, but only one page was fetched"
     )
-    # ...and every matched record was collected across those pages.
-    assert len(outcome.parsed_docs[facade_key]) == total, (
-        f"{host} said {total} matched but paging collected "
-        f"{len(outcome.parsed_docs[facade_key])} (the index may have shifted mid-scan)"
+    # ...and the pages between them covered the whole result set.
+    assert_paging_covered_the_result_set(
+        host, collected=len(outcome.parsed_docs[facade_key]), total=total
     )
-    assert outcome.n_matches[facade_key] == total
 
 
 def master_ids(documents: tuple[ParsedDocument, ...]) -> set[str]:
@@ -443,7 +556,7 @@ def test_aggregating_over_nodes_finds_more_than_one_node(client, skip_or_fail):
     except NoFacadeAnsweredError as exc:
         skip_or_fail(
             exc.failures,
-            did_not_answer=CouldNotGetSearchResponseError,
+            skippable=CouldNotGetSearchResponseError,
             reason="no node answered, so there is nothing to aggregate",
         )
 
@@ -467,7 +580,7 @@ def test_aggregating_over_nodes_finds_more_than_one_node(client, skip_or_fail):
 
 
 @pytest.mark.parametrize("facade, make_query", AND_OR_CASES)
-def test_search_ands_across_facets(client, facade, make_query, search_or_skip):
+def test_search_ands_across_facets(client, facade, make_query):
     """
     Test that facets AND across each other
 
@@ -485,14 +598,7 @@ def test_search_ands_across_facets(client, facade, make_query, search_or_skip):
     """
 
     def count(variables, experiments):
-        query = make_query(variables, experiments)
-        outcome = search_or_skip(query, facade, client, limit=1)
-        facade_key = (
-            facade.search_api.host,
-            type(facade.search_api).__name__,
-            facade.parameters.base_query_style.__name__,
-        )
-        return outcome.n_matches[facade_key]
+        return count_or_skip(client, facade, make_query(variables, experiments))
 
     for variable in AND_OR_VARIABLES:
         for experiment in AND_OR_EXPERIMENTS:
@@ -505,7 +611,7 @@ def test_search_ands_across_facets(client, facade, make_query, search_or_skip):
 
 
 @pytest.mark.parametrize("facade, make_query", AND_OR_CASES)
-def test_search_ors_within_a_facet(client, facade, make_query, search_or_skip):
+def test_search_ors_within_a_facet(client, facade, make_query):
     """
     Test that the values within a facet OR rather than one of them being dropped
 
@@ -522,14 +628,7 @@ def test_search_ors_within_a_facet(client, facade, make_query, search_or_skip):
     """
 
     def count(variables, experiments):
-        query = make_query(variables, experiments)
-        outcome = search_or_skip(query, facade, client, limit=1)
-        facade_key = (
-            facade.search_api.host,
-            type(facade.search_api).__name__,
-            facade.parameters.base_query_style.__name__,
-        )
-        return outcome.n_matches[facade_key]
+        return count_or_skip(client, facade, make_query(variables, experiments))
 
     experiment = AND_OR_EXPERIMENTS[:1]
     separately = [count((variable,), experiment) for variable in AND_OR_VARIABLES]
