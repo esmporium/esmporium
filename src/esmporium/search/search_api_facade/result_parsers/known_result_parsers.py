@@ -458,7 +458,7 @@ class ESGFNGResultParser:
         """
         See [ResultParserProtocol.get_n_matches][esmporium.search.search_api_facade.result_parsers.ResultParserProtocol.get_n_matches].
         """  # noqa: E501
-        loc = "context.numberMatched"
+        loc = "numberMatched"
         try:
             total = read_response_path(raw, loc)
         except UnreadableResponseError:
