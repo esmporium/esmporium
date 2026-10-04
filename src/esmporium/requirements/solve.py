@@ -132,6 +132,8 @@ class Explanation:
     message: str = ""
     """Details, if there are any to add"""
 
+    # @Claude is 'children' the software dev name? In future we will be looking for
+    # children of experiments so is this language confusing?
     children: tuple[Explanation, ...] = ()
     """Explanations of the parts, in the order they were evaluated"""
 
@@ -165,6 +167,9 @@ class Explanation:
           [satisfied] tas: #1 ('CMIP6.a.tas')
           [unsatisfied] rlut: no dataset matches ...
         """
+        # @Claude what is the subject showing? i.e. what in the error message
+        # is the model/group/project that isn't satisfied? Should more/less/different
+        # information be provided here for the user?
         line = f"{'  ' * indent}[{self.status}] {self.subject}"
         if self.message:
             line = f"{line}: {self.message}"
@@ -365,12 +370,14 @@ class _Context:
     group: dict[str, str | None]
 
 
+# @Claude is this too smart? Shouldn't this just be an already defined error?
 _ENTRY_FACET_ADVICE = (
     "Both `group_by` and `prefer` compare entries rather than queries, so they can "
     "only name facets every entry records or carries in its `extra`."
 )
 """What to say when `group_by` or `prefer` names a facet no entry can answer for"""
 
+# @Claude is this too smart? Shouldn't this just be an already defined error?
 _QUERY_FACET_ADVICE = (
     "Note that a facet in a query's `other_terms` is never translated, so it reaches "
     "the catalogue spelt as it was written: `other_terms={'table_id': ('Amon',)}` asks "
@@ -430,6 +437,7 @@ def _sortable(key: GroupKey) -> tuple[str, ...]:
     return tuple("" if value is None else value for _, value in key)
 
 
+# @Claude what is the role of this function?
 def describe_query(query: QueryProtocol) -> str:
     """
     Describe a query briefly, for a message a person is going to read
@@ -461,6 +469,8 @@ def describe_query(query: QueryProtocol) -> str:
     )
 
 
+# @claude do we need id_project_specific here? what is the use of it? to us,
+# id_project_specific is just another column to satisfy uniqueness in our main dataset
 def _describe_entry(entry: CatalogueEntry) -> str:
     # Both IDs, because they answer different questions. The integer is the key to the
     # row, for anyone going to look it up or link to it; the project-specific ID is the
@@ -519,7 +529,9 @@ def _ambiguous_message(candidates: Sequence[CatalogueEntry], ctx: _Context) -> s
     differing = _differing_facets(candidates)
     if not differing:
         listed = ", ".join(_describe_entry(candidate) for candidate in candidates)
-
+        # @Claude see above about project_specific_id?? What is the benefit of
+        # describing
+        # it in the error message here...
         return (
             f"{len(candidates)} candidates which agree on every facet, so no facet can "
             f"choose between them: {listed}. The same dataset can be published under "
@@ -639,6 +651,9 @@ def _eval_leaf(leaf: Leaf, ctx: _Context, prefix: str) -> NodeResult:
 
     candidates = [entry for entry in found if _in_group(entry, ctx)]
     if not candidates:
+        # @Claude, who put this TODO below? Was it you? Is this what we want to be able
+        # to do? Doesn't this go against the 'greedy', no backtracking logic? Or am
+        # I wrong here?
         # TODO: say which facet was the one which found nothing, i.e. drop each facet
         # in turn, search again, and report the relaxation which would have matched.
         # That is the question a user actually has here ("is `rlut` missing entirely,
@@ -712,6 +727,10 @@ def _worst(results: Sequence[Unresolved]) -> NotOkStatus:
     return min((result.status for result in results), key=_STATUS_PRIORITY.__getitem__)
 
 
+# @Claude prefix has a meaning in search (i.e. the prefix for a STAC search request).
+# Is this what you mean by prefix here? See tree.py where we had to rename prefix
+# for this very reason.
+# UNless it is the same prefix as used in search/
 def _eval_all_of(node: AllOf, ctx: _Context, prefix: str) -> NodeResult:
     # Every child is evaluated, even once one has failed, so that the explanation says
     # everything that is wrong with the group rather than the first thing.
