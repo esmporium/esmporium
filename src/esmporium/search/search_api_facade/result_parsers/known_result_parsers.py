@@ -12,6 +12,7 @@ from esmporium.search.apis.esgf1 import extract_one_element_list, solr_n_matches
 from esmporium.search.apis.esgfng import stac_nodes
 from esmporium.search.apis.protocol import (
     NoSearchResultNumberOfMatchesReturnedError,
+    UnreadableResponseError,
     describe_search_api,
     read_response_path,
 )
@@ -21,7 +22,6 @@ from esmporium.search.result_parsing import (
     ParsedDocument,
 )
 from esmporium.search.search_api_facade.result_parsers.protocol import (
-    NMatchesReader,
     get_single_value_columns_from_doc,
 )
 
@@ -128,92 +128,6 @@ def _single_row(
     )
 
     return DatasetFacets.model_validate({**base, **columns})
-
-
-def _n_matches_from(
-    raw: dict[str, Any], candidates: tuple[tuple[str, Any], ...]
-) -> int:
-    """
-    Read a match count out of the places one deployment might write it
-
-    Parameters
-    ----------
-    raw
-        The raw search result the values were read from
-
-        Only used for error messages.
-
-    candidates
-        Where we looked and what we found there, in the order we prefer them
-
-    Returns
-    -------
-    :
-        The number of records that matched the search
-
-    Raises
-    ------
-    NoSearchResultNumberOfMatchesReturnedError
-        None of `candidates` carries a count
-
-    TypeError
-        A candidate carries something which is not a count
-    """
-    for loc, total in candidates:
-        if isinstance(total, int):
-            return total
-
-        elif total is not None:
-            msg = f"We expected to get an integer at {loc}, but instead got {total!r}"
-            raise TypeError(msg)
-
-    raise NoSearchResultNumberOfMatchesReturnedError(
-        raw, tuple(loc for loc, _ in candidates)
-    )
-
-
-def stac_n_matches(raw: dict[str, Any]) -> int:
-    """
-    Get the number of records that matched a search from an ESGF-NG response
-
-    Both ESGF-NG deployments now write the count as `numberMatched`, which is what
-    STAC calls it, so that is what we read first.
-
-    West's own spellings are kept as fallbacks, after the STAC one. They are what the
-    recorded responses in `tests/test-data/search` carry until each is refreshed, and
-    any node still answering the old way is read correctly rather than not at all.
-    The live assumption is asserted against both deployments by
-    `test_live_stac_match_count_key_matches_the_deployment`, so a deployment going
-    back to only its old spellings is something we hear about.
-
-    Parameters
-    ----------
-    raw
-        The raw search result to read
-
-    Returns
-    -------
-    :
-        The number of records that matched the search
-
-    Raises
-    ------
-    NoSearchResultNumberOfMatchesReturnedError
-        `raw` does not report the number of records that matched the search
-    """
-    context = raw.get("context")
-
-    return _n_matches_from(
-        raw,
-        (
-            ("numberMatched", raw.get("numberMatched")),
-            ("numMatched", raw.get("numMatched")),
-            (
-                "context.matched",
-                context.get("matched") if isinstance(context, dict) else None,
-            ),
-        ),
-    )
 
 
 def solr_id_project_specific(doc: dict[str, Any], api: SearchAPI) -> str:
@@ -540,22 +454,21 @@ class ESGFNGResultParser:
     Read results from the ESGF-NG STAC API
     """
 
-    read_n_matches: NMatchesReader
-    """
-    Reads how many records matched a search out of one of this endpoint's responses
-
-    Kept as a field, rather than folded into the parser, because it is the seam the
-    tests use to hand in a reader of their own. Now that the deployments agree, the
-    count could instead move onto the search API, where a format-level concern
-    belongs; that is a larger change than retiring the per-deployment readers was, so
-    it has not been made yet.
-    """
-
     def get_n_matches(self, raw: dict[str, Any]) -> int:
         """
         See [ResultParserProtocol.get_n_matches][esmporium.search.search_api_facade.result_parsers.ResultParserProtocol.get_n_matches].
         """  # noqa: E501
-        return self.read_n_matches(raw)
+        loc = "context.numberMatched"
+        try:
+            total = read_response_path(raw, loc)
+        except UnreadableResponseError:
+            raise NoSearchResultNumberOfMatchesReturnedError(raw, loc)
+
+        if not isinstance(total, int):
+            msg = f"We expected to get an integer at {loc}, but instead got {total!r}"
+            raise TypeError(msg)
+
+        return total
 
     def parse_search_results(
         self,
