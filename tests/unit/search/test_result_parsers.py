@@ -9,7 +9,6 @@ these parsers exist:
 - where the project specific id is written
 - where the project is written (a Solr facet, a top-level STAC `collection` key)
 - how many dataset rows one document maps to
-- where the endpoint puts the number of records that matched
 
 Parsing of real recorded responses is in `test_recorded_responses.py`; this file is the
 controlled counterpart to it.
@@ -30,25 +29,21 @@ from esmporium.search import (
     ESGFNGResultParser,
     MissingResultFieldError,
     MultipleFacetValuesError,
-    NoSearchResultNumberOfMatchesReturnedError,
     SearchAPIESGF1Solr,
     SearchAPIESGFNGSTAC,
     SolrSingleRowResultParser,
     SolrVariableBundleResultParser,
     UnreadableResponseError,
     build_transient_retrying,
-    stac_n_matches,
 )
 
 
 def esgfng_parser() -> ESGFNGResultParser:
     """An ESGF-NG parser
 
-    One parser serves every project on this API, and now every deployment of it too.
+    One parser serves every project on this API, and every deployment of it too.
     """
-    return ESGFNGResultParser(
-        read_n_matches=stac_n_matches,
-    )
+    return ESGFNGResultParser()
 
 
 CMIP6_ROW = DatasetFacets(
@@ -275,197 +270,4 @@ def test_a_single_row_parser_will_not_quietly_split_a_bundle():
     with pytest.raises(MultipleFacetValuesError):
         SolrSingleRowResultParser().get_dataset_rows(
             doc, api=solr_api(), facade_parameters=ESGF1_CMIP6_FACADE_PARAMETERS
-        )
-
-
-@pytest.mark.parametrize(
-    "parser",
-    (
-        pytest.param(SolrSingleRowResultParser(), id="single-row"),
-        pytest.param(SolrVariableBundleResultParser(), id="variable-bundle"),
-    ),
-)
-@pytest.mark.parametrize(
-    "raw, exp",
-    (
-        pytest.param({"response": {"numFound": 3, "docs": []}}, 3, id="a-count"),
-        pytest.param({"response": {"numFound": 0, "docs": []}}, 0, id="no-matches"),
-    ),
-)
-def test_solr_n_matches(parser, raw, exp):
-    """Both Solr parsers read the count the one way Solr writes it"""
-    assert parser.get_n_matches(raw) == exp
-
-
-@pytest.mark.parametrize(
-    "raw, exp",
-    (
-        pytest.param(
-            {"response": {"docs": []}},
-            pytest.raises(
-                NoSearchResultNumberOfMatchesReturnedError,
-                match=re.escape(
-                    "This response does not report "
-                    "how many records matched the search. "
-                    "We expected to read the count from 'response.numFound', "
-                    "but 'numFound' is not in 'response', there is only: 'docs'"
-                ),
-            ),
-            id="no-count",
-        ),
-        pytest.param(
-            {},
-            pytest.raises(
-                NoSearchResultNumberOfMatchesReturnedError,
-                match=re.escape(
-                    "This response does not report "
-                    "how many records matched the search. "
-                    "We expected to read the count from 'response.numFound', "
-                    "but the response is empty."
-                ),
-            ),
-            id="nothing-we-recognise",
-        ),
-        pytest.param(
-            {"response": {"numFound": "3"}},
-            pytest.raises(
-                TypeError,
-                match=re.escape(
-                    "We expected to get an integer at 'response.numFound', "
-                    "but instead got '3'"
-                ),
-            ),
-            id="a-count-we-cannot-read",
-        ),
-    ),
-)
-def test_solr_n_matches_with_no_count_raises(raw, exp):
-    """A response we cannot read a count out of is one we have not understood"""
-    with exp:
-        SolrSingleRowResultParser().get_n_matches(raw)
-
-
-@pytest.mark.parametrize(
-    "raw, exp",
-    (
-        # What both deployments write today, and what STAC calls it.
-        pytest.param({"numberMatched": 7, "features": []}, 7, id="stac-spelling"),
-        # West's older spellings, which the recorded responses still carry.
-        pytest.param({"numMatched": 7}, 7, id="wests-top-level"),
-        pytest.param({"context": {"matched": 7}}, 7, id="wests-context"),
-        # West sends the STAC spelling and its own `context` together, agreeing.
-        pytest.param(
-            {"numberMatched": 7, "context": {"matched": 7}}, 7, id="stac-and-context"
-        ),
-        # Nothing promises they agree, so pin which one wins: the STAC spelling is
-        # read first, because it is the one both deployments are expected to keep.
-        pytest.param(
-            {"numberMatched": 7, "numMatched": 9, "context": {"matched": 11}},
-            7,
-            id="stac-spelling-wins",
-        ),
-    ),
-)
-def test_stac_n_matches_reads_every_spelling_a_deployment_has_used(raw, exp):
-    """One reader serves both deployments, past spellings included"""
-    assert stac_n_matches(raw) == exp
-
-
-# The reader looks in all three places, so the error names all three.
-WHERE_WE_LOOKED = (
-    "This response does not report how many records matched the search. "
-    "We expected to read the count from one of 'numberMatched', 'numMatched' or "
-    "'context.matched', "
-)
-
-
-@pytest.mark.parametrize(
-    "raw, exp",
-    (
-        pytest.param(
-            {},
-            pytest.raises(
-                NoSearchResultNumberOfMatchesReturnedError,
-                match=re.escape(f"{WHERE_WE_LOOKED}but the response is empty."),
-            ),
-            id="nothing-we-recognise",
-        ),
-        pytest.param(
-            {"features": [{"id": "a"}]},
-            # Every place we looked is explained, so a response carrying records but
-            # no count says so three times over rather than naming one field.
-            pytest.raises(
-                NoSearchResultNumberOfMatchesReturnedError,
-                match=re.escape(
-                    f"{WHERE_WE_LOOKED}but: 'numberMatched' is not in the response's "
-                    "top level, there is only: 'features'; 'numMatched' is not in the "
-                    "response's top level, there is only: 'features'; 'context' is not "
-                    "in the response's top level, there is only: 'features'."
-                ),
-            ),
-            id="records-but-no-count",
-        ),
-        pytest.param(
-            {"numberMatched": "7"},
-            # A count we cannot read is not something to fall through on: the field we
-            # expect is there, so answering from a fallback would be guessing.
-            pytest.raises(
-                TypeError,
-                match=re.escape(
-                    "We expected to get an integer at numberMatched, "
-                    "but instead got '7'"
-                ),
-            ),
-            id="a-count-we-cannot-read",
-        ),
-        pytest.param(
-            {"numMatched": None, "context": {"total": 4}},
-            # Each place we looked is explained as far as we got in it,
-            # so the one which came closest says so.
-            pytest.raises(
-                NoSearchResultNumberOfMatchesReturnedError,
-                match=re.escape(
-                    f"{WHERE_WE_LOOKED}but: 'numberMatched' is not in the response's "
-                    "top level, there is only: 'context', 'numMatched'; we found None "
-                    "at 'numMatched'; 'matched' is not in 'context', there is only: "
-                    "'total'."
-                ),
-            ),
-            id="a-context-which-does-not-carry-the-count",
-        ),
-    ),
-)
-def test_stac_n_matches_with_no_count_raises(raw, exp):
-    """A response we cannot read a count out of is one we have not understood"""
-    with exp:
-        stac_n_matches(raw)
-
-
-def test_a_stac_parser_reads_the_count_with_the_reader_it_was_given():
-    """The parser counts with whatever reader it was built with, not a fixed one
-
-    The reader is a field rather than something the parser decides so that a caller
-    can read a count from somewhere we have not met yet. That seam is what let the
-    two deployments be read differently while they disagreed, so it is worth keeping
-    pinned now that the same reader serves both.
-    """
-    parser = ESGFNGResultParser(read_n_matches=lambda raw: raw["ourCount"])
-
-    assert parser.get_n_matches({"ourCount": 7, "features": []}) == 7
-
-    # And the one the real facades are built with reads the STAC spelling.
-    assert esgfng_parser().get_n_matches({"numberMatched": 7, "features": []}) == 7
-
-
-def test_no_search_result_n_matches_returned_error_when_there_is_a_match_raises():
-    """The error is for responses we could not read; a readable one is a bug"""
-    with pytest.raises(
-        AssertionError,
-        match=re.escape(
-            "context.matched is in {'context': {'matched': 4}}, raw[context][matched]=4"
-        ),
-    ):
-        NoSearchResultNumberOfMatchesReturnedError(
-            {"context": {"matched": 4}},
-            expected_at=("numberMatched", "context.matched"),
         )

@@ -642,8 +642,7 @@ class SearchAPI(Protocol):
 
             This is not the total number of matches;
             that comes back in the response itself and is what
-            [ResultParserProtocol.get_n_matches][esmporium.search.search_api_facade.result_parsers.ResultParserProtocol.get_n_matches]
-            reads.
+            [get_n_matches][(c).get_n_matches] reads.
 
         Returns
         -------
@@ -688,6 +687,39 @@ class SearchAPI(Protocol):
         ------
         UnreadableResponseError
             `raw` says there is a next page but not in a shape we can read.
+        """
+        ...
+
+    def get_n_matches(self, raw: dict[str, Any]) -> int:
+        """
+        Get the number of records that matched a search from a raw response
+
+        This is the total for the whole search,
+        not a count of what the response carries:
+        a response carries at most one page of records
+        (see [build_search_request][(c).build_search_request]'s `limit`),
+        so the total can be far larger than the number of records in front of you.
+
+        Where the total is written is a property of the format this API speaks,
+        which is why it is read here:
+        Solr reports it at `response.numFound`,
+        STAC at `numberMatched`.
+
+        Parameters
+        ----------
+        raw
+            The response to read, i.e. the answer to a request built with
+            [build_search_request][(c).build_search_request]
+
+        Returns
+        -------
+        :
+            The number of records that matched the search
+
+        Raises
+        ------
+        NoSearchResultNumberOfMatchesReturnedError
+            `raw` does not report the number of records that matched the search
         """
         ...
 

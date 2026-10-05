@@ -8,11 +8,9 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from esmporium.search.apis.esgf1 import extract_one_element_list, solr_n_matches
+from esmporium.search.apis.esgf1 import extract_one_element_list
 from esmporium.search.apis.esgfng import stac_nodes
 from esmporium.search.apis.protocol import (
-    NoSearchResultNumberOfMatchesReturnedError,
-    UnreadableResponseError,
     describe_search_api,
     read_response_path,
 )
@@ -276,12 +274,6 @@ class SolrSingleRowResultParser:
     [MultipleFacetValuesError][esmporium.search.apis.MultipleFacetValuesError].
     """
 
-    def get_n_matches(self, raw: dict[str, Any]) -> int:
-        """
-        See [ResultParserProtocol.get_n_matches][esmporium.search.search_api_facade.result_parsers.ResultParserProtocol.get_n_matches].
-        """  # noqa: E501
-        return solr_n_matches(raw)
-
     def parse_search_results(
         self,
         raw: dict[str, Any],
@@ -333,12 +325,6 @@ class SolrVariableBundleResultParser:
     `variable` is a single value shared by the rows;
     `variable` is read as a list and the record explodes into one row per value.
     """
-
-    def get_n_matches(self, raw: dict[str, Any]) -> int:
-        """
-        See [ResultParserProtocol.get_n_matches][esmporium.search.search_api_facade.result_parsers.ResultParserProtocol.get_n_matches].
-        """  # noqa: E501
-        return solr_n_matches(raw)
 
     def parse_search_results(
         self,
@@ -453,22 +439,6 @@ class ESGFNGResultParser:
     """
     Read results from the ESGF-NG STAC API
     """
-
-    def get_n_matches(self, raw: dict[str, Any]) -> int:
-        """
-        See [ResultParserProtocol.get_n_matches][esmporium.search.search_api_facade.result_parsers.ResultParserProtocol.get_n_matches].
-        """  # noqa: E501
-        loc = "numberMatched"
-        try:
-            total = read_response_path(raw, loc)
-        except UnreadableResponseError:
-            raise NoSearchResultNumberOfMatchesReturnedError(raw, loc)
-
-        if not isinstance(total, int):
-            msg = f"We expected to get an integer at {loc}, but instead got {total!r}"
-            raise TypeError(msg)
-
-        return total
 
     def parse_search_results(
         self,

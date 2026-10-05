@@ -200,13 +200,12 @@ def collect_all_pages(  # noqa: PLR0913 - the keyword-only extras are injection 
             client=client,
             api=api,
             api_call_observer=api_call_observer,
-            read_n_matches=facade.get_n_matches,
         )
         raw = fire_here(request=request)
         # Read the count directly: a search response
         # that omits its total is one we cannot use, so let the raise propagate to the
         # UnreadableResponseError handler below rather than swallowing it to None.
-        n_matches = facade.get_n_matches(raw)
+        n_matches = api.get_n_matches(raw)
         if warn_on_pagination:
             _warn_if_paginating(facade_key[0], n_matches=n_matches, limit=limit)
         seen = {_request_fingerprint(request)}

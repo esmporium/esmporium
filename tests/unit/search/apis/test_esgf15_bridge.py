@@ -91,3 +91,10 @@ def test_parse_facet_values_with_nothing_to_read_raises():
 
 def test_parse_facet_patterns_is_always_empty():
     assert api().parse_facet_patterns({}, {"variant_label"}) == {}
+
+
+def test_n_matches_reads_the_count_the_solr_way():
+    """The bridge is Solr-shaped, so its total is at `response.numFound` too"""
+    raw = {"response": {"numFound": 25, "docs": []}}
+
+    assert api().get_n_matches(raw) == 25

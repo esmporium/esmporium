@@ -260,7 +260,7 @@ def count_or_skip(client, facade, query):
     except SearchAPIRequestError:
         pytest.skip(f"{facade.search_api.host} did not answer, so it is down or unwell")
 
-    return facade.get_n_matches(raw)
+    return facade.search_api.get_n_matches(raw)
 
 
 @pytest.fixture
@@ -447,13 +447,18 @@ def test_search_pages_through_all_the_results(client, api, query, skip_or_fail):
     )
     # ...and the pages between them covered the whole result set.
     collected = len(outcome.parsed_docs[facade_key])
+    # Paging through a completed search means we read a total off the first page, so
+    # not having one here is a surprise worth failing on, not something to skip over.
+    assert total is not None, f"{host} answered every page but reported no total"
     # It is possible to do a search and get the total,
     # then get a different result once you've paged through
     # because results are published in the meantime.
     # This gives some tolerance for this (unlikely) possibility.
+    # The floor matters: 2% of a small result set rounds to zero, which would make a
+    # single record published mid-scan a failure. CMIP7 is the live example -- it is
+    # new, so its result sets are small enough for the percentage alone to be nothing.
     drift_tolerance = 0.02
-    assert total is not None, "No total reported"
-    allowed_delta = drift_tolerance * total
+    allowed_delta = max(1, round(total * drift_tolerance))
     assert abs(collected - total) <= allowed_delta, (
         f"{host} said {total} matched but paging collected {collected}, "
         f"which differs by more than the {allowed_delta} record(s) of drift "
@@ -625,22 +630,18 @@ def test_search_ors_within_a_facet(client, facade, make_query):
 
 # --- Raw ESGF-NG east/west shape assumptions ---------------------------------
 #
-# Our STAC result parsing leans on a few things the two ESGF-NG deployments (east and
-# west) publish: the project specific id in `properties.title`,
+# Our STAC reading leans on a few things the two ESGF-NG deployments (east and west)
+# publish: the project specific id in `properties.title`,
 # the project in a top-level `collection` key
 # and the match count in `numberMatched`.
-# Those are pinned against fabricated docs in `tests/unit/search/test_result_parsers.py`
-# and against recorded responses in `tests/unit/search/test_recorded_responses.py`,
+# The first two are pinned against fabricated docs in
+# `tests/unit/search/test_result_parsers.py` and the count in
+# `tests/unit/search/apis/test_esgfng.py`, with all three pinned against recorded
+# responses in `tests/unit/search/test_recorded_responses.py`,
 # but a recording only notices a change when it is refreshed by hand.
 # So these assert the assumptions against the *live* responses: the day a
 # deployment changes shape, the relevant test fails loudly rather
-# than our parsers silently reading the wrong field.
-#
-# The deployments used to differ on the count, and these tests are what told us they
-# had stopped: west used to write `numMatched` and `context.matched` and no
-# `numberMatched` at all, which is why there was a reader per deployment. It now
-# writes the STAC spelling like east does, so one reader serves both and the
-# assumption below is the same for every case.
+# than our reading silently picking up the wrong field.
 
 EAST_HOST = "search.east.esgf.io"
 WEST_HOST = "search.west.esgf.io"
@@ -708,12 +709,7 @@ def test_live_stac_project_lives_in_collection(client, project, host, query):
 def test_live_stac_match_count_key_reports_the_stac_spelling(
     client, project, host, query
 ):
-    """Every deployment reports the count as `numberMatched`, which is STAC's spelling
-
-    `stac_n_matches` reads that key first for all of them, and only falls back to the
-    spellings west used to send. A deployment dropping it would mean we are reading
-    the count out of a fallback without knowing, or not at all.
-    """
+    """Every deployment reports the count as `numberMatched`, which is STAC's spelling"""  # noqa: E501
     raw, _ = fetch_raw_stac_or_skip(client, project, host, query)
 
     assert "numberMatched" in raw, (

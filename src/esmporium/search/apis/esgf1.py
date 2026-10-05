@@ -139,9 +139,10 @@ def solr_n_matches(raw: dict[str, Any]) -> int:
     """
     Get the number of records that matched a search from a Solr-shaped response
 
-    Note: this is not the same as the number of results in `raw`.
-    Solr has the idea of 'limit', which means that the number of results returned
-    can differ from the total number of records which matched a given query.
+    Solr reports the total at `response.numFound`.
+    That is the total for the whole search, not the number of documents this response
+    carries; see
+    [SearchAPI.get_n_matches][esmporium.search.apis.SearchAPI.get_n_matches].
 
     Parameters
     ----------
@@ -418,6 +419,12 @@ class SearchAPIESGF1Solr:
         See [SearchAPI.next_page_request][esmporium.search.apis.SearchAPI.next_page_request].
         """  # noqa: E501
         return solr_next_page_request(request, raw)
+
+    def get_n_matches(self, raw: dict[str, Any]) -> int:
+        """
+        See [SearchAPI.get_n_matches][esmporium.search.apis.SearchAPI.get_n_matches].
+        """
+        return solr_n_matches(raw)
 
     def build_get_facet_values_for_project_request(
         self, facets: set[str], project: str

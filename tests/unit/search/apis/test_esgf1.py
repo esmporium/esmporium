@@ -12,6 +12,7 @@ from esmporium.search.apis import (
     LimitOutOfRangeError,
     NoFacetValuesReturnedError,
     NoSearchResultDocumentsError,
+    NoSearchResultNumberOfMatchesReturnedError,
     Request,
     SearchAPIESGF1Solr,
     UnreadableResponseError,
@@ -307,3 +308,63 @@ def test_no_facet_value_returned_error_when_there_is_a_match_raises():
 def test_parse_facet_patterns_is_always_empty():
     """Solr enumerates its facet values; it never describes their form"""
     assert api().parse_facet_patterns({"summaries": {}}, {"variant_label"}) == {}
+
+
+@pytest.mark.parametrize(
+    "raw, exp",
+    (
+        pytest.param({"response": {"numFound": 3, "docs": []}}, 3, id="a-count"),
+        pytest.param({"response": {"numFound": 0, "docs": []}}, 0, id="no-matches"),
+    ),
+)
+def test_n_matches(raw, exp):
+    """Solr writes the total one way, and that is where we read it"""
+    assert api().get_n_matches(raw) == exp
+
+
+@pytest.mark.parametrize(
+    "raw, exp",
+    (
+        pytest.param(
+            {"response": {"docs": []}},
+            pytest.raises(
+                NoSearchResultNumberOfMatchesReturnedError,
+                match=re.escape(
+                    "This response does not report "
+                    "how many records matched the search. "
+                    "We expected to read the count from 'response.numFound', "
+                    "but 'numFound' is not in 'response', there is only: 'docs'"
+                ),
+            ),
+            id="no-count",
+        ),
+        pytest.param(
+            {},
+            pytest.raises(
+                NoSearchResultNumberOfMatchesReturnedError,
+                match=re.escape(
+                    "This response does not report "
+                    "how many records matched the search. "
+                    "We expected to read the count from 'response.numFound', "
+                    "but the response is empty."
+                ),
+            ),
+            id="nothing-we-recognise",
+        ),
+        pytest.param(
+            {"response": {"numFound": "3"}},
+            pytest.raises(
+                TypeError,
+                match=re.escape(
+                    "We expected to get an integer at 'response.numFound', "
+                    "but instead got '3'"
+                ),
+            ),
+            id="a-count-we-cannot-read",
+        ),
+    ),
+)
+def test_n_matches_with_no_count_raises(raw, exp):
+    """A response we cannot read a count out of is one we have not understood"""
+    with exp:
+        api().get_n_matches(raw)
