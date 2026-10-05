@@ -82,8 +82,13 @@ jobs:
         uses: lycheeverse/lychee-action@v2
         with:
           # Exclude local links
-          # and the template link in pyproject.toml
-          args: "--exclude 'file://' --exclude '^https://github\\.com/esmporium/esmporium/pull/\\{issue\\}$' ."
+          # and the template link in pyproject.toml.
+          # The codecov badge's link target is excluded because codecov redirects it
+          # to app.codecov.io, which rejects lychee's TLS handshake outright
+          # ("received fatal alert: HandshakeFailure"). That started some time after
+          # 2026-10-02, the last green run on main, and it is not something we can fix
+          # from here. The badge image itself is still checked.
+          args: "--exclude 'file://' --exclude '^https://github\\.com/esmporium/esmporium/pull/\\{issue\\}$' --exclude '^https://codecov\\.io/gh/esmporium/esmporium$' ."
 
   tests:
     strategy:
