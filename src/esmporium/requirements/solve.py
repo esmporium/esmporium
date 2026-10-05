@@ -1,7 +1,7 @@
 """
 Solving a requirement: filling roles with datasets, group by group
 
-The requirements tree says what is needed, and the catalogue says what
+The requirements tree says what is needed, the catalogue says what
 exists, and the solver works out (group by group) whether the one can
 be filled from the other.
 """
