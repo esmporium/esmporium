@@ -5,10 +5,6 @@ The point of this file is that it is parametrised over
 [`USE_CASES`][tests.unit.requirements.use_cases.USE_CASES] rather than naming
 any one of them: a use case added later is checked by these same four
 assertions, without anyone writing a test for it.
-
-What it does not check is anything about a *particular* use case. The solver's
-own behaviour -- what it does when a dataset is missing, or when two fit one
-role -- is in `test_solve.py`.
 """
 
 from __future__ import annotations
