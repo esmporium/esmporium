@@ -1,41 +1,9 @@
 """
 Solving a requirement: filling roles with datasets, group by group
 
-[`Catalogue.find`][esmporium.requirements.Catalogue] answers "which datasets match this
-one query?". An analysis asks something else: "do I have everything I need, *together*,
-and for which models?". The answer to that is not a list of datasets, it is a verdict
-per group, each with a reason attached.
-
-[solve][(m).solve] is where the two halves of this package meet.
-[`esmporium.requirements.tree`][] says what is needed,
-[`esmporium.requirements.catalogue`][] says what exists,
-and this works out, group by group, whether the one can be filled from the other.
-
-Four things happen here which happen nowhere else:
-
-1. **The groups are discovered**, as the distinct combinations of
-   [group_by][esmporium.requirements.Requirement.group_by] values across every leaf's
-   candidates. Forty models come out of the data rather than being listed up front.
-1. **Each role is filled**, one dataset per slot,
-   [prefer][esmporium.requirements.Requirement.prefer] breaking ties. A tie it cannot
-   break is reported as `"ambiguous"` rather than guessed at.
-1. **Each group is judged on its own.** One model resolving while the next does not is
-   the normal case, not an error.
-1. **The result explains itself**, see [Explanation][(m).Explanation].
-
-The solver is **greedy and does not backtrack**: a choice made for one leaf is never
-revisited in order to satisfy another. That is a deliberate trade, and it is why the
-explanation matters as much as the answer: when a group does not resolve, the
-explanation is what tells a user whether to widen a query, set `prefer`, or accept the
-loss.
-
-Today a tree holds leaves and `all_of` and nothing else, so greed has nothing to bite
-on -- each leaf is independent once the group is fixed. It starts to mean something
-when lineages and alternatives arrive.
-
-Where this sits in the flow: a requirement becomes searches, esmporium searches ESGF
-and stores what it finds, a catalogue reads those rows back, and this decides what they
-add up to.
+The requirements tree says what is needed, and the catalogue says what
+exists, and the solver works out (group by group) whether the one can
+be filled from the other.
 """
 
 # A note for whoever adds the next node type: [_eval][(m)._eval] is the fourth of the
@@ -45,8 +13,7 @@ add up to.
 
 from __future__ import annotations
 
-import contextlib
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -56,7 +23,6 @@ from esmporium.query import QueryProtocol
 from esmporium.requirements.catalogue import (
     Catalogue,
     CatalogueEntry,
-    UnrecordedFacetError,
     set_facets,
 )
 from esmporium.requirements.tree import (
@@ -78,26 +44,28 @@ A value can be `None` because a facet can be: CMIP5 has no concept of a grid, so
 `None` for every CMIP5 dataset.
 """
 
+# TODO future:
+# A third, `"undetermined"`, arrives with constraints: a check which needs metadata the
+# catalogue cannot supply can neither pass nor fail, and answering "no" on its behalf
+# would be a lie. Nothing here can produce that yet, because no check exists to need it,
+# so it is deliberately absent rather than defined and unreachable.
 NotOkStatus = Literal["unsatisfied", "ambiguous"]
 """
 Ways in which (part of) a requirement can fail to resolve
 
 `"unsatisfied"` is "there is no dataset", `"ambiguous"` is "there are too many and
 nothing to choose between them".
-
-A third, `"undetermined"`, arrives with constraints: a check which needs metadata the
-catalogue cannot supply can neither pass nor fail, and answering "no" on its behalf
-would be a lie. Nothing here can produce that yet, because no check exists to need it,
-so it is deliberately absent rather than defined and unreachable.
 """
 
+# TODO future:
+# Two more join them later, for the same reason as `"undetermined"`: `"degraded"`
+# when a check passes with a complaint, and `"absent"` when an optional part is
+# dropped.
 ExplanationStatus = Literal["satisfied", "unsatisfied", "ambiguous"]
 """
 Statuses an [Explanation][(m).Explanation] can carry
 
-The statuses of [NotOkStatus][(m).NotOkStatus], plus `"satisfied"`. Two more join them
-later, for the same reason as `"undetermined"`: `"degraded"` when a check passes with a
-complaint, and `"absent"` when an optional part is dropped.
+The statuses of [NotOkStatus][(m).NotOkStatus], plus `"satisfied"`.
 """
 
 _STATUS_PRIORITY: dict[NotOkStatus, int] = {
@@ -119,8 +87,10 @@ class Explanation:
     """
     Why (part of) a requirement did or did not resolve
 
-    The solver does not backtrack, so this is half the product rather than a debugging
-    aid: a group which did not resolve is only useful if it says what was tried.
+    Output rather than diagnostics: [SolveResult.explain][(m).SolveResult.explain]
+    renders these for a person to read. Most groups in a real archive do not resolve,
+    and `"unsatisfied"` on its own does not say whether to widen a query, set `prefer`,
+    or accept the loss.
     """
 
     subject: str
@@ -132,9 +102,7 @@ class Explanation:
     message: str = ""
     """Details, if there are any to add"""
 
-    # @Claude is 'children' the software dev name? In future we will be looking for
-    # children of experiments so is this language confusing?
-    children: tuple[Explanation, ...] = ()
+    parts: tuple[Explanation, ...] = ()
     """Explanations of the parts, in the order they were evaluated"""
 
     def render(self, indent: int = 0) -> str:
@@ -157,7 +125,7 @@ class Explanation:
         ...     Explanation(
         ...         "model=MIROC6",
         ...         "unsatisfied",
-        ...         children=(
+        ...         parts=(
         ...             Explanation("tas", "satisfied", "#1 ('CMIP6.a.tas')"),
         ...             Explanation("rlut", "unsatisfied", "no dataset matches ..."),
         ...         ),
@@ -167,16 +135,19 @@ class Explanation:
           [satisfied] tas: #1 ('CMIP6.a.tas')
           [unsatisfied] rlut: no dataset matches ...
         """
-        # @Claude what is the subject showing? i.e. what in the error message
-        # is the model/group/project that isn't satisfied? Should more/less/different
-        # information be provided here for the user?
         line = f"{'  ' * indent}[{self.status}] {self.subject}"
         if self.message:
             line = f"{line}: {self.message}"
 
-        return "\n".join([line, *(child.render(indent + 1) for child in self.children)])
+        return "\n".join([line, *(part.render(indent + 1) for part in self.parts)])
 
 
+# TODO future as tree grows:
+# Three more fields join `roles` as the tree grows, each carrying what its own node
+# type produces: `lineages` (the chain of parents behind each dataset), `choices`
+# (which alternative an `any_of` used) and `notes` (an optional part dropped, a check
+# which passed with a complaint). None of them are here yet, because nothing can put
+# anything in them yet.
 @dataclass(frozen=True)
 class Resolved:
     """
@@ -184,12 +155,6 @@ class Resolved:
 
     Nodes resolve from the leaves up and are merged as they go (see `_merge`),
     so a group's result is the `Resolved` of the tree's root.
-
-    Three more fields join `roles` as the tree grows, each carrying what its own node
-    type produces: `lineages` (the chain of parents behind each dataset), `choices`
-    (which alternative an `any_of` used) and `notes` (an optional part dropped, a check
-    which passed with a complaint). None of them are here yet, because nothing can put
-    anything in them yet.
     """
 
     roles: Mapping[str, tuple[CatalogueEntry, ...]]
@@ -327,7 +292,12 @@ class SolveResult:
         Returns
         -------
         :
-            Rendered explanations, one block per group, in a stable order.
+            A title naming the requirement, then one block per group, in a
+            stable order.
+
+            The title is there because the blocks name only their group: two
+            requirements solved against the same catalogue are otherwise
+            indistinguishable once the output is pasted somewhere else.
 
             When no group was discovered at all there is nothing to render, so the
             answer says why instead: an empty string would read as a bug.
@@ -338,11 +308,22 @@ class SolveResult:
             *self.ambiguous.values(),
         ]
         if not groups:
+            # `_no_groups` names the requirement itself, so it needs no title.
             return self._no_groups()
 
+        title = (
+            f"Requirement {self.requirement.name!r}, grouped by "
+            f"{readable_list(self.requirement.group_by)}:"
+        )
+
         return "\n\n".join(
-            group.explanation.render()
-            for group in sorted(groups, key=lambda group: _sortable(group.key))
+            [
+                title,
+                *(
+                    group.explanation.render()
+                    for group in sorted(groups, key=lambda group: _sortable(group.key))
+                ),
+            ]
         )
 
     def _no_groups(self) -> str:
@@ -370,74 +351,31 @@ class _Context:
     group: dict[str, str | None]
 
 
-# @Claude is this too smart? Shouldn't this just be an already defined error?
-_ENTRY_FACET_ADVICE = (
-    "Both `group_by` and `prefer` compare entries rather than queries, so they can "
-    "only name facets every entry records or carries in its `extra`."
-)
-"""What to say when `group_by` or `prefer` names a facet no entry can answer for"""
-
-# @Claude is this too smart? Shouldn't this just be an already defined error?
-_QUERY_FACET_ADVICE = (
-    "Note that a facet in a query's `other_terms` is never translated, so it reaches "
-    "the catalogue spelt as it was written: `other_terms={'table_id': ('Amon',)}` asks "
-    "for 'table_id', not 'processing_id', and no entry knows it. Declare the facet on "
-    "a query class instead, and it is translated on the way in."
-)
-"""What to say when a leaf's query names a facet no entry can answer for"""
-
-
-@contextlib.contextmanager
-def _asking_about(source: str, advice: str, requirement: Requirement) -> Iterator[None]:
-    """
-    Say which part of a requirement asked, if a facet turns out to be unanswerable
-
-    [`CatalogueEntry.facet`][esmporium.requirements.CatalogueEntry.facet] explains
-    perfectly well that no dataset records the facet it was asked about. What it cannot
-    know is who asked, and the fix differs: a facet in `group_by` or `prefer` is
-    compared against entries, so it has to be one they carry, whereas a facet in a
-    leaf's query may simply be spelt for a search API rather than for us.
-
-    Parameters
-    ----------
-    source
-        The part of the requirement doing the asking, e.g. ``"`prefer`"``
-
-    advice
-        What to advise, [_ENTRY_FACET_ADVICE][(m)._ENTRY_FACET_ADVICE] or
-        [_QUERY_FACET_ADVICE][(m)._QUERY_FACET_ADVICE].
-
-        Named by the call site, which knows what it is asking on behalf of, rather
-        than worked out here from how `source` happens to be spelt.
-
-    requirement
-        The requirement being solved
-
-    Yields
-    ------
-    :
-        Nothing; this is here for its `except`
-    """
-    try:
-        yield
-    except UnrecordedFacetError as exc:
-        # Appending to the message, rather than raising something new, on purpose. The
-        # class stays the same, so anything catching `UnrecordedFacetError` keeps
-        # working, and its `facets` and `entry_id` stay exactly as
-        # `CatalogueEntry.facet` set them. All this adds is the sentence the catalogue
-        # was not in a position to write.
-        exc.args = (
-            f"{exc.args[0]} This came up while solving requirement "
-            f"{requirement.name!r}, from {source}. {advice}",
-        )
-        raise
-
-
 def _sortable(key: GroupKey) -> tuple[str, ...]:
     return tuple("" if value is None else value for _, value in key)
 
 
-# @Claude what is the role of this function?
+def _describe_group(group: Mapping[str, str | None]) -> str:
+    """
+    Describe a group, for a message a person is going to read
+
+    One spelling, used by the group's own explanation and by the messages of the
+    leaves inside it. Two spellings would be free to drift, and a leaf which named
+    the group differently to the block it sits under would read as a second group.
+
+    Parameters
+    ----------
+    group
+        Facet -> value, as [_Context.group][(m)._Context] holds it
+
+    Returns
+    -------
+    :
+        The group, e.g. `model=ACCESS-CM2, variant_label=r1i1p1f1`
+    """
+    return ", ".join(f"{facet}={value}" for facet, value in group.items())
+
+
 def describe_query(query: QueryProtocol) -> str:
     """
     Describe a query briefly, for a message a person is going to read
@@ -469,10 +407,8 @@ def describe_query(query: QueryProtocol) -> str:
     )
 
 
-# @claude do we need id_project_specific here? what is the use of it? to us,
-# id_project_specific is just another column to satisfy uniqueness in our main dataset
 def _describe_entry(entry: CatalogueEntry) -> str:
-    # Both IDs, because they answer different questions. The integer is the key to the
+    # Both ID and id_project_specific. The integer is the key to the
     # row, for anyone going to look it up or link to it; the project-specific ID is the
     # dataset in the project's own language, which is what a user can search for.
     return f"#{entry.id} ({entry.id_project_specific!r})"
@@ -529,14 +465,16 @@ def _ambiguous_message(candidates: Sequence[CatalogueEntry], ctx: _Context) -> s
     differing = _differing_facets(candidates)
     if not differing:
         listed = ", ".join(_describe_entry(candidate) for candidate in candidates)
-        # @Claude see above about project_specific_id?? What is the benefit of
-        # describing
-        # it in the error message here...
+        # No speculation about *why* they agree, and no suggestion of picking one
+        # by ID: neither `prefer` nor a query can select on an ID, because
+        # `CatalogueEntry.facet` does not answer for one, so that advice raises
+        # `UnrecordedFacetError` if it is followed.
         return (
             f"{len(candidates)} candidates which agree on every facet, so no facet can "
-            f"choose between them: {listed}. The same dataset can be published under "
-            "more than one project-specific ID, which is what this usually is. "
-            "`prefer` cannot help; pick one by ID, or use `cardinality='all'`."
+            f"choose between them: {listed}. They differ only in their "
+            "project-specific ID, which `prefer` compares no more than a query can. "
+            "Use `cardinality='all'` to keep them all and choose further down, or "
+            "narrow the query."
         )
 
     listed = ", ".join(
@@ -598,34 +536,23 @@ def _choose(
         The datasets, or why they could not be narrowed down
     """
     remaining = list(candidates)
-    # `prefer` first, then `cardinality` decides what to do with whatever survives it.
-    # That is the order the design note gives, and it is why `prefer` is applied even
-    # when `cardinality="all"`: ranking and keeping are different questions.
-    #
-    # Sorted rather than in the order the mapping was written, because narrowing one
-    # facet at a time makes the first facet applied outrank the rest, and the mapping's
-    # order is deliberately not part of `requirement_hash`. Insertion order would
-    # therefore let two requirements which hash the same resolve differently. Sorting
-    # is not a decision about which facet *should* outrank which -- the design note
-    # names that as still to settle -- only a guarantee that one requirement always
-    # solves the same way.
-    with _asking_about("`prefer`", _ENTRY_FACET_ADVICE, ctx.requirement):
-        for facet in sorted(ctx.requirement.prefer):
-            order = ctx.requirement.prefer[facet]
-            ranks = [
-                order.index(value)
-                if (value := candidate.facet(facet)) in order
-                # Unlisted values rank behind every listed one, rather than being
-                # dropped: `prefer` says which is better, not which is allowed.
-                else len(order)
-                for candidate in remaining
-            ]
-            best = min(ranks)
-            remaining = [
-                candidate
-                for candidate, rank in zip(remaining, ranks, strict=True)
-                if rank == best
-            ]
+
+    for facet in sorted(ctx.requirement.prefer):
+        order = ctx.requirement.prefer[facet]
+        ranks = [
+            order.index(value)
+            if (value := candidate.facet(facet)) in order
+            # Unlisted values rank behind every listed one, rather than being
+            # dropped: `prefer` says which is better, not which is allowed.
+            else len(order)
+            for candidate in remaining
+        ]
+        best = min(ranks)
+        remaining = [
+            candidate
+            for candidate, rank in zip(remaining, ranks, strict=True)
+            if rank == best
+        ]
 
     if cardinality == "one" and len(remaining) > 1:
         return Unresolved(
@@ -637,34 +564,27 @@ def _choose(
 
 
 def _in_group(entry: CatalogueEntry, ctx: _Context) -> bool:
-    with _asking_about("`group_by`", _ENTRY_FACET_ADVICE, ctx.requirement):
-        return all(entry.facet(facet) == value for facet, value in ctx.group.items())
+    return all(entry.facet(facet) == value for facet, value in ctx.group.items())
 
 
-def _eval_leaf(leaf: Leaf, ctx: _Context, prefix: str) -> NodeResult:
-    path = f"{prefix}{leaf.role}"
+def _eval_leaf(leaf: Leaf, ctx: _Context, role_prefix: str) -> NodeResult:
+    path = f"{role_prefix}{leaf.role}"
     query = effective_query(leaf, ctx.requirement.where)
-    with _asking_about(
-        f"the query on leaf {leaf.role!r}", _QUERY_FACET_ADVICE, ctx.requirement
-    ):
-        found = ctx.catalogue.find(query)
+    found = ctx.catalogue.find(query)
 
     candidates = [entry for entry in found if _in_group(entry, ctx)]
     if not candidates:
-        # @Claude, who put this TODO below? Was it you? Is this what we want to be able
-        # to do? Doesn't this go against the 'greedy', no backtracking logic? Or am
-        # I wrong here?
-        # TODO: say which facet was the one which found nothing, i.e. drop each facet
-        # in turn, search again, and report the relaxation which would have matched.
-        # That is the question a user actually has here ("is `rlut` missing entirely,
-        # or only for this variant?"), and the query alone does not answer it. Left
-        # out for now because it costs a search per facet.
+        # The group is named here as well as on the block above, because the
+        # group is filtered on the entry rather than in the query: without it this
+        # line reads as "there is no `rlut` at all", which is a different and
+        # usually false statement.
         return Unresolved(
             "unsatisfied",
             Explanation(
                 path,
                 "unsatisfied",
-                f"no dataset matches {describe_query(query)}",
+                f"no dataset matches {describe_query(query)} "
+                f"for {_describe_group(ctx.group)}",
             ),
         )
 
@@ -710,14 +630,15 @@ def _label(node: Node) -> str:
     raise NotANodeError(node)
 
 
+# TODO: note on future (delete this once arrives)
+# Concatenating rather than replacing. Two used parts of a tree cannot
+# share a role today (`all_of` refuses it), but the nodes which make a role
+# legitimately repeatable are coming, and silently dropping half of a role
+# would be a bad way to find that out.
 def _merge(results: Sequence[Resolved], explanation: Explanation) -> Resolved:
     roles: dict[str, tuple[CatalogueEntry, ...]] = {}
     for result in results:
         for role, entries in result.roles.items():
-            # Concatenating rather than replacing. Two used parts of a tree cannot
-            # share a role today (`all_of` refuses it), but the nodes which make a role
-            # legitimately repeatable are coming, and silently dropping half of a role
-            # would be a bad way to find that out.
             roles[role] = (*roles.get(role, ()), *entries)
 
     return Resolved(roles, explanation)
@@ -727,14 +648,10 @@ def _worst(results: Sequence[Unresolved]) -> NotOkStatus:
     return min((result.status for result in results), key=_STATUS_PRIORITY.__getitem__)
 
 
-# @Claude prefix has a meaning in search (i.e. the prefix for a STAC search request).
-# Is this what you mean by prefix here? See tree.py where we had to rename prefix
-# for this very reason.
-# UNless it is the same prefix as used in search/
-def _eval_all_of(node: AllOf, ctx: _Context, prefix: str) -> NodeResult:
+def _eval_all_of(node: AllOf, ctx: _Context, role_prefix: str) -> NodeResult:
     # Every child is evaluated, even once one has failed, so that the explanation says
     # everything that is wrong with the group rather than the first thing.
-    results = [_eval(child, ctx, prefix) for child in node.children]
+    results = [_eval(child, ctx, role_prefix) for child in node.children]
     explanations = tuple(result.explanation for result in results)
     label = f"all_of({_label(node)})"
 
@@ -742,20 +659,20 @@ def _eval_all_of(node: AllOf, ctx: _Context, prefix: str) -> NodeResult:
     if failures:
         status = _worst(failures)
 
-        return Unresolved(status, Explanation(label, status, children=explanations))
+        return Unresolved(status, Explanation(label, status, parts=explanations))
 
     return _merge(
         [result for result in results if isinstance(result, Resolved)],
-        Explanation(label, "satisfied", children=explanations),
+        Explanation(label, "satisfied", parts=explanations),
     )
 
 
-def _eval(node: Node, ctx: _Context, prefix: str) -> NodeResult:
+def _eval(node: Node, ctx: _Context, role_prefix: str) -> NodeResult:
     if isinstance(node, Leaf):
-        return _eval_leaf(node, ctx, prefix)
+        return _eval_leaf(node, ctx, role_prefix)
 
     if isinstance(node, AllOf):
-        return _eval_all_of(node, ctx, prefix)
+        return _eval_all_of(node, ctx, role_prefix)
 
     raise NotANodeError(node)
 
@@ -782,16 +699,11 @@ def _group_values(
     values: set[tuple[str | None, ...]] = set()
     for _, leaf in walk_leaves(requirement.tree):
         query = effective_query(leaf, requirement.where)
-        with _asking_about(
-            f"the query on leaf {leaf.role!r}", _QUERY_FACET_ADVICE, requirement
-        ):
-            found = catalogue.find(query)
-
-        with _asking_about("`group_by`", _ENTRY_FACET_ADVICE, requirement):
-            values.update(
-                tuple(entry.facet(facet) for facet in requirement.group_by)
-                for entry in found
-            )
+        found = catalogue.find(query)
+        values.update(
+            tuple(entry.facet(facet) for facet in requirement.group_by)
+            for entry in found
+        )
 
     # Sorted so that the groups, and so the explanations, come out in the same order
     # every time.
@@ -839,7 +751,7 @@ def solve(requirement: Requirement, catalogue: Catalogue) -> SolveResult:
     for values in _group_values(requirement, catalogue):
         group = dict(zip(requirement.group_by, values, strict=True))
         key: GroupKey = tuple(group.items())
-        subject = ", ".join(f"{facet}={value}" for facet, value in key)
+        subject = _describe_group(group)
         ctx = _Context(requirement=requirement, catalogue=catalogue, group=group)
 
         evaluated = _eval(requirement.tree, ctx, "")
@@ -848,7 +760,7 @@ def solve(requirement: Requirement, catalogue: Catalogue) -> SolveResult:
                 key=key,
                 roles=evaluated.roles,
                 explanation=Explanation(
-                    subject, "satisfied", children=(evaluated.explanation,)
+                    subject, "satisfied", parts=(evaluated.explanation,)
                 ),
             )
         else:
@@ -856,7 +768,7 @@ def solve(requirement: Requirement, catalogue: Catalogue) -> SolveResult:
                 key=key,
                 status=evaluated.status,
                 explanation=Explanation(
-                    subject, evaluated.status, children=(evaluated.explanation,)
+                    subject, evaluated.status, parts=(evaluated.explanation,)
                 ),
             )
 

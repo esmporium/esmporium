@@ -2,9 +2,9 @@
 The requirement tree: what an analysis needs, and in what shape
 
 A requirement is a tree: one root at the top, branching at each internal node
-downward to leaves at the tips (a leaf is a node with no children). Each requirement
-tree represents one run of an analysis: solved once per group. For example,
-grouped by model means one requirement tree per model.
+downward to leaves at the tips (a leaf is a node with no children). There is one
+tree per requirement, and it is solved once per group, so `group_by=("model",)`
+gives one run of the analysis per model, all from that same tree.
 
 The one rule to hold onto is what each of them takes: **a leaf takes a query
 (in any query style), everything else takes nodes.**

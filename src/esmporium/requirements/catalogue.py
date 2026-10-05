@@ -389,6 +389,39 @@ def matches(query: QueryProtocol, entry: CatalogueEntry) -> bool:
     return _matches_facets(set_facets(query), entry)
 
 
+# TODO for future: whoever writes the database-backed catalogue has to fill `extra`
+# from the raw search documents, or three facets stay unaskable.
+#
+# `activity`, `realm` and `resolution` are canonical facets: a query may ask for them,
+# every query class declares them under those exact names (no translation involved),
+# the search APIs answer, and the values come back and are kept verbatim in
+# [`DatasetRawDoc.raw_json`][esmporium.db.schema.DatasetRawDoc]. What they are not is
+# columns of [`Dataset`][esmporium.db.schema.Dataset], so
+# [`DatasetFacets`][esmporium.search.DatasetFacets] drops them on the way in and
+# [CatalogueEntry.facet][(m).CatalogueEntry.facet] cannot answer for them. The data is
+# there; only the route from the raw document to the entry is missing, and
+# [`esmporium.search.normalise_stored_document`][] is what flattens a stored document
+# back out.
+#
+# Until that lands, a requirement naming one of them fails in a way which depends on
+# the data rather than on the requirement, because
+# [_matches_facets][(m)._matches_facets] is an `all`, which stops at the first facet
+# that does not match:
+#
+#   Query(variable="ta", realm="atmos")                  facets checked: realm, variable
+#     -> `realm` is checked first, so it always raises
+#   Query(variable="ta", other_terms={"realm": ("atmos",)})
+#                                                        facets checked: variable, realm
+#     -> `other_terms` is always checked last, so this raises only when `variable`
+#        matched something first, and silently finds nothing otherwise
+#
+# Deliberately not fixed here, and deliberately untested: with no catalogue reading the
+# database there is nothing yet to assert against, and a check which rejects these three
+# facets today would have to be taken out again the moment `extra` is filled. The thing
+# to add then is one pass over the facets a requirement names, before any matching, so
+# the answer does not depend on which rows happen to be present.
+
+
 class Catalogue(Protocol):
     """
     The datasets available to the solver, and what is known about them
