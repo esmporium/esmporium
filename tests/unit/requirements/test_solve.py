@@ -25,7 +25,6 @@ GROUP_BY = ("model", "variant_label")
 MONTHLY = Query(reporting_interval="mon")
 """Facets a requirement adds to every leaf, set once rather than per leaf"""
 
-# @Claude 'in project's own language'... but above is using cmip5 language for cmip6...
 READABLE_FACETS = {
     "project": "CMIP6",
     "model": "ModelA",
