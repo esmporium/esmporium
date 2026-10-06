@@ -14,8 +14,8 @@ Five scenes, each a use case the solver is built for:
 5. ...and the same requirement with `prefer` set, which resolves it
 
 Needs no network and no database: the catalogue here is
-[`InMemoryCatalogue`][esmporium.requirements.InMemoryCatalogue], which is what we use for demos 
-like this so we don't need a full database to be spun up.
+[`InMemoryCatalogue`][esmporium.requirements.InMemoryCatalogue], which is what we
+use for demos like this so we don't need a full database to be spun up.
 Everything else -- the requirement, the solving, the
 explanations -- is exactly what a real catalogue would get.
 """
@@ -33,11 +33,8 @@ from esmporium.requirements import (
     solve,
 )
 
-MONTHLY = Query(reporting_interval="mon")
-"""Facets every leaf in these examples inherits, set once on the requirement."""
 
-
-def entry(
+def catalogue_entry(
     entry_id: int,
     model: str,
     variable: str,
@@ -91,12 +88,12 @@ GREGORY = requirement(
         leaf(Query(variable="rlut"), "rlut"),
     ),
     group_by=("model", "variant_label"),
-    where=MONTHLY,
+    where=Query(reporting_interval="mon"),
 )
 
 BOTH_MODELS_COMPLETE = InMemoryCatalogue(
     entries=tuple(
-        entry(index, model, variable)
+        catalogue_entry(index, model, variable)
         for index, (model, variable) in enumerate(
             (model, variable)
             for model in ("CanESM5", "ACCESS-CM2")
@@ -116,7 +113,7 @@ PER_FIELD = requirement(
     name="per-field-analysis",
     tree=all_of(leaf(Query(variable=("tas", "pr", "rsdt", "rlut")), "field")),
     group_by=("model", "variable"),
-    where=MONTHLY,
+    where=Query(reporting_interval="mon"),
 )
 
 
@@ -139,7 +136,7 @@ TWO_GRIDS = InMemoryCatalogue(
     entries=(
         *BOTH_MODELS_COMPLETE.entries,
         *(
-            entry(100 + index, "CanESM5", variable, grid_label="gr")
+            catalogue_entry(100 + index, "CanESM5", variable, grid_label="gr")
             for index, variable in enumerate(("tas", "rsdt", "rlut"))
         ),
     )
@@ -149,7 +146,7 @@ PREFERS_NATIVE_GRID = requirement(
     name="gregory-regression",
     tree=GREGORY.tree,
     group_by=("model", "variant_label"),
-    where=MONTHLY,
+    where=Query(reporting_interval="mon"),
     # Order within a facet matters: the first value present wins.
     prefer={"grid_label": ("gn", "gr")},
 )
@@ -158,7 +155,7 @@ KEEPS_EVERY_GRID = requirement(
     name="gregory-regression",
     tree=GREGORY.tree,
     group_by=("model", "variant_label"),
-    where=MONTHLY,
+    where=Query(reporting_interval="mon"),
     # The other half of the same rule: `prefer` ranks, and `cardinality` says what to
     # do with whatever survives the ranking. Nothing ranks `grid_label` here, so with
     # `"all"` both grids are kept rather than reported as a tie.
