@@ -12,9 +12,9 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from esmporium.db.schema import DATASET_FACET_COLUMNS
 from esmporium.query import (
     CANONICAL_FACETS,
+    DATASET_FACET_COLUMNS,
     ClashingFacetsError,
     QueryCanonical,
     QueryProtocol,
@@ -185,7 +185,7 @@ class CatalogueEntry:
     — [`Query`][esmporium.query.Query] can ask for them and the search APIs
     answer — but which [`Dataset`][esmporium.db.schema.Dataset] has no column for,
     so they are not in
-    [`DATASET_FACET_COLUMNS`][esmporium.db.schema.DATASET_FACET_COLUMNS].
+    [`DATASET_FACET_COLUMNS`][esmporium.query.DATASET_FACET_COLUMNS].
     """
 
     def facet(self, name: str) -> str | None:
@@ -210,7 +210,7 @@ class CatalogueEntry:
         ------
         UnrecordedFacetError
             `name` is neither one of
-            [`DATASET_FACET_COLUMNS`][esmporium.db.schema.DATASET_FACET_COLUMNS]
+            [`DATASET_FACET_COLUMNS`][esmporium.query.DATASET_FACET_COLUMNS]
             nor a key of this entry's `extra`
         """
         if name in DATASET_FACET_COLUMNS:
@@ -316,16 +316,19 @@ def set_facets(query: QueryProtocol) -> dict[str, tuple[str, ...]]:
     return {**declared, **query_specific, **other}
 
 
-def _matches_facets(
+def matches_facets(
     facets: Mapping[str, tuple[str, ...]], entry: CatalogueEntry
 ) -> bool:
     """
     Determine whether an entry matches already-flattened facets
 
-    Separate from [matches][(m).matches] so that
-    [InMemoryCatalogue.find][(m).InMemoryCatalogue.find] can flatten a query once
-    and then check every entry against the result, rather than re-flattening the
-    same query for each entry.
+    The companion to [set_facets][(m).set_facets], and separate from
+    [matches][(m).matches] so that a catalogue can flatten a query once and then check
+    every entry against the result, rather than re-flattening the same query for each
+    entry. Both catalogues we ship do exactly that --
+    [InMemoryCatalogue.find][(m).InMemoryCatalogue.find] over its own entries, and
+    [esmporium.db.DatabaseCatalogue][] over the rows its `select` returned -- which
+    is how the two come to agree about a facet only an entry can answer for.
 
     Parameters
     ----------
@@ -380,46 +383,54 @@ def matches(query: QueryProtocol, entry: CatalogueEntry) -> bool:
     ------
     UnrecordedFacetError
         `query` sets a facet `entry` does not know, i.e. one which is neither one of
-        [`DATASET_FACET_COLUMNS`][esmporium.db.schema.DATASET_FACET_COLUMNS]
+        [`DATASET_FACET_COLUMNS`][esmporium.query.DATASET_FACET_COLUMNS]
         nor in the entry's `extra`
 
     ClashingFacetsError
         `query` sets the same facet in more than one place
     """
-    return _matches_facets(set_facets(query), entry)
+    return matches_facets(set_facets(query), entry)
 
 
-# TODO for future: whoever writes the database-backed catalogue has to fill `extra`
-# from the raw search documents, or three facets stay unaskable.
+# A note for developers: `extra` is filled by the database-backed catalogue
+# ([esmporium.db.DatabaseCatalogue][]) out of the stored raw search documents, which
+# is what makes `activity`, `realm`, `resolution` and the project-specific facets
+# askable at all. They are not columns of [`Dataset`][esmporium.db.schema.Dataset] --
+# `activity`, `realm` and `resolution` are canonical facets every query class names
+# and the APIs answer for, they just have nowhere to be stored -- so the raw document
+# is the only place left, and
+# [esmporium.search.normalise_stored_document][] is what flattens one back out.
 #
-# `activity`, `realm` and `resolution` are canonical facets: a query may ask for them,
-# every query class declares them under those exact names (no translation involved),
-# the search APIs answer, and the values come back and are kept verbatim in
-# [`DatasetRawDoc.raw_json`][esmporium.db.schema.DatasetRawDoc]. What they are not is
-# columns of [`Dataset`][esmporium.db.schema.Dataset], so
-# [`DatasetFacets`][esmporium.search.DatasetFacets] drops them on the way in and
-# [CatalogueEntry.facet][(m).CatalogueEntry.facet] cannot answer for them. The data is
-# there; only the route from the raw document to the entry is missing, and
-# [esmporium.search.normalise_stored_document][] is what flattens a stored document
-# back out.
+# Two things about that are worth knowing here, because they are decisions rather than
+# details:
 #
-# Until that lands, a requirement naming one of them fails in a way which depends on
-# the data rather than on the requirement, because
-# [_matches_facets][(m)._matches_facets] is an `all`, which stops at the first facet
-# that does not match:
+# - **Which document answers.** A dataset has many versions and a version can be
+#   described by several documents. The one that answers belongs to the newest version
+#   which passed the catalogue's `availability` filter -- not simply the newest version
+#   -- so a caller who excluded a retracted version is not then described by it. This
+#   is the piece which will need revisiting once a requirement can ask for a particular
+#   version, which it cannot today: `version` lives on
+#   [`DatasetVersion`][esmporium.db.schema.DatasetVersion], not on `Dataset`, and is
+#   neither a canonical facet nor something a [`Query`][esmporium.query.Query] can
+#   name. Making it one would touch `esmporium.query`, the canonical facets and every
+#   search API's parameter mapping, so it is a change of its own.
 #
-#   Query(variable="ta", realm="atmos")                  facets checked: realm, variable
-#     -> `realm` is checked first, so it always raises
-#   Query(variable="ta", other_terms={"realm": ("atmos",)})
+# - **A facet nothing records.** [matches_facets][(m).matches_facets] is an `all`,
+#   which stops at the first facet that does not match, so asking for a facet no entry
+#   knows raises when some row got far enough to be asked and silently finds nothing
+#   when none did:
+#
+#     Query(variable="ta", realm="atmos")                facets checked: realm, variable
+#       -> `realm` is checked first, so it always raises
+#     Query(variable="ta", other_terms={"realm": ("atmos",)})
 #                                                        facets checked: variable, realm
-#     -> `other_terms` is always checked last, so this raises only when `variable`
-#        matched something first, and silently finds nothing otherwise
+#       -> `other_terms` is always checked last, so this raises only when `variable`
+#          matched something first, and silently finds nothing otherwise
 #
-# Deliberately not fixed here, and deliberately untested: with no catalogue reading the
-# database there is nothing yet to assert against, and a check which rejects these three
-# facets today would have to be taken out again the moment `extra` is filled. The thing
-# to add then is one pass over the facets a requirement names, before any matching, so
-# the answer does not depend on which rows happen to be present.
+#   Both catalogues behave this way, which is the important part: it is one rule, not
+#   two, and `test_solving_against_the_database_matches_the_in_memory_catalogue` holds
+#   them to it. Making it unconditional means one pass over the facets a requirement
+#   names before any matching, which is worth doing and is not done here.
 
 
 class Catalogue(Protocol):
@@ -435,11 +446,12 @@ class Catalogue(Protocol):
         For example, a query naming
         `product` or `realm` must match whenever the entry's `extra` carries it
         (see [`CatalogueEntry.extra`][(m).CatalogueEntry.extra]).
-        What is up to each catalogue is where `extra` comes from — one backed by our
-        database would read it out of the raw search documents, another might consult
-        a project-specific table, or simply know.
+        What is up to each catalogue is where `extra` comes from —
+        [esmporium.db.DatabaseCatalogue][] reads it out of the raw search documents,
+        another might consult a project-specific table, or simply know.
         So anything the solver should be able to group by, prefer on or match
-        auxiliary data on has to be in `extra` by the time `find` returns.
+        auxiliary data on has to be in `extra` by the time `find` returns,
+        whether or not `query` happens to mention it.
 
         Parameters
         ----------
@@ -459,10 +471,14 @@ class InMemoryCatalogue:
     """
     A catalogue held entirely in memory
 
-    Intended for tests and for prototyping.
-    The catalogue we want is backed by our database;
-    this one lets everything built on top of
-    [`Catalogue`][(m).Catalogue] be written and tested without one.
+    Intended for tests and for prototyping, and expected to stay that way: it lets
+    everything built on top of [`Catalogue`][(m).Catalogue] be written and tested
+    without a database, which is how each new piece of this package gets written.
+
+    The database-backed one is [esmporium.db.DatabaseCatalogue][]. The two have to
+    give the same answers -- that is what makes testing against this one mean anything
+    -- and `test_solving_against_the_database_matches_the_in_memory_catalogue` is what
+    holds them together.
     """
 
     entries: tuple[CatalogueEntry, ...]
@@ -516,4 +532,4 @@ class InMemoryCatalogue:
         """
         facets = set_facets(query)
 
-        return tuple(entry for entry in self.entries if _matches_facets(facets, entry))
+        return tuple(entry for entry in self.entries if matches_facets(facets, entry))

@@ -289,9 +289,15 @@ def test_facet_columns_are_the_declared_facets():
     Test that `DATASET_FACET_COLUMNS` lists every facet of a dataset
 
     `DATASET_FACET_COLUMNS` is written out by hand
-    (see the note on it in `schema.py`),
+    (see the note on it in `esmporium/query/canonical_query.py`),
     so this is what stops a facet being added to the model
     without being added there.
+
+    It is defined in `esmporium.query` rather than beside the table it describes,
+    because `esmporium.requirements` needs it and cannot import `esmporium.db`
+    (see the developer note in `esmporium/requirements/__init__.py`).
+    That makes this a genuine cross-package invariant: the table is here, the list
+    is there, and nothing but this test holds them together.
 
     Every column except the ID is a facet today.
     When that stops being true (e.g. when we record when we last saw a dataset),

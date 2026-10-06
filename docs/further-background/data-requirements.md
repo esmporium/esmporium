@@ -299,20 +299,36 @@ Shipped checks:
 - **Output:** satisfied, unsatisfied, ambiguous and undetermined groups, each with an explanation tree (`SolveResult.explain()`). Per node, `NodeResultOk` and `NodeResultNotOk` carry the roles, lineages, choices and notes that are merged upwards.
 
 `Catalogue` is a protocol with `find`, `parent_of`, `linked` and `metadata`.
-`InMemoryCatalogue` stands in until esmporium has parent links and file information.
+`find` has two implementations: `InMemoryCatalogue`, written out by hand, and
+`esmporium.db.DatabaseCatalogue`, which answers from the `Dataset` rows a search
+saved. The two have to agree, and a test holds them to it; the in-memory one is how
+each new piece of this design gets written and is expected to stay. `parent_of`,
+`linked` and `metadata` are still ahead of us, on both.
 
 ## Flow and storage
 
-1. `to_search_plan(requirement)` returns queries for every leaf (including optional ones and every alternative), sibling queries and auxiliary queries. Leaves that differ only in variable are merged, which `merge_variables=False` turns off. It also returns `ancestry_until`.
-2. esmporium searches (`QueryCollection`, PR3.7), then adds parent links (PR6).
-3. `solve`.
+1. `to_search_plan(requirement)` returns one query per leaf: the leaf's own query with
+   the requirement's `where` added, deduplicated so that two roles asking for the same
+   dataset are searched for once. It will grow sibling queries, auxiliary queries and
+   `ancestry_until` as the tree does, and merging leaves which differ only in variable.
+2. `search(requirement)` fires those: each is split into one search per project it
+   names, and every record that comes back is handed to the processor. Then parent links
+   get added from file headers (PR6).
+3. `solve(requirement, catalogue)`.
+
+**Searching saves everything it finds, not just what the requirement asked for**, and
+that is deliberate. Working out what the records add up to is the solver's job, against
+the stored data, which is what makes step 3 repeatable: run the same requirement
+tomorrow and the difference between the two `SolveResult`s is what changed. A search
+which filtered as it went would have thrown away the evidence needed to answer that.
 
 ```mermaid
 flowchart LR
     REQ([Requirement]) --> SP["to_search_plan()"]
-    SP --> Q["queries for every leaf<br/>+ siblings + auxiliary<br/>+ ancestry_until"]
-    Q --> SEARCH["esmporium search<br/>(QueryCollection, PR3.7)"]
-    SEARCH --> LINK["add parent links<br/>from file headers (PR6)"]
+    SP --> Q["one query per leaf<br/>(+ siblings + auxiliary<br/>+ ancestry_until, later)"]
+    Q --> SEARCH["search(requirement)<br/>one search per leaf per project"]
+    SEARCH --> SAVE["save everything found<br/>(build_result_processor_factory)"]
+    SAVE --> LINK["add parent links<br/>from file headers (PR6)"]
     LINK --> CAT[("Catalogue<br/>find · parent_of · linked · metadata")]
     REQ --> SOLVE["solve(requirement, catalogue)<br/><i>greedy, no backtracking</i>"]
     CAT --> SOLVE
@@ -322,17 +338,44 @@ flowchart LR
     SOLVE --> UND["undetermined"]
 ```
 
+One thing to know before comparing two runs: **groups are discovered, so a group can
+disappear rather than becoming unsatisfied.** If the only datasets a group was built
+from stop being available, the group is not found at all the next time, and turns up in
+none of the three outcomes. A group whose *other* leaf went away does become
+`unsatisfied`, because the surviving leaf still discovers it. So the thing to diff day
+to day is the set of resolved groups, not any one group's status.
+
 ### Which way the dependency runs
 
-`search` will import `requirements`, never the other way round.
-We currently test this explicitly in [test_package.py].
-We will likely remove this explicit testing in the future once search imports requirements.
+`search` imports `requirements`, never the other way round.
 
-Step 2 above is the reason: `search` is going to take `Requirement` objects (PR3.7),
-so it has to import them. That fixes the direction of the dependency for good, and
-makes the reverse an error rather than a preference — `requirements` importing
-`search` is a circular import, and both packages then fail to import at all with
-*"cannot import name ... from partially initialized module"*.
+Step 2 above is the reason: `search` takes `Requirement` objects, so it has to import
+them. That fixes the direction of the dependency for good, and makes the reverse an
+error rather than a preference — `requirements` importing `search` is a circular
+import, and both packages then fail to import at all with *"cannot import name ...
+from partially initialized module"*.
+
+**And the rule bites at import time, not just in principle.** It is worth writing the
+chain out, because the import which breaks it does not look like it touches `search`
+at all. `requirements` used to read `DATASET_FACET_COLUMNS` from `esmporium.db.schema`,
+which looks harmless:
+
+```text
+requirements  ->  db  ->  search  ->  requirements
+                                      ^ still half-way through its own __init__
+```
+
+`esmporium.db.__init__` imports `results_to_database`, which imports
+`esmporium.search.result_normalisation`, which initialises the whole of
+`esmporium.search`. So importing `esmporium.requirements` pulled in twenty search
+modules, and `search` could not then import `Requirement` from a package which had not
+finished loading. The fix was to move `DATASET_FACET_COLUMNS` into `esmporium.query`,
+which is the rule below applied to the letter.
+
+`tests/unit/requirements/test_package.py` checks this two ways, and both are needed.
+One walks each module's own AST, which says what *that module* imports and so cannot
+see a transitive edge like the one above. The other imports the package in a subprocess
+and looks at what landed in `sys.modules`, which can.
 
 This is worth stating plainly because the pull to do it is real. `search` and
 `requirements` ask overlapping questions, so they want the same vocabulary, and the
@@ -346,22 +389,32 @@ to an API or match it against stored datasets, so it was defined twice, once in 
 package. It now lives in `esmporium.query` and both import it from there. It is still
 importable from `esmporium.search` for anyone who was already doing that.
 
-What `requirements` may import from esmporium, then, is `esmporium.query`,
-`DATASET_FACET_COLUMNS` from `esmporium.db.schema`, and `esmporium.formatting` for the
-helpers which render error messages — which is the whole surface every
-remaining piece of this design needs. The `esmporium.db` side will grow when the
-database-backed catalogue lands, since that needs a session and the `Dataset` table.
-The `esmporium.search` side will not. There is a test which checks both.
+What `requirements` may import from esmporium, then, is `esmporium.query` and
+`esmporium.formatting` for the helpers which render error messages — which is the whole
+surface every remaining piece of this design needs. There used to be an
+`esmporium.db.schema` entry, for `DATASET_FACET_COLUMNS`. It did not grow, it went
+away, for the reason above.
+
+The database-backed catalogue sits on the other side of this line, in
+`esmporium.db.catalogue`, rather than next to the protocol it implements. Three reasons,
+and they all point the same way: a `select(Dataset)` inside `requirements` would
+re-create the cycle; `esmporium.db` is meant to be the only layer which touches the
+local databases directly; and `normalise_stored_document` lives in `esmporium.search`,
+so filling `CatalogueEntry.extra` from stored raw documents is only reachable from the
+`db` side. `db -> requirements -> query` has no cycle in it, so `db` may import
+`requirements` freely.
 
 `esmporium.formatting` is a safe third entry because it depends on nothing but the
 standard library, so it cannot be half of a cycle. That is the test to apply to
 anything else proposed for this list: not "is it useful here?" but "could importing it
 ever point back this way?". If it is useful and importing it could point back this way, then maybe we have to move it.
 
-A `QueryCollection` that is a plain union is enough.
 "Requirement became satisfiable" is the difference between `solve` at t1 and at t2.
-Storing requirements (their canonical JSON and hash) and solve snapshots only matters for that comparison.
-Once requirements are in esmporium, those are ordinary esmporium tables.
+Storing requirements (their canonical JSON and hash) and solve snapshots only matters
+for that comparison, and is the piece still missing: today the two solves have to be
+run and compared in the same process, because nothing keeps the first one's answer.
+`canonical_json` and `requirement_hash` are the primitives; the tables are ordinary
+esmporium tables now that requirements live here.
 
 ## Queries and facets
 

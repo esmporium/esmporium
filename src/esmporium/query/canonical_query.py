@@ -47,6 +47,56 @@ Aligns as far as possible with [Dataset][esmporium.db.schema.Dataset].
 Query class-specific facets are deliberately not here.
 """
 
+DATASET_FACET_COLUMNS: tuple[str, ...] = (
+    "project",
+    "model",
+    "institution",
+    "experiment",
+    "variant_label",
+    "variable",
+    "reporting_interval",
+    "grid_label",
+    "processing_id",
+)
+"""
+The canonical facets that a stored dataset records
+
+In other words, the columns of [`Dataset`][esmporium.db.schema.Dataset]
+which describe the data itself: everything except
+[`Dataset.id`][esmporium.db.schema.Dataset.id] and
+[`Dataset.id_project_specific`][esmporium.db.schema.Dataset.id_project_specific],
+which identify a row rather than describe it.
+Two rows agreeing on all of these is allowed:
+the same dataset can legitimately turn up under more than one project-specific ID.
+
+This is a subset of [CANONICAL_FACETS][(m).CANONICAL_FACETS].
+`activity`, `realm` and `resolution` are deliberately *not* here:
+they are canonical facets, so a query may ask for them and the search APIs answer,
+but [`Dataset`][esmporium.db.schema.Dataset] has no column for them,
+so a stored row cannot answer for them on its own.
+`test_dataset_facet_columns_are_canonical_facets` pins both halves of that
+relationship.
+
+It lives here rather than beside the table it mirrors for two reasons.
+It is the shared vocabulary of three packages --
+[esmporium.db][] writes these columns, [esmporium.requirements][] asks which facets a
+stored dataset records, and [esmporium.search][] fills them --
+and `esmporium.query` is where anything all of them need belongs.
+And [esmporium.requirements][] has to be able to read it
+*without* importing [esmporium.db][]:
+importing `esmporium.db` pulls in [esmporium.search][] through
+[esmporium.search.result_normalisation][], and `esmporium.search` imports
+`esmporium.requirements`, so a requirements-to-db import closes a cycle and
+neither package loads at all.
+See the developer note in `esmporium/requirements/__init__.py`.
+
+The list is written out rather than derived from the table,
+both because not every future column will be a facet
+and because deriving it would mean importing the table.
+Adding a facet to [`Dataset`][esmporium.db.schema.Dataset] means adding it here too,
+which `test_facet_columns_are_the_declared_facets` checks.
+"""
+
 
 class NotACanonicalFacetError(ValueError):
     """Raised when a facet is declared as equivalent to a facet we do not have."""

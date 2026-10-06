@@ -399,20 +399,26 @@ def build_result_processor_factory(
     normalisers: Mapping[str, NormaliseFunc] = DEFAULT_NORMALISERS,
 ) -> Callable[[], AbstractContextManager[ResultProcessor]]:
     """
-    Build a factory that makes a fresh saving processor per sub-query
+    Build a factory that makes a fresh saving processor per sub-search
 
     This is the database-saving [ProcessorFactory][esmporium.search.ProcessorFactory] to
-    hand to [esmporium.search.search][]: it is called once per sub-query and opens a
-    fresh `sqlmodel.Session` (and so a fresh transaction) for that sub-query,
+    hand to [esmporium.search.search][]: it is called once per sub-search
+    (one leaf of the requirement, against one project) and opens a
+    fresh `sqlmodel.Session` (and so a fresh transaction) for that sub-search,
     yields a [build_result_processor][(m).] bound to it, and closes it afterwards.
-    A session per sub-query keeps each sub-query's writes in transactions of its own
+    A session per sub-search keeps each sub-search's writes in transactions of its own
     (one per page, see [build_result_processor][(m).]),
     and lets a parallel search give each worker its own session.
+
+    Everything a search returns is saved, not just what the requirement asked for.
+    That is deliberate: working out what the requirement adds up to is
+    [`solve`][esmporium.requirements.solve]'s job, against the stored data, so that
+    the same question can be asked again tomorrow and the two answers compared.
 
     Parameters
     ----------
     engine
-        The database engine each sub-query's session is opened on.
+        The database engine each sub-search's session is opened on.
 
     normalisers
         Passed through to [build_result_processor][(m).] for each session.
@@ -427,7 +433,7 @@ def build_result_processor_factory(
     --------
     >>> from esmporium.search import search  # doctest: +SKIP
     >>> search(  # doctest: +SKIP
-    ...     queries,
+    ...     requirement,
     ...     processor_factory=build_result_processor_factory(engine),
     ... )
     """

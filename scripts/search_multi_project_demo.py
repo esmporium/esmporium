@@ -1,15 +1,16 @@
 """
 A runnable example of multi-project `search`, run serially and then in parallel
 
-`search` takes one or more queries, each of which may name one or more projects. It
-splits every query into one single-project sub-query per project (translating the shared
-facet names into each project's own dialect as it goes) and runs each sub-query through
-`search_single_project`, saving results as they arrive through the processor factory you
-give it.
+`search` takes a `Requirement`: a tree of leaves, each carrying a query, and each query
+may name one or more projects. It works out one query per leaf (adding the
+requirement's `where`), splits each of those into one single-project query per project
+(translating the shared facet names into each project's own dialect as it goes), and
+runs each through `search_single_project`, saving results as they arrive through the
+processor factory you give it.
 
-This demo builds ONE query that names three projects, so `search` splits it into three
-sub-queries (CMIP5, CMIP6, CMIP7). It then runs the whole thing twice against throwaway
-databases; serially, then in parallel in a thread pool.
+This demo builds a requirement with ONE leaf naming three projects, so `search` splits
+it into three sub-searches (CMIP5, CMIP6, CMIP7). It then runs the whole thing twice
+against throwaway databases; serially, then in parallel in a thread pool.
 """
 
 from __future__ import annotations
@@ -31,18 +32,26 @@ from esmporium.db import (
 )
 from esmporium.db.migrate import upgrade_to_head
 from esmporium.query import Query
+from esmporium.requirements import leaf, requirement
 from esmporium.search import search
 
-# One query, three projects. `search` splits this into a CMIP5, a CMIP6 and a CMIP7
-# sub-query, translating the shared facet names into each project's own dialect. The
+# One leaf, three projects. `search` splits this into a CMIP5, a CMIP6 and a CMIP7
+# search, translating the shared facet names into each project's own dialect. The
 # facet *values* here (variable, reporting interval, experiment) are known to be spelt
-# the same across projects, so one query is enough. `historical` bounds each project
+# the same across projects, so one leaf is enough. `historical` bounds each project
 # to a single page at the default limit, keeping the demo quick.
-MULTI_PROJECT_QUERY = Query(
-    project=("CMIP5", "CMIP6", "CMIP7"),
-    variable="tas",
-    reporting_interval="mon",
-    experiment="historical",
+#
+# The projects go on the requirement's `where` rather than on the leaf, which is the
+# usual way round: `where` is added to every leaf, so a requirement that grew a second
+# leaf would search both over the same three projects without repeating itself.
+MULTI_PROJECT_REQUIREMENT = requirement(
+    name="tas-historical-three-projects",
+    tree=leaf(
+        Query(variable="tas", reporting_interval="mon", experiment="historical"),
+        "tas",
+    ),
+    group_by=("model",),
+    where=Query(project=("CMIP5", "CMIP6", "CMIP7")),
 )
 
 
@@ -102,7 +111,7 @@ def run(label: str, *, max_workers: int | None, limit: int) -> None:
 
         started = time.monotonic()
         search(
-            MULTI_PROJECT_QUERY,
+            MULTI_PROJECT_REQUIREMENT,
             limit=limit,
             api_call_observer=record_search_api_calls(engine),
             processor_factory=build_result_processor_factory(engine),
@@ -153,8 +162,9 @@ def main() -> None:
         )
         logger.addHandler(handler)
 
-    print(f"query: {MULTI_PROJECT_QUERY!r}")
-    print("this splits into one sub-query per project: CMIP5, CMIP6, CMIP7\n")
+    print(f"requirement: {MULTI_PROJECT_REQUIREMENT.name}")
+    print(f"its one leaf asks for: {MULTI_PROJECT_REQUIREMENT.tree.query!r}")
+    print("this splits into one search per project: CMIP5, CMIP6, CMIP7\n")
 
     run("serial (max_workers=None)", max_workers=None, limit=args.limit)
     run(

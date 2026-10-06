@@ -23,6 +23,10 @@ Needs no network and no database: the catalogue here is
 use for demos like this so we don't need a full database to be spun up.
 Everything else -- the requirement, the solving, the
 explanations -- is exactly what a real catalogue would get.
+
+To solve against real data instead, search for the requirement and then hand `solve`
+an [esmporium.db.DatabaseCatalogue][] over the same database;
+`scripts/search_multi_project_demo.py` shows the searching half.
 """
 
 from __future__ import annotations

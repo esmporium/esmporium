@@ -32,9 +32,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Literal
 
-from esmporium.db.schema import DATASET_FACET_COLUMNS
 from esmporium.formatting import readable_list
-from esmporium.query import QueryProtocol
+from esmporium.query import DATASET_FACET_COLUMNS, QueryProtocol
 from esmporium.requirements.catalogue import (
     Catalogue,
     CatalogueEntry,

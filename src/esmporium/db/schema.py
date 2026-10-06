@@ -6,12 +6,22 @@ Database schema
 # from __future__ import annotations
 
 import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import Index, MetaData, UniqueConstraint, text
 from sqlalchemy.orm import registry
 from sqlmodel import Field, SQLModel
 
-from esmporium.search.health import SearchAPICall
+from esmporium.query import DATASET_FACET_COLUMNS
+
+if TYPE_CHECKING:
+    # Only needed for `SearchAPICallRecord.from_call`'s annotation, which is quoted
+    # by hand below. Importing it at runtime would make this module depend on
+    # `esmporium.search`, and this module has to stay importable from
+    # `esmporium.requirements` (see the note by `DATASET_FACET_COLUMNS` below).
+    from esmporium.search.health import SearchAPICall
+
+__all__ = ["DATASET_FACET_COLUMNS"]
 
 
 def _utcnow() -> datetime.datetime:
@@ -331,32 +341,16 @@ class Dataset(EsmporiumBase, table=True):
     # )
 
 
-DATASET_FACET_COLUMNS: tuple[str, ...] = (
-    "project",
-    "model",
-    "institution",
-    "experiment",
-    "variant_label",
-    "variable",
-    "reporting_interval",
-    "grid_label",
-    "processing_id",
-)
-"""
-The columns of [`Dataset`][esmporium.db.schema.Dataset] that describe the data itself
-
-In other words, everything except the [Dataset.id]
-
-Two rows agreeing on all of these is allowed:
-the same dataset can legitimately turn up under more than one ID (but differ on
-[Dataset.id_project_specific]).
-
-This list is written out rather than derived from the table
-because not every future column will be a facet.
-Adding a facet to [`Dataset`][esmporium.db.schema.Dataset] means adding it here too.
-This is checked by the tests explicitly,
-see `test_facet_columns_are_the_declared_facets`.
-"""
+# `DATASET_FACET_COLUMNS` describes this table, but it is defined in
+# [esmporium.query][] and only re-exported here.
+# It is the shared vocabulary of three packages, and in particular
+# [esmporium.requirements][] must be able to read it without importing this one:
+# importing `esmporium.db` pulls in `esmporium.search`, which imports
+# `esmporium.requirements`, so a requirements-to-db import closes a cycle.
+# See the constant's own docstring and the note in
+# `esmporium/requirements/__init__.py`.
+# Re-exported rather than moved outright so that every
+# `esmporium.db.schema.DATASET_FACET_COLUMNS` reference keeps working.
 
 
 class DatasetVersion(EsmporiumBase, table=True):
@@ -636,7 +630,7 @@ class SearchAPICallRecord(EsmporiumBase, table=True):
     """
 
     @classmethod
-    def from_call(cls, call: SearchAPICall) -> "SearchAPICallRecord":
+    def from_call(cls, call: "SearchAPICall") -> "SearchAPICallRecord":
         """
         Initialise from the search layer's plain record of a call
 
