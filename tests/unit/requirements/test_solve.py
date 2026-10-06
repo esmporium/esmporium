@@ -1,20 +1,8 @@
 """
 Tests of the solver: filling a requirement's roles from a catalogue, group by group
-
-Two things are tested here which usually would not be. The *wording* of the
-explanations, because they are the output rather than a debugging aid: most groups
-in a real archive do not resolve, and a user decides whether to widen a query, set
-`prefer`, or accept the loss by reading these lines. And the *order* groups come
-out in, because an explanation which shuffled between runs could not be diffed.
-
-Facet values are readable here (`model=ModelA`) rather than derived from the
-column names, for the same reason: a test which pins a message has to pin one a
-person could have read.
 """
 
 from __future__ import annotations
-
-import re
 
 import pytest
 
@@ -32,11 +20,12 @@ from esmporium.requirements import (
 from esmporium.requirements.solve import _Context, _eval, _label
 
 GROUP_BY = ("model", "variant_label")
-"""What most analyses group by, and what these tests use unless grouping is the point"""
+"""What these tests use to group by, unless grouping is the point"""
 
 MONTHLY = Query(reporting_interval="mon")
 """Facets a requirement adds to every leaf, set once rather than per leaf"""
 
+# @Claude 'in project's own language'... but above is using cmip5 language for cmip6...
 READABLE_FACETS = {
     "project": "CMIP6",
     "model": "ModelA",
@@ -48,12 +37,7 @@ READABLE_FACETS = {
     "processing_id": "Amon",
 }
 """
-Values for the facets these tests talk about, in the projects' own language
-
-Only the facets which appear in an assertion are named. Anything else keeps what
-`get_dataset_kwargs` builds from the column, so a facet added to `Dataset` still
-needs no change here.
-"""
+Values for the facets these tests talk about, acet names in cannonical language."""
 
 ONLY_GROUP = tuple((facet, READABLE_FACETS[facet]) for facet in GROUP_BY)
 """The group every dataset below falls in, unless a test deliberately says otherwise"""
@@ -61,11 +45,6 @@ ONLY_GROUP = tuple((facet, READABLE_FACETS[facet]) for facet in GROUP_BY)
 VARIABLES_TOGETHER = ("tas", "rsdt", "rlut")
 """
 Variables an analysis needs at once, i.e. one leaf each under one `all_of`
-
-Three rather than two, because two is enough for a group to be missing one, and
-three also shows `all_of`'s label joining more than two. One constant rather than
-one default each, so that a requirement and the catalogue built for it cannot fall
-out of step.
 """
 
 
@@ -81,21 +60,9 @@ def tas_requirement(**overrides) -> Requirement:
     return requirement(**settings)
 
 
-# @Claude, hesitant to call this Gregory because it's using historical data?
-# Not abrupt-4xco2 and picontrol plus you don't even ask for all variables
-# ...But it's good to test multiple variables for all_of
-#
-# Answered by the rename below: the fixture was never a Gregory regression (no
-# control to regress against, and `rsut` missing), it was several leaves under one
-# `all_of`, which is what it is now called. This block is yours to delete.
 def variables_together(variables=VARIABLES_TOGETHER, **overrides) -> Requirement:
     """
     Get a requirement whose leaves are all needed together, one per variable
-
-    The shape of any analysis which regresses or differences one field against
-    another: the datasets are needed *at once*, so it is several leaves under one
-    `all_of` rather than several requirements, and a group missing any one of them
-    cannot be run.
 
     The role is the variable's own name, because when each leaf really is a
     different variable that is the clearest thing to call it.
@@ -138,10 +105,6 @@ def dataset(make_entry):
 def variables_catalogue(dataset):
     """
     Get a factory for a catalogue holding one dataset per variable, for one model
-
-    Takes the variables to publish, so that leaving one out is how a test says a
-    dataset is missing, and any facet to override on every entry. Defaults to the
-    variables [variables_together][(m).variables_together] asks for.
     """
 
     def factory(variables=VARIABLES_TOGETHER, **facets):
@@ -177,15 +140,19 @@ def test_required_variable_missing(variables_catalogue):
     result = solve(variables_together(), variables_catalogue(("tas", "rsdt")))
 
     assert not result.resolved
-    rendered = result.unsatisfied[ONLY_GROUP].explanation.render()
 
-    # The group is named on the leaf's own line as well as on the block above it,
-    # because the group is filtered on the entry rather than in the query: without
-    # it this line reads as "there is no `rlut` at all", which is a different and
-    # here untrue statement.
-    assert "[unsatisfied] rlut: no dataset matches" in rendered
-    assert "variable=rlut" in rendered
-    assert "for model=ModelA, variant_label=r1i1p1f1" in rendered
+    (tree_explanation,) = result.unsatisfied[ONLY_GROUP].explanation.parts
+    parts = {part.subject: part for part in tree_explanation.parts}
+    assert parts["rlut"].status == "unsatisfied"
+
+    # Where this message is pinned in full. The group is named on the leaf's own
+    # line as well as on the block above it, because the group is filtered on the
+    # entry rather than in the query: without it this line reads as "there is no
+    # `rlut` at all", which is a different and here untrue statement.
+    assert parts["rlut"].message == (
+        "no dataset matches reporting_interval=mon, variable=rlut "
+        "for model=ModelA, variant_label=r1i1p1f1"
+    )
 
 
 def test_a_role_always_holds_a_tuple(variables_catalogue):
@@ -341,14 +308,23 @@ def test_ambiguous_grids_and_prefer(dataset):
     preferred = solve(tas_requirement(prefer={"grid_label": ("gn", "gr")}), catalogue)
 
     assert list(ambiguous.ambiguous) == [ONLY_GROUP]
-    rendered = ambiguous.explain()
-    assert "2 candidates, differing in 'grid_label'" in rendered
-    assert "#1 ('entry-1_ps') with grid_label='gn'" in rendered
-    # All three ways out are offered, because which one is right is the user's
-    # judgement and not something the solver can work out.
-    assert "set `prefer` on the requirement" in rendered
-    assert "narrow the query" in rendered
-    assert "use `cardinality='all'` to keep them all" in rendered
+
+    (explanation,) = ambiguous.ambiguous[ONLY_GROUP].explanation.parts
+    assert (explanation.subject, explanation.status) == ("tas", "ambiguous")
+
+    # Where this message is pinned in full. All three ways out are offered,
+    # because which one is right is the user's judgement and not something the
+    # solver can work out. The entries are interpolated rather than written out,
+    # so the pin is on the wording and not on `make_entry`'s labels.
+    first, second = catalogue.entries
+    assert explanation.message == (
+        "2 candidates, differing in 'grid_label': "
+        f"#{first.id} ({first.id_project_specific!r}) with grid_label='gn', "
+        f"#{second.id} ({second.id_project_specific!r}) with grid_label='gr'. "
+        "Nothing was given to choose between them: set `prefer` on the "
+        "requirement (e.g. `prefer={'grid_label': (...)}`), narrow the query, or "
+        "use `cardinality='all'` to keep them all."
+    )
 
     assert preferred.resolved[ONLY_GROUP].one("tas").grid_label == "gn"
 
@@ -367,11 +343,18 @@ def test_ambiguous_despite_prefer_says_what_was_preferred(dataset):
     result = solve(tas_requirement(prefer={"grid_label": ("gn", "gr")}), catalogue)
 
     assert list(result.ambiguous) == [ONLY_GROUP]
-    assert (
+
+    # Where this message is pinned in full.
+    (explanation,) = result.ambiguous[ONLY_GROUP].explanation.parts
+    first, second = catalogue.entries
+    assert explanation.message == (
+        "2 candidates, differing in 'institution': "
+        f"#{first.id} ({first.id_project_specific!r}) with institution='InstA', "
+        f"#{second.id} ({second.id_project_specific!r}) with institution='InstB'. "
         "Preferring grid_label in the order 'gn' and 'gr' did not narrow this to "
         "one, since the candidates left over are equally preferred: add the facet "
         "they differ on to `prefer`, or narrow the query."
-    ) in result.explain()
+    )
 
 
 def test_candidates_which_agree_on_every_facet(dataset):
@@ -384,10 +367,19 @@ def test_candidates_which_agree_on_every_facet(dataset):
 
     result = solve(tas_requirement(), catalogue)
 
-    rendered = result.explain()
-    assert "2 candidates which agree on every facet" in rendered
-    assert "#1 ('one_ps'), #2 ('two_ps')" in rendered
-    assert "They differ only in their project-specific ID" in rendered
+    # Where this message is pinned in full. It advises `cardinality` or a narrower
+    # query and deliberately does not advise picking one by ID, which is advice
+    # `CatalogueEntry.facet` could not answer and so could not be followed.
+    (explanation,) = result.ambiguous[ONLY_GROUP].explanation.parts
+    first, second = catalogue.entries
+    assert explanation.message == (
+        "2 candidates which agree on every facet, so no facet can choose between "
+        f"them: #{first.id} ({first.id_project_specific!r}), "
+        f"#{second.id} ({second.id_project_specific!r}). They differ only in "
+        "their project-specific ID, which `prefer` compares no more than a query "
+        "can. Use `cardinality='all'` to keep them all and choose further down, "
+        "or narrow the query."
+    )
 
 
 def test_a_value_not_in_prefer_ranks_behind_one_that_is(dataset):
@@ -466,14 +458,16 @@ def test_one_refuses_a_role_holding_several(dataset):
     )
     group = solve(tas_requirement(cardinality="all"), catalogue).resolved[ONLY_GROUP]
 
-    with pytest.raises(
-        ValueError,
-        match=re.escape(
-            "'tas' holds 2 datasets, so there is no single one to return. "
-            "Read `roles` directly, or solve with `cardinality='one'`."
-        ),
-    ):
+    # The whole message, pinned once, here: `solve.py` raises it and nothing else
+    # tests it, so this is the one place it is written out. `match=` is
+    # `re.search`, so it could not notice text added to either end; this can.
+    with pytest.raises(ValueError) as excinfo:
         group.one("tas")
+
+    assert str(excinfo.value) == (
+        "'tas' holds 2 datasets, so there is no single one to return. "
+        "Read `roles` directly, or solve with `cardinality='one'`."
+    )
 
 
 def test_one_raises_for_a_role_which_was_not_resolved(dataset):
@@ -483,7 +477,7 @@ def test_one_raises_for_a_role_which_was_not_resolved(dataset):
         ONLY_GROUP
     ]
 
-    with pytest.raises(KeyError):
+    with pytest.raises(KeyError, match="rlut"):
         group.one("rlut")
 
 
@@ -548,13 +542,10 @@ def test_the_dispatchers_refuse_a_non_node(dispatch):
     # through, so a node type added later without a branch here fails loudly
     # instead of being skipped. Called directly, because a `Requirement` would
     # never hold such a tree.
-    with pytest.raises(
-        NotANodeError,
-        match=re.escape(
-            "Expected a node, i.e. one of 'Leaf' and 'AllOf', got str: 'tas'. "
-            "A leaf takes a query, everything else takes nodes."
-        ),
-    ):
+    # A fragment, not the whole message: the error belongs to `tree.py` and
+    # `test_tree.py` spells it out. What is tested here is that this module's
+    # dispatchers raise it too.
+    with pytest.raises(NotANodeError, match="Expected a node"):
         dispatch("tas")
 
 
@@ -582,11 +573,17 @@ def test_explain_says_why_when_no_group_was_discovered():
     # to show, and what was asked for, which is where the mistake usually is.
     rendered = solve(variables_together(), InMemoryCatalogue(entries=())).explain()
 
-    assert rendered.startswith("No groups were discovered, so nothing was solved")
-    assert "requirement 'variables-together'" in rendered
-    assert "grouped by 'model' and 'variant_label'" in rendered
-    assert "tas (reporting_interval=mon, variable=tas)" in rendered
-    assert "rlut (reporting_interval=mon, variable=rlut)" in rendered
+    # Where this message is pinned in full: it is the whole of `explain()` in this
+    # case, so there is no group block for the wording to sit beside.
+    assert rendered == (
+        "No groups were discovered, so nothing was solved: no dataset in the "
+        "catalogue matched any leaf of requirement 'variables-together'. A group "
+        "is discovered from the candidates the leaves find, grouped by 'model' "
+        "and 'variant_label', so no candidates means no groups. The leaves asked "
+        "for: tas (reporting_interval=mon, variable=tas); "
+        "rsdt (reporting_interval=mon, variable=rsdt); "
+        "rlut (reporting_interval=mon, variable=rlut)."
+    )
 
 
 def test_explain_covers_every_group(dataset):
@@ -642,8 +639,12 @@ def test_facet_no_dataset_knows_is_an_error(build, facet, dataset):
     # Raised rather than reported as an unresolved group, wherever the facet was
     # named: it is a mistake in the requirement rather than a fact about the data,
     # and no amount of new data would make the facet answerable.
-    with pytest.raises(UnrecordedFacetError, match=facet):
+    # A fragment plus the attribute, not the whole message: `test_catalogue.py`
+    # owns the wording, and `facets` is what a caller would catch and read.
+    with pytest.raises(UnrecordedFacetError, match=facet) as excinfo:
         solve(build(), InMemoryCatalogue(entries=(dataset(1),)))
+
+    assert excinfo.value.facets == (facet,)
 
 
 # ------------------------------------------------------- project-specific facets
