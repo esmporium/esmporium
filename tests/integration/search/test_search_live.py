@@ -395,23 +395,23 @@ def test_search_applies_the_facets_we_send(  # noqa: PLR0913 - parametrised, plu
     client, facade, query, poison_field, recorded, search_or_skip
 ):
     """
-     Test that the facade understood the facet names we sent it
+    Test that the facade understood the facet names we sent it
 
-     We take the query which does match data and change one facet
-     to a value nothing can have.
-     If the API is applying that facet, nothing comes back.
-     If it came back with matches, it ignored the name we used,
-     which means our name for that facet is wrong
-     and every search we build with it is quietly unfiltered.
+    We take the query which does match data and change one facet
+    to a value nothing can have.
+    If the API is applying that facet, nothing comes back.
+    If it came back with matches, it ignored the name we used,
+    which means our name for that facet is wrong
+    and every search we build with it is quietly unfiltered.
 
     The unpoisoned query is counted first, as a control. Without it this test passes
-     on any host which matches nothing anyway, and so proves nothing: `0 == 0` whether
-     the facet was applied or ignored. This is (unfortunately) needed -- the CMIP6
-     bridge facade spent a while asking ORNL for CMIP5's facet names, which matched
-     nothing at all, and this test passed throughout.
+    on any host which matches nothing anyway, and so proves nothing: `0 == 0` whether
+    the facet was applied or ignored. This is (unfortunately) needed -- the CMIP6
+    bridge facade spent a while asking ORNL for CMIP5's facet names, which matched
+    nothing at all, and this test passed throughout.
 
-     This also exercises the health path where a request succeeds but matches
-     nothing: the call is recorded as a success with a zero result count.
+    This also exercises the health path where a request succeeds but matches
+    nothing: the call is recorded as a success with a zero result count.
     """
     observer, read_calls = recorded
 
