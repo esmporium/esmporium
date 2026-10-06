@@ -41,6 +41,9 @@ TIMEOUT = 60.0
 """How long to wait for a node, in seconds"""
 
 
+CMIP5_QUERY = QueryCMIP5(experiment="historical", variable="tas", time_frequency="mon")
+"""A CMIP5 query we expect every CMIP5 node to have data for"""
+
 CMIP6_QUERY = QueryCMIP6(experiment_id="historical", variable_id="tas", frequency="mon")
 """A CMIP6 query we expect every CMIP6 node to have data for"""
 
@@ -49,15 +52,29 @@ LIVE_CASES = (
         INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
             "CMIP5", "esgf.nci.org.au"
         ),
-        QueryCMIP5(experiment="historical", variable="tas", time_frequency="mon"),
-        id="solr-cmip5",
+        CMIP5_QUERY,
+        id="solr-cmip5-nci",
+    ),
+    pytest.param(
+        INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
+            "CMIP5", "esgf-data.dkrz.de"
+        ),
+        CMIP5_QUERY,
+        id="solr-cmip5-dkrz",
     ),
     pytest.param(
         INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
             "CMIP6", "esgf.nci.org.au"
         ),
         CMIP6_QUERY,
-        id="solr-cmip6",
+        id="solr-cmip6-nci",
+    ),
+    pytest.param(
+        INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
+            "CMIP6", "esgf-data.dkrz.de"
+        ),
+        CMIP6_QUERY,
+        id="solr-cmip6-dkrz",
     ),
     pytest.param(
         INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
@@ -108,9 +125,17 @@ FACET_NAME_CASES = (
         INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
             "CMIP5", "esgf.nci.org.au"
         ),
-        QueryCMIP5(experiment="historical", variable="tas", time_frequency="mon"),
+        CMIP5_QUERY,
         "variable",
-        id="solr-cmip5",
+        id="solr-cmip5-nci",
+    ),
+    pytest.param(
+        INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
+            "CMIP5", "esgf-data.dkrz.de"
+        ),
+        CMIP5_QUERY,
+        "variable",
+        id="solr-cmip5-dkrz",
     ),
     pytest.param(
         INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
@@ -118,7 +143,15 @@ FACET_NAME_CASES = (
         ),
         CMIP6_QUERY,
         "variable_id",
-        id="solr-cmip6",
+        id="solr-cmip6-nci",
+    ),
+    pytest.param(
+        INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
+            "CMIP6", "esgf-data.dkrz.de"
+        ),
+        CMIP6_QUERY,
+        "variable_id",
+        id="solr-cmip6-dkrz",
     ),
     pytest.param(
         INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
@@ -195,7 +228,14 @@ AND_OR_CASES = (
             "CMIP5", "esgf.nci.org.au"
         ),
         and_or_query(QueryCMIP5, "variable", "experiment"),
-        id="solr-cmip5",
+        id="solr-cmip5-nci",
+    ),
+    pytest.param(
+        INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
+            "CMIP5", "esgf-data.dkrz.de"
+        ),
+        and_or_query(QueryCMIP5, "variable", "experiment"),
+        id="solr-cmip5-dkrz",
     ),
     pytest.param(
         INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
