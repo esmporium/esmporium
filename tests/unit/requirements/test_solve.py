@@ -36,7 +36,7 @@ READABLE_FACETS = {
     "processing_id": "Amon",
 }
 """
-Values for the facets these tests talk about, acet names in cannonical language."""
+Values for the facets these tests talk about, facet names in canonical language."""
 
 ONLY_GROUP = tuple((facet, READABLE_FACETS[facet]) for facet in GROUP_BY)
 """The group every dataset below falls in, unless a test deliberately says otherwise"""
