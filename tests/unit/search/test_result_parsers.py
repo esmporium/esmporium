@@ -60,6 +60,20 @@ CMIP6_ROW = DatasetFacets(
 )
 """One CMIP6 dataset row, used to build the documents that should parse back to it"""
 
+CMIP5_ROW = DatasetFacets(
+    id_project_specific="cmip5.output1.CSIRO-BOM.ACCESS1-0.rcp45.mon.atmos.Amon.r1i1p1",
+    project="CMIP5",
+    model="ACCESS1-0",
+    institution="CSIRO-BOM",
+    experiment="rcp45",
+    variant_label="r1i1p1",
+    variable="tas",
+    reporting_interval="mon",
+    grid_label=None,
+    processing_id="Amon",
+)
+"""One CMIP5 dataset row, which models no grid and spells its facets its own way"""
+
 CMIP7_ROW = CMIP6_ROW.model_copy(
     update={
         "id_project_specific": "MIP-DRS7.CMIP7.CMIP.CSIRO.ACCESS-CM2.historical"
@@ -236,18 +250,7 @@ def test_a_solr_record_with_no_project_raises():
 
 def test_a_solr_cmip5_record_explodes_into_one_row_per_variable():
     """CMIP5 bundles many variables into one record; every other facet is shared"""
-    row = DatasetFacets(
-        id_project_specific="cmip5.output1.CSIRO-BOM.ACCESS1-0.rcp45.mon.atmos.Amon.r1i1p1",
-        project="CMIP5",
-        model="ACCESS1-0",
-        institution="CSIRO-BOM",
-        experiment="rcp45",
-        variant_label="r1i1p1",
-        variable="tas",
-        reporting_interval="mon",
-        grid_label=None,
-        processing_id="Amon",
-    )
+    row = CMIP5_ROW
     doc = solr_doc(ESGF1_CMIP5_FACADE_PARAMETERS, row, variable=["tas", "pr"])
 
     rows = SolrVariableBundleResultParser().get_dataset_rows(
@@ -271,3 +274,30 @@ def test_a_single_row_parser_will_not_quietly_split_a_bundle():
         SolrSingleRowResultParser().get_dataset_rows(
             doc, api=solr_api(), facade_parameters=ESGF1_CMIP6_FACADE_PARAMETERS
         )
+
+
+@pytest.mark.parametrize(
+    "retracted, exp",
+    (
+        pytest.param(..., False, id="not-there-at-all"),
+        pytest.param([False], False, id="published-as-not-retracted"),
+        pytest.param([True], True, id="published-as-retracted"),
+    ),
+)
+def test_a_solr_record_without_a_retracted_field_is_read_as_not_retracted(
+    retracted, exp
+):
+    """`retracted` post-dates some CMIP5 data, so its absence is not a failure"""
+    doc = solr_doc(ESGF1_CMIP5_FACADE_PARAMETERS, CMIP5_ROW)
+    if retracted is ...:
+        del doc["retracted"]
+    else:
+        doc["retracted"] = retracted
+
+    parsed = SolrVariableBundleResultParser().parse_search_results(
+        {"response": {"docs": [doc]}},
+        api=solr_api(),
+        facade_parameters=ESGF1_CMIP5_FACADE_PARAMETERS,
+    )
+
+    assert parsed[0].retracted is exp

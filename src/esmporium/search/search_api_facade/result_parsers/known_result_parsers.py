@@ -203,20 +203,9 @@ def solr_parsed_document(
         Read whether this record is retracted, defaulting to not retracted
 
         `retracted` post-dates some of what the federation holds.
-        Paging a `distrib=true` CMIP5 search for `tas`/`historical`/`mon`
-        returns 8 records (out of 239) which do not carry the field at all,
-        every one of them an MPI-M dataset published to DKRZ in 2012.
-        They come back whichever node is asked, because the search sweeps
-        the federation, so this is not one deployment being unusual.
-
         A record published before the field existed was never retracted,
         so its absence is read as `False`
         rather than as a response we do not understand.
-
-        A `retracted` which IS there but which we cannot read still raises,
-        as it does for every other field here:
-        "the publisher never wrote this" and "we have misunderstood the format"
-        are different problems, and only the first has a safe answer.
         """
         if "retracted" not in doc:
             return False
