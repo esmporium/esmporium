@@ -139,7 +139,6 @@ def solr_n_matches(raw: dict[str, Any]) -> int:
     """
     Get the number of records that matched a search from a Solr-shaped response
 
-    Solr reports the total at `response.numFound`.
     That is the total for the whole search, not the number of documents this response
     carries; see
     [SearchAPI.get_n_matches][esmporium.search.apis.SearchAPI.get_n_matches].

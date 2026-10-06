@@ -698,12 +698,7 @@ class SearchAPI(Protocol):
         not a count of what the response carries:
         a response carries at most one page of records
         (see [build_search_request][(c).build_search_request]'s `limit`),
-        so the total can be far larger than the number of records in front of you.
-
-        Where the total is written is a property of the format this API speaks,
-        which is why it is read here:
-        Solr reports it at `response.numFound`,
-        STAC at `numberMatched`.
+        so the total can be far larger than the number of records in the response.
 
         Parameters
         ----------

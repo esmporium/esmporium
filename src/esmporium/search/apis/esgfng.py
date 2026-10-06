@@ -192,7 +192,6 @@ def stac_n_matches(raw: dict[str, Any], context: str | None = None) -> int:
     """
     Get the number of records that matched a search from a STAC-shaped response
 
-    STAC reports the total at `numberMatched`, which is its own spelling for it.
     That is the total for the whole search, not the number of features this response
     carries; see
     [SearchAPI.get_n_matches][esmporium.search.apis.SearchAPI.get_n_matches].

@@ -228,7 +228,7 @@ class SearchAPIFacade:
     see [esmporium.search.search_api_facade.result_parsers][].
 
     Anything which depends only on the format,
-    the number of records that matched included,
+    e.g. the number of records that matched,
     belongs on [search_api][(c).search_api] instead.
     """
 
