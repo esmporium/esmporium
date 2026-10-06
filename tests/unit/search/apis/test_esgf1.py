@@ -322,6 +322,13 @@ def test_n_matches(raw, exp):
     assert api().get_n_matches(raw) == exp
 
 
+WHERE_WE_LOOKED = (
+    "This response does not report how many records matched the search. "
+    "We expected to read the count from 'response.numFound', "
+)
+"""The opening of every message about a count we could not read"""
+
+
 @pytest.mark.parametrize(
     "raw, exp",
     (
@@ -330,10 +337,8 @@ def test_n_matches(raw, exp):
             pytest.raises(
                 NoSearchResultNumberOfMatchesReturnedError,
                 match=re.escape(
-                    "This response does not report "
-                    "how many records matched the search. "
-                    "We expected to read the count from 'response.numFound', "
-                    "but 'numFound' is not in 'response', there is only: 'docs'"
+                    f"{WHERE_WE_LOOKED}but 'numFound' is not in 'response', "
+                    "there is only: 'docs'"
                 ),
             ),
             id="no-count",
@@ -342,17 +347,26 @@ def test_n_matches(raw, exp):
             {},
             pytest.raises(
                 NoSearchResultNumberOfMatchesReturnedError,
-                match=re.escape(
-                    "This response does not report "
-                    "how many records matched the search. "
-                    "We expected to read the count from 'response.numFound', "
-                    "but the response is empty."
-                ),
+                match=re.escape(f"{WHERE_WE_LOOKED}but the response is empty."),
             ),
             id="nothing-we-recognise",
         ),
         pytest.param(
+            {"response": {"numFound": None, "docs": []}},
+            # The key being there but empty is not a count we can use, and the message
+            # says as much rather than reporting the key as missing.
+            pytest.raises(
+                NoSearchResultNumberOfMatchesReturnedError,
+                match=re.escape(
+                    f"{WHERE_WE_LOOKED}but we found None at 'response.numFound'."
+                ),
+            ),
+            id="a-count-which-is-empty",
+        ),
+        pytest.param(
             {"response": {"numFound": "3"}},
+            # A count in the right place but the wrong shape is our assumption being
+            # wrong about the type, not about the response, so it is a plain TypeError.
             pytest.raises(
                 TypeError,
                 match=re.escape(

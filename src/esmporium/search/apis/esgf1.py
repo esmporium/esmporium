@@ -139,7 +139,7 @@ def solr_n_matches(raw: dict[str, Any]) -> int:
     """
     Get the number of records that matched a search from a Solr-shaped response
 
-    That is the total for the whole search, not the number of documents this response
+    This is the total for the whole search, not the number of documents this response
     carries; see
     [SearchAPI.get_n_matches][esmporium.search.apis.SearchAPI.get_n_matches].
 
@@ -157,6 +157,10 @@ def solr_n_matches(raw: dict[str, Any]) -> int:
     ------
     NoSearchResultNumberOfMatchesReturnedError
         `raw` does not report the number of records that matched the search
+
+    TypeError
+        `raw` reports the count in the place we expect
+        but as something which is not an integer
     """
     num_found = raw.get("response", {}).get("numFound")
     if isinstance(num_found, int):

@@ -72,12 +72,6 @@ def skip_or_fail() -> Callable[..., NoReturn]:
 
     Failing on anything but certain exceptions
     means a kind of failure we add later fails loudly instead of quietly skipping.
-
-    Note that `failures` is the mapping as the error carries it, keyed by facade.
-    It is taken whole rather than as an iterable of the failures themselves because
-    iterating the mapping gives its keys: a previous version of this took an iterable
-    and was passed the mapping, so it compared facade keys against the exception type,
-    found none of them matching, and failed every time instead of ever skipping.
     """
 
     def check(

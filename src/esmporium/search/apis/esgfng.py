@@ -188,11 +188,11 @@ def stac_extract_result_documents(raw: dict[str, Any]) -> list[dict[str, Any]]:
     return list(features)
 
 
-def stac_n_matches(raw: dict[str, Any], context: str | None = None) -> int:
+def stac_n_matches(raw: dict[str, Any]) -> int:
     """
     Get the number of records that matched a search from a STAC-shaped response
 
-    That is the total for the whole search, not the number of features this response
+    This is the total for the whole search, not the number of features this response
     carries; see
     [SearchAPI.get_n_matches][esmporium.search.apis.SearchAPI.get_n_matches].
 
@@ -200,12 +200,6 @@ def stac_n_matches(raw: dict[str, Any], context: str | None = None) -> int:
     ----------
     raw
         The raw search result to read
-
-    context
-        Anything which helps reproduce a response we cannot read
-
-        See
-        [UnreadableResponseError][esmporium.search.apis.UnreadableResponseError].
 
     Returns
     -------
@@ -230,7 +224,7 @@ def stac_n_matches(raw: dict[str, Any], context: str | None = None) -> int:
         msg = f"We expected to get an integer at {loc!r}, but instead got {total!r}"
         raise TypeError(msg)
 
-    raise NoSearchResultNumberOfMatchesReturnedError(raw, loc, context)
+    raise NoSearchResultNumberOfMatchesReturnedError(raw, loc)
 
 
 def stac_next_page_request(request: Request, raw: dict[str, Any]) -> Request | None:
@@ -574,7 +568,7 @@ class SearchAPIESGFNGSTAC:
         """
         See [SearchAPI.get_n_matches][esmporium.search.apis.SearchAPI.get_n_matches].
         """
-        return stac_n_matches(raw, describe_search_api(self))
+        return stac_n_matches(raw)
 
     def build_get_facet_values_for_project_request(
         self, facets: set[str], project: str

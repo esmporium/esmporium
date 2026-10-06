@@ -715,6 +715,10 @@ class SearchAPI(Protocol):
         ------
         NoSearchResultNumberOfMatchesReturnedError
             `raw` does not report the number of records that matched the search
+
+        TypeError
+            `raw` reports the count in the place we expect
+            but as something which is not an integer
         """
         ...
 

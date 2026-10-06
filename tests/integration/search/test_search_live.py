@@ -12,7 +12,13 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from esmporium.query import QueryCMIP5, QueryCMIP6, QueryCMIP7, to_canonical
+from esmporium.query import (
+    QueryCMIP5,
+    QueryCMIP6,
+    QueryCMIP7,
+    QueryProtocol,
+    to_canonical,
+)
 from esmporium.search import (
     ESGF1_CMIP6_FACADE_PARAMETERS,
     INBUILT_SEARCH_API_FACADE_STORE,
@@ -223,7 +229,9 @@ def client():
         yield res
 
 
-def count_or_skip(client, facade, query):
+def count_or_skip(
+    client: httpx.Client, facade: SearchAPIFacade, query: QueryProtocol
+) -> int:
     """
     Ask one live node how many records match, in a single request
 
@@ -419,6 +427,12 @@ def test_search_pages_through_all_the_results(client, api, query, skip_or_fail):
 
     # Aim for ~4 pages, but always at least two (page smaller than the total).
     page_size = min(max(1, matched // 4), matched - 1)
+    # Being below the total is what makes this query page at all, so say so:
+    # a page size of one over two matches is two pages, which is all we need.
+    assert page_size < matched, (
+        f"page size {page_size} is not below the {matched} that matched, "
+        "so this query cannot trigger pagination"
+    )
 
     pages: list[int] = []
 

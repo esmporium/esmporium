@@ -480,14 +480,3 @@ def test_n_matches_with_no_count_raises(raw, exp):
     """A response we cannot read a count out of is one we have not understood"""
     with exp:
         api().get_n_matches(raw)
-
-
-def test_n_matches_failure_names_the_api_that_answered():
-    """The count is read by the API, so the error can say who sent the response"""
-    with pytest.raises(
-        NoSearchResultNumberOfMatchesReturnedError,
-        match=re.escape(
-            "This response came from SearchAPIESGFNGSTAC at https://search.example.io."
-        ),
-    ):
-        api().get_n_matches({"features": []})
