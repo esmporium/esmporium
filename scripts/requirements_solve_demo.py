@@ -14,8 +14,9 @@ Five scenes, each a use case the solver is built for:
 5. ...and the same requirement with `prefer` set, which resolves it
 
 Needs no network and no database: the catalogue here is
-[`InMemoryCatalogue`][esmporium.requirements.InMemoryCatalogue], which stands in until
-the database-backed one lands. Everything else -- the requirement, the solving, the
+[`InMemoryCatalogue`][esmporium.requirements.InMemoryCatalogue], which is what we use for demos 
+like this so we don't need a full database to be spun up.
+Everything else -- the requirement, the solving, the
 explanations -- is exactly what a real catalogue would get.
 """
 
