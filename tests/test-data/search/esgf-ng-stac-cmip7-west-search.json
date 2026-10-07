@@ -1,6 +1,6 @@
 {
   "context": {
-    "matched": 64
+    "matched": 694
   },
   "features": [
     {
@@ -253,19 +253,11 @@
         "cmip7:variable_units": "K",
         "cmip7:variant_label": "r1i1p2f1",
         "cmip7:vertical_label": "h2m",
-        "constellation": null,
         "created": "2026-09-06T17:19:19.156197Z",
         "datetime": null,
-        "description": null,
         "end_datetime": "1999-12-31T12:00:00Z",
-        "gsd": null,
-        "instruments": null,
         "latest": true,
-        "license": null,
-        "mission": null,
-        "platform": null,
         "project": "CMIP7",
-        "providers": null,
         "retracted": false,
         "size": 1065514605,
         "start_datetime": "1850-01-01T12:00:00Z",
@@ -526,19 +518,11 @@
         "cmip7:variable_units": "K",
         "cmip7:variant_label": "r1i1p2f1",
         "cmip7:vertical_label": "h2m",
-        "constellation": null,
         "created": "2026-09-07T00:57:50.431608Z",
         "datetime": null,
-        "description": null,
         "end_datetime": "1999-12-31T12:00:00Z",
-        "gsd": null,
-        "instruments": null,
         "latest": true,
-        "license": null,
-        "mission": null,
-        "platform": null,
         "project": "CMIP7",
-        "providers": null,
         "retracted": false,
         "size": 1068220830,
         "start_datetime": "1850-01-01T12:00:00Z",
@@ -605,7 +589,7 @@
       "type": "application/json"
     }
   ],
-  "numMatched": 64,
-  "numReturned": 2,
+  "numberMatched": 694,
+  "numberReturned": 2,
   "type": "FeatureCollection"
 }

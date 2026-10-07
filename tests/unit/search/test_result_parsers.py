@@ -9,7 +9,6 @@ these parsers exist:
 - where the project specific id is written
 - where the project is written (a Solr facet, a top-level STAC `collection` key)
 - how many dataset rows one document maps to
-- where the endpoint puts the number of records that matched
 
 Parsing of real recorded responses is in `test_recorded_responses.py`; this file is the
 controlled counterpart to it.
@@ -30,32 +29,21 @@ from esmporium.search import (
     ESGFNGResultParser,
     MissingResultFieldError,
     MultipleFacetValuesError,
-    NoSearchResultNumberOfMatchesReturnedError,
     SearchAPIESGF1Solr,
     SearchAPIESGFNGSTAC,
     SolrSingleRowResultParser,
     SolrVariableBundleResultParser,
     UnreadableResponseError,
     build_transient_retrying,
-    stac_east_n_matches,
-    stac_west_n_matches,
 )
 
 
-def esgfng_parser(east: bool = True) -> ESGFNGResultParser:
-    """An ESGF-NG parser for one deployment or the other
+def esgfng_parser() -> ESGFNGResultParser:
+    """An ESGF-NG parser
 
-    One parser serves every project on this API: what differs between the
-    deployments is only where each writes its match count.
+    One parser serves every project on this API, and every deployment of it too.
     """
-    if east:
-        return ESGFNGResultParser(
-            read_n_matches=stac_east_n_matches,
-        )
-
-    return ESGFNGResultParser(
-        read_n_matches=stac_west_n_matches,
-    )
+    return ESGFNGResultParser()
 
 
 CMIP6_ROW = DatasetFacets(
@@ -71,6 +59,20 @@ CMIP6_ROW = DatasetFacets(
     processing_id="Amon",
 )
 """One CMIP6 dataset row, used to build the documents that should parse back to it"""
+
+CMIP5_ROW = DatasetFacets(
+    id_project_specific="cmip5.output1.CSIRO-BOM.ACCESS1-0.rcp45.mon.atmos.Amon.r1i1p1",
+    project="CMIP5",
+    model="ACCESS1-0",
+    institution="CSIRO-BOM",
+    experiment="rcp45",
+    variant_label="r1i1p1",
+    variable="tas",
+    reporting_interval="mon",
+    grid_label=None,
+    processing_id="Amon",
+)
+"""One CMIP5 dataset row, which models no grid and spells its facets its own way"""
 
 CMIP7_ROW = CMIP6_ROW.model_copy(
     update={
@@ -248,18 +250,7 @@ def test_a_solr_record_with_no_project_raises():
 
 def test_a_solr_cmip5_record_explodes_into_one_row_per_variable():
     """CMIP5 bundles many variables into one record; every other facet is shared"""
-    row = DatasetFacets(
-        id_project_specific="cmip5.output1.CSIRO-BOM.ACCESS1-0.rcp45.mon.atmos.Amon.r1i1p1",
-        project="CMIP5",
-        model="ACCESS1-0",
-        institution="CSIRO-BOM",
-        experiment="rcp45",
-        variant_label="r1i1p1",
-        variable="tas",
-        reporting_interval="mon",
-        grid_label=None,
-        processing_id="Amon",
-    )
+    row = CMIP5_ROW
     doc = solr_doc(ESGF1_CMIP5_FACADE_PARAMETERS, row, variable=["tas", "pr"])
 
     rows = SolrVariableBundleResultParser().get_dataset_rows(
@@ -286,214 +277,27 @@ def test_a_single_row_parser_will_not_quietly_split_a_bundle():
 
 
 @pytest.mark.parametrize(
-    "parser",
+    "retracted, exp",
     (
-        pytest.param(SolrSingleRowResultParser(), id="single-row"),
-        pytest.param(SolrVariableBundleResultParser(), id="variable-bundle"),
+        pytest.param(..., False, id="not-there-at-all"),
+        pytest.param([False], False, id="published-as-not-retracted"),
+        pytest.param([True], True, id="published-as-retracted"),
     ),
 )
-@pytest.mark.parametrize(
-    "raw, exp",
-    (
-        pytest.param({"response": {"numFound": 3, "docs": []}}, 3, id="a-count"),
-        pytest.param({"response": {"numFound": 0, "docs": []}}, 0, id="no-matches"),
-    ),
-)
-def test_solr_n_matches(parser, raw, exp):
-    """Both Solr parsers read the count the one way Solr writes it"""
-    assert parser.get_n_matches(raw) == exp
+def test_a_solr_record_without_a_retracted_field_is_read_as_not_retracted(
+    retracted, exp
+):
+    """`retracted` post-dates some CMIP5 data, so its absence is not a failure"""
+    doc = solr_doc(ESGF1_CMIP5_FACADE_PARAMETERS, CMIP5_ROW)
+    if retracted is ...:
+        del doc["retracted"]
+    else:
+        doc["retracted"] = retracted
 
+    parsed = SolrVariableBundleResultParser().parse_search_results(
+        {"response": {"docs": [doc]}},
+        api=solr_api(),
+        facade_parameters=ESGF1_CMIP5_FACADE_PARAMETERS,
+    )
 
-@pytest.mark.parametrize(
-    "raw, exp",
-    (
-        pytest.param(
-            {"response": {"docs": []}},
-            pytest.raises(
-                NoSearchResultNumberOfMatchesReturnedError,
-                match=re.escape(
-                    "This response does not report "
-                    "how many records matched the search. "
-                    "We expected to read the count from 'response.numFound', "
-                    "but 'numFound' is not in 'response', there is only: 'docs'"
-                ),
-            ),
-            id="no-count",
-        ),
-        pytest.param(
-            {},
-            pytest.raises(
-                NoSearchResultNumberOfMatchesReturnedError,
-                match=re.escape(
-                    "This response does not report "
-                    "how many records matched the search. "
-                    "We expected to read the count from 'response.numFound', "
-                    "but the response is empty."
-                ),
-            ),
-            id="nothing-we-recognise",
-        ),
-        pytest.param(
-            {"response": {"numFound": "3"}},
-            pytest.raises(
-                TypeError,
-                match=re.escape(
-                    "We expected to get an integer at 'response.numFound', "
-                    "but instead got '3'"
-                ),
-            ),
-            id="a-count-we-cannot-read",
-        ),
-    ),
-)
-def test_solr_n_matches_with_no_count_raises(raw, exp):
-    """A response we cannot read a count out of is one we have not understood"""
-    with exp:
-        SolrSingleRowResultParser().get_n_matches(raw)
-
-
-def test_east_n_matches_reads_the_stac_spelling():
-    """East writes the count where STAC says to, and that is all east's reader reads"""
-    assert stac_east_n_matches({"numberMatched": 7, "features": []}) == 7
-
-
-@pytest.mark.parametrize(
-    "raw, exp",
-    (
-        pytest.param({"numMatched": 7}, 7, id="top-level"),
-        pytest.param({"context": {"matched": 7}}, 7, id="context"),
-        # West sends both, and they agree; `numMatched` is the one we read.
-        pytest.param({"numMatched": 7, "context": {"matched": 7}}, 7, id="both"),
-    ),
-)
-def test_west_n_matches_reads_wests_own_spellings(raw, exp):
-    """West does not write `numberMatched` at all; it writes these instead"""
-    assert stac_west_n_matches(raw) == exp
-
-
-# Each reader looks only where its own deployment writes the count, so the error names
-# only those places.
-WHERE_EAST_LOOKED = (
-    "This response does not report how many records matched the search. "
-    "We expected to read the count from 'numberMatched', "
-)
-WHERE_WEST_LOOKED = (
-    "This response does not report how many records matched the search. "
-    "We expected to read the count from one of 'numMatched' or 'context.matched', "
-)
-
-
-def test_east_n_matches_does_not_read_wests_spellings():
-    """Reading west's spellings on east would hide east changing shape
-
-    The whole point of a reader per deployment is that the day one of them starts
-    answering like the other, we are told rather than quietly carrying on.
-    """
-    with pytest.raises(
-        NoSearchResultNumberOfMatchesReturnedError,
-        match=re.escape(
-            f"{WHERE_EAST_LOOKED}but 'numberMatched' is not in the response's top "
-            "level, there is only: 'context', 'numMatched'"
-        ),
-    ):
-        stac_east_n_matches({"numMatched": 7, "context": {"matched": 7}})
-
-
-def test_west_n_matches_does_not_read_easts_spelling():
-    """And the same the other way round"""
-    with pytest.raises(
-        NoSearchResultNumberOfMatchesReturnedError,
-        match=re.escape(f"{WHERE_WEST_LOOKED}but: "),
-    ):
-        stac_west_n_matches({"numberMatched": 7})
-
-
-@pytest.mark.parametrize(
-    "read_n_matches, raw, exp",
-    (
-        pytest.param(
-            stac_east_n_matches,
-            {},
-            pytest.raises(
-                NoSearchResultNumberOfMatchesReturnedError,
-                match=re.escape(f"{WHERE_EAST_LOOKED}but the response is empty."),
-            ),
-            id="east-nothing-we-recognise",
-        ),
-        pytest.param(
-            stac_east_n_matches,
-            {"features": [{"id": "a"}]},
-            pytest.raises(
-                NoSearchResultNumberOfMatchesReturnedError,
-                match=re.escape(
-                    f"{WHERE_EAST_LOOKED}but 'numberMatched' is not in the response's "
-                    "top level, there is only: 'features'."
-                ),
-            ),
-            id="east-records-but-no-count",
-        ),
-        pytest.param(
-            stac_east_n_matches,
-            {"numberMatched": "7"},
-            pytest.raises(
-                TypeError,
-                match=re.escape(
-                    "We expected to get an integer at numberMatched, "
-                    "but instead got '7'"
-                ),
-            ),
-            id="east-a-count-we-cannot-read",
-        ),
-        pytest.param(
-            stac_west_n_matches,
-            {},
-            pytest.raises(
-                NoSearchResultNumberOfMatchesReturnedError,
-                match=re.escape(f"{WHERE_WEST_LOOKED}but the response is empty."),
-            ),
-            id="west-nothing-we-recognise",
-        ),
-        pytest.param(
-            stac_west_n_matches,
-            {"numMatched": None, "context": {"total": 4}},
-            # Each place we looked is explained as far as we got in it,
-            # so the one which came closest says so.
-            pytest.raises(
-                NoSearchResultNumberOfMatchesReturnedError,
-                match=re.escape(
-                    f"{WHERE_WEST_LOOKED}but: we found None at 'numMatched'; "
-                    "'matched' is not in 'context', there is only: 'total'."
-                ),
-            ),
-            id="west-a-context-which-does-not-carry-the-count",
-        ),
-    ),
-)
-def test_stac_n_matches_with_no_count_raises(read_n_matches, raw, exp):
-    """A response we cannot read a count out of is one we have not understood"""
-    with exp:
-        read_n_matches(raw)
-
-
-def test_a_stac_parser_reads_the_count_with_the_reader_it_was_given():
-    """The parser counts the way its deployment does, not the way STAC says to"""
-    parser = esgfng_parser(east=False)
-
-    assert parser.get_n_matches({"numMatched": 7, "features": []}) == 7
-
-    with pytest.raises(NoSearchResultNumberOfMatchesReturnedError):
-        parser.get_n_matches({"numberMatched": 7, "features": []})
-
-
-def test_no_search_result_n_matches_returned_error_when_there_is_a_match_raises():
-    """The error is for responses we could not read; a readable one is a bug"""
-    with pytest.raises(
-        AssertionError,
-        match=re.escape(
-            "context.matched is in {'context': {'matched': 4}}, raw[context][matched]=4"
-        ),
-    ):
-        NoSearchResultNumberOfMatchesReturnedError(
-            {"context": {"matched": 4}},
-            expected_at=("numberMatched", "context.matched"),
-        )
+    assert parsed[0].retracted is exp

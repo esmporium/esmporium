@@ -612,6 +612,14 @@ class SearchAPICallRecord(EsmporiumBase, table=True):
     The number of records the host reported matched, if it reported one
 
     `None` when the response carries no count we can read.
+
+    When this call is a search request,
+    this is the number of records in total that matched,
+    not the number of records returned in the response
+    (which is affected by pagination).
+    Hence the number of results is, in general, not unique:
+    it will be repeated across every search response
+    (which can be paginated).
     """
 
     response_time_seconds: float
@@ -619,10 +627,10 @@ class SearchAPICallRecord(EsmporiumBase, table=True):
 
     attempt_number: int
     """
-    Which attempt this row is, 1-based
+    Which attempt at this request this row is, 1-based
 
-    One row is recorded per HTTP attempt, so a host that had to be retried
-    leaves several rows for one logical request: attempt 1, attempt 2, and so on.
+    One row is recorded per HTTP attempt, so a request that had to be retried
+    leaves several rows: attempt 1, attempt 2, and so on.
     The successful attempt (if any) is the last one, and is the only one that
     carries a result count.
     """

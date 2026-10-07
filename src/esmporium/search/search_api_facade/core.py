@@ -220,12 +220,16 @@ class SearchAPIFacade:
     The parser that reads this facade's search results
 
     What a result looks like can be a function of its project
-    and the endpoint that answered
-    (e.g. a CMIP5 Solr record bundles many variables;
-    ESGF-NG east writes its match count somewhere west does not),
+    as well as of the format it arrived in
+    (e.g. a CMIP5 Solr record bundles many variables into one document,
+    where a CMIP6 Solr one is a single row),
     which is why the parser is chosen for this pairing
     rather than derived from either half alone;
     see [esmporium.search.search_api_facade.result_parsers][].
+
+    Anything which depends only on the format,
+    e.g. the number of records that matched,
+    belongs on [search_api][(c).search_api] instead.
     """
 
     def askable_facets(self, facets: set[str]) -> set[str]:
@@ -413,31 +417,6 @@ class SearchAPIFacade:
             This facade's query style cannot express one of `facets`
         """
         return self.read_back(self.search_api.parse_facet_patterns, raw, facets)
-
-    def get_n_matches(self, raw: dict[str, Any]) -> int:
-        """
-        Get the number of records that matched a search from a raw response
-
-        Note: this is not necessarily the same as the number of results in `raw`.
-        Some search APIs will only return a limited number of results.
-
-        Parameters
-        ----------
-        raw
-            The response to read, i.e. the answer to a request built with
-            [build_search_request][(c).build_search_request]
-
-        Returns
-        -------
-        :
-            The number of records that matched the search
-
-        Raises
-        ------
-        NoSearchResultNumberOfMatchesReturnedError
-            `raw` does not report the number of records that matched the search
-        """
-        return self.result_parser.get_n_matches(raw)
 
     def parse_search_results(self, raw: dict[str, Any]) -> tuple[ParsedDocument, ...]:
         """

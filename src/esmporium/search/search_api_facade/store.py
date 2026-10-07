@@ -30,8 +30,6 @@ from esmporium.search.search_api_facade.result_parsers import (
     ResultParserProtocol,
     SolrSingleRowResultParser,
     SolrVariableBundleResultParser,
-    stac_east_n_matches,
-    stac_west_n_matches,
 )
 
 RetryingBuilder = Callable[[], Retrying]
@@ -122,8 +120,8 @@ def get_default_facade_definition(project: str, host: str) -> FacadeDefinition: 
         "esgf-data.dkrz.de",
     )
     solr_esgf15_bridge_hosts = ("esgf-node.ornl.gov",)
-    esgfng_east_hosts = ("search.east.esgf.io",)
-    esgfng_west_hosts = ("search.west.esgf.io",)
+
+    esgfng_hosts = ("search.east.esgf.io", "search.west.esgf.io")
 
     # Have to declare these here, so that mypy doesn't complain later on.
     facade_parameters: FacadeParametersProtocol
@@ -153,22 +151,13 @@ def get_default_facade_definition(project: str, host: str) -> FacadeDefinition: 
             search_api_type = SearchAPIESGF1Solr
 
         elif host in solr_esgf15_bridge_hosts:
-            facade_parameters = ESGF1_CMIP5_FACADE_PARAMETERS
+            facade_parameters = ESGF1_CMIP6_FACADE_PARAMETERS
             result_parser = SolrSingleRowResultParser()
             search_api_type = SearchAPIESGF15BridgeSolr
 
-        elif host in esgfng_east_hosts:
+        elif host in esgfng_hosts:
             facade_parameters = ESGFNG_CMIP6_FACADE_PARAMETERS
-            result_parser = ESGFNGResultParser(
-                read_n_matches=stac_east_n_matches,
-            )
-            search_api_type = SearchAPIESGFNGSTAC
-
-        elif host in esgfng_west_hosts:
-            facade_parameters = ESGFNG_CMIP6_FACADE_PARAMETERS
-            result_parser = ESGFNGResultParser(
-                read_n_matches=stac_west_n_matches,
-            )
+            result_parser = ESGFNGResultParser()
             search_api_type = SearchAPIESGFNGSTAC
 
         else:
@@ -187,18 +176,9 @@ def get_default_facade_definition(project: str, host: str) -> FacadeDefinition: 
             result_parser = SolrSingleRowResultParser()
             search_api_type = SearchAPIESGF15BridgeSolr
 
-        elif host in esgfng_east_hosts:
+        elif host in esgfng_hosts:
             facade_parameters = ESGFNG_CMIP7_FACADE_PARAMETERS
-            result_parser = ESGFNGResultParser(
-                read_n_matches=stac_east_n_matches,
-            )
-            search_api_type = SearchAPIESGFNGSTAC
-
-        elif host in esgfng_west_hosts:
-            facade_parameters = ESGFNG_CMIP7_FACADE_PARAMETERS
-            result_parser = ESGFNGResultParser(
-                read_n_matches=stac_west_n_matches,
-            )
+            result_parser = ESGFNGResultParser()
             search_api_type = SearchAPIESGFNGSTAC
 
         else:

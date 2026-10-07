@@ -36,8 +36,6 @@ from esmporium.search import (
     SolrVariableBundleResultParser,
     build_transient_retrying,
     get_mapping_to_query_style_facet_names,
-    stac_east_n_matches,
-    stac_west_n_matches,
 )
 
 RECORDED_DIR = Path(__file__).parents[2] / "test-data" / "search"
@@ -128,9 +126,7 @@ RECORDED_CASES = (
         facade(
             ESGFNG_CMIP6_FACADE_PARAMETERS,
             SearchAPIESGFNGSTAC,
-            ESGFNGResultParser(
-                read_n_matches=stac_east_n_matches,
-            ),
+            ESGFNGResultParser(),
         ),
         id="esgf-ng-stac-cmip6-east",
     ),
@@ -139,9 +135,7 @@ RECORDED_CASES = (
         facade(
             ESGFNG_CMIP6_FACADE_PARAMETERS,
             SearchAPIESGFNGSTAC,
-            ESGFNGResultParser(
-                read_n_matches=stac_west_n_matches,
-            ),
+            ESGFNGResultParser(),
         ),
         id="esgf-ng-stac-cmip6-west",
     ),
@@ -150,7 +144,7 @@ RECORDED_CASES = (
         facade(
             ESGFNG_CMIP7_FACADE_PARAMETERS,
             SearchAPIESGFNGSTAC,
-            ESGFNGResultParser(read_n_matches=stac_east_n_matches),
+            ESGFNGResultParser(),
         ),
         id="esgf-ng-stac-cmip7-east",
     ),
@@ -159,7 +153,7 @@ RECORDED_CASES = (
         facade(
             ESGFNG_CMIP7_FACADE_PARAMETERS,
             SearchAPIESGFNGSTAC,
-            ESGFNGResultParser(read_n_matches=stac_west_n_matches),
+            ESGFNGResultParser(),
         ),
         id="esgf-ng-stac-cmip7-west",
     ),
@@ -195,7 +189,7 @@ def test_result_count_of_a_recorded_search(name, facade):
     """Test that we can count the matches in a response an API really sent"""
     raw = load(f"{name}-search")
 
-    assert facade.get_n_matches(raw) > 0
+    assert facade.search_api.get_n_matches(raw) > 0
 
 
 SOLR_RECORDED_CASES = tuple(c for c in RECORDED_CASES if "stac" not in str(c.id))

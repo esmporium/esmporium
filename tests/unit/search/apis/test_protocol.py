@@ -7,7 +7,9 @@ these pin the message, path by path, because that message is the whole feature.
 
 The errors built on top of it (`NoSearchResultDocumentsError` and friends) are
 tested where they are raised, in `test_esgf1.py`, `test_esgfng.py` and
-`test_result_parsers.py`.
+`test_result_parsers.py`. The one exception is the check that building one for a
+response which *can* be read is itself an error, which belongs to the machinery and so
+lives here.
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ import pytest
 
 from esmporium.search.apis import (
     NoFacetValuesReturnedError,
+    NoSearchResultNumberOfMatchesReturnedError,
     SearchAPIESGFNGSTAC,
     UnreadableResponseError,
     describe_search_api,
@@ -160,3 +163,17 @@ def test_a_single_path_is_still_kept_as_a_tuple():
 def test_the_named_subclasses_are_all_catchable_as_one():
     """`except UnreadableResponseError` is meant to catch the whole family"""
     assert issubclass(NoFacetValuesReturnedError, UnreadableResponseError)
+
+
+def test_no_search_result_n_matches_returned_error_when_there_is_a_match_raises():
+    """The error is for responses we could not read; a readable one is a bug"""
+    with pytest.raises(
+        AssertionError,
+        match=re.escape(
+            "context.matched is in {'context': {'matched': 4}}, raw[context][matched]=4"
+        ),
+    ):
+        NoSearchResultNumberOfMatchesReturnedError(
+            {"context": {"matched": 4}},
+            expected_at=("numberMatched", "context.matched"),
+        )

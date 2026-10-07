@@ -200,13 +200,12 @@ def collect_all_pages(  # noqa: PLR0913 - the keyword-only extras are injection 
             client=client,
             api=api,
             api_call_observer=api_call_observer,
-            read_n_matches=facade.get_n_matches,
         )
         raw = fire_here(request=request)
         # Read the count directly: a search response
         # that omits its total is one we cannot use, so let the raise propagate to the
         # UnreadableResponseError handler below rather than swallowing it to None.
-        n_matches = facade.get_n_matches(raw)
+        n_matches = api.get_n_matches(raw)
         if warn_on_pagination:
             _warn_if_paginating(facade_key[0], n_matches=n_matches, limit=limit)
         seen = {_request_fingerprint(request)}
@@ -258,11 +257,14 @@ def collect_all_pages(  # noqa: PLR0913 - the keyword-only extras are injection 
         )
 
     # Paged to the end. If the endpoint reported a total, note when what we collected
-    # falls short of it (most likely the index shifted mid-scan): the pages we did get
-    # are still all we could follow, so this is a heads-up, not a failure.
+    # differs from it. The total is read from the first page while the pages after it
+    # are fetched one by one, so an index being published to (or retracted from) while
+    # we scan it gives us more records than the total promised as readily as fewer.
+    # Either way the pages we got are all the endpoint offered us, so this is a
+    # heads-up, not a failure.
     if n_matches is not None and len(collected) != n_matches:
         logger.debug(
-            "%s paged to the end but collected %d of the %d records it reported "
+            "%s paged to the end but collected %d records against the %d it reported "
             "matched (the index may have shifted mid-scan)",
             facade_key[0],
             len(collected),

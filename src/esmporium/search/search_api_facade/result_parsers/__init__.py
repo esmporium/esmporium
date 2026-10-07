@@ -18,11 +18,8 @@ from esmporium.search.search_api_facade.result_parsers.known_result_parsers impo
     MissingResultFieldError,
     SolrSingleRowResultParser,
     SolrVariableBundleResultParser,
-    stac_east_n_matches,
-    stac_west_n_matches,
 )
 from esmporium.search.search_api_facade.result_parsers.protocol import (
-    NMatchesReader,
     ResultParserProtocol,
     get_single_value_columns_from_doc,
 )
@@ -30,11 +27,8 @@ from esmporium.search.search_api_facade.result_parsers.protocol import (
 __all__ = [
     "ESGFNGResultParser",
     "MissingResultFieldError",
-    "NMatchesReader",
     "ResultParserProtocol",
     "SolrSingleRowResultParser",
     "SolrVariableBundleResultParser",
     "get_single_value_columns_from_doc",
-    "stac_east_n_matches",
-    "stac_west_n_matches",
 ]

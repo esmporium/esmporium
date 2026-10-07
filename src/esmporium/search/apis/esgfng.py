@@ -16,6 +16,7 @@ from esmporium.search.apis.protocol import (
     LimitOutOfRangeError,
     NoFacetValuesReturnedError,
     NoSearchResultDocumentsError,
+    NoSearchResultNumberOfMatchesReturnedError,
     SearchAPI,
     UncompilableFacetPatternError,
     describe_search_api,
@@ -185,6 +186,45 @@ def stac_extract_result_documents(raw: dict[str, Any]) -> list[dict[str, Any]]:
     features: list[dict[str, Any]] = raw["features"]
 
     return list(features)
+
+
+def stac_n_matches(raw: dict[str, Any]) -> int:
+    """
+    Get the number of records that matched a search from a STAC-shaped response
+
+    This is the total for the whole search, not the number of features this response
+    carries; see
+    [SearchAPI.get_n_matches][esmporium.search.apis.SearchAPI.get_n_matches].
+
+    Parameters
+    ----------
+    raw
+        The raw search result to read
+
+    Returns
+    -------
+    :
+        The number of records that matched the search
+
+    Raises
+    ------
+    NoSearchResultNumberOfMatchesReturnedError
+        `raw` does not report the number of records that matched the search
+
+    TypeError
+        `raw` reports the count in the place we expect
+        but as something which is not an integer
+    """
+    loc = "numberMatched"
+    total = raw.get(loc)
+    if isinstance(total, int):
+        return total
+
+    elif total is not None:
+        msg = f"We expected to get an integer at {loc!r}, but instead got {total!r}"
+        raise TypeError(msg)
+
+    raise NoSearchResultNumberOfMatchesReturnedError(raw, loc)
 
 
 def stac_next_page_request(request: Request, raw: dict[str, Any]) -> Request | None:
@@ -523,6 +563,12 @@ class SearchAPIESGFNGSTAC:
         See [SearchAPI.next_page_request][esmporium.search.apis.SearchAPI.next_page_request].
         """  # noqa: E501
         return stac_next_page_request(request, raw)
+
+    def get_n_matches(self, raw: dict[str, Any]) -> int:
+        """
+        See [SearchAPI.get_n_matches][esmporium.search.apis.SearchAPI.get_n_matches].
+        """
+        return stac_n_matches(raw)
 
     def build_get_facet_values_for_project_request(
         self, facets: set[str], project: str

@@ -8,10 +8,9 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from esmporium.search.apis.esgf1 import extract_one_element_list, solr_n_matches
+from esmporium.search.apis.esgf1 import extract_one_element_list
 from esmporium.search.apis.esgfng import stac_nodes
 from esmporium.search.apis.protocol import (
-    NoSearchResultNumberOfMatchesReturnedError,
     describe_search_api,
     read_response_path,
 )
@@ -21,7 +20,6 @@ from esmporium.search.result_parsing import (
     ParsedDocument,
 )
 from esmporium.search.search_api_facade.result_parsers.protocol import (
-    NMatchesReader,
     get_single_value_columns_from_doc,
 )
 
@@ -130,108 +128,6 @@ def _single_row(
     return DatasetFacets.model_validate({**base, **columns})
 
 
-def _n_matches_from(
-    raw: dict[str, Any], candidates: tuple[tuple[str, Any], ...]
-) -> int:
-    """
-    Read a match count out of the places one deployment might write it
-
-    Parameters
-    ----------
-    raw
-        The raw search result the values were read from
-
-        Only used for error messages.
-
-    candidates
-        Where we looked and what we found there, in the order we prefer them
-
-    Returns
-    -------
-    :
-        The number of records that matched the search
-
-    Raises
-    ------
-    NoSearchResultNumberOfMatchesReturnedError
-        None of `candidates` carries a count
-
-    TypeError
-        A candidate carries something which is not a count
-    """
-    for loc, total in candidates:
-        if isinstance(total, int):
-            return total
-
-        elif total is not None:
-            msg = f"We expected to get an integer at {loc}, but instead got {total!r}"
-            raise TypeError(msg)
-
-    raise NoSearchResultNumberOfMatchesReturnedError(
-        raw, tuple(loc for loc, _ in candidates)
-    )
-
-
-def stac_east_n_matches(raw: dict[str, Any]) -> int:
-    """
-    Get the number of records that matched a search from an ESGF-NG east response
-
-    East writes the count as `numberMatched`, which is what STAC calls it.
-
-    Parameters
-    ----------
-    raw
-        The raw search result to read
-
-    Returns
-    -------
-    :
-        The number of records that matched the search
-
-    Raises
-    ------
-    NoSearchResultNumberOfMatchesReturnedError
-        `raw` does not report the number of records that matched the search
-    """
-    return _n_matches_from(raw, (("numberMatched", raw.get("numberMatched")),))
-
-
-def stac_west_n_matches(raw: dict[str, Any]) -> int:
-    """
-    Get the number of records that matched a search from an ESGF-NG west response
-
-    West does not write `numberMatched` at all. It writes the count twice, as
-    `numMatched` and as `context.matched`, neither of which is the STAC spelling.
-
-    Parameters
-    ----------
-    raw
-        The raw search result to read
-
-    Returns
-    -------
-    :
-        The number of records that matched the search
-
-    Raises
-    ------
-    NoSearchResultNumberOfMatchesReturnedError
-        `raw` does not report the number of records that matched the search
-    """
-    context = raw.get("context")
-
-    return _n_matches_from(
-        raw,
-        (
-            ("numMatched", raw.get("numMatched")),
-            (
-                "context.matched",
-                context.get("matched") if isinstance(context, dict) else None,
-            ),
-        ),
-    )
-
-
 def solr_id_project_specific(doc: dict[str, Any], api: SearchAPI) -> str:
     """
     Read the project specific id of a Solr record
@@ -302,12 +198,26 @@ def solr_parsed_document(
             read_response_path(doc, path, what=what, context=describe_search_api(api))
         )
 
+    def read_retracted() -> bool:
+        """
+        Read whether this record is retracted, defaulting to not retracted
+
+        `retracted` post-dates some of what the federation holds.
+        A record published before the field existed was never retracted,
+        so its absence is read as `False`
+        rather than as a response we do not understand.
+        """
+        if "retracted" not in doc:
+            return False
+
+        return bool(read("retracted", "whether this record is retracted"))
+
     return ParsedDocument(
         id_project_specific=solr_id_project_specific(doc, api),
         datasets=datasets,
         version=str(read("version", "the version of this record")),
         is_latest=bool(read("latest", "whether this is the latest version")),
-        retracted=bool(read("retracted", "whether this record is retracted")),
+        retracted=read_retracted(),
         nodes=(
             DataNodeInfo(
                 data_node=read("data_node", "the data node hosting this record")
@@ -378,12 +288,6 @@ class SolrSingleRowResultParser:
     [MultipleFacetValuesError][esmporium.search.apis.MultipleFacetValuesError].
     """
 
-    def get_n_matches(self, raw: dict[str, Any]) -> int:
-        """
-        See [ResultParserProtocol.get_n_matches][esmporium.search.search_api_facade.result_parsers.ResultParserProtocol.get_n_matches].
-        """  # noqa: E501
-        return solr_n_matches(raw)
-
     def parse_search_results(
         self,
         raw: dict[str, Any],
@@ -435,12 +339,6 @@ class SolrVariableBundleResultParser:
     `variable` is a single value shared by the rows;
     `variable` is read as a list and the record explodes into one row per value.
     """
-
-    def get_n_matches(self, raw: dict[str, Any]) -> int:
-        """
-        See [ResultParserProtocol.get_n_matches][esmporium.search.search_api_facade.result_parsers.ResultParserProtocol.get_n_matches].
-        """  # noqa: E501
-        return solr_n_matches(raw)
 
     def parse_search_results(
         self,
@@ -555,23 +453,6 @@ class ESGFNGResultParser:
     """
     Read results from the ESGF-NG STAC API
     """
-
-    read_n_matches: NMatchesReader
-    """
-    Reads how many records matched a search out of one of this endpoint's responses
-
-    Deliberately has no default: east and west should answer the same way and do not
-    (see [stac_east_n_matches][(m).] and [stac_west_n_matches][(m).]), so whoever builds
-    a parser has to say which deployment it is for rather than getting a reader that
-    quietly tries every spelling. If the two ever agree, this can go and the count can
-    move back onto the search API, where a format-level concern belongs.
-    """
-
-    def get_n_matches(self, raw: dict[str, Any]) -> int:
-        """
-        See [ResultParserProtocol.get_n_matches][esmporium.search.search_api_facade.result_parsers.ResultParserProtocol.get_n_matches].
-        """  # noqa: E501
-        return self.read_n_matches(raw)
 
     def parse_search_results(
         self,

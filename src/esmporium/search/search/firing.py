@@ -8,7 +8,7 @@ import json
 import logging
 import shlex
 import time
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import httpx
 
@@ -19,9 +19,6 @@ from esmporium.search.apis import (
 )
 from esmporium.search.health import SearchAPICall, SearchAPICallObserver
 from esmporium.search.search.errors import SearchAPIRequestError
-
-if TYPE_CHECKING:
-    from esmporium.search.search_api_facade import NMatchesReader
 
 logger = logging.getLogger(__name__)
 
@@ -114,9 +111,7 @@ def log_request_as_url_and_curl(
     )
 
 
-def _result_count_or_none(
-    read_n_matches: NMatchesReader | None, raw: dict[str, Any]
-) -> int | None:
+def _result_count_or_none(api: SearchAPI, raw: dict[str, Any]) -> int | None:
     """
     Read how many records a response reported, or `None` if it reported none
 
@@ -125,8 +120,8 @@ def _result_count_or_none(
 
     Parameters
     ----------
-    read_n_matches
-        Reads the count out of `raw`, or `None` if the caller cannot say how.
+    api
+        The API which answered, which knows where its format writes the count
 
     raw
         The response to read
@@ -135,13 +130,9 @@ def _result_count_or_none(
     -------
     :
         The number of records reported, or `None` if the response carries no count
-        (or if nothing that could read one was passed)
     """
-    if read_n_matches is None:
-        return None
-
     try:
-        return read_n_matches(raw)
+        return api.get_n_matches(raw)
     except NoSearchResultNumberOfMatchesReturnedError:
         return None
 
@@ -151,7 +142,6 @@ def fire(
     api: SearchAPI,
     request: Request,
     api_call_observer: SearchAPICallObserver | None = None,
-    read_n_matches: NMatchesReader | None = None,
 ) -> dict[str, Any]:
     """
     Send one request to one API, using that API's retry policy and timeout
@@ -162,7 +152,11 @@ def fire(
         The HTTP client to send with
 
     api
-        The API to send to (this also carries the retry policy and timeout)
+        The API to send to
+
+        This also carries the retry policy and timeout,
+        and reads how many records the answer says matched,
+        for the observer to record.
 
     request
         The request to send
@@ -171,10 +165,6 @@ def fire(
         Told about this call once it is done, on both the success and failure path.
         If `None` (the default), nothing is recorded.
         See [esmporium.search.health][] for how to build one.
-
-    read_n_matches
-        Reads how many records the answer says matched, for the observer to record.
-        If `None`, no count is recorded.
 
     Returns
     -------
@@ -261,7 +251,7 @@ def fire(
             success=True,
             response_code=response.status_code,
             error=None,
-            num_results=_result_count_or_none(read_n_matches, raw),
+            num_results=_result_count_or_none(api, raw),
             seconds=time.monotonic() - started,
         )
         return raw

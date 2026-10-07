@@ -4,7 +4,6 @@ Definition of the interface for parsing search results into the pieces we store
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Protocol
 
 from esmporium.search.result_parsing import DatasetFacets
@@ -17,14 +16,6 @@ if TYPE_CHECKING:
     from esmporium.search.search_api_facade.parameters import (
         FacadeParametersProtocol,
     )
-
-NMatchesReader = Callable[[dict[str, Any]], int]
-"""
-Reads how many records matched a search out of a raw response
-
-Where that is written can be an endpoint's own choice rather than the format's, which
-is why this is something a result parser is given rather than something it knows.
-"""
 
 
 def get_single_value_columns_from_doc(
@@ -91,40 +82,6 @@ class ResultParserProtocol(Protocol):
     """
     A parser of one project's search results from one search API
     """
-
-    def get_n_matches(self, raw: dict[str, Any]) -> int:
-        """
-        Get the number of records that matched a search from a raw response
-
-        Note: this is not necessarily the same as the number of results in `raw`.
-        Some search APIs will only return a limited number of results.
-        This method returns the total number of records which matched the search,
-        which can be much higher than the number of results returned in `raw`.
-
-        This lives here rather than on the search API because where the total is
-        written can be an endpoint's own choice: the two ESGF-NG deployments speak the
-        same format and still disagree about it.
-        We might move this back to the search API
-        if the two start speaking the same language again
-        (it really should be defined by the STAC format, not implementation).
-
-        Parameters
-        ----------
-        raw
-            The response to read, i.e. the answer to a request built with
-            [SearchAPI.build_search_request][esmporium.search.apis.SearchAPI.build_search_request]
-
-        Returns
-        -------
-        :
-            The number of records that matched the search
-
-        Raises
-        ------
-        NoSearchResultNumberOfMatchesReturnedError
-            `raw` does not report the number of records that matched the search
-        """
-        ...
 
     def parse_search_results(
         self,

@@ -12,6 +12,7 @@ from esmporium.search.apis import (
     LimitOutOfRangeError,
     NoFacetValuesReturnedError,
     NoSearchResultDocumentsError,
+    NoSearchResultNumberOfMatchesReturnedError,
     SearchAPIESGFNGSTAC,
     UncompilableFacetPatternError,
     UnreadableResponseError,
@@ -405,3 +406,77 @@ def test_parse_facet_patterns_of_an_uncompilable_pattern_raises():
 
     with pytest.raises(UncompilableFacetPatternError, match="variant_label"):
         api().parse_facet_patterns(raw, {"cmip6:variant_label"})
+
+
+@pytest.mark.parametrize(
+    "raw, exp",
+    (
+        pytest.param({"numberMatched": 7, "features": []}, 7, id="a-count"),
+        pytest.param({"numberMatched": 0, "features": []}, 0, id="no-matches"),
+    ),
+)
+def test_n_matches(raw, exp):
+    """The total is read from the one key STAC writes it at"""
+    assert api().get_n_matches(raw) == exp
+
+
+WHERE_WE_LOOKED = (
+    "This response does not report how many records matched the search. "
+    "We expected to read the count from 'numberMatched', "
+)
+"""The opening of every message about a count we could not read"""
+
+
+@pytest.mark.parametrize(
+    "raw, exp",
+    (
+        pytest.param(
+            {},
+            pytest.raises(
+                NoSearchResultNumberOfMatchesReturnedError,
+                match=re.escape(f"{WHERE_WE_LOOKED}but the response is empty."),
+            ),
+            id="nothing-we-recognise",
+        ),
+        pytest.param(
+            {"features": [{"id": "a"}]},
+            pytest.raises(
+                NoSearchResultNumberOfMatchesReturnedError,
+                match=re.escape(
+                    f"{WHERE_WE_LOOKED}but 'numberMatched' is not in the response's "
+                    "top level, there is only: 'features'."
+                ),
+            ),
+            id="records-but-no-count",
+        ),
+        pytest.param(
+            {"numberMatched": None, "features": []},
+            # The key being there but empty is not a count we can use, and the message
+            # says as much rather than reporting the key as missing.
+            pytest.raises(
+                NoSearchResultNumberOfMatchesReturnedError,
+                match=re.escape(
+                    f"{WHERE_WE_LOOKED}but we found None at 'numberMatched'."
+                ),
+            ),
+            id="a-count-which-is-empty",
+        ),
+        pytest.param(
+            {"numberMatched": "7"},
+            # A count in the right place but the wrong shape is our assumption being
+            # wrong about the type, not about the response, so it is a plain TypeError.
+            pytest.raises(
+                TypeError,
+                match=re.escape(
+                    "We expected to get an integer at 'numberMatched', "
+                    "but instead got '7'"
+                ),
+            ),
+            id="a-count-we-cannot-read",
+        ),
+    ),
+)
+def test_n_matches_with_no_count_raises(raw, exp):
+    """A response we cannot read a count out of is one we have not understood"""
+    with exp:
+        api().get_n_matches(raw)
