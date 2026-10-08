@@ -40,6 +40,8 @@ from esmporium.requirements.catalogue import (
 from esmporium.requirements.solve import (
     Explanation,
     ExplanationStatus,
+    ExplanationStatusNotOk,
+    ExplanationStatusOk,
     ResolvedRun,
     SolveResult,
     UnresolvedRun,
@@ -70,6 +72,8 @@ __all__ = [
     "EmptyLeafQueryError",
     "Explanation",
     "ExplanationStatus",
+    "ExplanationStatusNotOk",
+    "ExplanationStatusOk",
     "InMemoryCatalogue",
     "Leaf",
     "Node",

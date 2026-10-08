@@ -8,7 +8,8 @@ import pytest
 
 from esmporium.query import Query, QueryCMIP5
 from esmporium.requirements import (
-    ExplanationStatus,
+    ExplanationStatusNotOk,
+    ExplanationStatusOk,
     InMemoryCatalogue,
     NotANodeError,
     Requirement,
@@ -133,7 +134,7 @@ def test_all_satisfied(variables_catalogue):
         "rsdt": "rsdt",
         "rlut": "rlut",
     }
-    assert group.explanation.status is ExplanationStatus.SATISFIED
+    assert group.explanation.status is ExplanationStatusOk.SATISFIED
 
 
 def test_required_variable_missing(variables_catalogue):
@@ -143,7 +144,7 @@ def test_required_variable_missing(variables_catalogue):
 
     (tree_explanation,) = result.unsatisfied[ONLY_GROUP].explanation.parts
     parts = {part.subject: part for part in tree_explanation.parts}
-    assert parts["rlut"].status is ExplanationStatus.UNSATISFIED
+    assert parts["rlut"].status is ExplanationStatusNotOk.UNSATISFIED
 
     # Where this message is pinned in full. The group is named on the leaf's own
     # line as well as on the block above it, because the group is filtered on the
@@ -312,7 +313,7 @@ def test_ambiguous_grids_and_prefer(dataset):
     (explanation,) = ambiguous.ambiguous[ONLY_GROUP].explanation.parts
     assert (explanation.subject, explanation.status) == (
         "tas",
-        ExplanationStatus.AMBIGUOUS,
+        ExplanationStatusNotOk.AMBIGUOUS,
     )
 
     # Where this message is pinned in full. All three ways out are offered,

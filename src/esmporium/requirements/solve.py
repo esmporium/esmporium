@@ -50,22 +50,30 @@ A value can be `None` because a facet can be: CMIP5 has no concept of a grid, so
 
 
 # TODO future:
-# A third, `"undetermined"`, arrives with constraints: a check which needs metadata the
-# catalogue cannot supply can neither pass nor fail, and answering "no" on its behalf
-# would be a lie. Nothing here can produce that yet, because no check exists to need it,
-# so it is deliberately absent rather than defined and unreachable.
-#
-# TODO future:
-# Two more join them later, for the same reason as `"undetermined"`: `"degraded"`
-# when a check passes with a complaint, and `"absent"` when an optional part is
-# dropped.
-class ExplanationStatus(str, Enum):
+# Two more join this later: `"degraded"` when a check passes with a complaint, and
+# `"absent"` when an optional part is dropped. Nothing here can produce either yet,
+# so they are deliberately absent rather than defined and unreachable.
+class ExplanationStatusOk(str, Enum):
     """
-    Statuses an [Explanation][(m).Explanation] can carry
+    Ways in which (part of) a requirement can resolve
     """
 
     SATISFIED = "satisfied"
     """Everything asked for was found"""
+
+
+# TODO future:
+# A third, `"undetermined"`, arrives with constraints: a check which needs metadata the
+# catalogue cannot supply can neither pass nor fail, and answering "no" on its behalf
+# would be a lie. Nothing here can produce that yet, because no check exists to need it,
+# so it is deliberately absent rather than defined and unreachable.
+class ExplanationStatusNotOk(str, Enum):
+    """
+    Ways in which (part of) a requirement can fail to resolve
+
+    An enum of its own,
+    so that a field which can only have failed says so in its type.
+    """
 
     UNSATISFIED = "unsatisfied"
     """There is no dataset"""
@@ -73,36 +81,18 @@ class ExplanationStatus(str, Enum):
     AMBIGUOUS = "ambiguous"
     """There are too many datasets and nothing to choose between them"""
 
-    def __str__(self) -> str:
-        """
-        Get the status as it is written, e.g. `"satisfied"`
 
-        Returns
-        -------
-        :
-            The status' value
-        """
-        # Without this, `str` on a member gives "ExplanationStatus.SATISFIED" from
-        # Python 3.11 on, which is what [Explanation.render][(m).Explanation.render]
-        # would then put in front of a reader.
-        return self.value
-
-
-NotOkStatus = Literal[ExplanationStatus.UNSATISFIED, ExplanationStatus.AMBIGUOUS]
+ExplanationStatus = ExplanationStatusOk | ExplanationStatusNotOk
 """
-Ways in which (part of) a requirement can fail to resolve
+Statuses an [Explanation][(m).Explanation] can carry
 
-[ExplanationStatus][(m).ExplanationStatus] without `SATISFIED`, so that a field which
-can only have failed says so in its type.
-
-A `Literal` of two members rather than an enum of its own because an enum cannot be a
-subset of another enum: two enums would mean two places to add the next status, and
-two members meaning `"unsatisfied"` which are not the same object.
+A union so that every status has to decide whether it is ok or not
+and there is no ambiguity about which is which.
 """
 
-_STATUS_PRIORITY: dict[NotOkStatus, int] = {
-    ExplanationStatus.UNSATISFIED: 0,
-    ExplanationStatus.AMBIGUOUS: 1,
+_STATUS_PRIORITY: dict[ExplanationStatusNotOk, int] = {
+    ExplanationStatusNotOk.UNSATISFIED: 0,
+    ExplanationStatusNotOk.AMBIGUOUS: 1,
 }
 """
 Which status a group takes when its parts fail in different ways, lowest first
@@ -153,8 +143,8 @@ class Explanation:
 
         Examples
         --------
-        >>> satisfied = ExplanationStatus.SATISFIED
-        >>> unsatisfied = ExplanationStatus.UNSATISFIED
+        >>> satisfied = ExplanationStatusOk.SATISFIED
+        >>> unsatisfied = ExplanationStatusNotOk.UNSATISFIED
         >>> print(
         ...     Explanation(
         ...         "model=MIROC6",
@@ -169,7 +159,7 @@ class Explanation:
           [satisfied] tas: #1 ('CMIP6.a.tas')
           [unsatisfied] rlut: no dataset matches ...
         """
-        line = f"{'  ' * indent}[{self.status}] {self.subject}"
+        line = f"{'  ' * indent}[{self.status.value}] {self.subject}"
         if self.message:
             line = f"{line}: {self.message}"
 
@@ -201,7 +191,7 @@ class Unresolved:
     Why one node of the tree did not resolve, within one group
     """
 
-    status: NotOkStatus
+    status: ExplanationStatusNotOk
     """Resolution status"""
 
     explanation: Explanation
@@ -281,7 +271,7 @@ class UnresolvedRun:
     key: GroupKey
     """Values of the `group_by` facets"""
 
-    status: NotOkStatus
+    status: ExplanationStatusNotOk
     """Status"""
 
     explanation: Explanation
@@ -599,10 +589,10 @@ def _choose(
 
     if cardinality == "one" and len(remaining) > 1:
         return Unresolved(
-            ExplanationStatus.AMBIGUOUS,
+            ExplanationStatusNotOk.AMBIGUOUS,
             Explanation(
                 subject,
-                ExplanationStatus.AMBIGUOUS,
+                ExplanationStatusNotOk.AMBIGUOUS,
                 _ambiguous_message(remaining, ctx),
             ),
         )
@@ -622,10 +612,10 @@ def _eval_leaf(leaf: Leaf, ctx: _Context, role_prefix: str) -> NodeResult:
     candidates = [entry for entry in found if _in_group(entry, ctx)]
     if not candidates:
         return Unresolved(
-            ExplanationStatus.UNSATISFIED,
+            ExplanationStatusNotOk.UNSATISFIED,
             Explanation(
                 path,
-                ExplanationStatus.UNSATISFIED,
+                ExplanationStatusNotOk.UNSATISFIED,
                 f"no dataset matches {describe_query(query)} "
                 f"for {_describe_group(ctx.group)}",
             ),
@@ -639,7 +629,7 @@ def _eval_leaf(leaf: Leaf, ctx: _Context, role_prefix: str) -> NodeResult:
         {path: chosen},
         Explanation(
             path,
-            ExplanationStatus.SATISFIED,
+            ExplanationStatusOk.SATISFIED,
             ", ".join(_describe_entry(entry) for entry in chosen),
         ),
     )
@@ -687,7 +677,7 @@ def _merge(results: Sequence[Resolved], explanation: Explanation) -> Resolved:
     return Resolved(roles, explanation)
 
 
-def _worst(results: Sequence[Unresolved]) -> NotOkStatus:
+def _worst(results: Sequence[Unresolved]) -> ExplanationStatusNotOk:
     return min((result.status for result in results), key=_STATUS_PRIORITY.__getitem__)
 
 
@@ -710,7 +700,7 @@ def _eval_all_of(node: AllOf, ctx: _Context, role_prefix: str) -> NodeResult:
     # takes a `Sequence[Resolved]`, and both mypy and ty reject it.
     return _merge(
         [result for result in results if isinstance(result, Resolved)],
-        Explanation(label, ExplanationStatus.SATISFIED, parts=explanations),
+        Explanation(label, ExplanationStatusOk.SATISFIED, parts=explanations),
     )
 
 
@@ -788,9 +778,9 @@ def solve(requirement: Requirement, catalogue: Catalogue) -> SolveResult:
         mistake look like missing data everywhere.
     """
     resolved: dict[GroupKey, ResolvedRun] = {}
-    unresolved: dict[NotOkStatus, dict[GroupKey, UnresolvedRun]] = {
-        ExplanationStatus.UNSATISFIED: {},
-        ExplanationStatus.AMBIGUOUS: {},
+    unresolved: dict[ExplanationStatusNotOk, dict[GroupKey, UnresolvedRun]] = {
+        ExplanationStatusNotOk.UNSATISFIED: {},
+        ExplanationStatusNotOk.AMBIGUOUS: {},
     }
 
     for group_values in _group_values(requirement, catalogue):
@@ -805,7 +795,9 @@ def solve(requirement: Requirement, catalogue: Catalogue) -> SolveResult:
                 key=key,
                 roles=evaluated.roles,
                 explanation=Explanation(
-                    subject, ExplanationStatus.SATISFIED, parts=(evaluated.explanation,)
+                    subject,
+                    ExplanationStatusOk.SATISFIED,
+                    parts=(evaluated.explanation,),
                 ),
             )
         else:
@@ -820,6 +812,6 @@ def solve(requirement: Requirement, catalogue: Catalogue) -> SolveResult:
     return SolveResult(
         requirement=requirement,
         resolved=resolved,
-        unsatisfied=unresolved[ExplanationStatus.UNSATISFIED],
-        ambiguous=unresolved[ExplanationStatus.AMBIGUOUS],
+        unsatisfied=unresolved[ExplanationStatusNotOk.UNSATISFIED],
+        ambiguous=unresolved[ExplanationStatusNotOk.AMBIGUOUS],
     )
