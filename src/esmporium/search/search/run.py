@@ -310,7 +310,7 @@ class LeafSearchOutcome:
 
     Several when two leaves ask for the same dataset under different roles, which is
     searched for once; see
-    [`LeafSearch.roles`][esmporium.requirements.LeafSearch.roles].
+    [LeafSearch.roles][esmporium.search.LeafSearch.roles].
     """
 
     project: str
@@ -355,7 +355,7 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
     [Requirement][esmporium.requirements.Requirement] says what an analysis needs,
     which is more than one query's worth: it is a tree of leaves, each carrying a
     query, and each query may name several projects.
-    [plan_sub_searches][esmporium.search.search.planning.plan_sub_searches] flattens
+    [plan_sub_searches][esmporium.search.plan_sub_searches] flattens
     that into one search per leaf per project, and each runs through
     [search_single_project][(m).], handing its results to a fresh processor as they
     arrive.

@@ -8,6 +8,7 @@ import pytest
 
 from esmporium.query import Query, QueryCMIP5
 from esmporium.requirements import (
+    Cardinality,
     ExplanationStatusNotOk,
     ExplanationStatusOk,
     InMemoryCatalogue,
@@ -327,7 +328,7 @@ def test_ambiguous_grids_and_prefer(dataset):
         f"#{second.id} ({second.id_project_specific!r}) with grid_label='gr'. "
         "Nothing was given to choose between them: set `prefer` on the "
         "requirement (e.g. `prefer={'grid_label': (...)}`), narrow the query, or "
-        "use `cardinality='all'` to keep them all."
+        "use `cardinality=Cardinality.ALL` to keep them all."
     )
 
     assert preferred.satisfied[ONLY_GROUP].one("tas").grid_label == "gn"
@@ -387,7 +388,7 @@ def test_candidates_which_agree_on_every_facet(dataset):
         "separately only when their project-specific IDs differ, so the facet which "
         "tells these apart exists but has not reached the solver. Please raise an "
         "issue at https://github.com/esmporium/esmporium/issues quoting the message "
-        "above. `cardinality='all'` keeps them all in the meantime."
+        "above. `cardinality=Cardinality.ALL` keeps them all in the meantime."
     )
 
 
@@ -444,7 +445,7 @@ def test_differing_facets_only_names_what_every_candidate_knows(dataset):
     assert "realm" not in rendered
 
 
-# -------------------------------------------------------------- cardinality="all"
+# ------------------------------------------------------- cardinality=Cardinality.ALL
 
 
 def test_cardinality_all_keeps_every_candidate(dataset):
@@ -454,7 +455,7 @@ def test_cardinality_all_keeps_every_candidate(dataset):
         entries=(dataset(1, grid_label="gn"), dataset(2, grid_label="gr"))
     )
 
-    result = solve(tas_requirement(cardinality="all"), catalogue)
+    result = solve(tas_requirement(cardinality=Cardinality.ALL), catalogue)
 
     assert not result.ambiguous
     # In the order the catalogue gave them, so the result is reproducible.
@@ -465,7 +466,8 @@ def test_one_refuses_a_role_holding_several(dataset):
     catalogue = InMemoryCatalogue(
         entries=(dataset(1, grid_label="gn"), dataset(2, grid_label="gr"))
     )
-    group = solve(tas_requirement(cardinality="all"), catalogue).satisfied[ONLY_GROUP]
+    solved = solve(tas_requirement(cardinality=Cardinality.ALL), catalogue)
+    group = solved.satisfied[ONLY_GROUP]
 
     # The whole message, pinned once, here: `solve.py` raises it and nothing else
     # tests it, so this is the one place it is written out. `match=` is
@@ -475,7 +477,8 @@ def test_one_refuses_a_role_holding_several(dataset):
 
     assert str(excinfo.value) == (
         "'tas' holds 2 datasets, so there is no single one to return. "
-        "Read `roles` directly (solving with `cardinality='one'` may also fix this)."
+        "Read `roles` directly (solving with `cardinality=Cardinality.ONE` may also "
+        "fix this)."
     )
 
 

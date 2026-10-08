@@ -12,9 +12,9 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Protocol
 
+from esmporium.datasets import DATASET_FACET_COLUMNS
 from esmporium.query import (
     CANONICAL_FACETS,
-    DATASET_FACET_COLUMNS,
     ClashingFacetsError,
     QueryCanonical,
     QueryProtocol,
@@ -185,7 +185,7 @@ class CatalogueEntry:
     — [`Query`][esmporium.query.Query] can ask for them and the search APIs
     answer — but which [`Dataset`][esmporium.db.schema.Dataset] has no column for,
     so they are not in
-    [`DATASET_FACET_COLUMNS`][esmporium.query.DATASET_FACET_COLUMNS].
+    [DATASET_FACET_COLUMNS][esmporium.datasets.DATASET_FACET_COLUMNS].
     """
 
     def facet(self, name: str) -> str | None:
@@ -210,7 +210,7 @@ class CatalogueEntry:
         ------
         UnrecordedFacetError
             `name` is neither one of
-            [`DATASET_FACET_COLUMNS`][esmporium.query.DATASET_FACET_COLUMNS]
+            [DATASET_FACET_COLUMNS][esmporium.datasets.DATASET_FACET_COLUMNS]
             nor a key of this entry's `extra`
         """
         if name in DATASET_FACET_COLUMNS:
@@ -383,7 +383,7 @@ def matches(query: QueryProtocol, entry: CatalogueEntry) -> bool:
     ------
     UnrecordedFacetError
         `query` sets a facet `entry` does not know, i.e. one which is neither one of
-        [`DATASET_FACET_COLUMNS`][esmporium.query.DATASET_FACET_COLUMNS]
+        [DATASET_FACET_COLUMNS][esmporium.datasets.DATASET_FACET_COLUMNS]
         nor in the entry's `extra`
 
     ClashingFacetsError

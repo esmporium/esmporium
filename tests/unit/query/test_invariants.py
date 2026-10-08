@@ -21,9 +21,9 @@ from typing import Annotated, ClassVar
 
 import pytest
 
+from esmporium.datasets import DATASET_FACET_COLUMNS
 from esmporium.query import (
     CANONICAL_FACETS,
-    DATASET_FACET_COLUMNS,
     PROJECT_QUERY_MAP_DEFAULT,
     DuplicateCanonicalFacetError,
     FacetValues,
@@ -68,8 +68,9 @@ def test_dataset_facet_columns_are_canonical_facets():
     """
     The facets a stored dataset records are a subset of the canonical ones
 
-    Pinned here because `DATASET_FACET_COLUMNS` describes a database table but lives
-    in this package, so nothing else checks the two lists against each other. The
+    Pinned here because the two lists live apart -- `CANONICAL_FACETS` in this
+    package, `DATASET_FACET_COLUMNS` in `esmporium.datasets` -- so nothing else
+    checks them against each other. The
     difference is the interesting half: those three facets can be *searched* for, and
     every query class names them, but `Dataset` has no column for them, so a stored
     row cannot answer for one without help (see `CatalogueEntry.extra`).

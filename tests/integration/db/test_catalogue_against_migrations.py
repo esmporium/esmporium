@@ -12,7 +12,8 @@ import json
 
 from sqlmodel import Session
 
-from esmporium.db import DatabaseCatalogue
+from esmporium.datasets import DATASET_FACET_COLUMNS
+from esmporium.db import Availability, DatabaseCatalogue
 from esmporium.db.migrate import upgrade_to_head
 from esmporium.db.schema import (
     Dataset,
@@ -20,7 +21,7 @@ from esmporium.db.schema import (
     DatasetVersion,
     RawDocVersionLink,
 )
-from esmporium.query import DATASET_FACET_COLUMNS, Query
+from esmporium.query import Query
 
 
 def test_finds_rows_in_a_migrated_database(engine):
@@ -92,6 +93,10 @@ def test_a_retracted_dataset_is_not_available_in_a_migrated_database(engine):
 
     assert DatabaseCatalogue(engine).find(Query(variable="tas")) == ()
     assert (
-        len(DatabaseCatalogue(engine, availability="any").find(Query(variable="tas")))
+        len(
+            DatabaseCatalogue(engine, availability=Availability.ANY).find(
+                Query(variable="tas")
+            )
+        )
         == 1
     )

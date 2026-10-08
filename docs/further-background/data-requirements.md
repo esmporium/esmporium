@@ -50,7 +50,7 @@ Within a group, a leaf is filled by **exactly one** dataset. Several surviving
 candidates make the group `ambiguous`, none makes it `unsatisfied`, and every group
 is judged on its own — one model can be satisfied while the next is not.
 
-(That is `cardinality="one"`, the default. `cardinality="all"` is for an analysis
+(That is `Cardinality.ONE`, the default. `Cardinality.ALL` is for an analysis
 whose subject *is* the spread across candidates — see
 [Which one gets picked](#which-one-gets-picked).)
 
@@ -187,8 +187,8 @@ choose. Two settings on the `Requirement` do it, in this order:
    kind of tie on any facet, project-specific ones included.
 2. **`cardinality`** says what happens if a tie *survives* `prefer` — because no
    `prefer` entry covers the facet they differ on, or because they are equal on it.
-   `"one"` (the default) makes the group **ambiguous**; `"all"` keeps every remaining
-   candidate.
+   `Cardinality.ONE` (the default) makes the group **ambiguous**;
+   `Cardinality.ALL` keeps every remaining candidate.
 
 ```text
    group: CanESM5 / r1i1p1f1 / ssp126
@@ -202,9 +202,9 @@ choose. Two settings on the `Requirement` do it, in this order:
 
                               no prefer entry for variable
                               ────────────────────────────
-     sfcWind  ─┐                cardinality = "one"  → AMBIGUOUS
+     sfcWind  ─┐                Cardinality.ONE  → AMBIGUOUS
      uas      ─┼──►  tie   ──►                         (nothing is picked)
-     vas      ─┘                cardinality = "all"  → all three are kept
+     vas      ─┘                Cardinality.ALL  → all three are kept
 ```
 
 The important half of that is the second one: **ambiguity is an outcome, not a pick.**
@@ -309,7 +309,9 @@ each new piece of this design gets written and is expected to stay. `parent_of`,
 
 1. `to_search_plan(requirement)` returns one query per leaf: the leaf's own query with
    the requirement's `where` added, deduplicated so that two roles asking for the same
-   dataset are searched for once. It will grow sibling queries, auxiliary queries and
+   dataset are searched for once. It lives in `esmporium.search`, beside the searching
+   it plans, because reading a tree and firing searches at projects are two halves of
+   one step. It will grow sibling queries, auxiliary queries and
    `ancestry_until` as the tree does, and merging leaves which differ only in variable.
 2. `search(requirement)` fires those: each is split into one search per project it
    names, and every record that comes back is handed to the processor. Then parent links
@@ -369,8 +371,8 @@ requirements  ->  db  ->  search  ->  requirements
 `esmporium.search.result_normalisation`, which initialises the whole of
 `esmporium.search`. So importing `esmporium.requirements` pulled in twenty search
 modules, and `search` could not then import `Requirement` from a package which had not
-finished loading. The fix was to move `DATASET_FACET_COLUMNS` into `esmporium.query`,
-which is the rule below applied to the letter.
+finished loading. The fix was to move `DATASET_FACET_COLUMNS` out of `db` altogether,
+into `esmporium.datasets`, which is the rule below applied to the letter.
 
 `tests/unit/requirements/test_package.py` checks this two ways, and both are needed.
 One walks each module's own AST, which says what *that module* imports and so cannot
@@ -382,23 +384,31 @@ This is worth stating plainly because the pull to do it is real. `search` and
 obvious move when you find something defined twice is to import it from wherever it
 already lives. Do not.
 
-**When both need the same thing, it goes in `esmporium.query`.** Both already depend
-on it, so neither has to depend on the other. `ClashingFacetsError` is the worked
-example: a query naming one facet twice is ambiguous whether you are about to send it
-to an API or match it against stored datasets, so it was defined twice, once in each
-package. It now lives in `esmporium.query` and both import it from there. It is still
-importable from `esmporium.search` for anyone who was already doing that.
+**When both need the same thing, it goes somewhere neither of them owns**, and there
+are two such places.
 
-What `requirements` may import from esmporium, then, is `esmporium.query` and
-`esmporium.formatting` for the helpers which render error messages — which is the whole
-surface every remaining piece of this design needs. There used to be an
-`esmporium.db.schema` entry, for `DATASET_FACET_COLUMNS`. It did not grow, it went
-away, for the reason above.
+Something about *queries* goes in `esmporium.query`, which both already depend on, so
+neither has to depend on the other. `ClashingFacetsError` is the worked example: a
+query naming one facet twice is ambiguous whether you are about to send it to an API or
+match it against stored datasets, so it was defined twice, once in each package. It now
+lives in `esmporium.query` and both import it from there. It is still importable from
+`esmporium.search` for anyone who was already doing that.
+
+Something about *datasets* goes in `esmporium.datasets`, whose one rule is that it
+imports nothing else from esmporium — so it can be read from anywhere and can never be
+half of a cycle. `DATASET_FACET_COLUMNS` is the worked example: it describes a `db`
+table, four packages need to agree on it, and `db` is the one place it cannot live.
+
+What `requirements` may import from esmporium, then, is `esmporium.query`,
+`esmporium.datasets`, and `esmporium.formatting` for the helpers which render error
+messages — which is the whole surface every remaining piece of this design needs. There
+used to be an `esmporium.db.schema` entry, for `DATASET_FACET_COLUMNS`. It did not
+grow, it went away, for the reason above.
 
 The database-backed catalogue sits on the other side of this line, in
-`esmporium.db.catalogue`, rather than next to the protocol it implements. Three reasons,
-and they all point the same way: a `select(Dataset)` inside `requirements` would
-re-create the cycle; `esmporium.db` is meant to be the only layer which touches the
+`esmporium.db.database_catalogue`, rather than next to the protocol it implements.
+Three reasons, and they all point the same way: a `select(Dataset)` inside
+`requirements` would re-create the cycle; `esmporium.db` is meant to be the only layer which touches the
 local databases directly; and `normalise_stored_document` lives in `esmporium.search`,
 so filling `CatalogueEntry.extra` from stored raw documents is only reachable from the
 `db` side. `db -> requirements -> query` has no cycle in it, so `db` may import

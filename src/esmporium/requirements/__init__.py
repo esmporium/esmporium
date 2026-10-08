@@ -1,5 +1,5 @@
 """
-Expressing, compiling and solving the data requirements of an analysis
+Expressing and solving the data requirements of an analysis
 
 [esmporium.search][] answers "what exists that matches these facets?".
 An analysis, for example, is "everything I need to calculate the ECS". This
@@ -32,24 +32,27 @@ cell areas it is weighted by), and it involves judgements rather than matches
 # transitive edge like the one above), and the other imports this package in a
 # subprocess and looks at what landed in `sys.modules` (and so can).
 #
-# It is not a rule against sharing. When `search`, `db` and this package need the
-# same thing, it goes in [esmporium.query][], which they all already depend on, and
-# they all import it from there. Two worked examples:
-# [`ClashingFacetsError`][esmporium.query.ClashingFacetsError], which started out
-# defined twice, once here and once in `search`; and
-# [`DATASET_FACET_COLUMNS`][esmporium.query.DATASET_FACET_COLUMNS], which describes a
-# `db` table but cannot live beside it, because this package needs it and the import
-# above is what reading it from `db` would cost. Do the same with the next one.
+# It is not a rule against sharing, and there are two places to share from.
+# Something about *queries* which `search`, `db` and this package all need goes in
+# [esmporium.query][], which they all already depend on:
+# [ClashingFacetsError][esmporium.query.ClashingFacetsError] is the worked example,
+# having started out defined twice, once here and once in `search`.
+# Something about *datasets* goes in [esmporium.datasets][], which imports nothing
+# else from esmporium and so can never point back this way:
+# [DATASET_FACET_COLUMNS][esmporium.datasets.DATASET_FACET_COLUMNS] is the worked
+# example there, describing a `db` table it cannot live beside, because this package
+# needs it and the import above is what reading it from `db` would cost.
+# Do the same with the next one.
 #
 # The whole esmporium surface this package uses is therefore
-# [esmporium.query][] and [esmporium.formatting][], and nothing else.
-# `esmporium.formatting` is a safe third entry because it imports nothing but the
-# standard library, so it cannot be half of a cycle. That is the test to apply to
-# anything proposed for this list: not "is it useful here?" but "could importing it
-# ever point back this way?".
+# [esmporium.query][], [esmporium.datasets][] and [esmporium.formatting][], and
+# nothing else. The last two are safe because they import nothing but the standard
+# library, so neither can be half of a cycle. That is the test to apply to anything
+# proposed for this list: not "is it useful here?" but "could importing it ever
+# point back this way?".
 #
 # The database-backed catalogue is on the other side of this line, in
-# [esmporium.db.catalogue][]: `db` may import this package freely, because
+# [esmporium.db.database_catalogue][]: `db` may import this package freely, because
 # db -> requirements -> query has no cycle in it.
 from esmporium.requirements.catalogue import (
     Catalogue,
@@ -72,13 +75,9 @@ from esmporium.requirements.solve import (
     describe_query,
     solve,
 )
-from esmporium.requirements.to_search_plan import (
-    LeafSearch,
-    SearchPlan,
-    to_search_plan,
-)
 from esmporium.requirements.tree import (
     AllOf,
+    Cardinality,
     ConflictingFacetsError,
     DuplicateRoleError,
     EmptyLeafQueryError,
@@ -87,12 +86,15 @@ from esmporium.requirements.tree import (
     NotANodeError,
     Requirement,
     all_of,
+    effective_query,
     leaf,
     requirement,
+    walk_leaves,
 )
 
 __all__ = [
     "AllOf",
+    "Cardinality",
     "Catalogue",
     "CatalogueEntry",
     "ConflictingFacetsError",
@@ -105,22 +107,21 @@ __all__ = [
     "ExplanationStatusOk",
     "InMemoryCatalogue",
     "Leaf",
-    "LeafSearch",
     "Node",
     "NotANodeError",
     "Requirement",
-    "SearchPlan",
     "Solution",
     "SolveResult",
     "UnrecordedFacetError",
     "UnsolvedGroup",
     "all_of",
     "describe_query",
+    "effective_query",
     "leaf",
     "matches",
     "matches_facets",
     "requirement",
     "set_facets",
     "solve",
-    "to_search_plan",
+    "walk_leaves",
 ]

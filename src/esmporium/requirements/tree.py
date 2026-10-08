@@ -28,6 +28,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable, Iterable, Iterator, Mapping
+from enum import Enum
 from typing import Annotated, Any, Literal, TypeVar, Union, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -567,6 +568,20 @@ A new node type is added here as well as to the union.
 """
 
 
+class Cardinality(str, Enum):
+    """
+    How many datasets fill a leaf's role, per group
+
+    See [Requirement.cardinality][(m).Requirement.cardinality] for which to use when.
+    """
+
+    ONE = "one"
+    """One dataset, or the group is ambiguous"""
+
+    ALL = "all"
+    """Every candidate which survived `prefer`"""
+
+
 class Requirement(BaseModel):
     """
     The root of a requirement: the tree, plus how solving splits it into groups
@@ -643,24 +658,27 @@ class Requirement(BaseModel):
     # and nothing reads `prefer` until R3, so this waits for it rather than guessing
     # at it now.
 
-    cardinality: Literal["one", "all"] = "one"
+    cardinality: Cardinality = Cardinality.ONE
     """
     How many datasets fill each leaf's role, per group
 
-    `"one"`, the default, is the usual case: a leaf fills one slot, so several
-    surviving candidates are a question nobody has answered rather than a result.
+    [Cardinality.ONE][(m).Cardinality.ONE], the default, is the usual case: a leaf
+    fills one slot, so several surviving candidates are a question nobody has
+    answered rather than a result.
     The group is reported `ambiguous` and nothing is picked, which is the point --
     guessing would make the analysis depend on which dataset happened to be listed
     first. `prefer` is how a tie is settled on purpose.
 
-    `"all"` is for an analysis whose subject *is* the spread across candidates.
+    [Cardinality.ALL][(m).Cardinality.ALL] is for an analysis whose subject *is* the
+    spread across candidates.
     Ensemble member (variant) spread is the worked example: the variance across a
     model's variants is one number computed from every variant together, so the leaf
     wants all of them.
-    Written with `group_by=("model",)` and `cardinality="all"`, that is one group per
-    model, each holding however many variants that model published.
+    Written with `group_by=("model",)` and `cardinality=Cardinality.ALL`, that is one
+    group per model, each holding however many variants that model published.
 
-    Why `"one"` cannot express that, however it is grouped: `group_by` splits the
+    Why `Cardinality.ONE` cannot express that, however it is grouped: `group_by`
+    splits the
     datasets into groups, and `cardinality` says how many datasets a role holds
     *inside* one group. They are different questions, and grouping does not answer the
     second. Adding `variant_label` to `group_by` does give each of a model's variants a
@@ -1038,7 +1056,7 @@ def requirement(  # noqa: PLR0913 - one argument per field of the requirement
     *,
     where: QueryProtocol | None = None,
     prefer: Mapping[str, tuple[str, ...]] | None = None,
-    cardinality: Literal["one", "all"] = "one",
+    cardinality: Cardinality = Cardinality.ONE,
 ) -> Requirement:
     """
     Create a [Requirement][(m).Requirement]
@@ -1099,7 +1117,12 @@ def requirement(  # noqa: PLR0913 - one argument per field of the requirement
     `tas` three times, once per variant:
 
     >>> from esmporium.query import Query
-    >>> from esmporium.requirements import CatalogueEntry, InMemoryCatalogue, solve
+    >>> from esmporium.requirements import (
+    ...     Cardinality,
+    ...     CatalogueEntry,
+    ...     InMemoryCatalogue,
+    ...     solve,
+    ... )
     >>> def published(entry_id: int, variant_label: str) -> CatalogueEntry:
     ...     return CatalogueEntry(
     ...         id=entry_id,
@@ -1121,7 +1144,7 @@ def requirement(  # noqa: PLR0913 - one argument per field of the requirement
     ...     )
     ... )
 
-    Grouping on the variant, with the default `cardinality="one"`, is three groups of
+    Grouping on the variant, with the default `Cardinality.ONE`, is three groups of
     one dataset each. This is the right answer when the analysis is per-variant and
     simply repeats itself:
 
@@ -1137,7 +1160,8 @@ def requirement(  # noqa: PLR0913 - one argument per field of the requirement
     [1, 1, 1]
 
     Dropping `variant_label` from `group_by` asks for one group instead, but leaves
-    `cardinality="one"`, so the single `tas` slot now has three candidates and
+    `cardinality` at `Cardinality.ONE`, so the single `tas` slot now has three
+    candidates and
     nothing to choose between them. The group is `ambiguous` rather than satisfied:
 
     >>> still_one = requirement(
@@ -1149,7 +1173,7 @@ def requirement(  # noqa: PLR0913 - one argument per field of the requirement
     >>> len(solved.satisfied), len(solved.ambiguous)
     (0, 1)
 
-    `cardinality="all"` is what that group was missing: one group, with every variant
+    `Cardinality.ALL` is what that group was missing: one group, with every variant
     in it. An analysis which takes the variance across a model's ensemble needs its
     datasets this way round, because the answer is one number computed from all of
     them, not three numbers computed one at a time:
@@ -1158,7 +1182,7 @@ def requirement(  # noqa: PLR0913 - one argument per field of the requirement
     ...     name="variant-spread",
     ...     tree=leaf(Query(variable="tas"), "tas"),
     ...     group_by=("model",),
-    ...     cardinality="all",
+    ...     cardinality=Cardinality.ALL,
     ... )
     >>> solved = solve(together, catalogue)
     >>> len(solved.satisfied)

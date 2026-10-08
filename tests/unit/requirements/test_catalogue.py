@@ -17,7 +17,7 @@ import re
 
 import pytest
 
-from esmporium.db.schema import DATASET_FACET_COLUMNS
+from esmporium.datasets import DATASET_FACET_COLUMNS
 from esmporium.query import (
     ClashingFacetsError,
     Query,

@@ -8,7 +8,6 @@ and when searching our database ([esmporium.db][esmporium.db]).
 
 from esmporium.query.canonical_query import (
     CANONICAL_FACETS,
-    DATASET_FACET_COLUMNS,
     ClashingFacetsError,
     FacetValues,
     FacetValuesByName,
@@ -47,7 +46,6 @@ from esmporium.query.translate import (
 
 __all__ = [
     "CANONICAL_FACETS",
-    "DATASET_FACET_COLUMNS",
     "NON_FACET_FIELDS",
     "PROJECT_QUERY_MAP_DEFAULT",
     "ClashingFacetsError",

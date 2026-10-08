@@ -7,6 +7,12 @@ searches for every query it asks for. Each of those queries may be written in
 whichever query style suits the user (see [esmporium.query][]), and search results are
 (will be) automatically translated into the database (see [esmporium.db][]).
 
+Working out which queries a requirement asks for is
+[to_search_plan][esmporium.search.to_search_plan], and splitting those across the
+projects they name is [plan_sub_searches][esmporium.search.plan_sub_searches]. Both
+live here rather than with the requirement, because deciding which query class a
+project uses is a choice made at search time.
+
 [search_single_project][esmporium.search.search_single_project] is the layer below:
 one query, one project, no requirement involved.
 """
@@ -73,6 +79,7 @@ from esmporium.search.search import (
     CouldNotSearchError,
     CouldNotUseSearchResultsError,
     FacadePages,
+    LeafSearch,
     LeafSearchOutcome,
     NoFacadeAnsweredError,
     PaginationLimitError,
@@ -80,6 +87,7 @@ from esmporium.search.search import (
     ProcessorFactory,
     SearchAPIRequestError,
     SearchOutcome,
+    SearchPlan,
     SubSearch,
     collect_all_pages,
     curl_equivalent,
@@ -89,6 +97,7 @@ from esmporium.search.search import (
     plan_sub_searches,
     search,
     search_single_project,
+    to_search_plan,
 )
 from esmporium.search.search_api_facade import (
     DEFAULT_SEARCH_API_FACADES_BY_PROJECT,
@@ -168,6 +177,7 @@ __all__ = [
     "FacadePages",
     "FacetFinding",
     "FindingKind",
+    "LeafSearch",
     "LeafSearchOutcome",
     "LeafValueCheckOutcome",
     "LimitOutOfRangeError",
@@ -202,6 +212,7 @@ __all__ = [
     "SearchAPIFacadeStore",
     "SearchAPIRequestError",
     "SearchOutcome",
+    "SearchPlan",
     "SelectorOfferedNoAPIFacadeError",
     "SolrSingleRowResultParser",
     "SolrVariableBundleResultParser",
@@ -242,5 +253,6 @@ __all__ = [
     "read_response_path",
     "search",
     "search_single_project",
+    "to_search_plan",
     "values_set_for",
 ]

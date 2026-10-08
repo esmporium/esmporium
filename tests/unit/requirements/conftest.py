@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-from esmporium.query import DATASET_FACET_COLUMNS
+from esmporium.datasets import DATASET_FACET_COLUMNS
 from esmporium.requirements import CatalogueEntry, InMemoryCatalogue, set_facets
 from esmporium.requirements.tree import effective_query, walk_leaves
 

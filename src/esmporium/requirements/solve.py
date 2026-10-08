@@ -30,10 +30,10 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Literal
 
+from esmporium.datasets import DATASET_FACET_COLUMNS
 from esmporium.formatting import readable_list
-from esmporium.query import DATASET_FACET_COLUMNS, QueryProtocol
+from esmporium.query import QueryProtocol
 from esmporium.requirements.catalogue import (
     Catalogue,
     CatalogueEntry,
@@ -41,6 +41,7 @@ from esmporium.requirements.catalogue import (
 )
 from esmporium.requirements.tree import (
     AllOf,
+    Cardinality,
     Leaf,
     Node,
     NotANodeError,
@@ -255,14 +256,14 @@ class Solution:
 
         ValueError
             `role` holds more than one dataset, i.e. the requirement was probably
-            solved with `cardinality="all"`
+            solved with `cardinality=Cardinality.ALL`
         """
         entries = self.roles[role]
         if len(entries) != 1:
             msg = (
                 f"{role!r} holds {len(entries)} datasets, so there is no single one to "
-                "return. Read `roles` directly (solving with `cardinality='one'` "
-                "may also fix this)."
+                "return. Read `roles` directly (solving with "
+                "`cardinality=Cardinality.ONE` may also fix this)."
             )
             raise ValueError(msg)
 
@@ -512,7 +513,8 @@ def _ambiguous_message(candidates: Sequence[CatalogueEntry], ctx: _Context) -> s
             "separately only when their project-specific IDs differ, so the facet "
             "which tells these apart exists but has not reached the solver. Please "
             "raise an issue at https://github.com/esmporium/esmporium/issues quoting "
-            "the message above. `cardinality='all'` keeps them all in the meantime."
+            "the message above. `cardinality=Cardinality.ALL` keeps them all in "
+            "the meantime."
         )
 
     listed = ", ".join(
@@ -530,7 +532,7 @@ def _ambiguous_message(candidates: Sequence[CatalogueEntry], ctx: _Context) -> s
         return (
             f"{lead}. Nothing was given to choose between them: set `prefer` on the "
             f"requirement (e.g. `prefer={{{example!r}: (...)}}`), narrow the query, or "
-            "use `cardinality='all'` to keep them all."
+            "use `cardinality=Cardinality.ALL` to keep them all."
         )
 
     preferences = "; ".join(
@@ -549,7 +551,7 @@ def _choose(
     candidates: Sequence[CatalogueEntry],
     ctx: _Context,
     subject: str,
-    cardinality: Literal["one", "all"],
+    cardinality: Cardinality,
 ) -> tuple[CatalogueEntry, ...] | NodeResultNotOk:
     """
     Narrow candidates to the datasets which fill a role
@@ -595,7 +597,7 @@ def _choose(
             if rank == best
         ]
 
-    if cardinality == "one" and len(remaining) > 1:
+    if cardinality is Cardinality.ONE and len(remaining) > 1:
         return NodeResultNotOk(
             ExplanationStatusNotOk.AMBIGUOUS,
             Explanation(

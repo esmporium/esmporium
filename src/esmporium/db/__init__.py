@@ -7,7 +7,7 @@ This should be the only layer which touches the local databases directly.
 
 from __future__ import annotations
 
-from esmporium.db.catalogue import (
+from esmporium.db.database_catalogue import (
     Availability,
     DatabaseCatalogue,
     UnknownAvailabilityError,
@@ -30,7 +30,6 @@ from esmporium.db.results_to_database import (
     save_dataset,
 )
 from esmporium.db.schema import (
-    DATASET_FACET_COLUMNS,
     METADATA,
     DataNode,
     Dataset,
@@ -50,7 +49,6 @@ from esmporium.db.search_health import (
 )
 
 __all__ = [
-    "DATASET_FACET_COLUMNS",
     "METADATA",
     "MISSING",
     "Availability",

@@ -89,7 +89,8 @@ def test_never_imports_search(module):
 
     assert not offending, (
         f"{sorted(offending)} is a circular import: `search` takes `Requirement` "
-        "objects. Put anything shared in `esmporium.query` instead."
+        "objects. Put anything shared in `esmporium.query` or "
+        "`esmporium.datasets` instead."
     )
 
 
@@ -99,13 +100,15 @@ def test_imports_only_the_esmporium_it_needs():
 
     Written out by hand, so that widening it is a decision rather than a drift. The
     test to apply to a candidate is not "is it useful here?" but "could importing it
-    ever point back this way?" -- `esmporium.formatting` passes because it imports
-    nothing but the standard library, so it cannot be half of a cycle.
+    ever point back this way?" -- `esmporium.formatting` and `esmporium.datasets`
+    pass because they import nothing but the standard library, so neither can be half
+    of a cycle.
 
     There was an `esmporium.db.schema` entry here, for `DATASET_FACET_COLUMNS`. It did
-    not grow, it went away: the constant moved to `esmporium.query`, because reading
-    it from `db` meant importing `db`, and importing `db` reaches `esmporium.search`.
-    See `test_importing_requirements_imports_nothing_else` for what that costs.
+    not grow, it went away: the constant moved to `esmporium.datasets`, because
+    reading it from `db` meant importing `db`, and importing `db` reaches
+    `esmporium.search`. See `test_importing_requirements_imports_nothing_else` for
+    what that costs.
     """
     imported = set()
     for module in requirements_modules():
@@ -119,6 +122,7 @@ def test_imports_only_the_esmporium_it_needs():
     assert outside == {
         "esmporium.query",
         "esmporium.formatting",
+        "esmporium.datasets",
     }
 
 
@@ -128,8 +132,8 @@ def test_importing_requirements_imports_nothing_else():
 
     The two tests above read each module's own source, so neither can see a
     *transitive* edge -- and a transitive edge is how this package's import rule gets
-    broken in practice. Before `DATASET_FACET_COLUMNS` moved to `esmporium.query`,
-    this package imported `esmporium.db.schema`, which looks harmless and is not:
+    broken in practice. Before `DATASET_FACET_COLUMNS` moved out of `db`, this
+    package imported `esmporium.db.schema`, which looks harmless and is not:
 
         requirements -> db -> search -> requirements
 
@@ -166,6 +170,8 @@ for name in sys.modules:
     }
 
     assert outside == {
+        "esmporium.datasets",
+        "esmporium.datasets.facets",
         "esmporium.formatting",
         "esmporium.query",
         "esmporium.query.canonical_query",

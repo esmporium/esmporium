@@ -12,7 +12,7 @@ Six scenes, each a use case the solver is built for:
 3. a model missing one dataset: unsatisfied, and the explanation names what is missing
 4. two datasets fit one role and nothing chooses between them: ambiguous...
 5. ...and the same requirement with `prefer` set, which settles it...
-6. ...or with `cardinality="all"`, which keeps every candidate instead
+6. ...or with `cardinality=Cardinality.ALL`, which keeps every candidate instead
 
 Then two short epilogues:
 reading the datasets back out of a solution,
@@ -33,6 +33,7 @@ from __future__ import annotations
 
 from esmporium.query import Query, QueryCMIP6
 from esmporium.requirements import (
+    Cardinality,
     CatalogueEntry,
     InMemoryCatalogue,
     SolveResult,
@@ -167,8 +168,8 @@ KEEPS_EVERY_GRID = requirement(
     where=Query(reporting_interval="mon"),
     # The other half of the same rule: `prefer` ranks, and `cardinality` says what to
     # do with whatever survives the ranking. Nothing ranks `grid_label` here, so with
-    # `"all"` both grids are kept rather than reported as a tie.
-    cardinality="all",
+    # `Cardinality.ALL` both grids are kept rather than reported as a tie.
+    cardinality=Cardinality.ALL,
 )
 
 
@@ -204,7 +205,7 @@ def main() -> None:
     # Ambiguity is a question nobody answered, so there are two ways to answer it:
     # rank the candidates, or say that all of them are wanted.
     show(
-        "6. The same tie, with `cardinality='all'`: both grids are kept",
+        "6. The same tie, with `cardinality=Cardinality.ALL`: both grids are kept",
         solve(KEEPS_EVERY_GRID, TWO_GRIDS),
     )
 

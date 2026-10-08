@@ -12,16 +12,11 @@ from sqlalchemy import Index, MetaData, UniqueConstraint, text
 from sqlalchemy.orm import registry
 from sqlmodel import Field, SQLModel
 
-from esmporium.query import DATASET_FACET_COLUMNS
-
 if TYPE_CHECKING:
     # Only needed for `SearchAPICallRecord.from_call`'s annotation, which is quoted
-    # by hand below. Importing it at runtime would make this module depend on
-    # `esmporium.search`, and this module has to stay importable from
-    # `esmporium.requirements` (see the note by `DATASET_FACET_COLUMNS` below).
+    # by hand below. Importing it at runtime would make the schema -- the lowest
+    # layer of `esmporium.db` -- depend on the whole of `esmporium.search`.
     from esmporium.search.health import SearchAPICall
-
-__all__ = ["DATASET_FACET_COLUMNS"]
 
 
 def _utcnow() -> datetime.datetime:
@@ -341,16 +336,11 @@ class Dataset(EsmporiumBase, table=True):
     # )
 
 
-# `DATASET_FACET_COLUMNS` describes this table, but it is defined in
-# [esmporium.query][] and only re-exported here.
-# It is the shared vocabulary of three packages, and in particular
-# [esmporium.requirements][] must be able to read it without importing this one:
-# importing `esmporium.db` pulls in `esmporium.search`, which imports
+# `DATASET_FACET_COLUMNS` describes this table, but lives in
+# [esmporium.datasets][], which imports nothing else from esmporium and so can be
+# read from anywhere. [esmporium.requirements][] needs it and may not import this
+# module: importing `esmporium.db` pulls in `esmporium.search`, which imports
 # `esmporium.requirements`, so a requirements-to-db import closes a cycle.
-# See the constant's own docstring and the note in
-# `esmporium/requirements/__init__.py`.
-# Re-exported rather than moved outright so that every
-# `esmporium.db.schema.DATASET_FACET_COLUMNS` reference keeps working.
 
 
 class DatasetVersion(EsmporiumBase, table=True):

@@ -28,13 +28,14 @@ import pytest
 from sqlmodel import Session, select
 
 from esmporium.db import (
+    Availability,
     DatabaseCatalogue,
     Dataset,
     build_result_processor_factory,
 )
 from esmporium.db.migrate import upgrade_to_head
 from esmporium.query import Query
-from esmporium.requirements import all_of, leaf, requirement, solve
+from esmporium.requirements import Cardinality, all_of, leaf, requirement, solve
 from esmporium.search import (
     INBUILT_SEARCH_API_FACADE_STORE,
     build_list_selector,
@@ -218,7 +219,7 @@ def test_two_candidates_with_nothing_to_choose_between_them_are_ambiguous(
 
 def test_cardinality_all_keeps_both(migrated, selector, served):
     """An analysis whose subject *is* the spread gets both datasets, not an error"""
-    req = a_requirement(cardinality="all")
+    req = a_requirement(cardinality=Cardinality.ALL)
 
     run_search(req, migrated, selector, served())
     result = solve(req, DatabaseCatalogue(migrated))
@@ -296,7 +297,7 @@ def test_a_retracted_dataset_drops_its_group_from_the_solve(migrated, selector, 
     (A group whose *other* leaf is retracted does become `unsatisfied` -- the group is
     still discovered, from the leaf which survived. That is the test below.)
 
-    The rows are not deleted, and `availability="any"` still resolves the group, which
+    The rows are not deleted, and `Availability.ANY` still resolves the group, which
     is what makes this a statement about availability rather than about data loss.
     """
     req = a_requirement(prefer={"processing_id": (TMIN,)})
@@ -322,7 +323,7 @@ def test_a_retracted_dataset_drops_its_group_from_the_solve(migrated, selector, 
 
     # Nothing was deleted: the rows are still there, they just no longer count.
     assert len(saved_datasets(migrated)) == 2
-    on_record = solve(req, DatabaseCatalogue(migrated, availability="any"))
+    on_record = solve(req, DatabaseCatalogue(migrated, availability=Availability.ANY))
     assert set(on_record.satisfied) == set(today.satisfied)
 
 

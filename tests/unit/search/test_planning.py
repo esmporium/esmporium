@@ -14,9 +14,9 @@ from esmporium.requirements import (
     leaf,
     requirement,
     set_facets,
-    to_search_plan,
+    walk_leaves,
 )
-from esmporium.requirements.tree import walk_leaves
+from esmporium.search import to_search_plan
 
 
 def a_requirement(tree, **kwargs):

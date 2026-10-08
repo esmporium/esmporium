@@ -12,10 +12,10 @@ from sqlalchemy import Engine, func
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, select
 
+from esmporium.datasets import DATASET_FACET_COLUMNS
 from esmporium.db.dataset_uniqueness import facet_differences
 from esmporium.db.engine import is_sqlite_configured_for_concurrency
 from esmporium.db.schema import (
-    DATASET_FACET_COLUMNS,
     DATASET_IDENTITY_INDEX,
     DataNode,
     Dataset,

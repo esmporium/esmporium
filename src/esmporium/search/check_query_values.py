@@ -726,7 +726,7 @@ def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberat
     [esmporium.search.search][]: it takes the same
     [Requirement][esmporium.requirements.Requirement], works out the same searches
     with
-    [plan_sub_searches][esmporium.search.search.planning.plan_sub_searches], and
+    [plan_sub_searches][esmporium.search.plan_sub_searches], and
     checks each through [check_query_values_single_project][(m).] instead of searching
     it.
 

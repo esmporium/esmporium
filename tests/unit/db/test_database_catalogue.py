@@ -15,6 +15,7 @@ import pytest
 from sqlmodel import Session
 
 from esmporium.db import (
+    Availability,
     DatabaseCatalogue,
     UnknownAvailabilityError,
     facet_filters,
@@ -219,7 +220,7 @@ def test_a_dataset_whose_only_version_is_retracted_is_not_available(engine, stor
 def test_availability_any_includes_a_retracted_dataset(engine, store):
     store("retracted", variable="tas", versions=(("20200101", True, True, None),))
 
-    catalogue = DatabaseCatalogue(engine, availability="any")
+    catalogue = DatabaseCatalogue(engine, availability=Availability.ANY)
 
     assert found(catalogue, Query(variable="tas")) == ["retracted_ps"]
 
@@ -255,7 +256,8 @@ def test_latest_not_retracted_excludes_a_superseded_version(engine, store):
 
     assert found(DatabaseCatalogue(engine), Query(variable="tas")) == []
     assert found(
-        DatabaseCatalogue(engine, availability="not_retracted"), Query(variable="tas")
+        DatabaseCatalogue(engine, availability=Availability.NOT_RETRACTED),
+        Query(variable="tas"),
     ) == ["superseded_ps"]
 
 
@@ -265,13 +267,13 @@ def test_a_dataset_with_no_versions_is_only_found_under_any(engine, store):
     assert found(DatabaseCatalogue(engine), Query(variable="tas")) == []
     assert (
         found(
-            DatabaseCatalogue(engine, availability="not_retracted"),
+            DatabaseCatalogue(engine, availability=Availability.NOT_RETRACTED),
             Query(variable="tas"),
         )
         == []
     )
     assert found(
-        DatabaseCatalogue(engine, availability="any"), Query(variable="tas")
+        DatabaseCatalogue(engine, availability=Availability.ANY), Query(variable="tas")
     ) == ["no-versions_ps"]
 
 
@@ -368,8 +370,8 @@ def test_extra_comes_from_the_version_the_availability_filter_matched(engine, st
         ),
     )
 
-    not_retracted = DatabaseCatalogue(engine, availability="not_retracted")
-    anything = DatabaseCatalogue(engine, availability="any")
+    not_retracted = DatabaseCatalogue(engine, availability=Availability.NOT_RETRACTED)
+    anything = DatabaseCatalogue(engine, availability=Availability.ANY)
 
     (live_entry,) = not_retracted.find(Query(variable="tas"))
     (any_entry,) = anything.find(Query(variable="tas"))

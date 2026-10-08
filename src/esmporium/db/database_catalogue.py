@@ -26,10 +26,12 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal
+from enum import Enum
+from typing import TYPE_CHECKING, Any
 
 from sqlmodel import Session, col, select
 
+from esmporium.datasets import DATASET_FACET_COLUMNS
 from esmporium.db.schema import (
     Dataset,
     DatasetRawDoc,
@@ -37,7 +39,6 @@ from esmporium.db.schema import (
     RawDocVersionLink,
 )
 from esmporium.query import (
-    DATASET_FACET_COLUMNS,
     PROJECT_QUERY_MAP_DEFAULT,
     facet_spec,
 )
@@ -61,35 +62,37 @@ if TYPE_CHECKING:
     from esmporium.search.result_normalisation import NormaliseFunc
 
 
-Availability = Literal["any", "not_retracted", "latest_not_retracted"]
-"""
-Which of the datasets we have stored count as available
+class Availability(str, Enum):
+    """
+    Which of the datasets we have stored count as available
 
-Every setting is "as far as we last looked": `is_latest` and `retracted` are what ESGF
-said when the search ran, not what it says now
-(see [`DatasetVersion.retracted`][esmporium.db.schema.DatasetVersion.retracted]).
-Re-searching updates them in place, which is what makes "this stopped being available
-since yesterday" a thing the catalogue can show.
+    Every setting is "as far as we last looked": `is_latest` and `retracted` are what
+    ESGF said when the search ran, not what it says now
+    (see [DatasetVersion.retracted][esmporium.db.schema.DatasetVersion.retracted]).
+    Re-searching updates them in place, which is what makes "this stopped being
+    available since yesterday" a thing the catalogue can show.
+    """
 
-`latest_not_retracted`
-    The dataset has a version which was both the latest and not retracted. The
-    default: it is what "I can go and use this" means.
+    ANY = "any"
+    """
+    Every dataset on record, including ones whose only versions are retracted
 
-`not_retracted`
-    The dataset has a version which was not retracted, latest or not. Use this to keep
-    datasets whose newest version has not been re-searched yet.
+    Use this to ask what we have ever seen rather than what is usable.
+    """
 
-`any`
-    Every dataset on record, including ones whose only versions are retracted. Use
-    this to ask what we have ever seen rather than what is usable.
-"""
+    NOT_RETRACTED = "not_retracted"
+    """
+    The dataset has a version which was not retracted, latest or not
 
-_AVAILABILITY_SETTINGS: tuple[str, ...] = (
-    "any",
-    "not_retracted",
-    "latest_not_retracted",
-)
-"""The settings `availability` accepts, named in the error when it is given another"""
+    Use this to keep datasets whose newest version has not been re-searched yet.
+    """
+
+    LATEST_NOT_RETRACTED = "latest_not_retracted"
+    """
+    The dataset has a version which was both the latest and not retracted
+
+    The default: it is what "I can go and use this" means.
+    """
 
 
 class UnknownAvailabilityError(ValueError):
@@ -105,7 +108,7 @@ class UnknownAvailabilityError(ValueError):
             What was asked for
         """
         self.availability = availability
-        known = ", ".join(repr(each) for each in _AVAILABILITY_SETTINGS)
+        known = ", ".join(repr(each.value) for each in Availability)
         super().__init__(
             f"{availability!r} is not an availability we know. Use one of: {known}."
         )
@@ -130,7 +133,7 @@ def facet_filters(
     ----------
     facets
         Facet name -> the values which are acceptable. Every name must be one of
-        [DATASET_FACET_COLUMNS][esmporium.query.DATASET_FACET_COLUMNS].
+        [DATASET_FACET_COLUMNS][esmporium.datasets.DATASET_FACET_COLUMNS].
 
     Returns
     -------
@@ -176,19 +179,20 @@ def availability_filter(availability: Availability) -> ColumnElement[bool] | Non
     Returns
     -------
     :
-        The clause, or `None` for `"any"`, which filters nothing
+        The clause, or `None` for [Availability.ANY][(m).Availability.ANY], which
+        filters nothing
 
     Raises
     ------
     UnknownAvailabilityError
         `availability` is not one of the settings we know
     """
-    if availability == "any":
+    if availability == Availability.ANY:
         return None
 
-    if availability == "not_retracted":
+    if availability == Availability.NOT_RETRACTED:
         version_is_ok: ColumnElement[bool] = col(DatasetVersion.retracted).is_(False)
-    elif availability == "latest_not_retracted":
+    elif availability == Availability.LATEST_NOT_RETRACTED:
         version_is_ok = col(DatasetVersion.retracted).is_(False) & col(
             DatasetVersion.is_latest
         ).is_(True)
@@ -301,10 +305,11 @@ def _documents_by_dataset(
     Get the raw documents which answer for each dataset, newest available version first
 
     Which version's documents answer matters, and is why this takes `availability`
-    rather than just reading the newest version: with `availability="any"` and only an
-    old version on record, that old version's document is the one describing the
-    dataset we just said was available. Reading the newest version regardless would
-    describe a version the caller has excluded.
+    rather than just reading the newest version: with
+    [Availability.ANY][(m).Availability.ANY] and only an old version on record, that
+    old version's document is the one describing the dataset we just said was
+    available. Reading the newest version regardless would describe a version the
+    caller has excluded.
 
     Parameters
     ----------
@@ -345,9 +350,9 @@ def _documents_by_dataset(
         .where(col(DatasetVersion.dataset_id).in_(dataset_ids))
     )
 
-    if availability == "not_retracted":
+    if availability == Availability.NOT_RETRACTED:
         statement = statement.where(col(DatasetVersion.retracted).is_(False))
-    elif availability == "latest_not_retracted":
+    elif availability == Availability.LATEST_NOT_RETRACTED:
         statement = statement.where(
             col(DatasetVersion.retracted).is_(False),
             col(DatasetVersion.is_latest).is_(True),
@@ -422,7 +427,7 @@ def find_datasets(
     session: Session,
     query: QueryProtocol,
     *,
-    availability: Availability = "latest_not_retracted",
+    availability: Availability = Availability.LATEST_NOT_RETRACTED,
     normalisers: Mapping[str, NormaliseFunc] = DEFAULT_NORMALISERS,
 ) -> tuple[CatalogueEntry, ...]:
     """
@@ -530,7 +535,7 @@ class DatabaseCatalogue:
     engine: Engine
     """The database to read from"""
 
-    availability: Availability = "latest_not_retracted"
+    availability: Availability = Availability.LATEST_NOT_RETRACTED
     """
     Which datasets count as available
 
