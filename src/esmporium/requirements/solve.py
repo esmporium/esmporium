@@ -497,16 +497,24 @@ def _ambiguous_message(candidates: Sequence[CatalogueEntry], ctx: _Context) -> s
     differing = _differing_facets(candidates)
     if not differing:
         listed = ", ".join(_describe_entry(candidate) for candidate in candidates)
-        # No speculation about *why* they agree, and no suggestion of picking one
-        # by ID: neither `prefer` nor a query can select on an ID, because
-        # `CatalogueEntry.facet` does not answer for one, so that advice raises
-        # `UnrecordedFacetError` if it is followed.
+
+        # The issue tracker rather than advice, because a catalogue backed by our
+        # database cannot get here: ingestion refuses two datasets which agree on
+        # every column, `id_project_specific` included (see
+        # [`UnhandledDatasetClashError`][esmporium.db.UnhandledDatasetClashError]),
+        # so these two differ in a facet which exists but reached neither a column
+        # nor `extra`. That is ours to fix, not the user's to work around, and
+        # "narrow the query" is not offered because there is nothing visible to
+        # narrow on.
         return (
             f"{len(candidates)} candidates which agree on every facet, so no facet can "
             f"choose between them: {listed}. They differ only in their "
             "project-specific ID, which `prefer` compares no more than a query can. "
-            "Use `cardinality='all'` to keep them all and choose further down, or "
-            "narrow the query."
+            "This should not happen: datasets agreeing on every column are stored "
+            "separately only when their project-specific IDs differ, so the facet "
+            "which tells these apart exists but has not reached the solver. Please "
+            "raise an issue at https://github.com/esmporium/esmporium/issues quoting "
+            "the message above. `cardinality='all'` keeps them all in the meantime."
         )
 
     listed = ", ".join(
@@ -696,6 +704,10 @@ def _eval_all_of(node: AllOf, ctx: _Context, role_prefix: str) -> NodeResult:
 
         return Unresolved(status, Explanation(label, status, parts=explanations))
 
+    # Everything left is `Resolved`, because `failures` returned above if anything
+    # was not. The filter is for the type checkers, which cannot see that: passing
+    # `results` straight through is a `list[Resolved | Unresolved]` where `_merge`
+    # takes a `Sequence[Resolved]`, and both mypy and ty reject it.
     return _merge(
         [result for result in results if isinstance(result, Resolved)],
         Explanation(label, ExplanationStatus.SATISFIED, parts=explanations),
@@ -776,20 +788,18 @@ def solve(requirement: Requirement, catalogue: Catalogue) -> SolveResult:
         mistake look like missing data everywhere.
     """
     resolved: dict[GroupKey, ResolvedRun] = {}
-    unsatisfied: dict[GroupKey, UnresolvedRun] = {}
-    ambiguous: dict[GroupKey, UnresolvedRun] = {}
     unresolved: dict[NotOkStatus, dict[GroupKey, UnresolvedRun]] = {
-        ExplanationStatus.UNSATISFIED: unsatisfied,
-        ExplanationStatus.AMBIGUOUS: ambiguous,
+        ExplanationStatus.UNSATISFIED: {},
+        ExplanationStatus.AMBIGUOUS: {},
     }
 
-    for values in _group_values(requirement, catalogue):
-        group = dict(zip(requirement.group_by, values, strict=True))
-        key: GroupKey = tuple(group.items())
-        subject = _describe_group(group)
-        ctx = _Context(requirement=requirement, catalogue=catalogue, group=group)
+    for group_values in _group_values(requirement, catalogue):
+        group_dict = dict(zip(requirement.group_by, group_values, strict=True))
+        key: GroupKey = tuple(group_dict.items())
+        subject = _describe_group(group_dict)
+        ctx = _Context(requirement=requirement, catalogue=catalogue, group=group_dict)
 
-        evaluated = _eval(requirement.tree, ctx, "")
+        evaluated = _eval(requirement.tree, ctx, role_prefix="")
         if isinstance(evaluated, Resolved):
             resolved[key] = ResolvedRun(
                 key=key,
@@ -810,6 +820,6 @@ def solve(requirement: Requirement, catalogue: Catalogue) -> SolveResult:
     return SolveResult(
         requirement=requirement,
         resolved=resolved,
-        unsatisfied=unsatisfied,
-        ambiguous=ambiguous,
+        unsatisfied=unresolved[ExplanationStatus.UNSATISFIED],
+        ambiguous=unresolved[ExplanationStatus.AMBIGUOUS],
     )

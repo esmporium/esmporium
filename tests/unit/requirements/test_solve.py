@@ -363,15 +363,17 @@ def test_ambiguous_despite_prefer_says_what_was_preferred(dataset):
 def test_candidates_which_agree_on_every_facet(dataset):
     # Two rows our dataset model cannot tell apart on any facet. No `prefer` and no
     # query could choose between them, so the message says so instead of advising
-    # something which cannot be done.
+    # something which cannot be done. Built by hand here: ingestion refuses this
+    # pair, so a database-backed catalogue cannot produce it.
     catalogue = InMemoryCatalogue(
         entries=(dataset(1, label="one"), dataset(2, label="two"))
     )
 
     result = solve(tas_requirement(), catalogue)
 
-    # Where this message is pinned in full. It advises `cardinality` or a narrower
-    # query and deliberately does not advise picking one by ID, which is advice
+    # Where this message is pinned in full. It points at the issue tracker rather
+    # than at the user, because the facet which tells these apart exists and did not
+    # reach the solver, and it does not advise picking one by ID, which is advice
     # `CatalogueEntry.facet` could not answer and so could not be followed.
     (explanation,) = result.ambiguous[ONLY_GROUP].explanation.parts
     first, second = catalogue.entries
@@ -380,8 +382,11 @@ def test_candidates_which_agree_on_every_facet(dataset):
         f"them: #{first.id} ({first.id_project_specific!r}), "
         f"#{second.id} ({second.id_project_specific!r}). They differ only in "
         "their project-specific ID, which `prefer` compares no more than a query "
-        "can. Use `cardinality='all'` to keep them all and choose further down, "
-        "or narrow the query."
+        "can. This should not happen: datasets agreeing on every column are stored "
+        "separately only when their project-specific IDs differ, so the facet which "
+        "tells these apart exists but has not reached the solver. Please raise an "
+        "issue at https://github.com/esmporium/esmporium/issues quoting the message "
+        "above. `cardinality='all'` keeps them all in the meantime."
     )
 
 
