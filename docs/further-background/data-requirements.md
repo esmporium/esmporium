@@ -295,7 +295,7 @@ Shipped checks:
 - **Groups** are the union of `group_by` values over every leaf's candidates.
 - **Leaves** apply `prefer`, then resolve their lineage, auxiliary data and own checks. If several candidates remain, the group is `ambiguous`.
 - **Ambiguous and undetermined results are never skipped**: `any_of` stops at them, and `optional` passes them on.
-- **Output:** resolved, unsatisfied, ambiguous and undetermined groups, each with an explanation tree (`SolveResult.explain()`). Per node, `Resolved` and `Unresolved` carry the roles, lineages, choices and notes that are merged upwards.
+- **Output:** resolved, unsatisfied, ambiguous and undetermined groups, each with an explanation tree (`SolveResult.explain()`). Per node, `NodeResultResolved` and `NodeResultUnresolved` carry the roles, lineages, choices and notes that are merged upwards.
 
 `Catalogue` is a protocol with `find`, `parent_of`, `linked` and `metadata`.
 `InMemoryCatalogue` stands in until esmporium has parent links and file information.

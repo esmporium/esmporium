@@ -173,7 +173,7 @@ class Explanation:
 # which passed with a complaint). None of them are here yet, because nothing can put
 # anything in them yet.
 @dataclass(frozen=True)
-class Resolved:
+class NodeResultResolved:
     """
     What one node of the tree resolved to, within one run (per group)
     """
@@ -186,7 +186,7 @@ class Resolved:
 
 
 @dataclass(frozen=True)
-class Unresolved:
+class NodeResultUnresolved:
     """
     Why one node of the tree did not resolve, within one group
     """
@@ -198,7 +198,7 @@ class Unresolved:
     """Explanation"""
 
 
-NodeResult = Resolved | Unresolved
+NodeResult = NodeResultResolved | NodeResultUnresolved
 """The result of evaluating one node of the tree, within one group"""
 
 
@@ -542,7 +542,7 @@ def _choose(
     ctx: _Context,
     subject: str,
     cardinality: Literal["one", "all"],
-) -> tuple[CatalogueEntry, ...] | Unresolved:
+) -> tuple[CatalogueEntry, ...] | NodeResultUnresolved:
     """
     Narrow candidates to the datasets which fill a role
 
@@ -588,7 +588,7 @@ def _choose(
         ]
 
     if cardinality == "one" and len(remaining) > 1:
-        return Unresolved(
+        return NodeResultUnresolved(
             ExplanationStatusNotOk.AMBIGUOUS,
             Explanation(
                 subject,
@@ -611,7 +611,7 @@ def _eval_leaf(leaf: Leaf, ctx: _Context, role_prefix: str) -> NodeResult:
 
     candidates = [entry for entry in found if _in_group(entry, ctx)]
     if not candidates:
-        return Unresolved(
+        return NodeResultUnresolved(
             ExplanationStatusNotOk.UNSATISFIED,
             Explanation(
                 path,
@@ -622,10 +622,10 @@ def _eval_leaf(leaf: Leaf, ctx: _Context, role_prefix: str) -> NodeResult:
         )
 
     chosen = _choose(candidates, ctx, path, ctx.requirement.cardinality)
-    if isinstance(chosen, Unresolved):
+    if isinstance(chosen, NodeResultUnresolved):
         return chosen
 
-    return Resolved(
+    return NodeResultResolved(
         {path: chosen},
         Explanation(
             path,
@@ -668,16 +668,18 @@ def _label(node: Node) -> str:
 # share a role today (`all_of` refuses it), but the nodes which make a role
 # legitimately repeatable are coming, and silently dropping half of a role
 # would be a bad way to find that out.
-def _merge(results: Sequence[Resolved], explanation: Explanation) -> Resolved:
+def _merge(
+    results: Sequence[NodeResultResolved], explanation: Explanation
+) -> NodeResultResolved:
     roles: dict[str, tuple[CatalogueEntry, ...]] = {}
     for result in results:
         for role, entries in result.roles.items():
             roles[role] = (*roles.get(role, ()), *entries)
 
-    return Resolved(roles, explanation)
+    return NodeResultResolved(roles, explanation)
 
 
-def _worst(results: Sequence[Unresolved]) -> ExplanationStatusNotOk:
+def _worst(results: Sequence[NodeResultUnresolved]) -> ExplanationStatusNotOk:
     return min((result.status for result in results), key=_STATUS_PRIORITY.__getitem__)
 
 
@@ -688,18 +690,25 @@ def _eval_all_of(node: AllOf, ctx: _Context, role_prefix: str) -> NodeResult:
     explanations = tuple(result.explanation for result in results)
     label = f"all_of({_label(node)})"
 
-    failures = [result for result in results if isinstance(result, Unresolved)]
+    failures = [
+        result for result in results if isinstance(result, NodeResultUnresolved)
+    ]
     if failures:
         status = _worst(failures)
 
-        return Unresolved(status, Explanation(label, status, parts=explanations))
+        return NodeResultUnresolved(
+            status, Explanation(label, status, parts=explanations)
+        )
 
-    # Everything left is `Resolved`, because `failures` returned above if anything
-    # was not. The filter is for the type checkers, which cannot see that: passing
-    # `results` straight through is a `list[Resolved | Unresolved]` where `_merge`
-    # takes a `Sequence[Resolved]`, and both mypy and ty reject it.
+    # Everything left is `NodeResultResolved`,
+    # because `failures` returned above if anything was not.
+    # The filter is for the type checkers, which cannot see that:
+    # passing `results` straight through is a
+    # `list[NodeResultResolved | NodeResultUnresolved]`
+    # where `_merge` takes a `Sequence[NodeResultResolved]`,
+    # and both mypy and ty reject it.
     return _merge(
-        [result for result in results if isinstance(result, Resolved)],
+        [result for result in results if isinstance(result, NodeResultResolved)],
         Explanation(label, ExplanationStatusOk.SATISFIED, parts=explanations),
     )
 
@@ -790,7 +799,7 @@ def solve(requirement: Requirement, catalogue: Catalogue) -> SolveResult:
         ctx = _Context(requirement=requirement, catalogue=catalogue, group=group_dict)
 
         evaluated = _eval(requirement.tree, ctx, role_prefix="")
-        if isinstance(evaluated, Resolved):
+        if isinstance(evaluated, NodeResultResolved):
             resolved[key] = ResolvedRun(
                 key=key,
                 roles=evaluated.roles,
