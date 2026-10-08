@@ -4,51 +4,11 @@ Pieces shared by the requirements tests
 
 from __future__ import annotations
 
-import ast
-import importlib
-import pathlib
-import pkgutil
-
 import pytest
 
-import esmporium.requirements
-from esmporium.requirements import CatalogueEntry
-
-
-def esmporium_modules_imported_by(module) -> set[str]:
-    """
-    Get the esmporium modules a module imports, read off its source
-
-    Read off the source rather than `sys.modules`, because `esmporium.db.schema`
-    itself imports `esmporium.search.health`: anything which followed imports
-    transitively would report `esmporium.search` for a reason that has nothing to do
-    with this package.
-    """
-    tree = ast.parse(pathlib.Path(module.__file__).read_text())
-
-    imported = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module is not None:
-            imported.add(node.module)
-        elif isinstance(node, ast.Import):
-            imported.update(alias.name for alias in node.names)
-
-    return {name for name in imported if name.split(".")[0] == "esmporium"}
-
-
-def requirements_modules() -> tuple[object, ...]:
-    """
-    Get every module of `esmporium.requirements`, the package itself included
-
-    Discovered rather than listed, so that a module added later is checked without
-    anyone having to remember to add it here.
-    """
-    package = esmporium.requirements
-    found = [package]
-    for info in pkgutil.iter_modules(package.__path__):
-        found.append(importlib.import_module(f"{package.__name__}.{info.name}"))
-
-    return tuple(found)
+from esmporium.db.schema import DATASET_FACET_COLUMNS
+from esmporium.requirements import CatalogueEntry, InMemoryCatalogue, set_facets
+from esmporium.requirements.tree import effective_query, walk_leaves
 
 
 @pytest.fixture
@@ -73,5 +33,51 @@ def make_entry(get_dataset_kwargs):
                 f"entry-{entry_id}" if label is None else label, **facets
             ),
         )
+
+    return factory
+
+
+@pytest.fixture
+def satisfying_catalogue(make_entry):
+    """
+    Get a factory for a catalogue in which every leaf of a requirement is satisfied
+
+    One entry per leaf, built from the first value of every facet the leaf's
+    effective query sets. Facets which are columns are set on the entry itself;
+    the rest (CMIP5's `product`, anything in `other_terms`) go into its `extra`,
+    which is the only way an entry can answer for them.
+
+    Facets no leaf names keep the values `get_dataset_kwargs` builds, so every
+    entry agrees on `model` and `variant_label` and there is exactly one group.
+
+    The known limit, and the part which grows as the tree does: a requirement
+    which groups or prefers on a facet no leaf's query names has nothing here to
+    answer for it, so solving it raises
+    [`UnrecordedFacetError`][esmporium.requirements.UnrecordedFacetError].
+    """
+
+    def factory(requirement):
+        entries = {}
+        for _, each_leaf in walk_leaves(requirement.tree):
+            asked = set_facets(effective_query(each_leaf, requirement.where))
+            facets = {facet: values[0] for facet, values in asked.items()}
+            columns = {
+                facet: value
+                for facet, value in facets.items()
+                if facet in DATASET_FACET_COLUMNS
+            }
+            extra = {
+                facet: value
+                for facet, value in facets.items()
+                if facet not in DATASET_FACET_COLUMNS
+            }
+
+            # Keyed by what was asked for, so two leaves which ask the same thing
+            # share one entry rather than colliding on `id`.
+            key = tuple(sorted(facets.items()))
+            if key not in entries:
+                entries[key] = make_entry(len(entries) + 1, extra=extra, **columns)
+
+        return InMemoryCatalogue(entries=tuple(entries.values()))
 
     return factory

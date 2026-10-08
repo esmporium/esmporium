@@ -61,7 +61,7 @@ METADATA: MetaData = REGISTRY.metadata
 The metadata describing every table we define
 
 This is what migrations are generated against,
-see [`esmporium.db.migrate`][].
+see [esmporium.db.migrate][].
 """
 
 
@@ -502,11 +502,11 @@ class DatasetRawDoc(EsmporiumBase, table=True):
     Names the format of `raw_json`, stamped by the search API that returned it
 
     Recorded for use elsewhere, most notably in
-    [`esmporium.search.normalise_stored_document`][]
+    [esmporium.search.normalise_stored_document][]
     to normalise the raw_json when we need to explain
     which facet distinguishes [`Dataset`][esmporium.db.schema.Dataset] rows
     that our model considers identical
-    (see [`esmporium.db.dataset_uniqueness`][]).
+    (see [esmporium.db.dataset_uniqueness][]).
     """
 
     retrieved_at: datetime.datetime = Field(default_factory=_utcnow)

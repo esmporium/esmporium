@@ -686,7 +686,7 @@ def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberat
     Check one or more queries, over one or more projects, against the APIs
 
     This is the high-level entry point, and the value-checking mirror of
-    [`esmporium.search.search`][]: each query must name one *or more* projects,
+    [esmporium.search.search][]: each query must name one *or more* projects,
     we split every query into one single-project query per project and check
     each through [check_query_values_single_project][(m).].
 
