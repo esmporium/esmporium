@@ -4,7 +4,7 @@ The requirement tree: what an analysis needs, and in what shape
 A requirement is a tree: one root at the top, branching at each internal node
 downward to leaves at the tips (a leaf is a node with no children). There is one
 tree per requirement, and it is solved once per group, so `group_by=("model",)`
-gives one run of the analysis per model, all from that same tree.
+gives one run per model, each solved on its own, all from that same tree.
 
 The one rule to hold onto is what each of them takes: **a leaf takes a query
 (in any query style), everything else takes nodes.**
@@ -609,11 +609,11 @@ class Requirement(BaseModel):
 
     group_by: tuple[str, ...]
     """
-    Facets which define a group, i.e. what counts as one requirement tree
+    Facets which define a group, i.e. what counts as one run to be solved
 
     Required, deliberately. `("model", "variant_label")` is what most analyses want,
     and is the reason this has no default: a grouping decides what "one run" means,
-    and an analysis which never said so is indistinguishable from one which meant
+    and a requirement which never said so is indistinguishable from one which meant
     something else. Write the usual pair out when it is what you want.
     """
 
@@ -655,8 +655,8 @@ class Requirement(BaseModel):
     Ensemble member (variant) spread is the worked example: the variance across a
     model's variants is one number computed from every variant together, so the leaf
     wants all of them.
-    Written with `group_by=("model",)` and `cardinality="all"`, that is one run per
-    model, each holding however many variants that model published.
+    Written with `group_by=("model",)` and `cardinality="all"`, that is one run of the
+    analysis per model, each holding however many variants that model published.
 
     Why `"one"` cannot express that, however it is grouped: `group_by` splits the work
     into runs, and `cardinality` says how many datasets a role holds *inside* one run.
@@ -1039,7 +1039,7 @@ def requirement(  # noqa: PLR0913 - one argument per field of the requirement
     cardinality: Literal["one", "all"] = "one",
 ) -> Requirement:
     """
-    Require a tree of datasets, grouped into runs of an analysis
+    Require a tree of datasets, grouped into runs to be solved
 
     `where`, `prefer` and `cardinality` are keyword-only: each is a refinement of what
     the first three already say, and read at a call site as a bare value none of them
@@ -1054,7 +1054,7 @@ def requirement(  # noqa: PLR0913 - one argument per field of the requirement
         The datasets needed
 
     group_by
-        Facets which define a group, i.e. what counts as one run of the analysis.
+        Facets which define a group, i.e. what counts as one run to be solved.
         See [Requirement.group_by][(m).Requirement.group_by]; it has no default
         deliberately.
 
@@ -1165,7 +1165,7 @@ def requirement(  # noqa: PLR0913 - one argument per field of the requirement
     [3]
 
     `roles` holds a tuple whichever cardinality was used, so reading the result does
-    not change shape. [ResolvedGroup.one][esmporium.requirements.ResolvedGroup.one] is
+    not change shape. [ResolvedRun.one][esmporium.requirements.ResolvedRun.one] is
     the way to ask for the single dataset in a role, and refuses when there are three.
     """
     canonical_where = QueryCanonical() if where is None else _canonical(where)

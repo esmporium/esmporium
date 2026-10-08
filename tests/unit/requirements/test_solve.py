@@ -8,6 +8,7 @@ import pytest
 
 from esmporium.query import Query, QueryCMIP5
 from esmporium.requirements import (
+    ExplanationStatus,
     InMemoryCatalogue,
     NotANodeError,
     Requirement,
@@ -132,7 +133,7 @@ def test_all_satisfied(variables_catalogue):
         "rsdt": "rsdt",
         "rlut": "rlut",
     }
-    assert group.explanation.status == "satisfied"
+    assert group.explanation.status is ExplanationStatus.SATISFIED
 
 
 def test_required_variable_missing(variables_catalogue):
@@ -142,7 +143,7 @@ def test_required_variable_missing(variables_catalogue):
 
     (tree_explanation,) = result.unsatisfied[ONLY_GROUP].explanation.parts
     parts = {part.subject: part for part in tree_explanation.parts}
-    assert parts["rlut"].status == "unsatisfied"
+    assert parts["rlut"].status is ExplanationStatus.UNSATISFIED
 
     # Where this message is pinned in full. The group is named on the leaf's own
     # line as well as on the block above it, because the group is filtered on the
@@ -155,7 +156,7 @@ def test_required_variable_missing(variables_catalogue):
 
 
 def test_a_role_always_holds_a_tuple(variables_catalogue):
-    # The promise `ResolvedGroup.roles` makes: one shape to handle, whatever the
+    # The promise `ResolvedRun.roles` makes: one shape to handle, whatever the
     # cardinality, so that a reader never has to ask which it got.
     group = solve(variables_together(), variables_catalogue()).resolved[ONLY_GROUP]
 
@@ -309,7 +310,10 @@ def test_ambiguous_grids_and_prefer(dataset):
     assert list(ambiguous.ambiguous) == [ONLY_GROUP]
 
     (explanation,) = ambiguous.ambiguous[ONLY_GROUP].explanation.parts
-    assert (explanation.subject, explanation.status) == ("tas", "ambiguous")
+    assert (explanation.subject, explanation.status) == (
+        "tas",
+        ExplanationStatus.AMBIGUOUS,
+    )
 
     # Where this message is pinned in full. All three ways out are offered,
     # because which one is right is the user's judgement and not something the
@@ -465,7 +469,7 @@ def test_one_refuses_a_role_holding_several(dataset):
 
     assert str(excinfo.value) == (
         "'tas' holds 2 datasets, so there is no single one to return. "
-        "Read `roles` directly, or solve with `cardinality='one'`."
+        "Read `roles` directly (solving with `cardinality='one'` may also fix this)."
     )
 
 
