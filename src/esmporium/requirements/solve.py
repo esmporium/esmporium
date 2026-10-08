@@ -509,7 +509,7 @@ def _ambiguous_message(candidates: Sequence[CatalogueEntry], ctx: _Context) -> s
         return (
             f"{len(candidates)} candidates which agree on every facet, so no facet can "
             f"choose between them: {listed}. They differ only in their "
-            "project-specific ID, which `prefer` compares no more than a query can. "
+            "project-specific ID, which cannot be used to break a tie."
             "This should not happen: datasets agreeing on every column are stored "
             "separately only when their project-specific IDs differ, so the facet "
             "which tells these apart exists but has not reached the solver. Please "

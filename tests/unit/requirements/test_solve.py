@@ -381,8 +381,8 @@ def test_candidates_which_agree_on_every_facet(dataset):
         "2 candidates which agree on every facet, so no facet can choose between "
         f"them: #{first.id} ({first.id_project_specific!r}), "
         f"#{second.id} ({second.id_project_specific!r}). They differ only in "
-        "their project-specific ID, which `prefer` compares no more than a query "
-        "can. This should not happen: datasets agreeing on every column are stored "
+        "their project-specific ID, which cannot be used to break a tie."
+        "This should not happen: datasets agreeing on every column are stored "
         "separately only when their project-specific IDs differ, so the facet which "
         "tells these apart exists but has not reached the solver. Please raise an "
         "issue at https://github.com/esmporium/esmporium/issues quoting the message "
@@ -485,8 +485,8 @@ def test_one_raises_for_a_role_which_was_not_resolved(dataset):
         ONLY_GROUP
     ]
 
-    with pytest.raises(KeyError, match="rlut"):
-        group.one("rlut")
+    with pytest.raises(KeyError, match="junk_key"):
+        group.one("junk_key")
 
 
 # -------------------------------------------------------------------------- all_of
@@ -533,9 +533,25 @@ def test_the_label_names_the_roles_below_it(dataset):
         group_by=GROUP_BY,
     )
 
-    rendered = solve(nested, InMemoryCatalogue(entries=(dataset(1),))).explain()
+    entry = dataset(1)
 
-    assert "all_of(tas & rlut)" in rendered
+    rendered = solve(nested, InMemoryCatalogue(entries=(entry,))).explain()
+
+    # The whole message, so the label can be read where a reader meets it. The
+    # inner `all_of(rlut)` is indented beneath the outer `all_of(tas & rlut)`, so
+    # the nesting shows in the shape of the block while neither label spells it
+    # out. The entry is interpolated, so the pin is on the wording rather than on
+    # `make_entry`'s labels.
+    assert rendered == (
+        "Requirement 'nested', grouped by 'model' and 'variant_label':\n"
+        "\n"
+        "[unsatisfied] model=ModelA, variant_label=r1i1p1f1\n"
+        "  [unsatisfied] all_of(tas & rlut)\n"
+        f"    [satisfied] tas: #{entry.id} ({entry.id_project_specific!r})\n"
+        "    [unsatisfied] all_of(rlut)\n"
+        "      [unsatisfied] rlut: no dataset matches variable=rlut "
+        "for model=ModelA, variant_label=r1i1p1f1"
+    )
 
 
 @pytest.mark.parametrize(
@@ -554,7 +570,7 @@ def test_the_dispatchers_refuse_a_non_node(dispatch):
     # `test_tree.py` spells it out. What is tested here is that this module's
     # dispatchers raise it too.
     with pytest.raises(NotANodeError, match="Expected a node"):
-        dispatch("tas")
+        dispatch("some string")
 
 
 # ------------------------------------------------------------------------ explain()
