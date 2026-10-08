@@ -19,7 +19,7 @@ from esmporium.requirements import (
     requirement,
     solve,
 )
-from esmporium.requirements.solve import _Context, _eval, _label
+from esmporium.requirements.solve import _Context, _eval_tree, _label
 
 GROUP_BY = ("model", "variant_label")
 """What these tests use to group by, unless grouping is the point"""
@@ -119,16 +119,16 @@ def variables_catalogue(dataset):
     return factory
 
 
-# ------------------------------------------------------------------------- resolving
+# ------------------------------------------------------------------------- satisfied
 
 
 def test_all_satisfied(variables_catalogue):
     result = solve(variables_together(), variables_catalogue())
 
-    assert list(result.resolved) == [ONLY_GROUP]
+    assert list(result.satisfied) == [ONLY_GROUP]
     assert not (result.unsatisfied or result.ambiguous)
 
-    group = result.resolved[ONLY_GROUP]
+    group = result.satisfied[ONLY_GROUP]
     assert {role: group.one(role).variable for role in group.roles} == {
         "tas": "tas",
         "rsdt": "rsdt",
@@ -140,7 +140,7 @@ def test_all_satisfied(variables_catalogue):
 def test_required_variable_missing(variables_catalogue):
     result = solve(variables_together(), variables_catalogue(("tas", "rsdt")))
 
-    assert not result.resolved
+    assert not result.satisfied
 
     (tree_explanation,) = result.unsatisfied[ONLY_GROUP].explanation.parts
     parts = {part.subject: part for part in tree_explanation.parts}
@@ -157,9 +157,9 @@ def test_required_variable_missing(variables_catalogue):
 
 
 def test_a_role_always_holds_a_tuple(variables_catalogue):
-    # The promise `ResolvedRun.roles` makes: one shape to handle, whatever the
+    # The promise `Solution.roles` makes: one shape to handle, whatever the
     # cardinality, so that a reader never has to ask which it got.
-    group = solve(variables_together(), variables_catalogue()).resolved[ONLY_GROUP]
+    group = solve(variables_together(), variables_catalogue()).satisfied[ONLY_GROUP]
 
     assert all(isinstance(entries, tuple) for entries in group.roles.values())
 
@@ -178,7 +178,7 @@ def test_the_result_carries_the_requirement_it_solved(variables_catalogue):
 
 
 def test_group_by_variable_fans_out(dataset):
-    # One leaf offering four variables, with `variable` grouped on: one run per
+    # One leaf offering four variables, with `variable` grouped on: one group per
     # variable rather than one variable chosen. Only three were published, and the
     # fourth produces no group at all -- groups are discovered, never listed.
     per_field = requirement(
@@ -196,7 +196,7 @@ def test_group_by_variable_fans_out(dataset):
 
     result = solve(per_field, catalogue)
 
-    assert [dict(key)["variable"] for key in result.resolved] == ["pr", "rsdt", "tas"]
+    assert [dict(key)["variable"] for key in result.satisfied] == ["pr", "rsdt", "tas"]
     assert not (result.unsatisfied or result.ambiguous)
 
 
@@ -216,7 +216,7 @@ def test_group_by_experiment_fans_out(dataset):
 
     result = solve(scenarios, catalogue)
 
-    assert [dict(key)["experiment"] for key in result.resolved] == [
+    assert [dict(key)["experiment"] for key in result.satisfied] == [
         "historical",
         "ssp126",
     ]
@@ -239,12 +239,12 @@ def test_a_group_is_discovered_from_any_leaf(dataset):
         catalogue,
     )
 
-    assert [dict(key)["experiment"] for key in result.resolved] == ["historical"]
+    assert [dict(key)["experiment"] for key in result.satisfied] == ["historical"]
     assert [dict(key)["experiment"] for key in result.unsatisfied] == ["ssp126"]
 
 
 def test_groups_come_out_in_a_stable_order(dataset):
-    # Sorted, so that two runs of the same solve produce the same explanation and a
+    # Sorted, so that solving twice produces the same explanation and a
     # difference between them means the data changed. `None` is a real value here --
     # CMIP5 has no concept of a grid -- and sorts as though it were empty.
     grouped_on_grid = requirement(
@@ -262,7 +262,7 @@ def test_groups_come_out_in_a_stable_order(dataset):
 
     result = solve(grouped_on_grid, catalogue)
 
-    assert [dict(key)["grid_label"] for key in result.resolved] == [None, "gn", "gr"]
+    assert [dict(key)["grid_label"] for key in result.satisfied] == [None, "gn", "gr"]
     assert "[satisfied] model=ModelA, grid_label=None" in result.explain()
 
 
@@ -285,7 +285,7 @@ def test_every_group_lands_in_exactly_one_bucket(dataset):
         catalogue,
     )
 
-    buckets = (result.resolved, result.unsatisfied, result.ambiguous)
+    buckets = (result.satisfied, result.unsatisfied, result.ambiguous)
     keys = [key for bucket in buckets for key in bucket]
     assert len(keys) == len(set(keys)) == 3
     assert [[dict(key)["experiment"] for key in bucket] for bucket in buckets] == [
@@ -330,7 +330,7 @@ def test_ambiguous_grids_and_prefer(dataset):
         "use `cardinality='all'` to keep them all."
     )
 
-    assert preferred.resolved[ONLY_GROUP].one("tas").grid_label == "gn"
+    assert preferred.satisfied[ONLY_GROUP].one("tas").grid_label == "gn"
 
 
 def test_ambiguous_despite_prefer_says_what_was_preferred(dataset):
@@ -401,7 +401,7 @@ def test_a_value_not_in_prefer_ranks_behind_one_that_is(dataset):
     listed_second = solve(tas_requirement(prefer={"grid_label": ("gr",)}), catalogue)
     nothing_listed = solve(tas_requirement(prefer={"grid_label": ("gm",)}), catalogue)
 
-    assert listed_second.resolved[ONLY_GROUP].one("tas").grid_label == "gr"
+    assert listed_second.satisfied[ONLY_GROUP].one("tas").grid_label == "gr"
     # Neither value is listed, so neither is preferred and the tie is untouched.
     assert list(nothing_listed.ambiguous) == [ONLY_GROUP]
 
@@ -424,7 +424,7 @@ def test_prefer_applies_every_facet_it_names(dataset):
         catalogue,
     )
 
-    assert result.resolved[ONLY_GROUP].one("tas").id == 2
+    assert result.satisfied[ONLY_GROUP].one("tas").id == 2
 
 
 def test_differing_facets_only_names_what_every_candidate_knows(dataset):
@@ -458,14 +458,14 @@ def test_cardinality_all_keeps_every_candidate(dataset):
 
     assert not result.ambiguous
     # In the order the catalogue gave them, so the result is reproducible.
-    assert [entry.id for entry in result.resolved[ONLY_GROUP].roles["tas"]] == [1, 2]
+    assert [entry.id for entry in result.satisfied[ONLY_GROUP].roles["tas"]] == [1, 2]
 
 
 def test_one_refuses_a_role_holding_several(dataset):
     catalogue = InMemoryCatalogue(
         entries=(dataset(1, grid_label="gn"), dataset(2, grid_label="gr"))
     )
-    group = solve(tas_requirement(cardinality="all"), catalogue).resolved[ONLY_GROUP]
+    group = solve(tas_requirement(cardinality="all"), catalogue).satisfied[ONLY_GROUP]
 
     # The whole message, pinned once, here: `solve.py` raises it and nothing else
     # tests it, so this is the one place it is written out. `match=` is
@@ -479,15 +479,14 @@ def test_one_refuses_a_role_holding_several(dataset):
     )
 
 
-def test_one_raises_for_a_role_which_was_not_resolved(dataset):
+def test_one_raises_for_an_unknown_role(dataset):
     # A role the requirement never had. `KeyError` rather than `None`, because a
     # missing role is a mistake in whatever asked, not an answer.
-    group = solve(tas_requirement(), InMemoryCatalogue(entries=(dataset(1),))).resolved[
-        ONLY_GROUP
-    ]
+    result = solve(tas_requirement(), InMemoryCatalogue(entries=(dataset(1),)))
+    solution = result.satisfied[ONLY_GROUP]
 
     with pytest.raises(KeyError, match="junk_key"):
-        group.one("junk_key")
+        solution.one("junk_key")
 
 
 # -------------------------------------------------------------------------- all_of
@@ -506,7 +505,7 @@ def test_every_child_is_evaluated(variables_catalogue):
 
 
 def test_unsatisfied_wins_over_ambiguous(dataset):
-    # A group missing a dataset cannot be run however the ambiguity is resolved,
+    # A group missing a dataset cannot be satisfied however the ambiguity is settled,
     # so the missing dataset is the honest headline -- and the ambiguity is still
     # reported, because nothing was skipped to decide that.
     catalogue = InMemoryCatalogue(
@@ -559,7 +558,7 @@ def test_the_label_names_the_roles_below_it(dataset):
     "dispatch",
     [
         pytest.param(_label, id="_label"),
-        pytest.param(lambda node: _eval(node, A_CONTEXT, ""), id="_eval"),
+        pytest.param(lambda node: _eval_tree(node, A_CONTEXT, ""), id="_eval"),
     ],
 )
 def test_the_dispatchers_refuse_a_non_node(dispatch):
@@ -661,7 +660,7 @@ def test_explain_covers_every_group(dataset):
     ],
 )
 def test_facet_no_dataset_knows_is_an_error(build, facet, dataset):
-    # Raised rather than reported as an unresolved group, wherever the facet was
+    # Raised rather than reported as an unsolved group, wherever the facet was
     # named: it is a mistake in the requirement rather than a fact about the data,
     # and no amount of new data would make the facet answerable.
     # A fragment plus the attribute, not the whole message: `test_catalogue.py`
@@ -689,7 +688,7 @@ def test_project_specific_facets_come_from_the_catalogue(dataset):
 
     result = solve(cmip5, InMemoryCatalogue(entries=(wanted, other)))
 
-    assert list(result.resolved) == [(("model", "ModelA"), ("product", "output1"))]
-    assert result.resolved[(("model", "ModelA"), ("product", "output1"))].one(
+    assert list(result.satisfied) == [(("model", "ModelA"), ("product", "output1"))]
+    assert result.satisfied[(("model", "ModelA"), ("product", "output1"))].one(
         "tas"
     ) == (wanted)

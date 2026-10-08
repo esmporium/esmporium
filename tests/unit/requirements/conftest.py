@@ -40,7 +40,7 @@ def make_entry(get_dataset_kwargs):
 @pytest.fixture
 def satisfying_catalogue(make_entry):
     """
-    Get a factory for a catalogue in which every leaf of a requirement resolves
+    Get a factory for a catalogue in which every leaf of a requirement is satisfied
 
     One entry per leaf, built from the first value of every facet the leaf's
     effective query sets. Facets which are columns are set on the entry itself;

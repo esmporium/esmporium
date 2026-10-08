@@ -19,8 +19,9 @@ Most "or"s in the use cases are fan-outs.
 
 ## Groups
 
-A requirement is solved **once per group**, and a group is one run of the analysis:
-ECS across forty models is forty groups, each resolved and reported on its own.
+A requirement is solved **once per group**.
+A group is a set of datasets from which we try to meet the requirement:
+ECS across forty models is forty groups, each solved and reported on its own.
 
 `group_by` on the `Requirement` names the facets to split on, so `group_by=("model",)`
 gives one group per model. The groups are not listed up front. They are discovered
@@ -41,13 +42,13 @@ group_by = ("model",)
 
 This is the difference between data an analysis needs *together* and data it repeats
 *over*. Datasets needed together are separate leaves: ECS wants tas, rsdt, rlut and
-rsut in the same run, so it has four. A facet the analysis simply repeats over goes
-in `group_by` instead: pattern scaling's nine variables are nine separate runs, so
+rsut in the same group, so it has four. A facet the analysis simply repeats over goes
+in `group_by` instead: pattern scaling's nine variables are nine separate groups, so
 they are one leaf with `variable` in the group key, not nine leaves.
 
-Within a group, a leaf resolves to **exactly one** dataset. Several surviving
+Within a group, a leaf is filled by **exactly one** dataset. Several surviving
 candidates make the group `ambiguous`, none makes it `unsatisfied`, and every group
-is judged on its own — one model can resolve while the next does not.
+is judged on its own — one model can be satisfied while the next is not.
 
 (That is `cardinality="one"`, the default. `cardinality="all"` is for an analysis
 whose subject *is* the spread across candidates — see
@@ -97,7 +98,7 @@ some of the logic, such as `all_of` and `any_of` take any number of children, an
   *query*.
 - **`scope(name, child, constraints=)`** — an internal node that prefixes roles, so the same role can appear twice (`abrupt4x.tas` and `abrupt2x.tas`), and holds checks which compare leaves.
 - **`requirement(tree=, name=, group_by=, where=, prefer=, cardinality=, constraints=)`** — the root.
-  `tree`, `name` and `group_by` are required: a grouping decides what "one run" means, so it is
+  `tree`, `name` and `group_by` are required: a grouping decides what one group is, so it is
   stated rather than defaulted. Write `group_by=("model", "variant_label")` when that is what you want.
 
 Every node has the same three ways to say something about the leaves below it, and each pushes down to the leaves:
@@ -121,7 +122,7 @@ There is deliberately no node for "one experiment": that was four separable
 things in a trench coat (shared facets, a lineage, scoped checks and a role
 prefix), and each now has one home.
 
-Resolved roles look like `tas`, `control.tas`, `chain.0.tas`, `nbp.sftlf`
+Role paths look like `tas`, `control.tas`, `chain.0.tas`, `nbp.sftlf`
 and, inside a scope, `abrupt4x.control.tas`.
 
 ### A role is not a variable
@@ -161,13 +162,13 @@ The two homes of `variable`, side by side:
 ```text
    variable in the LEAF'S QUERY          variable in GROUP_BY
    ────────────────────────────          ────────────────────
-   "any of these will do"                "run the whole analysis
+   "any of these will do"                "solve the whole tree
    pick ONE per group                     once per value"
-   → one dataset                         → many runs
+   → one dataset                         → many groups
 ```
 
 ECS is the other case, and the reason roles so often *look* like variables. It needs
-tas, rsdt, rlut and rsut **in the same run**, to regress one against the others — four
+tas, rsdt, rlut and rsut **in the same group**, to regress one against the others — four
 different datasets, so four leaves. Naming each role after its variable is then simply
 the clearest thing to call it. That is a fact about ECS, not a rule about leaves.
 
@@ -197,7 +198,7 @@ choose. Two settings on the `Requirement` do it, in this order:
    ──────────────────         ────────────────────────────────────────
      sfcWind  ─┐
      uas      ─┼──► prefer ──►  uas is listed first
-     vas      ─┘                → uas, and the group RESOLVES
+     vas      ─┘                → uas, and the group is SATISFIED
 
                               no prefer entry for variable
                               ────────────────────────────
@@ -207,7 +208,7 @@ choose. Two settings on the `Requirement` do it, in this order:
 ```
 
 The important half of that is the second one: **ambiguity is an outcome, not a pick.**
-A group is never resolved by guessing, and an ambiguous group is reported rather than
+A group is never satisfied by guessing, and an ambiguous group is reported rather than
 quietly dropped, so the fix is yours to make — add a `prefer` entry, narrow the leaf's
 query, or move the facet into `group_by` so the values stop competing.
 
@@ -227,7 +228,7 @@ The diagram below draws one concrete requirement: equilibrium climate sensitivit
 experiment (optionally also 2x and 0.5x), each traced back to its piControl, which
 must cover it. It shows the two things that are easy to miss in prose: the three
 levels a check attaches at (leaf, scope, requirement), and how role names gain
-their prefixes as they resolve. **Leaves are green; every other node is an internal
+their prefixes from the scopes above them. **Leaves are green; every other node is an internal
 node (blue) that groups or wraps them** — `all_of` needs all its children, `optional`
 may drop its child, and a `scope` renames the leaves below it.
 
@@ -245,7 +246,7 @@ flowchart TD
     A4 --> D["leaf: rsdt"]
     A4 --> L["leaf: rlut"]
     A4 --> S["leaf: rsut"]
-    T -.->|resolves to| RP["roles:<br/>abrupt4x.tas<br/>abrupt4x.control.tas"]
+    T -.->|fills| RP["roles:<br/>abrupt4x.tas<br/>abrupt4x.control.tas"]
 
     classDef leaf fill:#e8f5e9,stroke:#43a047,color:#1b5e20;
     classDef internal fill:#e3f2fd,stroke:#1e88e5,color:#0d47a1;
@@ -293,9 +294,9 @@ Shipped checks:
 `solve(requirement, catalogue)` is greedy, with no backtracking. This choice means that we need to give clear error messages, to help users be able to spot places where there might be solutions that they could try. The setup below should also keep the door open to doing non-greedy solving too, but we are not implementing that now as we think that the cost of non-greedy search is not worth the benefit (which we expect to be very small). We will re-evaluate that once we start working with real data.
 
 - **Groups** are the union of `group_by` values over every leaf's candidates.
-- **Leaves** apply `prefer`, then resolve their lineage, auxiliary data and own checks. If several candidates remain, the group is `ambiguous`.
+- **Leaves** apply `prefer`, then work out their lineage, auxiliary data and own checks. If several candidates remain, the group is `ambiguous`.
 - **Ambiguous and undetermined results are never skipped**: `any_of` stops at them, and `optional` passes them on.
-- **Output:** resolved, unsatisfied, ambiguous and undetermined groups, each with an explanation tree (`SolveResult.explain()`). Per node, `NodeResultResolved` and `NodeResultUnresolved` carry the roles, lineages, choices and notes that are merged upwards.
+- **Output:** satisfied, unsatisfied, ambiguous and undetermined groups, each with an explanation tree (`SolveResult.explain()`). Per node, `NodeResultOk` and `NodeResultNotOk` carry the roles, lineages, choices and notes that are merged upwards.
 
 `Catalogue` is a protocol with `find`, `parent_of`, `linked` and `metadata`.
 `InMemoryCatalogue` stands in until esmporium has parent links and file information.
@@ -315,7 +316,7 @@ flowchart LR
     LINK --> CAT[("Catalogue<br/>find · parent_of · linked · metadata")]
     REQ --> SOLVE["solve(requirement, catalogue)<br/><i>greedy, no backtracking</i>"]
     CAT --> SOLVE
-    SOLVE --> RES["resolved"]
+    SOLVE --> RES["satisfied"]
     SOLVE --> UNS["unsatisfied"]
     SOLVE --> AMB["ambiguous"]
     SOLVE --> UND["undetermined"]

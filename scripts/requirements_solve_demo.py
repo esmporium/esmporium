@@ -8,10 +8,10 @@ asks "do I have everything one analysis needs, *together*, and for which models?
 Five scenes, each a use case the solver is built for:
 
 1. everything is there, for both models
-2. one leaf, several variables, `variable` in `group_by` -- one run per variable
+2. one leaf, several variables, `variable` in `group_by` -- one group per variable
 3. a model missing one dataset: unsatisfied, and the explanation names what is missing
 4. two datasets fit one role and nothing chooses between them: ambiguous...
-5. ...and the same requirement with `prefer` set, which resolves it
+5. ...and the same requirement with `prefer` set, which settles it
 
 Needs no network and no database: the catalogue here is
 [`InMemoryCatalogue`][esmporium.requirements.InMemoryCatalogue], which is what we
@@ -63,7 +63,7 @@ def show(title: str, result: SolveResult) -> None:
     print(title)
     print("=" * 78)
     print(
-        f"resolved: {len(result.resolved)}   "
+        f"satisfied: {len(result.satisfied)}   "
         f"unsatisfied: {len(result.unsatisfied)}   "
         f"ambiguous: {len(result.ambiguous)}"
     )
@@ -75,7 +75,7 @@ def show(title: str, result: SolveResult) -> None:
     print()
 
 
-# ------------------------------------------------------------------- 1. all resolved
+# ------------------------------------------------------------------ 1. all satisfied
 
 # Three datasets needed *together*, to regress one against the others, so three
 # leaves. Roles named after their variables here only because that is the clearest
@@ -103,12 +103,12 @@ BOTH_MODELS_COMPLETE = InMemoryCatalogue(
 )
 
 
-# ------------------------------------------------------------- 2. one run per variable
+# ----------------------------------------------------------- 2. one group per variable
 
 # The other shape entirely. This analysis works on *a* field and repeats itself for
 # each one, so it needs one dataset at a time, not four together: one leaf offering
 # four variables, a role saying what the dataset is *for*, and `variable` in
-# `group_by` to split the runs.
+# `group_by` to split the datasets into groups.
 PER_FIELD = requirement(
     name="per-field-analysis",
     tree=all_of(leaf(Query(variable=("tas", "pr", "rsdt", "rlut")), "field")),
@@ -173,7 +173,7 @@ def main() -> None:
     # The groups are never listed up front -- they are discovered from what the
     # catalogue holds. Two models x four variables, minus the pairs nobody published.
     show(
-        "2. One leaf, four variables, `variable` in group_by -> one run per variable",
+        "2. One leaf, four variables, `variable` in group_by -> one group per variable",
         solve(PER_FIELD, BOTH_MODELS_COMPLETE),
     )
 
@@ -188,7 +188,7 @@ def main() -> None:
     )
 
     show(
-        "5. The same data, with `prefer={'grid_label': ('gn', 'gr')}`: resolved",
+        "5. The same data, with `prefer={'grid_label': ('gn', 'gr')}`: satisfied",
         solve(PREFERS_NATIVE_GRID, TWO_GRIDS),
     )
 
@@ -199,17 +199,17 @@ def main() -> None:
         solve(KEEPS_EVERY_GRID, TWO_GRIDS),
     )
 
-    # What a resolved group is actually *for*: the datasets to run the analysis on,
+    # What a solution is actually *for*: the datasets to do the analysis with,
     # reachable by the role names the requirement gave them.
     print("=" * 78)
     print("Reading the answer back out")
     print("=" * 78)
-    resolved = solve(PREFERS_NATIVE_GRID, TWO_GRIDS)
-    for key, group in sorted(resolved.resolved.items()):
+    result = solve(PREFERS_NATIVE_GRID, TWO_GRIDS)
+    for key, solution in sorted(result.satisfied.items()):
         model = dict(key)["model"]
         print(f"{model}:")
-        for role in sorted(group.roles):
-            print(f"    {role:6} -> {group.one(role).id_project_specific}")
+        for role in sorted(solution.roles):
+            print(f"    {role:6} -> {solution.one(role).id_project_specific}")
     print()
 
     # A requirement may be written in any query style; it is translated as it is
