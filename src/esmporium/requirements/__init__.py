@@ -1,7 +1,7 @@
 """
 Expressing, compiling and solving the data requirements of an analysis
 
-[`esmporium.search`][] answers "what exists that matches these facets?".
+[esmporium.search][] answers "what exists that matches these facets?".
 An analysis, for example, is "everything I need to calculate the ECS". This
 needs something more sophisticated than a single search query:
 "do I have everything I need, and if not, what is missing?", i.e.
@@ -13,21 +13,21 @@ cell areas it is weighted by), and it involves judgements rather than matches
 """
 
 # A note for developers:
-# This package must never import from [`esmporium.search`][]. That is a hard rule,
+# This package must never import from [esmporium.search][]. That is a hard rule,
 # and the reason is circular imports: `search` will take `Requirement` objects. Add an
 # import the other way and both packages stop importing at all, with
 # "cannot import name ... from partially initialized module".
 #
 # It is not a rule against sharing. When `search` and this package need the same
-# thing, it goes in [`esmporium.query`][], which both already depend on, and both
+# thing, it goes in [esmporium.query][], which both already depend on, and both
 # import it from there. That is how
 # [`ClashingFacetsError`][esmporium.query.ClashingFacetsError] is shared: it started
 # out defined twice, once here and once in `search`, and moved to `query` rather than
 # one side importing the other. Do the same with the next one.
 #
-# Today the whole esmporium surface this package uses is [`esmporium.query`][] plus
+# Today the whole esmporium surface this package uses is [esmporium.query][] plus
 # [`DATASET_FACET_COLUMNS`][esmporium.db.schema.DATASET_FACET_COLUMNS] from
-# [`esmporium.db.schema`][].
+# [esmporium.db.schema][].
 from esmporium.requirements.catalogue import (
     Catalogue,
     CatalogueEntry,
@@ -40,9 +40,11 @@ from esmporium.requirements.catalogue import (
 from esmporium.requirements.solve import (
     Explanation,
     ExplanationStatus,
-    ResolvedRun,
+    ExplanationStatusNotOk,
+    ExplanationStatusOk,
+    Solution,
     SolveResult,
-    UnresolvedRun,
+    UnsolvedGroup,
     describe_query,
     solve,
 )
@@ -70,15 +72,17 @@ __all__ = [
     "EmptyLeafQueryError",
     "Explanation",
     "ExplanationStatus",
+    "ExplanationStatusNotOk",
+    "ExplanationStatusOk",
     "InMemoryCatalogue",
     "Leaf",
     "Node",
     "NotANodeError",
     "Requirement",
-    "ResolvedRun",
+    "Solution",
     "SolveResult",
     "UnrecordedFacetError",
-    "UnresolvedRun",
+    "UnsolvedGroup",
     "all_of",
     "describe_query",
     "leaf",

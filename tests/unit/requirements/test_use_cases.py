@@ -55,11 +55,11 @@ def test_use_case(requirement, satisfying_catalogue):
 
     # `explain()` as the message, so a failure here reads as the solver's own
     # account of what it could not do.
-    assert len(result.resolved) == 1, result.explain()
+    assert len(result.satisfied) == 1, result.explain()
     assert not result.unsatisfied, result.explain()
     assert not result.ambiguous, result.explain()
 
     # Every role is filled: a requirement can be satisfied as a whole and still
     # have left a role out if the roles and the merged result disagree.
-    (group,) = result.resolved.values()
+    (group,) = result.satisfied.values()
     assert set(group.roles) == set(role_paths(requirement.tree))

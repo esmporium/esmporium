@@ -1,17 +1,28 @@
 """
 Solving a requirement: filling roles with datasets, group by group
 
-The requirements tree says what is needed, the catalogue says what
-exists, and the solver works out (group by group) whether the one can
-be filled from the other.
+The requirements tree says what is needed,
+the catalogue says what exists,
+and the solver works out whether the one can be satisfied from the other.
 
-The same tree is solved once per group: group_by says what one run is,
-and each run gets its own verdict.
+We attempt to solve the same tree multiple times, one attempt per group.
+A group is a set of datasets from which we try to meet the requirement.
+The grouping is set by
+[`Requirement.group_by`][esmporium.requirements.Requirement.group_by].
+Each attempt either leads to a solution ([Solution][(m).Solution])
+or not ([UnsolvedGroup][(m).UnsolvedGroup]).
+
+Within an attempt, each node of the tree is also given a status
+(see [ExplanationStatus][(m).ExplanationStatus]).
+The group's outcome is the outcome of the root of the tree,
+with whether that status is [ExplanationStatusOk][(m).ExplanationStatusOk]
+or [ExplanationStatusNotOk][(m).ExplanationStatusNotOk]
+defining whether we found a solution or not.
 """
 
 # A note for whoever adds the next node type: [_eval][(m)._eval] is the fourth of the
 # dispatch functions named in the note at the top of
-# [`esmporium.requirements.tree`][]. Like the other three it ends in a `TypeError`
+# [esmporium.requirements.tree][]. Like the other three it ends in a `TypeError`
 # rather than a silent fallthrough, so a forgotten branch fails loudly.
 
 from __future__ import annotations
@@ -41,7 +52,7 @@ from esmporium.requirements.tree import (
 
 GroupKey = tuple[tuple[str, str | None], ...]
 """
-`(facet, value)` pairs identifying a group, i.e. one run to be solved
+`(facet, value)` pairs identifying a group
 
 A value can be `None` because a facet can be: CMIP5 has no concept of a grid, so
 [`CatalogueEntry.grid_label`][esmporium.requirements.CatalogueEntry.grid_label] is
@@ -50,22 +61,30 @@ A value can be `None` because a facet can be: CMIP5 has no concept of a grid, so
 
 
 # TODO future:
-# A third, `"undetermined"`, arrives with constraints: a check which needs metadata the
-# catalogue cannot supply can neither pass nor fail, and answering "no" on its behalf
-# would be a lie. Nothing here can produce that yet, because no check exists to need it,
-# so it is deliberately absent rather than defined and unreachable.
-#
-# TODO future:
-# Two more join them later, for the same reason as `"undetermined"`: `"degraded"`
-# when a check passes with a complaint, and `"absent"` when an optional part is
-# dropped.
-class ExplanationStatus(str, Enum):
+# Two more join this later: `"degraded"` when a check passes with a complaint, and
+# `"absent"` when an optional part is dropped. Nothing here can produce either yet,
+# so they are deliberately absent rather than defined and unreachable.
+class ExplanationStatusOk(str, Enum):
     """
-    Statuses an [Explanation][(m).Explanation] can carry
+    Ways in which (part of) a requirement can be met
     """
 
     SATISFIED = "satisfied"
     """Everything asked for was found"""
+
+
+# TODO future:
+# A third, `"undetermined"`, arrives with constraints: a check which needs metadata the
+# catalogue cannot supply can neither pass nor fail, and answering "no" on its behalf
+# would be a lie. Nothing here can produce that yet, because no check exists to need it,
+# so it is deliberately absent rather than defined and unreachable.
+class ExplanationStatusNotOk(str, Enum):
+    """
+    Ways in which (part of) a requirement can fail to be met
+
+    An enum of its own,
+    so that a field which can only have failed says so in its type.
+    """
 
     UNSATISFIED = "unsatisfied"
     """There is no dataset"""
@@ -73,42 +92,24 @@ class ExplanationStatus(str, Enum):
     AMBIGUOUS = "ambiguous"
     """There are too many datasets and nothing to choose between them"""
 
-    def __str__(self) -> str:
-        """
-        Get the status as it is written, e.g. `"satisfied"`
 
-        Returns
-        -------
-        :
-            The status' value
-        """
-        # Without this, `str` on a member gives "ExplanationStatus.SATISFIED" from
-        # Python 3.11 on, which is what [Explanation.render][(m).Explanation.render]
-        # would then put in front of a reader.
-        return self.value
-
-
-NotOkStatus = Literal[ExplanationStatus.UNSATISFIED, ExplanationStatus.AMBIGUOUS]
+ExplanationStatus = ExplanationStatusOk | ExplanationStatusNotOk
 """
-Ways in which (part of) a requirement can fail to resolve
+Statuses an [Explanation][(m).Explanation] can carry
 
-[ExplanationStatus][(m).ExplanationStatus] without `SATISFIED`, so that a field which
-can only have failed says so in its type.
-
-A `Literal` of two members rather than an enum of its own because an enum cannot be a
-subset of another enum: two enums would mean two places to add the next status, and
-two members meaning `"unsatisfied"` which are not the same object.
+A union so that every status has to decide whether it is ok or not
+and there is no ambiguity about which is which.
 """
 
-_STATUS_PRIORITY: dict[NotOkStatus, int] = {
-    ExplanationStatus.UNSATISFIED: 0,
-    ExplanationStatus.AMBIGUOUS: 1,
+_STATUS_PRIORITY: dict[ExplanationStatusNotOk, int] = {
+    ExplanationStatusNotOk.UNSATISFIED: 0,
+    ExplanationStatusNotOk.AMBIGUOUS: 1,
 }
 """
 Which status a group takes when its parts fail in different ways, lowest first
 
-`"unsatisfied"` wins over `"ambiguous"`: a group missing a dataset cannot be run
-however the ambiguity is resolved, so the missing dataset is the honest headline. The
+`"unsatisfied"` wins over `"ambiguous"`: a group missing a dataset cannot be satisfied
+however the ambiguity is settled, so the missing dataset is the honest headline. The
 explanation still carries both, because nothing short-circuits -- see
 [_eval_all_of][(m)._eval_all_of].
 """
@@ -117,10 +118,10 @@ explanation still carries both, because nothing short-circuits -- see
 @dataclass(frozen=True)
 class Explanation:
     """
-    Why (part of) a requirement did or did not resolve
+    Why (part of) a requirement was or was not met
 
     Output rather than diagnostics: [SolveResult.explain][(m).SolveResult.explain]
-    renders these for a person to read. Most groups in a real archive do not resolve,
+    renders these for a person to read. Most groups in a real archive are not satisfied,
     and `"unsatisfied"` on its own does not say whether to widen a query, set `prefer`,
     or accept the loss.
     """
@@ -153,8 +154,8 @@ class Explanation:
 
         Examples
         --------
-        >>> satisfied = ExplanationStatus.SATISFIED
-        >>> unsatisfied = ExplanationStatus.UNSATISFIED
+        >>> satisfied = ExplanationStatusOk.SATISFIED
+        >>> unsatisfied = ExplanationStatusNotOk.UNSATISFIED
         >>> print(
         ...     Explanation(
         ...         "model=MIROC6",
@@ -169,7 +170,7 @@ class Explanation:
           [satisfied] tas: #1 ('CMIP6.a.tas')
           [unsatisfied] rlut: no dataset matches ...
         """
-        line = f"{'  ' * indent}[{self.status}] {self.subject}"
+        line = f"{'  ' * indent}[{self.status.value}] {self.subject}"
         if self.message:
             line = f"{line}: {self.message}"
 
@@ -183,42 +184,39 @@ class Explanation:
 # which passed with a complaint). None of them are here yet, because nothing can put
 # anything in them yet.
 @dataclass(frozen=True)
-class Resolved:
+class NodeResultOk:
     """
-    What one node of the tree resolved to, within one run (per group)
+    A node of the tree which is satisfied, within one group
     """
 
     roles: Mapping[str, tuple[CatalogueEntry, ...]]
     """Role path -> the datasets filling it"""
 
     explanation: Explanation
-    """How this node resolved"""
+    """How this node was satisfied"""
 
 
 @dataclass(frozen=True)
-class Unresolved:
+class NodeResultNotOk:
     """
-    Why one node of the tree did not resolve, within one group
+    Why one node of the tree was not satisfied, within one group
     """
 
-    status: NotOkStatus
-    """Resolution status"""
+    status: ExplanationStatusNotOk
+    """Status"""
 
     explanation: Explanation
     """Explanation"""
 
 
-NodeResult = Resolved | Unresolved
+NodeResult = NodeResultOk | NodeResultNotOk
 """The result of evaluating one node of the tree, within one group"""
 
 
 @dataclass(frozen=True)
-class ResolvedRun:
+class Solution:
     """
-    A run (per group) for which the requirement is satisfied
-
-    In other words, one run of the analysis which can go ahead, and the datasets to run
-    it on.
+    The datasets which satisfy the requirement for one group
     """
 
     key: GroupKey
@@ -230,12 +228,12 @@ class ResolvedRun:
 
     Always a tuple, whatever the
     [cardinality][esmporium.requirements.Requirement.cardinality], so that everything
-    reading this has one shape to handle. [one][(m).ResolvedRun.one] is the way to
+    reading this has one shape to handle. [one][(m).Solution.one] is the way to
     ask for the single dataset in a role.
     """
 
     explanation: Explanation
-    """How the group was resolved"""
+    """How the group was satisfied"""
 
     def one(self, role: str) -> CatalogueEntry:
         """
@@ -254,7 +252,7 @@ class ResolvedRun:
         Raises
         ------
         KeyError
-            `role` was not resolved
+            `role` is not a role path of the requirement
 
         ValueError
             `role` holds more than one dataset, i.e. the requirement was probably
@@ -273,15 +271,15 @@ class ResolvedRun:
 
 
 @dataclass(frozen=True)
-class UnresolvedRun:
+class UnsolvedGroup:
     """
-    A run (per group) for which the requirement is not satisfied
+    A group for which no solution was found
     """
 
     key: GroupKey
     """Values of the `group_by` facets"""
 
-    status: NotOkStatus
+    status: ExplanationStatusNotOk
     """Status"""
 
     explanation: Explanation
@@ -293,7 +291,8 @@ class SolveResult:
     """
     The result of solving a requirement: every group, sorted into what became of it
 
-    Every group which was discovered appears in exactly one of the three mappings.
+    Every group which was discovered appears in exactly one of the three mappings,
+    one per status.
     """
 
     requirement: Requirement
@@ -304,17 +303,17 @@ class SolveResult:
     satisfiable?" a comparison of two results:
     [requirement_hash][esmporium.requirements.Requirement.requirement_hash] tells you
     whether both solves asked the same question, so that a group which moved from
-    `unsatisfied` to `resolved` means new data arrived rather than someone having
+    `unsatisfied` to `satisfied` means new data arrived rather than someone having
     quietly edited what was asked for.
     """
 
-    resolved: Mapping[GroupKey, ResolvedRun] = field(default_factory=dict)
-    """Groups which can be run"""
+    satisfied: Mapping[GroupKey, Solution] = field(default_factory=dict)
+    """Solutions, i.e. groups for which the requirement is satisfied"""
 
-    unsatisfied: Mapping[GroupKey, UnresolvedRun] = field(default_factory=dict)
+    unsatisfied: Mapping[GroupKey, UnsolvedGroup] = field(default_factory=dict)
     """Groups missing a dataset"""
 
-    ambiguous: Mapping[GroupKey, UnresolvedRun] = field(default_factory=dict)
+    ambiguous: Mapping[GroupKey, UnsolvedGroup] = field(default_factory=dict)
     """Groups where a role had several candidates and nothing to choose between them"""
 
     def explain(self) -> str:
@@ -334,8 +333,8 @@ class SolveResult:
             When no group was discovered at all there is nothing to render, so the
             answer says why instead: an empty string would read as a bug.
         """
-        groups: list[ResolvedRun | UnresolvedRun] = [
-            *self.resolved.values(),
+        groups: list[Solution | UnsolvedGroup] = [
+            *self.satisfied.values(),
             *self.unsatisfied.values(),
             *self.ambiguous.values(),
         ]
@@ -552,7 +551,7 @@ def _choose(
     ctx: _Context,
     subject: str,
     cardinality: Literal["one", "all"],
-) -> tuple[CatalogueEntry, ...] | Unresolved:
+) -> tuple[CatalogueEntry, ...] | NodeResultNotOk:
     """
     Narrow candidates to the datasets which fill a role
 
@@ -598,11 +597,11 @@ def _choose(
         ]
 
     if cardinality == "one" and len(remaining) > 1:
-        return Unresolved(
-            ExplanationStatus.AMBIGUOUS,
+        return NodeResultNotOk(
+            ExplanationStatusNotOk.AMBIGUOUS,
             Explanation(
                 subject,
-                ExplanationStatus.AMBIGUOUS,
+                ExplanationStatusNotOk.AMBIGUOUS,
                 _ambiguous_message(remaining, ctx),
             ),
         )
@@ -621,25 +620,25 @@ def _eval_leaf(leaf: Leaf, ctx: _Context, role_prefix: str) -> NodeResult:
 
     candidates = [entry for entry in found if _in_group(entry, ctx)]
     if not candidates:
-        return Unresolved(
-            ExplanationStatus.UNSATISFIED,
+        return NodeResultNotOk(
+            ExplanationStatusNotOk.UNSATISFIED,
             Explanation(
                 path,
-                ExplanationStatus.UNSATISFIED,
+                ExplanationStatusNotOk.UNSATISFIED,
                 f"no dataset matches {describe_query(query)} "
                 f"for {_describe_group(ctx.group)}",
             ),
         )
 
     chosen = _choose(candidates, ctx, path, ctx.requirement.cardinality)
-    if isinstance(chosen, Unresolved):
+    if isinstance(chosen, NodeResultNotOk):
         return chosen
 
-    return Resolved(
+    return NodeResultOk(
         {path: chosen},
         Explanation(
             path,
-            ExplanationStatus.SATISFIED,
+            ExplanationStatusOk.SATISFIED,
             ", ".join(_describe_entry(entry) for entry in chosen),
         ),
     )
@@ -678,43 +677,46 @@ def _label(node: Node) -> str:
 # share a role today (`all_of` refuses it), but the nodes which make a role
 # legitimately repeatable are coming, and silently dropping half of a role
 # would be a bad way to find that out.
-def _merge(results: Sequence[Resolved], explanation: Explanation) -> Resolved:
+def _merge(results: Sequence[NodeResultOk], explanation: Explanation) -> NodeResultOk:
     roles: dict[str, tuple[CatalogueEntry, ...]] = {}
     for result in results:
         for role, entries in result.roles.items():
             roles[role] = (*roles.get(role, ()), *entries)
 
-    return Resolved(roles, explanation)
+    return NodeResultOk(roles, explanation)
 
 
-def _worst(results: Sequence[Unresolved]) -> NotOkStatus:
+def _worst(results: Sequence[NodeResultNotOk]) -> ExplanationStatusNotOk:
     return min((result.status for result in results), key=_STATUS_PRIORITY.__getitem__)
 
 
 def _eval_all_of(node: AllOf, ctx: _Context, role_prefix: str) -> NodeResult:
     # Every child is evaluated, even once one has failed, so that the explanation says
     # everything that is wrong with the group rather than the first thing.
-    results = [_eval(child, ctx, role_prefix) for child in node.children]
+    results = [_eval_tree(child, ctx, role_prefix) for child in node.children]
     explanations = tuple(result.explanation for result in results)
     label = f"all_of({_label(node)})"
 
-    failures = [result for result in results if isinstance(result, Unresolved)]
+    failures = [result for result in results if isinstance(result, NodeResultNotOk)]
     if failures:
         status = _worst(failures)
 
-        return Unresolved(status, Explanation(label, status, parts=explanations))
+        return NodeResultNotOk(status, Explanation(label, status, parts=explanations))
 
-    # Everything left is `Resolved`, because `failures` returned above if anything
-    # was not. The filter is for the type checkers, which cannot see that: passing
-    # `results` straight through is a `list[Resolved | Unresolved]` where `_merge`
-    # takes a `Sequence[Resolved]`, and both mypy and ty reject it.
+    # Everything left is `NodeResultOk`,
+    # because `failures` returned above if anything was not.
+    # The filter is for the type checkers, which cannot see that:
+    # passing `results` straight through is a
+    # `list[NodeResultOk | NodeResultNotOk]`
+    # where `_merge` takes a `Sequence[NodeResultOk]`,
+    # and both mypy and ty reject it.
     return _merge(
-        [result for result in results if isinstance(result, Resolved)],
-        Explanation(label, ExplanationStatus.SATISFIED, parts=explanations),
+        [result for result in results if isinstance(result, NodeResultOk)],
+        Explanation(label, ExplanationStatusOk.SATISFIED, parts=explanations),
     )
 
 
-def _eval(node: Node, ctx: _Context, role_prefix: str) -> NodeResult:
+def _eval_tree(node: Node, ctx: _Context, role_prefix: str) -> NodeResult:
     if isinstance(node, Leaf):
         return _eval_leaf(node, ctx, role_prefix)
 
@@ -774,7 +776,7 @@ def solve(requirement: Requirement, catalogue: Catalogue) -> SolveResult:
     Returns
     -------
     :
-        Every group which was discovered, sorted into resolved, unsatisfied and
+        Every group which was discovered, sorted into satisfied, unsatisfied and
         ambiguous, each with an explanation
 
     Raises
@@ -782,15 +784,15 @@ def solve(requirement: Requirement, catalogue: Catalogue) -> SolveResult:
     UnrecordedFacetError
         `group_by`, `prefer` or a leaf's query names a facet no dataset can answer for.
 
-        Raised rather than reported as an unresolved group, because it is a mistake in
+        Raised rather than reported as an unsolved group, because it is a mistake in
         the requirement rather than a fact about the data: no amount of new data would
         make the facet answerable, and reporting it group by group would make one
         mistake look like missing data everywhere.
     """
-    resolved: dict[GroupKey, ResolvedRun] = {}
-    unresolved: dict[NotOkStatus, dict[GroupKey, UnresolvedRun]] = {
-        ExplanationStatus.UNSATISFIED: {},
-        ExplanationStatus.AMBIGUOUS: {},
+    satisfied: dict[GroupKey, Solution] = {}
+    unsatisfied: dict[ExplanationStatusNotOk, dict[GroupKey, UnsolvedGroup]] = {
+        ExplanationStatusNotOk.UNSATISFIED: {},
+        ExplanationStatusNotOk.AMBIGUOUS: {},
     }
 
     for group_values in _group_values(requirement, catalogue):
@@ -799,17 +801,20 @@ def solve(requirement: Requirement, catalogue: Catalogue) -> SolveResult:
         subject = _describe_group(group_dict)
         ctx = _Context(requirement=requirement, catalogue=catalogue, group=group_dict)
 
-        evaluated = _eval(requirement.tree, ctx, role_prefix="")
-        if isinstance(evaluated, Resolved):
-            resolved[key] = ResolvedRun(
+        evaluated = _eval_tree(requirement.tree, ctx, role_prefix="")
+        if isinstance(evaluated, NodeResultOk):
+            satisfied[key] = Solution(
                 key=key,
                 roles=evaluated.roles,
                 explanation=Explanation(
-                    subject, ExplanationStatus.SATISFIED, parts=(evaluated.explanation,)
+                    subject,
+                    ExplanationStatusOk.SATISFIED,
+                    parts=(evaluated.explanation,),
                 ),
             )
+
         else:
-            unresolved[evaluated.status][key] = UnresolvedRun(
+            unsatisfied[evaluated.status][key] = UnsolvedGroup(
                 key=key,
                 status=evaluated.status,
                 explanation=Explanation(
@@ -819,7 +824,7 @@ def solve(requirement: Requirement, catalogue: Catalogue) -> SolveResult:
 
     return SolveResult(
         requirement=requirement,
-        resolved=resolved,
-        unsatisfied=unresolved[ExplanationStatus.UNSATISFIED],
-        ambiguous=unresolved[ExplanationStatus.AMBIGUOUS],
+        satisfied=satisfied,
+        unsatisfied=unsatisfied[ExplanationStatusNotOk.UNSATISFIED],
+        ambiguous=unsatisfied[ExplanationStatusNotOk.AMBIGUOUS],
     )

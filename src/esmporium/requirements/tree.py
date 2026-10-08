@@ -2,9 +2,11 @@
 The requirement tree: what an analysis needs, and in what shape
 
 A requirement is a tree: one root at the top, branching at each internal node
-downward to leaves at the tips (a leaf is a node with no children). There is one
-tree per requirement, and it is solved once per group, so `group_by=("model",)`
-gives one run per model, each solved on its own, all from that same tree.
+downward to leaves at the tips (a leaf is a node with no children).
+
+Determining whether a requirement can be met is the job of
+[esmporium.requirements.solve][].
+Please see [esmporium.requirements.solve][] for an explanation of how this works.
 
 The one rule to hold onto is what each of them takes: **a leaf takes a query
 (in any query style), everything else takes nodes.**
@@ -18,7 +20,7 @@ The one rule to hold onto is what each of them takes: **a leaf takes a query
 # each end in a `TypeError` rather than a silent fallthrough, so a forgotten branch
 # fails loudly.
 # There is a fourth, in another module: `_eval` in
-# [`esmporium.requirements.solve`][], which dispatches on the node type and fails the
+# [esmporium.requirements.solve][], which dispatches on the node type and fails the
 # same way.
 
 from __future__ import annotations
@@ -412,7 +414,7 @@ class Leaf(BaseModel):
     The role this leaf plays
 
     Say what the leaf (i.e. dataset) is *for*.
-    A role is the named slot the resolved dataset is filed under,
+    A role is the named slot the chosen dataset is filed under,
     and it is what a check refers to later,
     so it wants to read as a job e.g. 'control', 'reference', 'scenario-data'.
 
@@ -574,7 +576,7 @@ class Requirement(BaseModel):
     A requirement is solved once per **group**.
 
     For example, the equilibrium climate sensitivity across forty models is forty
-    groups, each resolved and reported on its own. `group_by` names the facets to
+    groups, each solved and reported on its own. `group_by` names the facets to
     split on; the groups themselves are not listed up front, but discovered during the
     solve process.
     """
@@ -609,10 +611,10 @@ class Requirement(BaseModel):
 
     group_by: tuple[str, ...]
     """
-    Facets which define a group, i.e. what counts as one run to be solved
+    Facets which define a group
 
     Required, deliberately. `("model", "variant_label")` is what most analyses want,
-    and is the reason this has no default: a grouping decides what "one run" means,
+    and is the reason this has no default: a grouping decides what one group is,
     and a requirement which never said so is indistinguishable from one which meant
     something else. Write the usual pair out when it is what you want.
     """
@@ -643,7 +645,7 @@ class Requirement(BaseModel):
 
     cardinality: Literal["one", "all"] = "one"
     """
-    How many datasets each leaf resolves to per group
+    How many datasets fill each leaf's role, per group
 
     `"one"`, the default, is the usual case: a leaf fills one slot, so several
     surviving candidates are a question nobody has answered rather than a result.
@@ -655,19 +657,19 @@ class Requirement(BaseModel):
     Ensemble member (variant) spread is the worked example: the variance across a
     model's variants is one number computed from every variant together, so the leaf
     wants all of them.
-    Written with `group_by=("model",)` and `cardinality="all"`, that is one run of the
-    analysis per model, each holding however many variants that model published.
+    Written with `group_by=("model",)` and `cardinality="all"`, that is one group per
+    model, each holding however many variants that model published.
 
-    Why `"one"` cannot express that, however it is grouped: `group_by` splits the work
-    into runs, and `cardinality` says how many datasets a role holds *inside* one run.
-    They are different questions, and grouping does not answer the second. Adding
-    `variant_label` to `group_by` does give each of a model's variants a home, but a
-    run of its own, which is one answer per variant where the analysis wants a single
-    answer computed from all of them. Leaving it out puts them in one run, where
-    `"one"` finds several candidates for a slot which holds one, has nothing to choose
-    between them, and reports the group `ambiguous` -- correctly, because it cannot
-    tell this case from a genuine tie. `"all"` is how the requirement says it is not
-    a tie.
+    Why `"one"` cannot express that, however it is grouped: `group_by` splits the
+    datasets into groups, and `cardinality` says how many datasets a role holds
+    *inside* one group. They are different questions, and grouping does not answer the
+    second. Adding `variant_label` to `group_by` does give each of a model's variants a
+    home, but a group of its own, which is one answer per variant where the analysis
+    wants a single answer computed from all of them. Leaving it out puts them in one
+    group, where `"one"` finds several candidates for a slot which holds one, has
+    nothing to choose between them, and reports the group `ambiguous` -- correctly,
+    because it cannot tell this case from a genuine tie. `"all"` is how the
+    requirement says it is not a tie.
 
     The three cases are worked through side by side in [requirement][(m).requirement].
     """
@@ -864,7 +866,7 @@ def walk_leaves(node: Node, role_prefix: str = "") -> Iterator[tuple[str, Leaf]]
 
 def role_paths(node: Node) -> frozenset[str]:
     """
-    Get the role paths a node can resolve
+    Get the role paths a node fills
 
     Parameters
     ----------
@@ -879,7 +881,7 @@ def role_paths(node: Node) -> frozenset[str]:
     Raises
     ------
     DuplicateRoleError
-        Roles are duplicated in a way which could not be resolved
+        Two leaves which are both used fill the same role
 
     TypeError
         `node` is not a node
@@ -895,7 +897,7 @@ def role_paths(node: Node) -> frozenset[str]:
 
 def distinct_role_paths(nodes: Iterable[Node]) -> frozenset[str]:
     """
-    Get the role paths a set of sibling nodes resolves, refusing any repeat
+    Get the role paths a set of sibling nodes fills, refusing any repeat
 
     Separate from [role_paths][(m).role_paths] so that [all_of][(m).all_of] can check
     its arguments *before* handing them to pydantic, which would otherwise wrap the
@@ -914,7 +916,7 @@ def distinct_role_paths(nodes: Iterable[Node]) -> frozenset[str]:
     Raises
     ------
     DuplicateRoleError
-        Two of the nodes resolve the same role
+        Two of the nodes fill the same role
     """
     seen: set[str] = set()
     duplicated: set[str] = set()
@@ -936,7 +938,7 @@ def distinct_role_paths(nodes: Iterable[Node]) -> frozenset[str]:
 # this is built on `role_paths` rather than on roles.
 def check_roles_are_distinct(node: Node) -> None:
     """
-    Check that no two leaves below a node resolve the same role
+    Check that no two leaves below a node fill the same role
 
     Returns nothing: this is here to raise, and exists so that a caller which wants
     the check can ask for the check. Working out the role paths is the same walk as
@@ -952,7 +954,7 @@ def check_roles_are_distinct(node: Node) -> None:
     Raises
     ------
     DuplicateRoleError
-        Two leaves which are both used resolve the same role
+        Two leaves which are both used fill the same role
 
     TypeError
         `node` is not a node
@@ -971,7 +973,7 @@ def leaf(query: QueryProtocol, role: str) -> Leaf:
         Stored canonical, see [Leaf.query][(m).Leaf.query].
 
     role
-        Role the dataset is resolved into, see [Leaf.role][(m).Leaf.role]
+        Role the dataset fills, see [Leaf.role][(m).Leaf.role]
 
     Returns
     -------
@@ -1016,7 +1018,7 @@ def all_of(*nodes: Node) -> AllOf:
         Something which is not a node was given
 
     DuplicateRoleError
-        Two of the nodes resolve the same role
+        Two of the nodes fill the same role
     """
     for node in nodes:
         if not isinstance(node, NODE_TYPES):
@@ -1039,7 +1041,7 @@ def requirement(  # noqa: PLR0913 - one argument per field of the requirement
     cardinality: Literal["one", "all"] = "one",
 ) -> Requirement:
     """
-    Require a tree of datasets, grouped into runs to be solved
+    Create a [Requirement][(m).Requirement]
 
     `where`, `prefer` and `cardinality` are keyword-only: each is a refinement of what
     the first three already say, and read at a call site as a bare value none of them
@@ -1054,7 +1056,7 @@ def requirement(  # noqa: PLR0913 - one argument per field of the requirement
         The datasets needed
 
     group_by
-        Facets which define a group, i.e. what counts as one run to be solved.
+        Facets which define a group.
         See [Requirement.group_by][(m).Requirement.group_by]; it has no default
         deliberately.
 
@@ -1067,7 +1069,7 @@ def requirement(  # noqa: PLR0913 - one argument per field of the requirement
         See [Requirement.prefer][(m).Requirement.prefer].
 
     cardinality
-        How many datasets each leaf resolves to per group.
+        How many datasets fill each leaf's role, per group.
         See [Requirement.cardinality][(m).Requirement.cardinality].
 
     Returns
@@ -1081,7 +1083,7 @@ def requirement(  # noqa: PLR0913 - one argument per field of the requirement
         `tree` is not a node
 
     DuplicateRoleError
-        Two leaves which are both used resolve the same role
+        Two leaves which are both used fill the same role
 
     ConflictingFacetsError
         `where` and a leaf set the same facet to different values
@@ -1092,9 +1094,9 @@ def requirement(  # noqa: PLR0913 - one argument per field of the requirement
     Examples
     --------
     Two arguments decide the *shape* of the answer: `group_by`, which splits the
-    work into runs, and `cardinality`, which says how many datasets one role holds
-    inside a run. Here is the difference, over one model which published `tas` three
-    times, once per variant:
+    datasets into groups, and `cardinality`, which says how many datasets one role
+    holds inside a group. Here is the difference, over one model which published
+    `tas` three times, once per variant:
 
     >>> from esmporium.query import Query
     >>> from esmporium.requirements import CatalogueEntry, InMemoryCatalogue, solve
@@ -1119,7 +1121,7 @@ def requirement(  # noqa: PLR0913 - one argument per field of the requirement
     ...     )
     ... )
 
-    Grouping on the variant, with the default `cardinality="one"`, is three runs of
+    Grouping on the variant, with the default `cardinality="one"`, is three groups of
     one dataset each. This is the right answer when the analysis is per-variant and
     simply repeats itself:
 
@@ -1129,14 +1131,14 @@ def requirement(  # noqa: PLR0913 - one argument per field of the requirement
     ...     group_by=("model", "variant_label"),
     ... )
     >>> solved = solve(per_variant, catalogue)
-    >>> len(solved.resolved)
+    >>> len(solved.satisfied)
     3
-    >>> [len(group.roles["tas"]) for group in solved.resolved.values()]
+    >>> [len(group.roles["tas"]) for group in solved.satisfied.values()]
     [1, 1, 1]
 
-    Dropping `variant_label` from `group_by` asks for one run instead, but leaves
+    Dropping `variant_label` from `group_by` asks for one group instead, but leaves
     `cardinality="one"`, so the single `tas` slot now has three candidates and
-    nothing to choose between them. The group is `ambiguous` rather than resolved:
+    nothing to choose between them. The group is `ambiguous` rather than satisfied:
 
     >>> still_one = requirement(
     ...     name="variant-spread",
@@ -1144,10 +1146,10 @@ def requirement(  # noqa: PLR0913 - one argument per field of the requirement
     ...     group_by=("model",),
     ... )
     >>> solved = solve(still_one, catalogue)
-    >>> len(solved.resolved), len(solved.ambiguous)
+    >>> len(solved.satisfied), len(solved.ambiguous)
     (0, 1)
 
-    `cardinality="all"` is what that group was missing: one run, with every variant
+    `cardinality="all"` is what that group was missing: one group, with every variant
     in it. An analysis which takes the variance across a model's ensemble needs its
     datasets this way round, because the answer is one number computed from all of
     them, not three numbers computed one at a time:
@@ -1159,13 +1161,13 @@ def requirement(  # noqa: PLR0913 - one argument per field of the requirement
     ...     cardinality="all",
     ... )
     >>> solved = solve(together, catalogue)
-    >>> len(solved.resolved)
+    >>> len(solved.satisfied)
     1
-    >>> [len(group.roles["tas"]) for group in solved.resolved.values()]
+    >>> [len(group.roles["tas"]) for group in solved.satisfied.values()]
     [3]
 
     `roles` holds a tuple whichever cardinality was used, so reading the result does
-    not change shape. [ResolvedRun.one][esmporium.requirements.ResolvedRun.one] is
+    not change shape. [Solution.one][esmporium.requirements.Solution.one] is
     the way to ask for the single dataset in a role, and refuses when there are three.
     """
     canonical_where = QueryCanonical() if where is None else _canonical(where)

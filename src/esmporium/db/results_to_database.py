@@ -123,7 +123,7 @@ class UnconfiguredSQLiteEngineError(Exception):
     """
     Results were about to be saved into a SQLite engine that has not been configured
 
-    See [`esmporium.db.configure_sqlite_for_concurrency`][]
+    See [esmporium.db.configure_sqlite_for_concurrency][]
     for why this is needed.
     """
 
@@ -153,7 +153,7 @@ def save_dataset(
 
     normalisers
         Normalisers to use when diagnosing a clash,
-        see [`esmporium.search.normalise_stored_document`][].
+        see [esmporium.search.normalise_stored_document][].
 
     Returns
     -------
@@ -171,7 +171,7 @@ def save_dataset(
 
     UnconfiguredSQLiteEngineError
         `session` is bound to a SQLite engine that has not been configured with
-        [`esmporium.db.configure_sqlite_for_concurrency`][].
+        [esmporium.db.configure_sqlite_for_concurrency][].
     """
     _check_engine_is_configured(session)
 
@@ -192,7 +192,7 @@ def _check_engine_is_configured(session: Session) -> None:
 
     Saving uses savepoints,
     which only behave on SQLite once the engine is configured
-    (see [`esmporium.db.configure_sqlite_for_concurrency`][]).
+    (see [esmporium.db.configure_sqlite_for_concurrency][]).
     Without that, rows would be committed one by one as they are written,
     so we fail loudly instead.
     """
@@ -337,7 +337,7 @@ def ingest_parsed_documents(
     ------
     UnconfiguredSQLiteEngineError
         `session` is bound to a SQLite engine that has not been configured with
-        [`esmporium.db.configure_sqlite_for_concurrency`][].
+        [esmporium.db.configure_sqlite_for_concurrency][].
     """
     _check_engine_is_configured(session)
     for parsed in parsed_documents:
@@ -352,14 +352,14 @@ def build_result_processor(
     Build a processor that persists one facade's parsed results into `session`
 
     The returned callback is what
-    [`esmporium.search.search_single_project`][] calls
+    [esmporium.search.search_single_project][] calls
     with each page of results as it arrives:
     it ingests that page's documents and commits,
     so each page is saved all or nothing
     and is durable as soon as it arrives.
     Inject it as
     `search_single_project(..., processor=build_result_processor(session))`.
-    For the multi-query [`esmporium.search.search`][], which wants a fresh processor per
+    For the multi-query [esmporium.search.search][], which wants a fresh processor per
     sub-query, use [build_result_processor_factory][(m).] instead.
 
     Parameters
@@ -402,7 +402,7 @@ def build_result_processor_factory(
     Build a factory that makes a fresh saving processor per sub-query
 
     This is the database-saving [ProcessorFactory][esmporium.search.ProcessorFactory] to
-    hand to [`esmporium.search.search`][]: it is called once per sub-query and opens a
+    hand to [esmporium.search.search][]: it is called once per sub-query and opens a
     fresh `sqlmodel.Session` (and so a fresh transaction) for that sub-query,
     yields a [build_result_processor][(m).] bound to it, and closes it afterwards.
     A session per sub-query keeps each sub-query's writes in transactions of its own
@@ -528,7 +528,7 @@ def _get_or_create(
     Under snapshot isolation (REPEATABLE READ or SERIALIZABLE)
     the re-run cannot see the other transaction's row, so the error propagates.
     On SQLite the race cannot happen at all,
-    because [`esmporium.db.configure_sqlite_for_concurrency`][]
+    because [esmporium.db.configure_sqlite_for_concurrency][]
     makes writing transactions take turns.
 
     If the re-run still finds nothing,

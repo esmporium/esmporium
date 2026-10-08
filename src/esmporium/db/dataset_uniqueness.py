@@ -62,7 +62,7 @@ def facet_differences(
         Each is a tuple of a key identifying the entry
         (e.g. the dataset's [`Dataset.id`][esmporium.db.schema.Dataset])
         and its normalised facets, as produced by
-        [`esmporium.search.normalise_stored_document`][].
+        [esmporium.search.normalise_stored_document][].
 
     Returns
     -------

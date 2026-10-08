@@ -236,7 +236,7 @@ class CatalogueEntry:
 # your own instead: annotate it `QueryFacet(None)` the way CMIP5's `product` is,
 # and the facade does the prefixing while `to_canonical` does the translating.
 # See [`QueryFacet`][esmporium.query.QueryFacet] and
-# [`esmporium.query.known_queries`][].
+# [esmporium.query.known_queries][].
 
 
 def set_facets(query: QueryProtocol) -> dict[str, tuple[str, ...]]:
@@ -400,7 +400,7 @@ def matches(query: QueryProtocol, entry: CatalogueEntry) -> bool:
 # [`DatasetFacets`][esmporium.search.DatasetFacets] drops them on the way in and
 # [CatalogueEntry.facet][(m).CatalogueEntry.facet] cannot answer for them. The data is
 # there; only the route from the raw document to the entry is missing, and
-# [`esmporium.search.normalise_stored_document`][] is what flattens a stored document
+# [esmporium.search.normalise_stored_document][] is what flattens a stored document
 # back out.
 #
 # Until that lands, a requirement naming one of them fails in a way which depends on
