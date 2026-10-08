@@ -170,7 +170,7 @@ def search_single_project(  # noqa: PLR0913 - the keyword-only extras are delibe
         If `None` (the default),
         the parsed documents are still collected into the returned outcome,
         they are just not handed anywhere.
-        See [`esmporium.db.build_result_processor`][] for the database-saving one.
+        See [esmporium.db.build_result_processor][] for the database-saving one.
 
     Returns
     -------

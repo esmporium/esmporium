@@ -8,7 +8,7 @@ it is data that ships with the package, not an importable sub-package
 (if it were importable, our docs generation would import this module
 and run it as a side effect).
 
-To run migrations from within esmporium, see [`esmporium.db.migrate`][].
+To run migrations from within esmporium, see [esmporium.db.migrate][].
 """
 
 from __future__ import annotations
@@ -87,7 +87,7 @@ def run_migrations_online() -> None:
     Run migrations in 'online' mode
 
     If a caller has already put a connection on `config.attributes`
-    (which is what [`esmporium.db.migrate`][] does),
+    (which is what [esmporium.db.migrate][] does),
     we use it rather than creating our own engine.
     That is what lets the same migration scripts be driven
     both by the `alembic` command line during development

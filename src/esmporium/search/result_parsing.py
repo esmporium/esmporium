@@ -120,7 +120,7 @@ class ResultProcessor(Protocol):
     A callback that processes the parsed results one host answered with
 
     The database layer supplies a concrete processor
-    (see [`esmporium.db.build_result_processor`][]).
+    (see [esmporium.db.build_result_processor][]).
     """
 
     def __call__(

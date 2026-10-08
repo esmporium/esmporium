@@ -5,13 +5,18 @@ Sits beside the search demos (`search_cmipx.py`, `check_query_values_demo.py`) a
 answers a different question. Those ask "what exists that matches these facets?". This
 asks "do I have everything one analysis needs, *together*, and for which models?".
 
-Five scenes, each a use case the solver is built for:
+Six scenes, each a use case the solver is built for:
 
 1. everything is there, for both models
 2. one leaf, several variables, `variable` in `group_by` -- one group per variable
 3. a model missing one dataset: unsatisfied, and the explanation names what is missing
 4. two datasets fit one role and nothing chooses between them: ambiguous...
-5. ...and the same requirement with `prefer` set, which settles it
+5. ...and the same requirement with `prefer` set, which settles it...
+6. ...or with `cardinality="all"`, which keeps every candidate instead
+
+Then two short epilogues:
+reading the datasets back out of a solution,
+and one requirement written in two query styles giving one hash.
 
 Needs no network and no database: the catalogue here is
 [`InMemoryCatalogue`][esmporium.requirements.InMemoryCatalogue], which is what we

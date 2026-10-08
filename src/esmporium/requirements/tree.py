@@ -5,9 +5,8 @@ A requirement is a tree: one root at the top, branching at each internal node
 downward to leaves at the tips (a leaf is a node with no children).
 
 Determining whether a requirement can be met is the job of
-[`esmporium.requirements.solve`][esmporium.requirements.solve].
-Please see [`esmporium.requirements.solve`][esmporium.requirements.solve]
-for an explanation of how this works.
+[esmporium.requirements.solve][].
+Please see [esmporium.requirements.solve][] for an explanation of how this works.
 
 The one rule to hold onto is what each of them takes: **a leaf takes a query
 (in any query style), everything else takes nodes.**
@@ -21,7 +20,7 @@ The one rule to hold onto is what each of them takes: **a leaf takes a query
 # each end in a `TypeError` rather than a silent fallthrough, so a forgotten branch
 # fails loudly.
 # There is a fourth, in another module: `_eval` in
-# [`esmporium.requirements.solve`][], which dispatches on the node type and fails the
+# [esmporium.requirements.solve][], which dispatches on the node type and fails the
 # same way.
 
 from __future__ import annotations

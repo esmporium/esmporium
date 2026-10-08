@@ -4,9 +4,9 @@ Flattening a stored raw search document into `{facet_name: value}`
 This is a rare thing to need.
 It is currently only used when we need to explain, from raw JSON,
 which facet distinguishes datasets our model considers identical
-(see [`esmporium.db.dataset_uniqueness.facet_differences`][]).
+(see [esmporium.db.dataset_uniqueness.facet_differences][]).
 For example, when saving a dataset clashes with one already stored
-(see [`esmporium.db.save_dataset`][])
+(see [esmporium.db.save_dataset][])
 or when datasets our model cannot tell apart are loaded.
 
 It is currently used by the database layer, possibly long after the search,
@@ -229,7 +229,7 @@ def normalise_stored_document(
     -------
     :
         The document's facets as a flat mapping of unprefixed name to scalar (or list)
-        value, ready for [`esmporium.db.dataset_uniqueness.facet_differences`][]
+        value, ready for [esmporium.db.dataset_uniqueness.facet_differences][]
 
     Raises
     ------

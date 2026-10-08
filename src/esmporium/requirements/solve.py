@@ -17,12 +17,12 @@ Within an attempt, each node of the tree is also given a status
 The group's outcome is the outcome of the root of the tree,
 with whether that status is [ExplanationStatusOk][(m).ExplanationStatusOk]
 or [ExplanationStatusNotOk][(m).ExplanationStatusNotOk]
-defininig whether we found a solution or not.
+defining whether we found a solution or not.
 """
 
 # A note for whoever adds the next node type: [_eval][(m)._eval] is the fourth of the
 # dispatch functions named in the note at the top of
-# [`esmporium.requirements.tree`][]. Like the other three it ends in a `TypeError`
+# [esmporium.requirements.tree][]. Like the other three it ends in a `TypeError`
 # rather than a silent fallthrough, so a forgotten branch fails loudly.
 
 from __future__ import annotations

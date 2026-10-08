@@ -44,7 +44,7 @@ def configure_sqlite_for_concurrency(
 
     That `BEGIN` is `BEGIN IMMEDIATE`, which takes SQLite's single write lock
     when the transaction starts rather than at its first write.
-    Parallel search (e.g. via [`esmporium.search.search`][] with ``max_workers > 1``)
+    Parallel search (e.g. via [esmporium.search.search][] with ``max_workers > 1``)
     gives each worker its own session, and so its own connection.
     With `BEGIN IMMEDIATE` their transactions take turns:
     a worker only starts once the previous one has committed,
