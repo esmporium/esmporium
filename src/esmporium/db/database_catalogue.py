@@ -2,8 +2,8 @@
 The datasets we have stored, as the solver sees them
 
 [esmporium.requirements][] defines what a catalogue is
-([`Catalogue`][esmporium.requirements.Catalogue]) and ships an in-memory one for
-tests. This is the real one: it answers from the [`Dataset`][(m).Dataset] rows a
+([Catalogue][esmporium.requirements.Catalogue]) and ships an in-memory one for
+tests. This is the real one: it answers from the [Dataset][(m).Dataset] rows a
 search saved.
 
 It lives in `esmporium.db` rather than beside the protocol it implements, for two
@@ -11,13 +11,13 @@ reasons. `esmporium.db` is the only layer which touches the local databases dire
 and this is a `select`. And `esmporium.requirements` may not import `esmporium.db`
 (see the developer note in `esmporium/requirements/__init__.py`), whereas the reverse
 is free: `db` -> `requirements` -> `query` has no cycle in it. Being on this side also
-means [`normalise_stored_document`][esmporium.search.normalise_stored_document] is in
+means [normalise_stored_document][esmporium.search.normalise_stored_document] is in
 reach, which is what lets `extra` be filled at all.
 
 **The semantics are the in-memory catalogue's.** The facets a dataset records are
 columns, so they are matched in SQL; everything else is matched in Python by
-[`CatalogueEntry.facet`][esmporium.requirements.CatalogueEntry.facet], exactly as
-[`InMemoryCatalogue`][esmporium.requirements.InMemoryCatalogue] does it. The SQL is an
+[CatalogueEntry.facet][esmporium.requirements.CatalogueEntry.facet], exactly as
+[InMemoryCatalogue][esmporium.requirements.InMemoryCatalogue] does it. The SQL is an
 optimisation, not a second set of rules, and
 `test_solving_against_the_database_matches_the_in_memory_catalogue` pins that.
 """
@@ -121,7 +121,7 @@ def facet_filters(
     Turn facets into the `where` clauses which match them
 
     Several values for one facet are an `IN`, i.e. an "or", exactly as they are when
-    searching and as [`matches`][esmporium.requirements.matches] treats them.
+    searching and as [matches][esmporium.requirements.matches] treats them.
 
     A `NULL` column never matches: SQL's `IN` yields `NULL` for a `NULL` left-hand
     side, so a CMIP5 row (which has no `grid_label`) does not match
@@ -161,7 +161,7 @@ def availability_filter(availability: Availability) -> ColumnElement[bool] | Non
     """
     Get the `where` clause which keeps only the datasets an availability allows
 
-    An `EXISTS` over [`DatasetVersion`][esmporium.db.schema.DatasetVersion] rather than
+    An `EXISTS` over [DatasetVersion][esmporium.db.schema.DatasetVersion] rather than
     a join, because a dataset has many versions and a join would return it once per
     version.
 
@@ -221,7 +221,7 @@ def _canonical_name_for(project: str) -> Mapping[str, str]:
     Parameters
     ----------
     project
-        The project whose names to map, as [`Dataset.project`][(m).Dataset] records it
+        The project whose names to map, as [Dataset.project][(m).Dataset] records it
 
     Returns
     -------
@@ -381,7 +381,7 @@ def to_catalogue_entry(
     Read a stored dataset row as the solver's view of it
 
     The write-side mirror of this is
-    [`DatasetFacets`][esmporium.search.DatasetFacets], which is what a parser produces
+    [DatasetFacets][esmporium.search.DatasetFacets], which is what a parser produces
     on the way in.
 
     Parameters
@@ -391,7 +391,7 @@ def to_catalogue_entry(
 
     extra
         The facets which are not columns, as
-        [`CatalogueEntry.extra`][esmporium.requirements.CatalogueEntry.extra]
+        [CatalogueEntry.extra][esmporium.requirements.CatalogueEntry.extra]
         describes them. If `None`, the entry can answer only for its columns.
 
     Returns
@@ -434,7 +434,7 @@ def find_datasets(
     Find every stored dataset which matches a query
 
     The session-level primitive behind
-    [`DatabaseCatalogue.find`][(m).DatabaseCatalogue], for a caller who wants one
+    [DatabaseCatalogue.find][(m).DatabaseCatalogue], for a caller who wants one
     transaction across a whole solve rather than one per `find`.
 
     Parameters
@@ -454,7 +454,7 @@ def find_datasets(
     Returns
     -------
     :
-        Matching datasets, ordered by [`Dataset.id`][(m).Dataset], which is the order
+        Matching datasets, ordered by [Dataset.id][(m).Dataset], which is the order
         they were first saved in
 
     Raises
@@ -523,13 +523,13 @@ def find_datasets(
 @dataclass(frozen=True)
 class DatabaseCatalogue:
     """
-    A [`Catalogue`][esmporium.requirements.Catalogue] backed by our own database
+    A [Catalogue][esmporium.requirements.Catalogue] backed by our own database
 
-    Answers from the [`Dataset`][(m).Dataset] rows a search saved, so
-    [`solve`][esmporium.requirements.solve] can be run against everything found so far
+    Answers from the [Dataset][(m).Dataset] rows a search saved, so
+    [solve][esmporium.requirements.solve] can be run against everything found so far
     rather than against a catalogue written out by hand. Run the same requirement
     again tomorrow and the difference between the two
-    [`SolveResult`][esmporium.requirements.SolveResult]s is what changed.
+    [SolveResult][esmporium.requirements.SolveResult]s is what changed.
     """
 
     engine: Engine
@@ -564,7 +564,7 @@ class DatabaseCatalogue:
         question this exists to answer. Use [find_datasets][(m).find_datasets] if you
         do want one transaction across a whole solve.
 
-        [`solve`][esmporium.requirements.solve] calls this once to discover the groups
+        [solve][esmporium.requirements.solve] calls this once to discover the groups
         and once per leaf per group, so a large solve issues a good many identical
         queries. That is fine on SQLite and is the thing to look at first if it is
         ever not.

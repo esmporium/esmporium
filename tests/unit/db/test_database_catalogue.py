@@ -2,7 +2,7 @@
 Tests of the database-backed catalogue
 
 The headline is `test_solving_against_the_database_matches_the_in_memory_catalogue`:
-the two implementations of [`Catalogue`][esmporium.requirements.Catalogue] have to give
+the two implementations of [Catalogue][esmporium.requirements.Catalogue] have to give
 the same answers, because that is the promise which lets everything in
 `esmporium.requirements` be written and tested against the in-memory one.
 """
@@ -139,7 +139,7 @@ def test_a_query_setting_no_facets_finds_everything(engine, store):
     """
     An empty query constrains nothing, so it matches every row
 
-    The same answer [`matches`][esmporium.requirements.matches] documents. It is a
+    The same answer [matches][esmporium.requirements.matches] documents. It is a
     sharp edge one level up, which is why a requirement's leaf refuses an empty query.
     """
     store("one")

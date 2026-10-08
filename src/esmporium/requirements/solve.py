@@ -8,7 +8,7 @@ and the solver works out whether the one can be satisfied from the other.
 We attempt to solve the same tree multiple times, one attempt per group.
 A group is a set of datasets from which we try to meet the requirement.
 The grouping is set by
-[`Requirement.group_by`][esmporium.requirements.Requirement.group_by].
+[Requirement.group_by][esmporium.requirements.Requirement.group_by].
 Each attempt either leads to a solution ([Solution][(m).Solution])
 or not ([UnsolvedGroup][(m).UnsolvedGroup]).
 
@@ -55,7 +55,7 @@ GroupKey = tuple[tuple[str, str | None], ...]
 `(facet, value)` pairs identifying a group
 
 A value can be `None` because a facet can be: CMIP5 has no concept of a grid, so
-[`CatalogueEntry.grid_label`][esmporium.requirements.CatalogueEntry.grid_label] is
+[CatalogueEntry.grid_label][esmporium.requirements.CatalogueEntry.grid_label] is
 `None` for every CMIP5 dataset.
 """
 
@@ -500,7 +500,7 @@ def _ambiguous_message(candidates: Sequence[CatalogueEntry], ctx: _Context) -> s
         # The issue tracker rather than advice, because a catalogue backed by our
         # database cannot get here: ingestion refuses two datasets which agree on
         # every column, `id_project_specific` included (see
-        # [`UnhandledDatasetClashError`][esmporium.db.UnhandledDatasetClashError]),
+        # [UnhandledDatasetClashError][esmporium.db.UnhandledDatasetClashError]),
         # so these two differ in a facet which exists but reached neither a column
         # nor `extra`. That is ours to fix, not the user's to work around, and
         # "narrow the query" is not offered because there is nothing visible to

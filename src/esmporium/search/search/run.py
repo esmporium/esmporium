@@ -327,7 +327,7 @@ class LeafSearchOutcome:
         """
         Whether any facade answered this search
 
-        Forwarded from [`SearchOutcome.answered`][(m).SearchOutcome.answered], so
+        Forwarded from [SearchOutcome.answered][(m).SearchOutcome.answered], so
         that `all(o.answered for o in outcomes)` reads the same whichever entry point
         produced them.
         """

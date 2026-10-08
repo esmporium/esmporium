@@ -19,7 +19,7 @@ reading the datasets back out of a solution,
 and one requirement written in two query styles giving one hash.
 
 Needs no network and no database: the catalogue here is
-[`InMemoryCatalogue`][esmporium.requirements.InMemoryCatalogue], which is what we
+[InMemoryCatalogue][esmporium.requirements.InMemoryCatalogue], which is what we
 use for demos like this so we don't need a full database to be spun up.
 Everything else -- the requirement, the solving, the
 explanations -- is exactly what a real catalogue would get.

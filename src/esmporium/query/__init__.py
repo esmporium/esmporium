@@ -3,7 +3,7 @@ Specification of queries
 
 These are intended to be used both when searching ESGF
 [TODO add cross-ref once the ESGF search module is added]
-and when searching our database ([esmporium.db][esmporium.db]).
+and when searching our database ([esmporium.db][]).
 """
 
 from esmporium.query.canonical_query import (

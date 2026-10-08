@@ -327,7 +327,7 @@ def test_dataset_facets_mirror_dataset_columns():
     """`DatasetFacets` declares exactly `Dataset`'s facets plus `id_project_specific`.
 
     This pins the `search` <-> `db` coupling in one assertion. The facade parses results
-    into [`DatasetFacets`][esmporium.search.result_parsing.DatasetFacets], and the `db`
+    into [DatasetFacets][esmporium.search.result_parsing.DatasetFacets], and the `db`
     layer builds a `Dataset` from each one, so if a facet is added to `Dataset` without
     adding it to `DatasetFacets` (or vice versa), parsing and storage silently fall out
     of step. This fails by name the moment they diverge -- a faster, sharper signal than

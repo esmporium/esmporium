@@ -331,28 +331,28 @@ class QueryCanonical(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     project: FacetValues = ()
-    """See [`Dataset.project`][esmporium.db.schema.Dataset.project]"""
+    """See [Dataset.project][esmporium.db.schema.Dataset.project]"""
 
     model: FacetValues = ()
-    """See [`Dataset.model`][esmporium.db.schema.Dataset.model]"""
+    """See [Dataset.model][esmporium.db.schema.Dataset.model]"""
 
     institution: FacetValues = ()
-    """See [`Dataset.institution`][esmporium.db.schema.Dataset.institution]"""
+    """See [Dataset.institution][esmporium.db.schema.Dataset.institution]"""
 
     experiment: FacetValues = ()
-    """See [`Dataset.experiment`][esmporium.db.schema.Dataset.experiment]"""
+    """See [Dataset.experiment][esmporium.db.schema.Dataset.experiment]"""
 
     variable: FacetValues = ()
-    """See [`Dataset.variable`][esmporium.db.schema.Dataset.variable]"""
+    """See [Dataset.variable][esmporium.db.schema.Dataset.variable]"""
 
     variant_label: FacetValues = ()
-    """See [`Dataset.variant_label`][esmporium.db.schema.Dataset.variant_label]"""
+    """See [Dataset.variant_label][esmporium.db.schema.Dataset.variant_label]"""
 
     reporting_interval: FacetValues = ()
-    """See [`Dataset.reporting_interval`][esmporium.db.schema.Dataset.reporting_interval]"""  # noqa: E501
+    """See [Dataset.reporting_interval][esmporium.db.schema.Dataset.reporting_interval]"""  # noqa: E501
 
     processing_id: FacetValues = ()
-    """See [`Dataset.processing_id`][esmporium.db.schema.Dataset.processing_id]"""
+    """See [Dataset.processing_id][esmporium.db.schema.Dataset.processing_id]"""
 
     activity: FacetValues = ()
     """
@@ -373,7 +373,7 @@ class QueryCanonical(BaseModel):
     """
 
     grid_label: FacetValues = ()
-    """See [`grid_label`][esmporium.db.schema.Dataset.grid_label]."""
+    """See [grid_label][esmporium.db.schema.Dataset.grid_label]."""
 
     realm: FacetValues = ()
     """

@@ -2,7 +2,7 @@
 Identify the facets which make datasets unique, even if they look identical to us
 
 For example,
-when datasets share every facet column our [`Dataset`][esmporium.db.schema.Dataset]
+when datasets share every facet column our [Dataset][esmporium.db.schema.Dataset]
 model records but have different `id_project_specific` values,
 they are usually distinguished by some project-specific facet
 we do not model as a column:
@@ -13,7 +13,7 @@ but a query on our columns alone cannot tell them apart.
 
 When datasets share every column, `id_project_specific` included, our model cannot
 store them separately at all (see
-[`UnhandledDatasetClashError`][esmporium.db.UnhandledDatasetClashError]).
+[UnhandledDatasetClashError][esmporium.db.UnhandledDatasetClashError]).
 This is data of a shape we did not expect: it differs in a facet
 that appears neither in our columns nor in `id_project_specific`.
 Diffing the raw documents shows which facet our model is missing.
@@ -60,7 +60,7 @@ def facet_differences(
     normalised_info
         One entry per dataset (or raw document) in the clash.
         Each is a tuple of a key identifying the entry
-        (e.g. the dataset's [`Dataset.id`][esmporium.db.schema.Dataset])
+        (e.g. the dataset's [Dataset.id][esmporium.db.schema.Dataset])
         and its normalised facets, as produced by
         [esmporium.search.normalise_stored_document][].
 
@@ -69,7 +69,7 @@ def facet_differences(
     :
         `{facet_name: {key: value}}` for each facet the entries do not all agree on,
         with one entry per key
-        (its value, or [`MISSING`][(m).] if its document lacks the facet).
+        (its value, or [MISSING][(m).] if its document lacks the facet).
         Empty if the entries agree on every facet.
 
     Raises

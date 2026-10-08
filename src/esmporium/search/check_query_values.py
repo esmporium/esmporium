@@ -681,7 +681,7 @@ class LeafValueCheckOutcome:
     What came of checking one of a requirement's queries: one leaf, one project
 
     The value-checking mirror of
-    [`LeafSearchOutcome`][esmporium.search.LeafSearchOutcome], and for the same
+    [LeafSearchOutcome][esmporium.search.LeafSearchOutcome], and for the same
     reason: a requirement fans out into many checks, and a report on its own does not
     say which leaf it is about.
     """
@@ -703,7 +703,7 @@ class LeafValueCheckOutcome:
         """
         Whether any facade answered this check
 
-        Forwarded from [`ValueCheckOutcome.answered`][(m).ValueCheckOutcome.answered].
+        Forwarded from [ValueCheckOutcome.answered][(m).ValueCheckOutcome.answered].
         """
         return self.outcome.answered
 

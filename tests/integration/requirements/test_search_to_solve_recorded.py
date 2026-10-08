@@ -3,9 +3,9 @@ A requirement searched, saved and solved, end to end, with no network
 
 This is the point of R4, and the loop we actually want to run daily: write a
 requirement, search for it, dump everything the search found into the database, and
-ask [`solve`][esmporium.requirements.solve] what it adds up to. Run it again tomorrow
+ask [solve][esmporium.requirements.solve] what it adds up to. Run it again tomorrow
 and the difference between the two
-[`SolveResult`][esmporium.requirements.SolveResult]s is what changed.
+[SolveResult][esmporium.requirements.SolveResult]s is what changed.
 
 It runs off a recorded ESGF-NG response (`tests/test-data/search/`) through a mock
 transport, so it is deterministic and part of the ordinary test run. The live

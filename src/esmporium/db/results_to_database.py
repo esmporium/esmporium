@@ -50,7 +50,7 @@ class UnhandledDatasetClashError(Exception):
     We did not expect data of this shape.
     The data is presumably different in some facet(s) we do not model,
     and which also do not appear in id_project_specific,
-    so that difference is invisible to [`Dataset`][esmporium.db.schema.Dataset].
+    so that difference is invisible to [Dataset][esmporium.db.schema.Dataset].
 
     For example, CORDEX data could differ by driving climate model,
     without the driving climate model appearing in id_project_specific.
@@ -75,7 +75,7 @@ class UnhandledDatasetClashError(Exception):
         differences
             The facets that differ between the raw documents
             of the stored dataset and `dataset`,
-            as returned by [`facet_differences`][esmporium.db.facet_differences].
+            as returned by [facet_differences][esmporium.db.facet_differences].
 
             `None` if these could not be worked out
             (e.g. no raw document was supplied for `dataset`).
@@ -164,7 +164,7 @@ def save_dataset(
     ------
     UnhandledDatasetClashError
         `dataset` is identical, in every column our model records, to one already
-        stored (see [`Dataset`][esmporium.db.schema.Dataset]'s identity index).
+        stored (see [Dataset][esmporium.db.schema.Dataset]'s identity index).
 
         If `raw_doc` is supplied and the stored dataset has raw documents,
         the error's `differences` holds the facets that differ between them.
@@ -380,7 +380,7 @@ def build_result_processor(
     -------
     :
         A callback of the shape
-        [`ResultProcessor`][esmporium.search.result_parsing.ResultProcessor].
+        [ResultProcessor][esmporium.search.result_parsing.ResultProcessor].
     """
 
     def processor(
@@ -412,7 +412,7 @@ def build_result_processor_factory(
 
     Everything a search returns is saved, not just what the requirement asked for.
     That is deliberate: working out what the requirement adds up to is
-    [`solve`][esmporium.requirements.solve]'s job, against the stored data, so that
+    [solve][esmporium.requirements.solve]'s job, against the stored data, so that
     the same question can be asked again tomorrow and the two answers compared.
 
     Parameters

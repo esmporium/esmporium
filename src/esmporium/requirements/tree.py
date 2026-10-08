@@ -67,7 +67,7 @@ Separator between the parts of a role path, e.g. the `.` in `abrupt4x.control.ta
 
 # A note for developers:
 # This looks like a duplicate of
-# [`ClashingFacetsError`][esmporium.query.ClashingFacetsError] and is not one, so it
+# [ClashingFacetsError][esmporium.query.ClashingFacetsError] and is not one, so it
 # stays here rather than moving to `esmporium.query`.
 # This error is about values, rather than facets.
 class ConflictingFacetsError(ValueError):
@@ -77,7 +77,7 @@ class ConflictingFacetsError(ValueError):
     Repeating a facet is fine as long as the values agree *and* both sides keep it in
     the same home. Agreeing on the value but disagreeing on the home -- a declared
     field on one side, `other_terms` on the other -- raises
-    [`ClashingFacetsError`][esmporium.query.ClashingFacetsError] instead.
+    [ClashingFacetsError][esmporium.query.ClashingFacetsError] instead.
     """
 
     def __init__(self, role: str, facets: Iterable[str], source_name: str) -> None:
@@ -228,7 +228,7 @@ def _accept_any_query_style(value: Any) -> Any:
     Returns
     -------
     :
-        A [`QueryCanonical`][esmporium.query.QueryCanonical] if `value` was a query of
+        A [QueryCanonical][esmporium.query.QueryCanonical] if `value` was a query of
         some kind, and `value` untouched otherwise, so that pydantic reports anything
         unusable in its own words.
 
@@ -400,9 +400,9 @@ class Leaf(BaseModel):
     instead.
 
     Write it in whichever style suits the project --
-    [`Query`][esmporium.query.Query], [`QueryCMIP5`][esmporium.query.QueryCMIP5] and
+    [Query][esmporium.query.Query], [QueryCMIP5][esmporium.query.QueryCMIP5] and
     the rest all work. It is translated on the way in and stored as a
-    [`QueryCanonical`][esmporium.query.QueryCanonical]
+    [QueryCanonical][esmporium.query.QueryCanonical]
     (to make the rest of the package and functionality work)
     """
     # For developers: the reason we store this as `QueryCanonical` is that a stored
@@ -459,7 +459,7 @@ class Leaf(BaseModel):
         Takes a query rather than keyword facets, for the same reason
         [Leaf.query][(m).Leaf.query] does: a query in any style can name any facet,
         including one only a project names. Keywords could only reach the facets
-        [`Query`][esmporium.query.Query] declares, so a facet a leaf could hold --
+        [Query][esmporium.query.Query] declares, so a facet a leaf could hold --
         CMIP5's `product` -- was one `.where()` could not add.
 
         Whatever `Query` decides about a facet still applies, because the query is

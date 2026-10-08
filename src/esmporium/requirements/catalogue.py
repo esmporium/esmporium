@@ -24,7 +24,7 @@ from esmporium.query import (
 
 # A note for developers:
 # This looks like a duplicate of
-# [`UnaskableFacetError`][esmporium.search.UnaskableFacetError] and is not one.
+# [UnaskableFacetError][esmporium.search.UnaskableFacetError] and is not one.
 # That error is an `AssertionError`: reaching it means a request was
 # built naming a facet a query style has no parameter for, i.e. a guard was bypassed
 # and the bug is ours. This one is a `ValueError`, because asking is reasonable and
@@ -70,13 +70,13 @@ class DuplicateEntryIDError(ValueError):
     Two or more of a catalogue's entries share an ID
 
     Not to be confused with
-    [`UnhandledDatasetClashError`][esmporium.db.UnhandledDatasetClashError],
+    [UnhandledDatasetClashError][esmporium.db.UnhandledDatasetClashError],
     which is about the *data*: two rows our dataset model cannot tell apart, where
     the fix is to work out which facet we are missing.
     This is about the *code*: an ID identifies one row, so a catalogue which repeats
     one has been built wrongly.
     It cannot arise from the database, where `id` is
-    [`Dataset.id`][esmporium.db.schema.Dataset.id], a primary key.
+    [Dataset.id][esmporium.db.schema.Dataset.id], a primary key.
     """
 
     def __init__(self, collisions: Mapping[int, int]) -> None:
@@ -110,9 +110,9 @@ class CatalogueEntry:
     """
     A dataset, as far as the solver is concerned
 
-    The fields mirror the columns of [`Dataset`][esmporium.db.schema.Dataset],
+    The fields mirror the columns of [Dataset][esmporium.db.schema.Dataset],
     so that the two cannot drift apart unnoticed.
-    [`DatasetFacets`][esmporium.search.DatasetFacets] is the mirror image of this
+    [DatasetFacets][esmporium.search.DatasetFacets] is the mirror image of this
     class on the write side: parsers produce those, and this is what reading a
     stored row gives back.
 
@@ -122,7 +122,7 @@ class CatalogueEntry:
 
     id: int
     """
-    See [`Dataset.id`][esmporium.db.schema.Dataset.id]
+    See [Dataset.id][esmporium.db.schema.Dataset.id]
 
     Not optional, unlike the column it mirrors:
     an entry describes a row which is already in the database,
@@ -133,33 +133,33 @@ class CatalogueEntry:
     id_project_specific: str
     """
     See
-    [`Dataset.id_project_specific`][esmporium.db.schema.Dataset.id_project_specific]
+    [Dataset.id_project_specific][esmporium.db.schema.Dataset.id_project_specific]
     """
 
     project: str
-    """See [`Dataset.project`][esmporium.db.schema.Dataset.project]."""
+    """See [Dataset.project][esmporium.db.schema.Dataset.project]."""
 
     model: str
-    """See [`Dataset.model`][esmporium.db.schema.Dataset.model]."""
+    """See [Dataset.model][esmporium.db.schema.Dataset.model]."""
 
     institution: str
-    """See [`Dataset.institution`][esmporium.db.schema.Dataset.institution]."""
+    """See [Dataset.institution][esmporium.db.schema.Dataset.institution]."""
 
     experiment: str
-    """See [`Dataset.experiment`][esmporium.db.schema.Dataset.experiment]."""
+    """See [Dataset.experiment][esmporium.db.schema.Dataset.experiment]."""
 
     variant_label: str
-    """See [`Dataset.variant_label`][esmporium.db.schema.Dataset.variant_label]."""
+    """See [Dataset.variant_label][esmporium.db.schema.Dataset.variant_label]."""
 
     variable: str
-    """See [`Dataset.variable`][esmporium.db.schema.Dataset.variable]."""
+    """See [Dataset.variable][esmporium.db.schema.Dataset.variable]."""
 
     reporting_interval: str
-    """See [`Dataset.reporting_interval`][esmporium.db.schema.Dataset.reporting_interval]."""  # noqa: E501
+    """See [Dataset.reporting_interval][esmporium.db.schema.Dataset.reporting_interval]."""  # noqa: E501
 
     grid_label: str | None
     """
-    See [`Dataset.grid_label`][esmporium.db.schema.Dataset.grid_label]
+    See [Dataset.grid_label][esmporium.db.schema.Dataset.grid_label]
 
     `None` for a project with no concept of a grid (CMIP5), exactly as the column is.
     A query can therefore never match this facet for such a dataset:
@@ -167,7 +167,7 @@ class CatalogueEntry:
     """
 
     processing_id: str
-    """See [`Dataset.processing_id`][esmporium.db.schema.Dataset.processing_id]."""
+    """See [Dataset.processing_id][esmporium.db.schema.Dataset.processing_id]."""
 
     extra: Mapping[str, str | None] = field(default_factory=dict)
     """
@@ -182,8 +182,8 @@ class CatalogueEntry:
     Project-specific ones, which have no canonical name at all
     (CMIP5's `product`, CMIP6's `sub_experiment_id`).
     And `activity`, `realm` and `resolution`, which *are* canonical facets
-    — [`Query`][esmporium.query.Query] can ask for them and the search APIs
-    answer — but which [`Dataset`][esmporium.db.schema.Dataset] has no column for,
+    — [Query][esmporium.query.Query] can ask for them and the search APIs
+    answer — but which [Dataset][esmporium.db.schema.Dataset] has no column for,
     so they are not in
     [DATASET_FACET_COLUMNS][esmporium.datasets.DATASET_FACET_COLUMNS].
     """
@@ -235,7 +235,7 @@ class CatalogueEntry:
 # For anything longer-lived than a one-off, declare the facet on a query class of
 # your own instead: annotate it `QueryFacet(None)` the way CMIP5's `product` is,
 # and the facade does the prefixing while `to_canonical` does the translating.
-# See [`QueryFacet`][esmporium.query.QueryFacet] and
+# See [QueryFacet][esmporium.query.QueryFacet] and
 # [esmporium.query.known_queries][].
 
 
@@ -250,7 +250,7 @@ def set_facets(query: QueryProtocol) -> dict[str, tuple[str, ...]]:
     has a single thing to loop over.
 
     `query` may be written in any query style
-    ([`QueryCMIP6`][esmporium.query.QueryCMIP6], say):
+    ([QueryCMIP6][esmporium.query.QueryCMIP6], say):
     it is translated to canonical names on the way in, so a caller does not have to
     know that our columns are named `experiment` rather than `experiment_id`.
 
@@ -395,7 +395,7 @@ def matches(query: QueryProtocol, entry: CatalogueEntry) -> bool:
 # A note for developers: `extra` is filled by the database-backed catalogue
 # ([esmporium.db.DatabaseCatalogue][]) out of the stored raw search documents, which
 # is what makes `activity`, `realm`, `resolution` and the project-specific facets
-# askable at all. They are not columns of [`Dataset`][esmporium.db.schema.Dataset] --
+# askable at all. They are not columns of [Dataset][esmporium.db.schema.Dataset] --
 # `activity`, `realm` and `resolution` are canonical facets every query class names
 # and the APIs answer for, they just have nowhere to be stored -- so the raw document
 # is the only place left, and
@@ -410,8 +410,8 @@ def matches(query: QueryProtocol, entry: CatalogueEntry) -> bool:
 #   -- so a caller who excluded a retracted version is not then described by it. This
 #   is the piece which will need revisiting once a requirement can ask for a particular
 #   version, which it cannot today: `version` lives on
-#   [`DatasetVersion`][esmporium.db.schema.DatasetVersion], not on `Dataset`, and is
-#   neither a canonical facet nor something a [`Query`][esmporium.query.Query] can
+#   [DatasetVersion][esmporium.db.schema.DatasetVersion], not on `Dataset`, and is
+#   neither a canonical facet nor something a [Query][esmporium.query.Query] can
 #   name. Making it one would touch `esmporium.query`, the canonical facets and every
 #   search API's parameter mapping, so it is a change of its own.
 #
@@ -445,7 +445,7 @@ class Catalogue(Protocol):
         Note for implementers: Matching on a facet we have no column for is essential.
         For example, a query naming
         `product` or `realm` must match whenever the entry's `extra` carries it
-        (see [`CatalogueEntry.extra`][(m).CatalogueEntry.extra]).
+        (see [CatalogueEntry.extra][(m).CatalogueEntry.extra]).
         What is up to each catalogue is where `extra` comes from —
         [esmporium.db.DatabaseCatalogue][] reads it out of the raw search documents,
         another might consult a project-specific table, or simply know.
@@ -472,7 +472,7 @@ class InMemoryCatalogue:
     A catalogue held entirely in memory
 
     Intended for tests and for prototyping, and expected to stay that way: it lets
-    everything built on top of [`Catalogue`][(m).Catalogue] be written and tested
+    everything built on top of [Catalogue][(m).Catalogue] be written and tested
     without a database, which is how each new piece of this package gets written.
 
     The database-backed one is [esmporium.db.DatabaseCatalogue][]. The two have to

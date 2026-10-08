@@ -14,7 +14,7 @@ from esmporium.requirements.tree import effective_query, walk_leaves
 @pytest.fixture
 def make_entry(get_dataset_kwargs):
     """
-    Get a factory for a [`CatalogueEntry`][esmporium.requirements.CatalogueEntry]
+    Get a factory for a [CatalogueEntry][esmporium.requirements.CatalogueEntry]
 
     Builds on `get_dataset_kwargs` (see the root `conftest.py`), so the facet values
     come from the column names and types rather than being written out here.
@@ -53,7 +53,7 @@ def satisfying_catalogue(make_entry):
     The known limit, and the part which grows as the tree does: a requirement
     which groups or prefers on a facet no leaf's query names has nothing here to
     answer for it, so solving it raises
-    [`UnrecordedFacetError`][esmporium.requirements.UnrecordedFacetError].
+    [UnrecordedFacetError][esmporium.requirements.UnrecordedFacetError].
     """
 
     def factory(requirement):

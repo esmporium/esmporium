@@ -409,9 +409,9 @@ def translate_canonical_to_projects(
     with [to_canonical][(m).to_canonical] in front of it.
 
     Use this when the query is already canonical, which
-    [`QueryCanonical`][esmporium.query.QueryCanonical] cannot be translated
+    [QueryCanonical][esmporium.query.QueryCanonical] cannot be translated
     *to* its own form on the way in: it declares no
-    [`QueryFacet`][esmporium.query.QueryFacet] annotations, because it is what those
+    [QueryFacet][esmporium.query.QueryFacet] annotations, because it is what those
     annotations point at, so `to_canonical` has nothing to read and raises.
     A requirement's leaf query is the case this exists for.
 
