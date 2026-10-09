@@ -1,25 +1,9 @@
 """
 The datasets we have stored, as the solver sees them
 
-[esmporium.requirements][] defines what a catalogue is
-([Catalogue][esmporium.requirements.Catalogue]) and ships an in-memory one for
-tests. This is the real one: it answers from the [Dataset][(m).Dataset] rows a
-search saved.
-
-It lives in `esmporium.db` rather than beside the protocol it implements, for two
-reasons. `esmporium.db` is the only layer which touches the local databases directly,
-and this is a `select`. And `esmporium.requirements` may not import `esmporium.db`
-(see the developer note in `esmporium/requirements/__init__.py`), whereas the reverse
-is free: `db` -> `requirements` -> `query` has no cycle in it. Being on this side also
-means [normalise_stored_document][esmporium.search.normalise_stored_document] is in
-reach, which is what lets `extra` be filled at all.
-
-**The semantics are the in-memory catalogue's.** The facets a dataset records are
-columns, so they are matched in SQL; everything else is matched in Python by
-[CatalogueEntry.facet][esmporium.requirements.CatalogueEntry.facet], exactly as
-[InMemoryCatalogue][esmporium.requirements.InMemoryCatalogue] does it. The SQL is an
-optimisation, not a second set of rules, and
-`test_solving_against_the_database_matches_the_in_memory_catalogue` pins that.
+[esmporium.requirements][] defines what a catalogue is.
+This identifies what datasets exist in the database which fulfil the requirement:
+it answers from the [Dataset][(m).Dataset] rows a search saved.
 """
 
 from __future__ import annotations
@@ -209,7 +193,9 @@ def availability_filter(availability: Availability) -> ColumnElement[bool] | Non
     )
 
 
-def _canonical_name_for(project: str) -> Mapping[str, str]:
+def _canonical_name_for(
+    project: str, project_query_map: Mapping[str, type[QueryProtocol]]
+) -> Mapping[str, str]:
     """
     Get the native-to-canonical facet name mapping for a project
 
@@ -223,16 +209,19 @@ def _canonical_name_for(project: str) -> Mapping[str, str]:
     project
         The project whose names to map, as [Dataset.project][(m).Dataset] records it
 
+    project_query_map
+        Mapping from projects to the query class which names their facets
+
     Returns
     -------
     :
         Native facet name -> canonical facet name
 
-        Empty for a project we have no query class for, in which case the native names
-        are kept as they are, which is the best we can do and still better than
-        nothing.
+        Empty for a project `project_query_map` has no query class for, in which case
+        the native names are kept as they are, which is the best we can do and still
+        better than nothing.
     """
-    for known, query_class in PROJECT_QUERY_MAP_DEFAULT.items():
+    for known, query_class in project_query_map.items():
         if known.lower() == project.lower():
             return facet_spec(query_class).native_to_canonical
 
@@ -243,6 +232,7 @@ def _extra_from_documents(
     project: str,
     documents: list[tuple[dict[str, Any], str]],
     normalisers: Mapping[str, NormaliseFunc],
+    project_query_map: Mapping[str, type[QueryProtocol]],
 ) -> dict[str, str | None]:
     """
     Build an entry's `extra` from the raw documents describing it
@@ -260,6 +250,10 @@ def _extra_from_documents(
     normalisers
         How to flatten a document of each format
 
+    project_query_map
+        Mapping from projects to the query class which names their facets, used to
+        translate each document's native facet names
+
     Returns
     -------
     :
@@ -270,7 +264,7 @@ def _extra_from_documents(
     UnknownRawDocFormatTagError
         A document's format tag has no flattener in `normalisers`
     """
-    to_canonical_name = _canonical_name_for(project)
+    to_canonical_name = _canonical_name_for(project, project_query_map)
 
     extra: dict[str, str | None] = {}
     for raw, tag in documents:
@@ -429,6 +423,7 @@ def find_datasets(
     *,
     availability: Availability = Availability.LATEST_NOT_RETRACTED,
     normalisers: Mapping[str, NormaliseFunc] = DEFAULT_NORMALISERS,
+    project_query_map: Mapping[str, type[QueryProtocol]] = PROJECT_QUERY_MAP_DEFAULT,
 ) -> tuple[CatalogueEntry, ...]:
     """
     Find every stored dataset which matches a query
@@ -450,6 +445,11 @@ def find_datasets(
 
     normalisers
         How to flatten a stored raw document of each format, when filling `extra`
+
+    project_query_map
+        Mapping from projects to the query class which names their facets, used to
+        translate a stored document's native facet names into the canonical ones a
+        query asks with
 
     Returns
     -------
@@ -504,7 +504,10 @@ def find_datasets(
         to_catalogue_entry(
             row,
             _extra_from_documents(
-                row.project, documents.get(row.id, []) if row.id else [], normalisers
+                row.project,
+                documents.get(row.id, []) if row.id else [],
+                normalisers,
+                project_query_map,
             ),
         )
         for row in rows
@@ -554,6 +557,19 @@ class DatabaseCatalogue:
     facades with a search API of your own, whose documents carry your own format tag.
     """
 
+    project_query_map: Mapping[str, type[QueryProtocol]] = field(
+        default_factory=lambda: PROJECT_QUERY_MAP_DEFAULT
+    )
+    """
+    Mapping from projects to the query class which names their facets
+
+    Used to translate a stored document's native facet names (`activity_id`) into the
+    canonical ones a query asks with (`activity`), when filling
+    [CatalogueEntry.extra][esmporium.requirements.CatalogueEntry.extra]. Override it
+    for a project whose query class is your own; a project which is not in here keeps
+    its documents' native spellings.
+    """
+
     def find(self, query: QueryProtocol) -> tuple[CatalogueEntry, ...]:
         """
         Find every stored dataset which matches a query
@@ -593,4 +609,5 @@ class DatabaseCatalogue:
                 query,
                 availability=self.availability,
                 normalisers=self.normalisers,
+                project_query_map=self.project_query_map,
             )
