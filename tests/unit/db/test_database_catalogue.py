@@ -594,3 +594,76 @@ def test_solving_against_the_database_matches_the_in_memory_catalogue(engine, st
             role: tuple(entry.id_project_specific for entry in entries)
             for role, entries in other.roles.items()
         }
+
+
+# ------------------------------------- the two catalogues answering about a facet
+# nothing records
+
+
+def outcome(catalogue, query):
+    """
+    What a catalogue did with a query: what it found, or the error it raised
+
+    Returned rather than asserted on directly, so that the two catalogues can be
+    compared without this test caring which of the two answers is the right one.
+    """
+    try:
+        return tuple(entry.id_project_specific for entry in catalogue.find(query))
+    except UnrecordedFacetError as exc:
+        return f"UnrecordedFacetError({', '.join(exc.facets)})"
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        pytest.param(
+            Query(variable="tas", realm="atmos"), id="declared-column-matches"
+        ),
+        pytest.param(
+            Query(variable="ta", realm="atmos"), id="declared-column-matches-nothing"
+        ),
+        pytest.param(
+            Query(variable="tas", other_terms={"realm": ("atmos",)}),
+            id="other-terms-column-matches",
+        ),
+        pytest.param(
+            Query(variable="ta", other_terms={"realm": ("atmos",)}),
+            id="other-terms-column-matches-nothing",
+        ),
+    ],
+)
+def test_both_catalogues_answer_alike_about_a_facet_nothing_records(
+    engine, store, get_dataset_kwargs, query
+):
+    """
+    Both catalogues give the same answer when asked for a facet nothing records
+
+    `realm` is the facet here: a canonical facet every query class names, with no
+    column on [Dataset][esmporium.db.schema.Dataset], so only a raw document can
+    answer for it -- and the dataset stored here has no raw documents, so nothing
+    can. Whether that is an error or an empty result is not what this test is about.
+    What it is about is that both catalogues decide it the same way, because
+    everything in `esmporium.requirements` is written against `InMemoryCatalogue`
+    and solving against the database has to mean the same thing.
+
+    `test_solving_against_the_database_matches_the_in_memory_catalogue` cannot see
+    this: every entry in it records `realm`, so the question never arises.
+
+    **`declared-column-matches-nothing` fails today**, deliberately. The two
+    catalogues reach the facet by different routes -- the in-memory one checks every
+    facet of every entry in `set_facets` order (alphabetical, so `realm` before
+    `variable`), while the database one filters on the columns in SQL and only asks
+    the surviving rows about the rest. So when the column facet matches no row, the
+    in-memory catalogue still asks `realm` and raises, and the database one never
+    asks at all. The fix is a decision which has not been taken yet: see the note by
+    `extra` in `esmporium/requirements/catalogue.py`.
+    """
+    store("one", variable="tas", versions=live())
+
+    in_memory = InMemoryCatalogue(
+        entries=(
+            CatalogueEntry(id=1, extra={}, **get_dataset_kwargs("one", variable="tas")),
+        )
+    )
+
+    assert outcome(DatabaseCatalogue(engine), query) == outcome(in_memory, query)
