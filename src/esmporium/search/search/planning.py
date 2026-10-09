@@ -8,10 +8,10 @@ searches have to be fired to have any chance of satisfying it.
 
 That happens in two steps, and both are here.
 [to_search_plan][(m).to_search_plan] reads the tree and gives one query per distinct
-leaf, saying nothing about where those queries go. A query may name several projects,
-or none, and one search goes to one project, so
-[plan_sub_searches][(m).plan_sub_searches] then splits each of them into one query per
-project it names, in the style that project uses.
+leaf, saying nothing about where those queries go. One search goes to one project and
+a query may name several, so [plan_sub_searches][(m).plan_sub_searches] then splits
+each of them into one query per project it names, in the style that project uses. A
+leaf which names no project is an error raised there, naming the roles which asked.
 
 Shared by [search][esmporium.search.search] and
 [check_query_values][esmporium.search.check_query_values] because they ask the same
