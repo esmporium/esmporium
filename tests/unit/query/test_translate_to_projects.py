@@ -14,11 +14,14 @@ from esmporium.query import (
     FacetNotExpressibleError,
     NoTargetProjectError,
     Query,
+    QueryCanonical,
     QueryCMIP5,
     QueryCMIP6,
     QueryFacet,
     SourceQuery,
     UnknownProjectError,
+    to_canonical,
+    translate_canonical_to_projects,
     translate_to_projects,
 )
 
@@ -219,3 +222,68 @@ def test_a_query_we_did_not_write_can_be_a_target():
             mip=("MIP1",), esm=("ACCESS-CM2",), vintage=("2026",), source_query=start
         )
     }
+
+
+# ------------------------------------------- the canonical-input entry point
+
+
+def test_a_canonical_query_translates():
+    """
+    A canonical query can be translated, which it cannot be via `translate_to_projects`
+
+    `translate_to_projects` runs `to_canonical` first, and that reads the query
+    class's `QueryFacet` annotations. `QueryCanonical` has none -- it is what those
+    annotations point *at* -- so it has to come in through this door instead.
+    """
+    canonical = QueryCanonical(project=("CMIP5", "CMIP6"), variable=("tas",))
+
+    res = translate_canonical_to_projects(canonical)
+
+    assert sorted(res) == ["CMIP5", "CMIP6"]
+    assert res["CMIP5"].variable == ("tas",)
+    assert res["CMIP6"].variable_id == ("tas",)
+
+
+def test_the_two_entry_points_agree():
+    """
+    Going through `to_canonical` first changes nothing but the input type
+    """
+    query = Query(project=("CMIP5", "CMIP6"), model="ACCESS-CM2")
+
+    through_query = translate_to_projects(query)
+    through_canonical = translate_canonical_to_projects(to_canonical(query))
+
+    assert sorted(through_query) == sorted(through_canonical)
+    for project, translated in through_query.items():
+        other = through_canonical[project]
+        assert type(translated) is type(other)
+        # `source_query` is the one difference: `to_canonical` records what it was
+        # handed, and here the two were handed different things.
+        excluded = {"source_query"}
+        assert translated.model_dump(exclude=excluded) == other.model_dump(
+            exclude=excluded
+        )
+
+
+def test_a_canonical_query_with_no_project_says_to_set_project():
+    """
+    The fix names `project`, because that is what a canonical query calls it
+
+    `translate_to_projects` names the facet under the style the query was written in,
+    which it reads off `source_query`. A canonical query built directly has no
+    `source_query`, so there is no other style to name.
+    """
+    with pytest.raises(
+        NoTargetProjectError,
+        match=re.escape("Please supply `projects` or set the query's `project` facet"),
+    ):
+        translate_canonical_to_projects(QueryCanonical(variable=("tas",)))
+
+
+def test_a_canonical_query_can_still_be_pointed_at_projects():
+    canonical = QueryCanonical(variable=("tas",))
+
+    res = translate_canonical_to_projects(canonical, projects=["CMIP7"])
+
+    assert res["CMIP7"].variable_id == ("tas",)
+    assert res["CMIP7"].project == ("CMIP7",)

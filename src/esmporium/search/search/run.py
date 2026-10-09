@@ -1,24 +1,19 @@
 """
-The search entry points for single project and multi-project queries
+The search entry points, for one project's query and for a whole requirement
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
-from typing import TypeAlias, cast
+from typing import TYPE_CHECKING, TypeAlias, cast
 
 import httpx
 
-from esmporium.query import (
-    QueryProtocol,
-    as_query_iterable,
-    to_canonical,
-    translate_to_projects,
-)
+from esmporium.query import QueryProtocol, to_canonical
 from esmporium.search.health import SearchAPICallObserver
 from esmporium.search.result_parsing import ParsedDocument, ResultProcessor
 from esmporium.search.search.errors import (
@@ -29,12 +24,16 @@ from esmporium.search.search.errors import (
 )
 from esmporium.search.search.keys import FacadeKey, get_facade_key
 from esmporium.search.search.pagination import collect_all_pages
+from esmporium.search.search.planning import SubSearch, plan_sub_searches
 from esmporium.search.search_api_facade import (
     DEFAULT_SELECTOR,
     ClashingFacetsError,
     SearchAPIFacadeSelector,
     SelectorOfferedNoAPIFacadeError,
 )
+
+if TYPE_CHECKING:
+    from esmporium.requirements import Requirement
 
 logger = logging.getLogger(__name__)
 
@@ -74,10 +73,10 @@ class SearchOutcome:
 
         `True` for any outcome a search actually returned (even one where every facade
         matched zero records). `False` only for the empty, failures-only outcome that
-        the multi-query [search][(m).] puts in place of a sub-query whose endpoints all
-        failed, so a caller can tell "this project came back empty" from "this project
-        could not be reached" -- the latter has `answered` `False` and a populated
-        `failures`.
+        the requirement-driven [search][(m).] puts in place of a sub-search whose
+        endpoints all failed, so a caller can tell "this project came back empty" from
+        "this project could not be reached" -- the latter has `answered` `False` and a
+        populated `failures`.
         """
         return bool(self.parsed_docs)
 
@@ -98,9 +97,10 @@ def search_single_project(  # noqa: PLR0913 - the keyword-only extras are delibe
     Search the facades the selector yields, and parse their answers into datasets
 
     This is the low-level, single-project building block: `query` must name exactly
-    one project (the selector and facades enforce that). To search several projects,
-    or to run several queries through one call, use the higher-level [search][(m).],
-    which splits multi-project queries and calls this function once per project.
+    one project (the selector and facades enforce that). To search for everything an
+    analysis needs, use the higher-level [search][(m).], which takes a
+    [Requirement][esmporium.requirements.Requirement], works out the queries it asks
+    for, and calls this function once per query per project.
 
     Parameters
     ----------
@@ -282,17 +282,60 @@ ProcessorFactory: TypeAlias = Callable[
     [], AbstractContextManager[ResultProcessor | None]
 ]
 """
-Makes a fresh result processor for one sub-query, as a context manager
+Makes a fresh result processor for one sub-search, as a context manager
 
-[search][(m).] calls this once per sub-query and enters the context around that
-sub-query's search, so each sub-query gets its own processor and anything that
-processor holds (e.g. a database session and its transaction) is set up before the
-search and torn down after.
+[search][(m).] calls this once per sub-search and enters the context around that
+sub-search, so each gets its own processor and anything that processor holds (e.g. a
+database session and its transaction) is set up before the search and torn down
+after.
 """
 
 
+@dataclass(frozen=True)
+class LeafSearchOutcome:
+    """
+    What came of one of a requirement's searches: one leaf's query, one project
+
+    Carries what was asked alongside what came back, because a requirement fans out
+    into many searches and an outcome on its own does not say which of them it is.
+
+    The search itself is on [outcome][(c).outcome]. The provenance lives here rather
+    than on [SearchOutcome][(m).] because that type is also what
+    [search_single_project][(m).] returns, where a role and a project would be empty.
+    """
+
+    roles: tuple[str, ...]
+    """
+    The role paths which asked for this search
+
+    Several when two leaves ask for the same dataset under different roles, which is
+    searched for once; see
+    [LeafSearch.roles][esmporium.search.LeafSearch.roles].
+    """
+
+    project: str
+    """The project this search was rendered for"""
+
+    query: QueryProtocol
+    """The project-specific query which was sent"""
+
+    outcome: SearchOutcome
+    """What came back"""
+
+    @property
+    def answered(self) -> bool:
+        """
+        Whether any facade answered this search
+
+        Forwarded from [SearchOutcome.answered][(m).SearchOutcome.answered], so
+        that `all(o.answered for o in outcomes)` reads the same whichever entry point
+        produced them.
+        """
+        return self.outcome.answered
+
+
 def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection seams
-    queries: QueryProtocol | Iterable[QueryProtocol],
+    requirement: Requirement,
     selector: SearchAPIFacadeSelector = DEFAULT_SELECTOR,
     *,
     stop_at_first_result: bool = True,
@@ -304,31 +347,43 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
     processor_factory: ProcessorFactory | None = None,
     project_query_map: Mapping[str, type[QueryProtocol]] | None = None,
     max_workers: int | None = None,
-) -> tuple[SearchOutcome, ...]:
+) -> tuple[LeafSearchOutcome, ...]:
     """
-    Search one or more queries over one or more projects
+    Search for everything a requirement needs
 
-    This is the high-level entry point. Each query may name one *or more* projects; we
-    split every query into one single-project query per project (via
-    [translate_to_projects][esmporium.query.translate.translate_to_projects]) and run
-    each through [search_single_project][(m).], handing that sub-query's results to a
-    fresh processor as they arrive.
+    This is the high-level entry point. A
+    [Requirement][esmporium.requirements.Requirement] says what an analysis needs,
+    which is more than one query's worth: it is a tree of leaves, each carrying a
+    query, and each query may name several projects.
+    [plan_sub_searches][esmporium.search.plan_sub_searches] flattens
+    that into one search per leaf per project, and each runs through
+    [search_single_project][(m).], handing its results to a fresh processor as they
+    arrive.
 
-    Each query must still name at least one project, else we raise an error.
+    What comes back is not filtered to what the requirement asked for. Every record
+    every search returned is reported, and handed to the processor, so the obvious
+    pairing is to save the lot (with
+    [build_result_processor_factory][esmporium.db.build_result_processor_factory]) and
+    then ask [solve][esmporium.requirements.solve] what it adds up to. Searching and
+    solving are deliberately separate steps: solving against stored data means the
+    same requirement can be solved again tomorrow, and the difference between the two
+    answers is what changed.
 
-    By default the sub-queries run sequentially. Pass `max_workers > 1` to run them
-    concurrently in a thread pool: the work is network-bound, so this is usually a large
-    win when there are several sub-queries.
+    By default the sub-searches run one after another. Pass `max_workers > 1` to run
+    them concurrently in a thread pool: the work is network-bound, so this is usually
+    a large win when there are several.
 
     Parameters
     ----------
-    queries
-        A single query, or an iterable of queries. Each query may name one or more
-        projects. A query that names no project is an error (see above).
+    requirement
+        The requirement to search for
+
+        Every leaf's query must name at least one project, whether on the leaf itself
+        or on the requirement's `where` (see `Raises`).
 
     selector
-        Passed straight through to [search_single_project][(m).] for every sub-query.
-        The default picks facades by the sub-query's (single) project.
+        Passed straight through to [search_single_project][(m).] for every
+        sub-search. The default picks facades by the sub-search's (single) project.
 
     stop_at_first_result
         Passed through to each [search_single_project][(m).] call.
@@ -343,8 +398,8 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
         Passed through to each [search_single_project][(m).] call.
 
     client
-        The HTTP client to search with, shared across every sub-query. If `None`, one is
-        built for the call and closed at the end.
+        The HTTP client to search with, shared across every sub-search. If `None`, one
+        is built for the call and closed at the end.
 
     api_call_observer
         Passed through to each [search_single_project][(m).] call. See
@@ -352,78 +407,89 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
         [record_search_api_calls][esmporium.db.search_health.record_search_api_calls].
 
     processor_factory
-        Called once per sub-query to make the processor for that sub-query, as a
-        context manager entered around the sub-query's search (see
-        [ProcessorFactory][(m).]). If `None` (the default), no processor is used: the
-        results are still returned in the outcomes, they are just not handed anywhere.
-        To save every result to the database, pass
-        [esmporium.db.build_result_processor_factory][].
+        Called once per sub-search to make the processor for that sub-search, as a
+        context manager entered around its search (see [ProcessorFactory][(m).]). If
+        `None` (the default), no processor is used: the results are still returned in
+        the outcomes, they are just not handed anywhere. To save every result to the
+        database, pass [esmporium.db.build_result_processor_factory][].
 
     project_query_map
         Passed through to
-        [translate_to_projects][esmporium.query.translate.translate_to_projects] when
-        splitting a query, to control which query class each project uses. If `None`,
-        the default mapping is used.
+        [translate_canonical_to_projects][esmporium.query.translate_canonical_to_projects]
+        when splitting a leaf's query, to control which query class each project uses.
+        If `None`, the default mapping is used.
 
     max_workers
-        How many sub-queries to run at once. `None` (the default) or `1` runs them
-        sequentially, one after another. A value greater than `1` runs them concurrently
-        in a thread pool of that size (see "Running sub-queries in parallel" above).
+        How many sub-searches to run at once. `None` (the default) or `1` runs them
+        one after another. A value greater than `1` runs them concurrently in a thread
+        pool of that size (see "Running sub-queries in parallel" above).
 
     Returns
     -------
     :
-        One [SearchOutcome][(m).] per sub-query, in the order the sub-queries ran
-        (queries in input order; within a query, the projects in the order
-        [translate_to_projects][esmporium.query.translate.translate_to_projects] yields
-        them). Two sub-queries can answer from the same endpoint, which is why these are
+        One [LeafSearchOutcome][(m).] per sub-search, in the order the sub-searches
+        were planned: the requirement's leaves in tree order (depth-first, children
+        left to right), deduplicated so two roles asking for the same dataset appear
+        once, and within a leaf the projects in the order its query names them.
+
+        That order holds whether or not `max_workers` was used, because
+        `ThreadPoolExecutor.map` preserves it.
+
+        Two sub-searches can answer from the same endpoint, which is why these are
         kept apart rather than merged into one endpoint-keyed outcome.
 
-        A sub-query whose endpoints all failed still gets an entry, in place, so the
-        result stays aligned with the sub-queries: an empty outcome carrying that
-        sub-query's `failures` and reporting `answered` as `False`. This is only reached
-        if at least one sub-query answered (see `Raises`).
+        A sub-search whose endpoints all failed still gets an entry, in place, so the
+        result stays aligned with the sub-searches: an empty outcome carrying that
+        sub-search's `failures` and reporting `answered` as `False`. This is only
+        reached if at least one sub-search answered (see `Raises`).
 
     Raises
     ------
     NoTargetProjectError
-        A query in `queries` names no project. Raised while splitting, before any search
-        or processor runs.
-
-    NoFacadeAnsweredError
-        Every sub-query failed and there was exactly one, so its failure is re-raised
-        unchanged (a single-project search fails the same way with or without this
-        wrapper).
+        A leaf's query names no project. Raised while planning, before any search or
+        processor runs, and names the roles which asked.
 
     AllSubQueriesFailedError
-        Every sub-query failed and there were several, so all their failures are
-        gathered into one error rather than any being lost.
+        Every sub-search failed. All their failures are gathered into one error,
+        labelled with the role and project each belongs to, rather than any being
+        lost.
+
+        Raised however many sub-searches there were. Each one belongs to a particular
+        leaf and project, so a bare
+        [NoFacadeAnsweredError][esmporium.search.NoFacadeAnsweredError] would throw
+        away the one thing a caller needs in order to know what to go and look at.
     """
-    # Split every query up front, so a query with no project blows up before we contact
-    # any endpoint or run any processor.
-    sub_queries: list[QueryProtocol] = []
-    for query in as_query_iterable(queries):
-        by_project = translate_to_projects(query, project_query_map=project_query_map)
-        sub_queries.extend(by_project.values())
+    # Plan the whole thing up front, so a leaf with no project blows up before we
+    # contact any endpoint or run any processor.
+    sub_searches = plan_sub_searches(requirement, project_query_map=project_query_map)
 
     owns_client = client is None
     client = client if client is not None else httpx.Client(follow_redirects=True)
 
     def run_one(
-        sub_query: QueryProtocol,
-    ) -> tuple[SearchOutcome, NoFacadeAnsweredError | None]:
+        sub_search: SubSearch,
+    ) -> tuple[LeafSearchOutcome, NoFacadeAnsweredError | None]:
         # A fresh processor (and so, for the saving one, a fresh session and
-        # transaction) per sub-query: entered around this sub-query's search and exited
-        # after. This is the seam that makes a worker independent -- it owns its session
-        # and shares nothing mutable -- so it is safe to call from a thread. `client` is
-        # shared: httpx.Client is thread-safe for concurrent requests.
+        # transaction) per sub-search: entered around this sub-search and exited
+        # after. This is the seam that makes a worker independent -- it owns its
+        # session and shares nothing mutable -- so it is safe to call from a thread.
+        # `client` is shared: httpx.Client is thread-safe for concurrent requests.
         processor_cm: AbstractContextManager[ResultProcessor | None] = (
             nullcontext(None) if processor_factory is None else processor_factory()
         )
+
+        def wrap(outcome: SearchOutcome) -> LeafSearchOutcome:
+            return LeafSearchOutcome(
+                roles=sub_search.roles,
+                project=sub_search.project,
+                query=sub_search.query,
+                outcome=outcome,
+            )
+
         try:
             with processor_cm as processor:
                 outcome = search_single_project(
-                    sub_query,
+                    sub_search.query,
                     selector,
                     stop_at_first_result=stop_at_first_result,
                     limit=limit,
@@ -434,37 +500,42 @@ def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection 
                     processor=processor,
                 )
         except NoFacadeAnsweredError as exc:
-            # This sub-query's endpoints all failed. Keep going: turn it into an empty
-            # outcome carrying the failures, so a caller still gets the sub-queries that
-            # did answer (and can see this one did not, via `SearchOutcome.answered`).
-            # Anything else (a config error, a pagination-cap breach, a bug) is not a
-            # "node was down" and is left to propagate and stop the whole run.
+            # This sub-search's endpoints all failed. Keep going: turn it into an
+            # empty outcome carrying the failures, so a caller still gets the
+            # sub-searches that did answer (and can see this one did not, via
+            # `LeafSearchOutcome.answered`). Anything else (a config error, a
+            # pagination-cap breach, a bug) is not a "node was down" and is left to
+            # propagate and stop the whole run.
             # `exc.failures` came from search_single_project, so it is that variant.
             failures = cast("dict[FacadeKey, CouldNotSearchError]", exc.failures)
-            return SearchOutcome({}, {}, failures), exc
-        return outcome, None
+            return wrap(SearchOutcome({}, {}, failures)), exc
+        return wrap(outcome), None
 
     try:
-        if max_workers is None or max_workers == 1 or len(sub_queries) <= 1:
-            # Sequential: results are handled and committed one sub-query at a time.
-            results = [run_one(sq) for sq in sub_queries]
+        if max_workers is None or max_workers == 1 or len(sub_searches) <= 1:
+            # Sequential: results are handled and committed one sub-search at a time.
+            results = [run_one(each) for each in sub_searches]
         else:
             # Parallel: `map` preserves input order and, if a worker raises something
             # we do not fold in (see run_one), re-raises the first such error only once
             # the executor has joined the rest, so the others' committed results stay.
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                results = list(executor.map(run_one, sub_queries))
+                results = list(executor.map(run_one, sub_searches))
     finally:
         if owns_client:
             client.close()
 
     caught = [exc for _, exc in results if exc is not None]
     if caught and len(caught) == len(results):
-        # Every sub-query failed, so there is nothing to return: fail loudly. A lone
-        # failure re-raises as-is, so a single-project search fails exactly as it would
-        # without the wrapper; several failures are gathered so none is lost.
-        if len(caught) == 1:
-            raise caught[0]
-        raise AllSubQueriesFailedError(tuple(caught))
+        # Every sub-search failed, so there is nothing to return: fail loudly, saying
+        # which leaf and project each failure belongs to.
+        raise AllSubQueriesFailedError(
+            tuple(caught),
+            tuple(
+                each.label()
+                for each, (_, exc) in zip(sub_searches, results, strict=True)
+                if exc is not None
+            ),
+        )
 
     return tuple(outcome for outcome, _ in results)

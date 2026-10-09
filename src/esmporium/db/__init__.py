@@ -7,6 +7,15 @@ This should be the only layer which touches the local databases directly.
 
 from __future__ import annotations
 
+from esmporium.db.database_catalogue import (
+    Availability,
+    DatabaseCatalogue,
+    UnknownAvailabilityError,
+    availability_filter,
+    facet_filters,
+    find_datasets,
+    to_catalogue_entry,
+)
 from esmporium.db.dataset_uniqueness import (
     MISSING,
     facet_differences,
@@ -21,7 +30,6 @@ from esmporium.db.results_to_database import (
     save_dataset,
 )
 from esmporium.db.schema import (
-    DATASET_FACET_COLUMNS,
     METADATA,
     DataNode,
     Dataset,
@@ -41,10 +49,11 @@ from esmporium.db.search_health import (
 )
 
 __all__ = [
-    "DATASET_FACET_COLUMNS",
     "METADATA",
     "MISSING",
+    "Availability",
     "DataNode",
+    "DatabaseCatalogue",
     "Dataset",
     "DatasetRawDoc",
     "DatasetVersion",
@@ -55,14 +64,19 @@ __all__ = [
     "SearchAPICallRecord",
     "UnconfiguredSQLiteEngineError",
     "UnhandledDatasetClashError",
+    "UnknownAvailabilityError",
     "aggregate_host_health",
+    "availability_filter",
     "build_health_selector",
     "build_result_processor",
     "build_result_processor_factory",
     "configure_sqlite_for_concurrency",
     "facet_differences",
+    "facet_filters",
+    "find_datasets",
     "get_median_response_time_for_ranking",
     "ingest_parsed_documents",
     "record_search_api_calls",
     "save_dataset",
+    "to_catalogue_entry",
 ]

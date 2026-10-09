@@ -17,7 +17,7 @@ import re
 
 import pytest
 
-from esmporium.db.schema import DATASET_FACET_COLUMNS
+from esmporium.datasets import DATASET_FACET_COLUMNS
 from esmporium.query import (
     ClashingFacetsError,
     Query,
@@ -32,6 +32,7 @@ from esmporium.requirements import (
     InMemoryCatalogue,
     UnrecordedFacetError,
     matches,
+    matches_facets,
     set_facets,
 )
 
@@ -188,6 +189,38 @@ def test_set_facets_refuses_a_facet_set_twice(query, clashing):
 
 
 # ----------------------------------------------------------------------------- matches
+
+
+def test_matches_facets_checks_already_flattened_facets(make_entry):
+    """
+    The companion to `set_facets`: flatten once, then check many entries
+
+    Public because both catalogues need it. `InMemoryCatalogue` flattens a query once
+    and walks its own entries; the database-backed one flattens once and walks the rows
+    its `select` returned. Going through `matches` instead would re-flatten the query
+    per entry, and -- more to the point -- the two catalogues agreeing about a facet
+    only an entry can answer for is exactly what sharing this function buys.
+    """
+    entry = make_entry(1, variable="tas", experiment="historical")
+    facets = set_facets(Query(variable="tas", experiment="historical"))
+
+    assert matches_facets(facets, entry)
+    assert not matches_facets(set_facets(Query(variable="pr")), entry)
+    # Nothing to check means nothing to fail, as with an empty query one level up.
+    assert matches_facets({}, entry)
+
+
+@pytest.mark.parametrize(
+    ("variable", "expected"),
+    [pytest.param("tas", True, id="matches"), pytest.param("pr", False, id="does-not")],
+)
+def test_matches_facets_and_matches_agree(make_entry, variable, expected):
+    """Parametrised both ways, so this cannot pass by both answers being `False`"""
+    entry = make_entry(1, variable="tas")
+    query = Query(variable=variable, project=entry.project)
+
+    assert matches(query, entry) is expected
+    assert matches_facets(set_facets(query), entry) is expected
 
 
 def test_matches_on_one_facet(make_entry):

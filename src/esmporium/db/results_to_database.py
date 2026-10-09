@@ -12,10 +12,10 @@ from sqlalchemy import Engine, func
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, select
 
+from esmporium.datasets import DATASET_FACET_COLUMNS
 from esmporium.db.dataset_uniqueness import facet_differences
 from esmporium.db.engine import is_sqlite_configured_for_concurrency
 from esmporium.db.schema import (
-    DATASET_FACET_COLUMNS,
     DATASET_IDENTITY_INDEX,
     DataNode,
     Dataset,
@@ -50,7 +50,7 @@ class UnhandledDatasetClashError(Exception):
     We did not expect data of this shape.
     The data is presumably different in some facet(s) we do not model,
     and which also do not appear in id_project_specific,
-    so that difference is invisible to [`Dataset`][esmporium.db.schema.Dataset].
+    so that difference is invisible to [Dataset][esmporium.db.schema.Dataset].
 
     For example, CORDEX data could differ by driving climate model,
     without the driving climate model appearing in id_project_specific.
@@ -75,7 +75,7 @@ class UnhandledDatasetClashError(Exception):
         differences
             The facets that differ between the raw documents
             of the stored dataset and `dataset`,
-            as returned by [`facet_differences`][esmporium.db.facet_differences].
+            as returned by [facet_differences][esmporium.db.facet_differences].
 
             `None` if these could not be worked out
             (e.g. no raw document was supplied for `dataset`).
@@ -164,7 +164,7 @@ def save_dataset(
     ------
     UnhandledDatasetClashError
         `dataset` is identical, in every column our model records, to one already
-        stored (see [`Dataset`][esmporium.db.schema.Dataset]'s identity index).
+        stored (see [Dataset][esmporium.db.schema.Dataset]'s identity index).
 
         If `raw_doc` is supplied and the stored dataset has raw documents,
         the error's `differences` holds the facets that differ between them.
@@ -380,7 +380,7 @@ def build_result_processor(
     -------
     :
         A callback of the shape
-        [`ResultProcessor`][esmporium.search.result_parsing.ResultProcessor].
+        [ResultProcessor][esmporium.search.result_parsing.ResultProcessor].
     """
 
     def processor(
@@ -399,20 +399,26 @@ def build_result_processor_factory(
     normalisers: Mapping[str, NormaliseFunc] = DEFAULT_NORMALISERS,
 ) -> Callable[[], AbstractContextManager[ResultProcessor]]:
     """
-    Build a factory that makes a fresh saving processor per sub-query
+    Build a factory that makes a fresh saving processor per sub-search
 
     This is the database-saving [ProcessorFactory][esmporium.search.ProcessorFactory] to
-    hand to [esmporium.search.search][]: it is called once per sub-query and opens a
-    fresh `sqlmodel.Session` (and so a fresh transaction) for that sub-query,
+    hand to [esmporium.search.search][]: it is called once per sub-search
+    (one leaf of the requirement, against one project) and opens a
+    fresh `sqlmodel.Session` (and so a fresh transaction) for that sub-search,
     yields a [build_result_processor][(m).] bound to it, and closes it afterwards.
-    A session per sub-query keeps each sub-query's writes in transactions of its own
+    A session per sub-search keeps each sub-search's writes in transactions of its own
     (one per page, see [build_result_processor][(m).]),
     and lets a parallel search give each worker its own session.
+
+    Everything a search returns is saved, not just what the requirement asked for.
+    That is deliberate: working out what the requirement adds up to is
+    [solve][esmporium.requirements.solve]'s job, against the stored data, so that
+    the same question can be asked again tomorrow and the two answers compared.
 
     Parameters
     ----------
     engine
-        The database engine each sub-query's session is opened on.
+        The database engine each sub-search's session is opened on.
 
     normalisers
         Passed through to [build_result_processor][(m).] for each session.
@@ -427,7 +433,7 @@ def build_result_processor_factory(
     --------
     >>> from esmporium.search import search  # doctest: +SKIP
     >>> search(  # doctest: +SKIP
-    ...     queries,
+    ...     requirement,
     ...     processor_factory=build_result_processor_factory(engine),
     ... )
     """

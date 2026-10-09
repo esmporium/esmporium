@@ -10,17 +10,17 @@ For example, when saving a dataset clashes with one already stored
 or when datasets our model cannot tell apart are loaded.
 
 It is currently used by the database layer, possibly long after the search,
-so there is no live [`SearchAPI`][esmporium.search.apis.SearchAPI] in scope
+so there is no live [SearchAPI][esmporium.search.apis.SearchAPI] in scope
 and it cannot ask the API how to read its own format.
 Instead each raw doc should be stored with a `raw_docs_format_tag`.
-This string allows [`normalise_stored_document`][(m).] to dispatch to the right parser
+This string allows [normalise_stored_document][(m).] to dispatch to the right parser
 on that tag through a registry of per-format flatteners.
 
-The registry ([`DEFAULT_NORMALISERS`][(m).]) covers the search APIs we ship.
+The registry ([DEFAULT_NORMALISERS][(m).]) covers the search APIs we ship.
 It is a parameter, so a user who bypasses our facade with their own search API
 can inject the flattener for their own tag.
 A tag with no registered flattener raises
-[`UnknownRawDocFormatTagError`][(m).] rather than guessing.
+[UnknownRawDocFormatTagError][(m).] rather than guessing.
 
 Living here (in `search`) rather than in `db`
 keeps the format knowledge out of the database layer:
@@ -140,9 +140,9 @@ def _normalise_stac(raw: dict[str, Any]) -> dict[str, Any]:
     STAC nests its facets inside `properties`, under project-prefixed keys, e.g.
     `{"properties": {"cmip7:activity_id": "ScenarioMIP"}}`. The `cmipN:` prefix is
     dropped and any single-element list is unwrapped, so the result is keyed the same
-    way [`_normalise_solr`][(m).]'s is.
+    way [_normalise_solr][(m).]'s is.
 
-    Kept separate from [`_normalise_solr`][(m).] on purpose: the two search generations
+    Kept separate from [_normalise_solr][(m).] on purpose: the two search generations
     are handled by independent code so neither is coupled to the other's shape.
 
     Parameters
@@ -220,7 +220,7 @@ def normalise_stored_document(
         One raw search document, already parsed from its stored JSON
 
     raw_docs_format_tag
-        See [`DatasetRawDoc.raw_docs_format_tag`][esmporium.db.schema.DatasetRawDoc])
+        See [DatasetRawDoc.raw_docs_format_tag][esmporium.db.schema.DatasetRawDoc])
 
     normalisers
         The flattener to use for each tag.

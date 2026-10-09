@@ -355,32 +355,118 @@ def translate_to_projects(
     >>> mip1_translated_to["MIP1"].mip
     ('MIP1',)
     """
-    canonical = to_canonical(query)
+    return translate_canonical_to_projects(
+        to_canonical(query), projects=projects, project_query_map=project_query_map
+    )
 
+
+def _no_target_project_fix(canonical: QueryCanonical) -> str:
+    """
+    Get the "here is how to fix it" half of a missing-project message
+
+    Named under the facet name the caller can actually type, which means knowing the
+    style the query was written in. `canonical.source_query` carries that for a query
+    which came through [to_canonical][(m).to_canonical], and is `None` for a
+    canonical query built directly -- a requirement's leaf query, for instance --
+    where `project` is already the name to use.
+
+    Parameters
+    ----------
+    canonical
+        The query which names no project
+
+    Returns
+    -------
+    :
+        What to do about it
+    """
+    source = canonical.source_query
+    if source is None:
+        return "Please supply `projects` or set the query's `project` facet"
+
+    spec = facet_spec(type(source))
+    project_facet = spec.canonical_to_native.get("project")
+    if project_facet is None:
+        return (
+            "Please supply `projects` "
+            f"({spec.name} has no facet equivalent to `project`)"
+        )
+
+    return f"Please supply `projects` or set the query's `{project_facet}` facet"
+
+
+def translate_canonical_to_projects(
+    canonical: QueryCanonical,
+    *,
+    projects: Collection[str] | None = None,
+    project_query_map: Mapping[str, type[QueryProtocol]] | None = None,
+) -> dict[str, QueryProtocol]:
+    """
+    Translate an already-canonical query to one or more projects
+
+    The canonical-input half of
+    [translate_to_projects][(m).translate_to_projects], which is this function
+    with [to_canonical][(m).to_canonical] in front of it.
+
+    Use this when the query is already canonical, which
+    [QueryCanonical][esmporium.query.QueryCanonical] cannot be translated
+    *to* its own form on the way in: it declares no
+    [QueryFacet][esmporium.query.QueryFacet] annotations, because it is what those
+    annotations point at, so `to_canonical` has nothing to read and raises.
+    A requirement's leaf query is the case this exists for.
+
+    Parameters
+    ----------
+    canonical
+        Canonical query to translate
+
+    projects
+        Projects to translate to
+
+        If not supplied, we translate to the projects named by `canonical.project`.
+
+    project_query_map
+        Mapping from projects to the query class to return for them
+
+        If not supplied, we use
+        [PROJECT_QUERY_MAP_DEFAULT][esmporium.query.translate.PROJECT_QUERY_MAP_DEFAULT].
+
+    Returns
+    -------
+    :
+        Translated queries, keyed by the project they were rendered for
+
+    Raises
+    ------
+    NoTargetProjectError
+        `projects` was not supplied and `canonical` does not set the project
+
+    UnknownProjectError
+        We do not know what kind of query to return for a requested project
+
+    FacetNotExpressibleError
+        A requested project's query class cannot express a facet in the query.
+        The call fails as a whole; no partial result is returned.
+
+    Examples
+    --------
+    >>> from esmporium.query import QueryCanonical
+    >>>
+    >>> canonical = QueryCanonical(project=("CMIP6",), variable=("tas",))
+    >>> translate_canonical_to_projects(canonical)["CMIP6"].variable_id
+    ('tas',)
+    """
     if projects is not None:
         target_projects: Collection[str] = projects
 
+    elif not canonical.project:
+        msg = (
+            "`projects` was not supplied and the query does not set a project. "
+            f"{_no_target_project_fix(canonical)}"
+        )
+        raise NoTargetProjectError(msg)
+
     else:
-        # Check on canonical so we know the name is always project
-        if not canonical.project:
-            # Name the facet under the query style's own parameter name,
-            # so the fix names something the user can actually type.
-            spec = facet_spec(type(query))
-            project_facet = spec.canonical_to_native.get("project")
-            if project_facet is None:
-                fix = (
-                    "Please supply `projects` "
-                    f"({spec.name} has no facet equivalent to `project`)"
-                )
-            else:
-                fix = (
-                    "Please supply `projects` "
-                    f"or set the query's `{project_facet}` facet"
-                )
-
-            msg = f"`projects` was not supplied and the query does not set a project. {fix}"  # noqa: E501
-            raise NoTargetProjectError(msg)
-
         target_projects = canonical.project
 
     if project_query_map is None:

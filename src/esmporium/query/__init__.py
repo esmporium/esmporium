@@ -3,7 +3,7 @@ Specification of queries
 
 These are intended to be used both when searching ESGF
 [TODO add cross-ref once the ESGF search module is added]
-and when searching our database ([esmporium.db][esmporium.db]).
+and when searching our database ([esmporium.db][]).
 """
 
 from esmporium.query.canonical_query import (
@@ -39,6 +39,7 @@ from esmporium.query.translate import (
     as_query_iterable,
     from_canonical,
     to_canonical,
+    translate_canonical_to_projects,
     translate_to_projects,
     translate_to_type,
 )
@@ -73,6 +74,7 @@ __all__ = [
     "facet_values_from_attributes",
     "from_canonical",
     "to_canonical",
+    "translate_canonical_to_projects",
     "translate_to_projects",
     "translate_to_type",
 ]

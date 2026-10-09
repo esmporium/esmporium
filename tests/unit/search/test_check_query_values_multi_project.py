@@ -1,11 +1,15 @@
 """
-Test the high-level multi-project `check_query_values` against a mock API
+Test the high-level, requirement-driven `check_query_values` against a mock API
 
 These cover the behaviours the wrapper adds on top of
-`check_query_values_single_project`: splitting a query into one check per project,
-running several queries, refusing a query with no project, returning one outcome per
-sub-query, and that a real finding still surfaces through the wrapper. The
-single-project checking behaviour itself is covered in `test_check_query_values.py`.
+`check_query_values_single_project`: turning a requirement into one check per leaf,
+splitting each of those per project, checking a twice-asked-for query once, refusing a
+leaf with no project, saying which leaf each outcome is about, and that a real finding
+still surfaces through the wrapper. The single-project checking behaviour itself is
+covered in `test_check_query_values.py`.
+
+It mirrors `test_search_multi_project.py` test for test, because
+`check_query_values` mirrors `search`: both plan the same requirement the same way.
 """
 
 from __future__ import annotations
@@ -17,10 +21,10 @@ import pytest
 from tenacity import Retrying, stop_after_attempt
 
 from esmporium.query import NoTargetProjectError, Query
+from esmporium.requirements import all_of, leaf, requirement
 from esmporium.search import (
     ESGF1_CMIP6_FACADE_PARAMETERS,
     AllSubQueriesFailedError,
-    NoFacadeAnsweredError,
     SearchAPIESGF1Solr,
     SearchAPIFacade,
     SolrSingleRowResultParser,
@@ -63,8 +67,22 @@ def facet_values(**fields: object) -> httpx.Response:
     return httpx.Response(200, json={"facet_counts": {"facet_fields": dict(fields)}})
 
 
-def test_splits_a_multi_project_query_into_one_check_per_project():
-    """A query naming two projects becomes two checks, one per project"""
+def a_requirement(*leaves, where=None):
+    """Build a requirement from leaves, defaulting what the checker does not look at"""
+    tree = leaves[0] if len(leaves) == 1 else all_of(*leaves)
+    return requirement(name="an-analysis", tree=tree, group_by=("model",), where=where)
+
+
+def for_experiments(*experiments, projects=("CMIP6",)):
+    """A requirement with one leaf per experiment, each role named for its experiment"""
+    return a_requirement(
+        *(leaf(Query(experiment=experiment), experiment) for experiment in experiments),
+        where=Query(project=projects),
+    )
+
+
+def test_splits_a_multi_project_leaf_into_one_check_per_project():
+    """A leaf naming two projects becomes two checks, one per project"""
     seen_projects: list[list[str]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -72,7 +90,7 @@ def test_splits_a_multi_project_query_into_one_check_per_project():
         return facet_values(experiment_id=["historical", 5])
 
     outcomes = check_query_values(
-        Query(project=("CMIP5", "CMIP6"), experiment="historical"),
+        for_experiments("historical", projects=("CMIP5", "CMIP6")),
         build_list_selector([make_facade()]),
         client=client_for(handler),
     )
@@ -82,24 +100,13 @@ def test_splits_a_multi_project_query_into_one_check_per_project():
     assert sorted(seen_projects) == [["CMIP5"], ["CMIP6"]]
 
 
-def test_accepts_a_single_query_as_well_as_a_collection():
-    """A bare query is treated as a one-query run, not iterated as a collection"""
+def test_runs_every_leaf_and_returns_one_outcome_each():
+    """Every leaf is checked and gets its own outcome, in tree order"""
     outcomes = check_query_values(
-        Query(project=("CMIP6",), experiment="historical"),
-        build_list_selector([make_facade()]),
-        client=client_for(lambda r: facet_values(experiment_id=["historical", 5])),
-    )
-
-    assert len(outcomes) == 1
-
-
-def test_runs_every_query_and_returns_one_outcome_each():
-    """Several queries each run and each return their own outcome, in input order"""
-    first = Query(project=("CMIP6",), experiment="historical")
-    second = Query(project=("CMIP6",), variable="tas")
-
-    outcomes = check_query_values(
-        (first, second),
+        a_requirement(
+            leaf(Query(project=("CMIP6",), experiment="historical"), "historical"),
+            leaf(Query(project=("CMIP6",), variable="tas"), "tas"),
+        ),
         build_list_selector([make_facade()]),
         client=client_for(
             lambda r: facet_values(
@@ -108,14 +115,57 @@ def test_runs_every_query_and_returns_one_outcome_each():
         ),
     )
 
-    assert len(outcomes) == 2
+    assert [outcome.roles for outcome in outcomes] == [("historical",), ("tas",)]
 
 
-def test_a_query_with_no_project_is_refused_before_any_work():
-    """A query that names no project blows up before any endpoint is contacted"""
-    with pytest.raises(NoTargetProjectError):
+def test_two_leaves_asking_the_same_thing_are_checked_once():
+    """Checking the same query twice would be pure waste, so it happens once"""
+    requests_made = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal requests_made
+        requests_made += 1
+        return facet_values(experiment_id=["historical", 5])
+
+    same = Query(project=("CMIP6",), experiment="historical")
+    outcomes = check_query_values(
+        a_requirement(leaf(same, "field"), leaf(same, "reference")),
+        build_list_selector([make_facade()]),
+        client=client_for(handler),
+    )
+
+    assert requests_made == 1
+    assert len(outcomes) == 1
+    assert outcomes[0].roles == ("field", "reference")
+
+
+def test_outcomes_carry_the_role_and_project_which_produced_them():
+    """A report says which leaf it is about and which project answered"""
+    outcomes = check_query_values(
+        for_experiments("historical", projects=("CMIP5", "CMIP6")),
+        build_list_selector([make_facade()]),
+        client=client_for(lambda r: facet_values(experiment_id=["historical", 5])),
+    )
+
+    assert {(outcome.roles, outcome.project) for outcome in outcomes} == {
+        (("historical",), "CMIP5"),
+        (("historical",), "CMIP6"),
+    }
+
+
+def test_a_leaf_with_no_project_is_refused_before_any_work():
+    """
+    A leaf that names no project blows up before any endpoint is contacted
+
+    And says which leaf, exactly as `search` does: the point of checking a whole
+    requirement is not having to work out which part of it to go and look at.
+    """
+    with pytest.raises(NoTargetProjectError, match=r"'tas'.*'an-analysis'"):
         check_query_values(
-            Query(experiment="historical"),
+            a_requirement(
+                leaf(Query(project=("CMIP6",), experiment="historical"), "historical"),
+                leaf(Query(variable="tas"), "tas"),
+            ),
             build_list_selector([make_facade()]),
             client=client_for(never_asked),
         )
@@ -123,28 +173,31 @@ def test_a_query_with_no_project_is_refused_before_any_work():
 
 def test_a_finding_surfaces_through_the_wrapper():
     """
-    A real value problem still comes back through the multi-project entry point
+    A real value problem still comes back through the requirement entry point
 
-    The source lists 'historical'; the query asks for 'Historical', so the wrapper's
+    The source lists 'historical'; the requirement asks for 'Historical', so the
     outcome should carry the wrong-case finding, proving results are not lost in the
-    split-and-fan-out.
+    plan-and-fan-out.
     """
-    (outcome,) = check_query_values(
-        Query(project=("CMIP6",), experiment="Historical"),
+    (only,) = check_query_values(
+        for_experiments("Historical"),
         build_list_selector([make_facade()]),
         client=client_for(lambda r: facet_values(experiment_id=["historical", 5])),
     )
 
-    (report,) = outcome.reports.values()
+    (report,) = only.outcome.reports.values()
     (finding,) = report.findings
     assert finding.value == "Historical"
     assert finding.kind == "case"
     assert finding.suggestions == ("historical",)
+    # ...and says which leaf asked for it, which is the whole reason to check a
+    # requirement rather than a loose query.
+    assert only.roles == ("Historical",)
 
 
-def test_parallelises_over_the_sub_queries():
+def test_parallelises_over_the_sub_checks():
     """
-    With `max_workers > 1` the sub-queries are genuinely in flight at the same time
+    With `max_workers > 1` the sub-checks are genuinely in flight at the same time
 
     Both facet-value requests must reach the handler together to pass the barrier. A
     sequential run would leave the second unsent while the first blocks, so the barrier
@@ -157,7 +210,7 @@ def test_parallelises_over_the_sub_queries():
         return facet_values(experiment_id=["historical", 5])
 
     outcomes = check_query_values(
-        Query(project=("CMIP5", "CMIP6"), experiment="historical"),
+        for_experiments("historical", projects=("CMIP5", "CMIP6")),
         build_list_selector([make_facade()]),
         client=client_for(handler),
         max_workers=2,
@@ -178,10 +231,10 @@ def failing_for(down_project: str):
     return handler
 
 
-def test_a_failed_sub_query_does_not_sink_the_ones_that_answered():
+def test_a_failed_sub_check_does_not_sink_the_ones_that_answered():
     """One project's endpoints all failing does not stop the others being checked"""
     outcomes = check_query_values(
-        Query(project=("CMIP5", "CMIP6"), experiment="historical"),
+        for_experiments("historical", projects=("CMIP5", "CMIP6")),
         build_list_selector([make_facade()]),
         client=client_for(failing_for("CMIP6")),
     )
@@ -191,27 +244,36 @@ def test_a_failed_sub_query_does_not_sink_the_ones_that_answered():
     unreachable = [outcome for outcome in outcomes if not outcome.answered]
     assert len(answered) == 1
     assert len(unreachable) == 1
-    assert unreachable[0].reports == {}
-    assert unreachable[0].failures
+    assert unreachable[0].outcome.reports == {}
+    assert unreachable[0].outcome.failures
+    assert unreachable[0].project == "CMIP6"
 
 
-def test_a_single_failed_sub_query_re_raises_its_own_error():
-    """A one-project check that fails raises NoFacadeAnsweredError, wrapper or not"""
-    with pytest.raises(NoFacadeAnsweredError):
-        check_query_values(
-            Query(project=("CMIP6",), experiment="historical"),
-            build_list_selector([make_facade()]),
-            client=client_for(failing_for("CMIP6")),
-        )
+@pytest.mark.parametrize(
+    ("projects", "expected"),
+    [
+        pytest.param(("CMIP6",), 1, id="one-sub-check"),
+        pytest.param(("CMIP5", "CMIP6"), 2, id="several-sub-checks"),
+    ],
+)
+def test_every_sub_check_failing_raises_an_aggregate_naming_the_roles(
+    projects, expected
+):
+    """
+    When nothing answers, one error gathers every failure and says which is which
 
-
-def test_all_sub_queries_failing_raises_an_aggregate():
-    """When every sub-query fails, one error gathers all of them, none lost"""
+    Raised however many sub-checks there were, mirroring `search`: each failure
+    belongs to a particular leaf and project, and a bare `NoFacadeAnsweredError` would
+    throw that away.
+    """
     with pytest.raises(AllSubQueriesFailedError) as excinfo:
         check_query_values(
-            Query(project=("CMIP5", "CMIP6"), experiment="historical"),
+            for_experiments("historical", projects=projects),
             build_list_selector([make_facade()]),
             client=client_for(lambda r: httpx.Response(500)),
         )
 
-    assert len(excinfo.value.failures) == 2
+    assert len(excinfo.value.failures) == expected
+    message = str(excinfo.value)
+    for project in projects:
+        assert f"'historical' ({project})" in message

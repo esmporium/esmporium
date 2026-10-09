@@ -16,12 +16,12 @@ from __future__ import annotations
 
 import difflib
 import re
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from dataclasses import field as dcfield
 from enum import Enum
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import httpx
 
@@ -29,10 +29,8 @@ from esmporium.query import (
     CANONICAL_FACETS,
     QueryCanonical,
     QueryProtocol,
-    as_query_iterable,
     facet_spec,
     to_canonical,
-    translate_to_projects,
 )
 from esmporium.search.apis import (
     UncompilableFacetPatternError,
@@ -44,9 +42,11 @@ from esmporium.search.search import (
     FacadeKey,
     NoFacadeAnsweredError,
     SearchAPIRequestError,
+    SubSearch,
     fire,
     get_facade_key,
     get_url,
+    plan_sub_searches,
 )
 from esmporium.search.search_api_facade import (
     DEFAULT_SELECTOR,
@@ -54,6 +54,9 @@ from esmporium.search.search_api_facade import (
     SearchAPIFacadeSelector,
     SelectorOfferedNoAPIFacadeError,
 )
+
+if TYPE_CHECKING:
+    from esmporium.requirements import Requirement
 
 CloseMatcher = Callable[[str, set[str]], tuple[str, ...]]
 """
@@ -545,10 +548,11 @@ class ValueCheckOutcome:
         """
         Whether any facade answered, i.e. this is a real answer and not a pure failure
 
-        `False` only for the empty, failures-only outcome that the multi-query
-        [check_query_values][(m).] puts in place of a sub-query whose endpoints all
-        failed, so a caller can tell a project that was checked from one that could not
-        be reached (the latter has `answered` `False` and a populated `failures`).
+        `False` only for the empty, failures-only outcome that the
+        requirement-driven [check_query_values][(m).] puts in place of a sub-check
+        whose endpoints all failed, so a caller can tell a project that was checked
+        from one that could not be reached (the latter has `answered` `False` and a
+        populated `failures`).
         """
         return bool(self.reports)
 
@@ -671,8 +675,41 @@ def check_query_values_single_project(  # noqa: PLR0913 - the keyword-only extra
     return ValueCheckOutcome(reports, failures)
 
 
+@dataclass(frozen=True)
+class LeafValueCheckOutcome:
+    """
+    What came of checking one of a requirement's queries: one leaf, one project
+
+    The value-checking mirror of
+    [LeafSearchOutcome][esmporium.search.LeafSearchOutcome], and for the same
+    reason: a requirement fans out into many checks, and a report on its own does not
+    say which leaf it is about.
+    """
+
+    roles: tuple[str, ...]
+    """The role paths which asked for the query that was checked"""
+
+    project: str
+    """The project this check was rendered for"""
+
+    query: QueryProtocol
+    """The project-specific query which was checked"""
+
+    outcome: ValueCheckOutcome
+    """What the APIs said about it"""
+
+    @property
+    def answered(self) -> bool:
+        """
+        Whether any facade answered this check
+
+        Forwarded from [ValueCheckOutcome.answered][(m).ValueCheckOutcome.answered].
+        """
+        return self.outcome.answered
+
+
 def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberate injection seams
-    queries: QueryProtocol | Iterable[QueryProtocol],
+    requirement: Requirement,
     selector: SearchAPIFacadeSelector = DEFAULT_SELECTOR,
     *,
     stop_at_first_result: bool = True,
@@ -681,28 +718,37 @@ def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberat
     api_call_observer: SearchAPICallObserver | None = None,
     project_query_map: Mapping[str, type[QueryProtocol]] | None = None,
     max_workers: int | None = None,
-) -> tuple[ValueCheckOutcome, ...]:
+) -> tuple[LeafValueCheckOutcome, ...]:
     """
-    Check one or more queries, over one or more projects, against the APIs
+    Check the values a requirement asks for against the APIs
 
     This is the high-level entry point, and the value-checking mirror of
-    [esmporium.search.search][]: each query must name one *or more* projects,
-    we split every query into one single-project query per project and check
-    each through [check_query_values_single_project][(m).].
+    [esmporium.search.search][]: it takes the same
+    [Requirement][esmporium.requirements.Requirement], works out the same searches
+    with
+    [plan_sub_searches][esmporium.search.plan_sub_searches], and
+    checks each through [check_query_values_single_project][(m).] instead of searching
+    it.
 
-    By default the sub-queries run sequentially. Pass `max_workers > 1` to run them
+    That mirroring is the point. "My search came back empty -- did I misspell
+    something?" is a question about the requirement that was searched, so it has to be
+    askable of the requirement rather than of queries picked back out of it by hand.
+
+    By default the sub-checks run sequentially. Pass `max_workers > 1` to run them
     concurrently in a thread pool: the work is network-bound, so this is usually a large
-    win when there are several sub-queries.
+    win when there are several.
 
     Parameters
     ----------
-    queries
-        A single query, or an iterable of queries. Each query may name one or more
-        projects. A query that names no project is an error (see above).
+    requirement
+        The requirement whose values to check
+
+        Every leaf's query must name at least one project, whether on the leaf itself
+        or on the requirement's `where` (see `Raises`).
 
     selector
         Passed straight through to [check_query_values_single_project][(m).] for every
-        sub-query. The default picks facades by the sub-query's (single) project.
+        sub-check. The default picks facades by the sub-check's (single) project.
 
     stop_at_first_result
         Passed through to each [check_query_values_single_project][(m).] call.
@@ -711,7 +757,7 @@ def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberat
         Passed through to each [check_query_values_single_project][(m).] call.
 
     client
-        The HTTP client to ask the APIs with, shared across every sub-query. If `None`,
+        The HTTP client to ask the APIs with, shared across every sub-check. If `None`,
         one is built for the call and closed at the end.
 
     api_call_observer
@@ -720,60 +766,63 @@ def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberat
 
     project_query_map
         Passed through to
-        [translate_to_projects][esmporium.query.translate.translate_to_projects] when
-        splitting a query, to control which query class each project uses. If `None`,
-        the default mapping is used.
+        [translate_canonical_to_projects][esmporium.query.translate_canonical_to_projects]
+        when splitting a leaf's query, to control which query class each project uses.
+        If `None`, the default mapping is used.
 
     max_workers
-        How many sub-queries to check at once. `None` (the default) or `1` runs them
+        How many sub-checks to run at once. `None` (the default) or `1` runs them
         sequentially; a value greater than `1` runs them concurrently in a thread pool
         of that size.
 
     Returns
     -------
     :
-        One [ValueCheckOutcome][(m).] per sub-query, in the order the sub-queries ran
-        (queries in input order; within a query, the projects in the order
-        [translate_to_projects][esmporium.query.translate.translate_to_projects]
-        yields them).
+        One [LeafValueCheckOutcome][(m).] per sub-check, in the order they were
+        planned: the requirement's leaves in tree order, deduplicated so two roles
+        asking for the same dataset are checked once, and within a leaf the projects
+        in the order its query names them.
 
-        A sub-query whose endpoints all failed still gets an entry, in place: an empty
-        outcome carrying that sub-query's `failures` and reporting `answered` as
-        `False`. Only a total failure (no sub-query answered) raises instead.
+        A sub-check whose endpoints all failed still gets an entry, in place: an empty
+        outcome carrying that sub-check's `failures` and reporting `answered` as
+        `False`. Only a total failure (nothing answered) raises instead.
 
     Raises
     ------
     NoTargetProjectError
-        A query in `queries` names no project. Raised while splitting, before any check
-        happens.
-
-    NoFacadeAnsweredError
-        Every sub-query failed and there was exactly one, so its failure is re-raised
-        unchanged.
+        A leaf's query names no project. Raised while planning, before any check
+        happens, and names the roles which asked.
 
     AllSubQueriesFailedError
-        Every sub-query failed and there were several, so all their failures are
-        gathered into one error rather than any being lost.
+        Every sub-check failed. All their failures are gathered into one error,
+        labelled with the role and project each belongs to, rather than any being
+        lost. Raised however many sub-checks there were, for the same reason
+        [esmporium.search.search][] does it.
     """
-    # Split every query up front, so a query with no project blows up before we contact
-    # any endpoint.
-    sub_queries: list[QueryProtocol] = []
-    for query in as_query_iterable(queries):
-        by_project = translate_to_projects(query, project_query_map=project_query_map)
-        sub_queries.extend(by_project.values())
+    # Plan the whole thing up front, so a leaf with no project blows up before we
+    # contact any endpoint.
+    sub_searches = plan_sub_searches(requirement, project_query_map=project_query_map)
 
     owns_client = client is None
     client = client if client is not None else httpx.Client(follow_redirects=True)
 
     def run_one(
-        sub_query: QueryProtocol,
-    ) -> tuple[ValueCheckOutcome, NoFacadeAnsweredError | None]:
+        sub_search: SubSearch,
+    ) -> tuple[LeafValueCheckOutcome, NoFacadeAnsweredError | None]:
         # Each check is independent and shares nothing mutable, so it is safe to call
         # from a thread. `client` is shared: httpx.Client is thread-safe for concurrent
         # requests.
+        def wrap(outcome: ValueCheckOutcome) -> LeafValueCheckOutcome:
+            return LeafValueCheckOutcome(
+                roles=sub_search.roles,
+                project=sub_search.project,
+                query=sub_search.query,
+                outcome=outcome,
+            )
+
         try:
             outcome = check_query_values_single_project(
-                sub_query,
+                sub_search.query,
                 selector,
                 stop_at_first_result=stop_at_first_result,
                 close_matches=close_matches,
@@ -781,33 +830,39 @@ def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberat
                 api_call_observer=api_call_observer,
             )
         except NoFacadeAnsweredError as exc:
-            # This sub-query's endpoints all failed. Keep going: fold it into an empty
-            # outcome carrying the failures, so a caller still gets the sub-queries that
+            # This sub-check's endpoints all failed. Keep going: fold it into an empty
+            # outcome carrying the failures, so a caller still gets the sub-checks that
             # did answer. Anything else propagates and stops the whole run.
             # `exc.failures` came from the value-check path, hence that variant.
             failures = cast(
                 "dict[FacadeKey, CouldNotGetAllowedValuesError]", exc.failures
             )
-            return ValueCheckOutcome({}, failures), exc
-        return outcome, None
+            return wrap(ValueCheckOutcome({}, failures)), exc
+        return wrap(outcome), None
 
     try:
-        if max_workers is None or max_workers == 1 or len(sub_queries) <= 1:
-            results = [run_one(sq) for sq in sub_queries]
+        if max_workers is None or max_workers == 1 or len(sub_searches) <= 1:
+            results = [run_one(each) for each in sub_searches]
         else:
             # `map` preserves input order across the pool.
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                results = list(executor.map(run_one, sub_queries))
+                results = list(executor.map(run_one, sub_searches))
     finally:
         if owns_client:
             client.close()
 
     caught = [exc for _, exc in results if exc is not None]
     if caught and len(caught) == len(results):
-        # Every sub-query failed, so there is nothing to return: fail loudly, as above.
-        if len(caught) == 1:
-            raise caught[0]
-        raise AllSubQueriesFailedError(tuple(caught))
+        # Nothing answered, so there is nothing to return: fail loudly, saying which
+        # leaf and project each failure belongs to.
+        raise AllSubQueriesFailedError(
+            tuple(caught),
+            tuple(
+                each.label()
+                for each, (_, exc) in zip(sub_searches, results, strict=True)
+                if exc is not None
+            ),
+        )
 
     return tuple(outcome for outcome, _ in results)
 

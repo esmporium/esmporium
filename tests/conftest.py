@@ -10,7 +10,8 @@ import typing
 import pandas as pd
 import pytest
 
-from esmporium.db import DATASET_FACET_COLUMNS, Dataset
+from esmporium.datasets import DATASET_FACET_COLUMNS
+from esmporium.db import Dataset
 
 OPT_IN_MARKERS: dict[str, str] = {
     "network": "a third-party service over the network",

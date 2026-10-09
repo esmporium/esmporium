@@ -11,8 +11,8 @@ from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, create_engine, select
 
+from esmporium.datasets import DATASET_FACET_COLUMNS
 from esmporium.db import (
-    DATASET_FACET_COLUMNS,
     METADATA,
     DataNode,
     Dataset,
@@ -289,9 +289,15 @@ def test_facet_columns_are_the_declared_facets():
     Test that `DATASET_FACET_COLUMNS` lists every facet of a dataset
 
     `DATASET_FACET_COLUMNS` is written out by hand
-    (see the note on it in `schema.py`),
+    (see the note on it in `esmporium/datasets/facets.py`),
     so this is what stops a facet being added to the model
     without being added there.
+
+    It is defined in `esmporium.datasets` rather than beside the table it describes,
+    because `esmporium.requirements` needs it and cannot import `esmporium.db`
+    (see the developer note in `esmporium/requirements/__init__.py`).
+    That makes this a genuine cross-package invariant: the table is here, the list
+    is there, and nothing but this test holds them together.
 
     Every column except the ID is a facet today.
     When that stops being true (e.g. when we record when we last saw a dataset),
@@ -321,7 +327,7 @@ def test_dataset_facets_mirror_dataset_columns():
     """`DatasetFacets` declares exactly `Dataset`'s facets plus `id_project_specific`.
 
     This pins the `search` <-> `db` coupling in one assertion. The facade parses results
-    into [`DatasetFacets`][esmporium.search.result_parsing.DatasetFacets], and the `db`
+    into [DatasetFacets][esmporium.search.result_parsing.DatasetFacets], and the `db`
     layer builds a `Dataset` from each one, so if a facet is added to `Dataset` without
     adding it to `DatasetFacets` (or vice versa), parsing and storage silently fall out
     of step. This fails by name the moment they diverge -- a faster, sharper signal than
