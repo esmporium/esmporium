@@ -423,9 +423,10 @@ def test_a_non_scalar_document_value_is_left_out(engine, store):
     """
     A facet with several values has no single answer, so the entry does not claim one
 
-    `extra` holds one value per facet, because that is what grouping and preferring
-    compare. A list is left out rather than guessed at, which reads as "this entry
-    does not know that facet".
+    Both facet mappings hold one value per facet, because that is what grouping and
+    preferring compare. A list is left out rather than guessed at, which reads as
+    "this entry does not know that facet" -- and so a genuinely multi-realm dataset
+    cannot be grouped on `realm`, which is a known wart rather than a decision.
     """
     store(
         "one",
@@ -436,18 +437,19 @@ def test_a_non_scalar_document_value_is_left_out(engine, store):
 
     (entry,) = DatabaseCatalogue(engine).find(Query(variable="tas"))
 
-    with pytest.raises(UnrecordedFacetError, match="realm"):
-        entry.facet("realm")
+    assert entry.facet("realm") is None
+    assert "realm" not in entry.known_facets()
 
 
 @pytest.mark.parametrize("populated", [False, True], ids=["empty", "populated"])
 def test_a_facet_no_document_knows_is_refused(engine, store, populated):
     """
-    Asking for a facet nothing records raises rather than quietly finding nothing
+    Asking for a facet nothing records finds nothing, whatever the table holds
 
     Parametrised over an empty and a populated table because the point is that the
     *answer* is the same either way: this is a fact about what we store, not about
-    which rows happen to be present.
+    which rows happen to be present. It used to raise when populated and return `()`
+    when empty, which is the defect the tier split removed.
     """
     if populated:
         store("one", variable="tas", versions=live([{"realm": ["atmos"]}]))
@@ -455,15 +457,7 @@ def test_a_facet_no_document_knows_is_refused(engine, store, populated):
     catalogue = DatabaseCatalogue(engine)
     asked = Query(variable="tas", other_terms={"something_we_never_record": ("x",)})
 
-    if populated:
-        with pytest.raises(UnrecordedFacetError, match="something_we_never_record"):
-            catalogue.find(asked)
-    else:
-        # Nothing matched the column facets, so no entry was ever asked. Documented
-        # rather than asserted as desirable: the in-memory catalogue does exactly the
-        # same, and `test_solving_against_the_database_matches_the_in_memory_catalogue`
-        # is what holds the two together.
-        assert catalogue.find(asked) == ()
+    assert catalogue.find(asked) == ()
 
 
 def test_an_unknown_format_tag_is_refused(engine, get_dataset_kwargs):
@@ -560,7 +554,13 @@ def test_solving_against_the_database_matches_the_in_memory_catalogue(engine, st
                 model=facets["model"],
                 variable=facets["variable"],
                 grid_label=facets["grid_label"],
-                extra={"realm": realm},
+                # `realm` is a facet we model, so it goes in `project_facets` under
+                # its canonical name; the Solr document's own spelling of it is the
+                # same word, so `other_terms` carries it too. Putting it in the wrong
+                # mapping is exactly the mistake this test exists to catch, because
+                # the database-backed catalogue fills both from the stored document.
+                project_facets={"realm": realm},
+                other_terms={"realm": realm},
             )
             for index, (label, facets, realm) in enumerate(rows)
         )
@@ -606,11 +606,15 @@ def outcome(catalogue, query):
 
     Returned rather than asserted on directly, so that the two catalogues can be
     compared without this test caring which of the two answers is the right one.
+
+    The `except` is kept although nothing in the matching path raises any more, so
+    that a regression which reintroduced an error here would show up as a difference
+    between the two catalogues rather than as this helper blowing up.
     """
     try:
         return tuple(entry.id_project_specific for entry in catalogue.find(query))
-    except UnrecordedFacetError as exc:
-        return f"UnrecordedFacetError({', '.join(exc.facets)})"
+    except ValueError as exc:
+        return f"{type(exc).__name__}: {exc}"
 
 
 @pytest.mark.parametrize(
@@ -649,21 +653,21 @@ def test_both_catalogues_answer_alike_about_a_facet_nothing_records(
     `test_solving_against_the_database_matches_the_in_memory_catalogue` cannot see
     this: every entry in it records `realm`, so the question never arises.
 
-    **`declared-column-matches-nothing` fails today**, deliberately. The two
-    catalogues reach the facet by different routes -- the in-memory one checks every
-    facet of every entry in `set_facets` order (alphabetical, so `realm` before
+    This used to disagree on `declared-column-matches-nothing`, and why is worth
+    keeping: the two catalogues reach the facet by different routes -- the in-memory
+    one checked every facet of every entry in alphabetical order (so `realm` before
     `variable`), while the database one filters on the columns in SQL and only asks
-    the surviving rows about the rest. So when the column facet matches no row, the
-    in-memory catalogue still asks `realm` and raises, and the database one never
-    asks at all. The fix is a decision which has not been taken yet: see the note by
-    `extra` in `esmporium/requirements/catalogue.py`.
+    the surviving rows about the rest. With `facet` raising, the in-memory catalogue
+    still asked `realm` and raised, and the database one never asked at all. `facet`
+    answering `None` is what makes the route stop mattering, so all four cases now
+    find nothing. The parametrisation is kept to hold it that way.
     """
     store("one", variable="tas", versions=live())
 
     in_memory = InMemoryCatalogue(
-        entries=(
-            CatalogueEntry(id=1, extra={}, **get_dataset_kwargs("one", variable="tas")),
-        )
+        entries=(CatalogueEntry(id=1, **get_dataset_kwargs("one", variable="tas")),)
     )
 
     assert outcome(DatabaseCatalogue(engine), query) == outcome(in_memory, query)
+    # Pinned, not just compared: two catalogues which both raised would also agree.
+    assert outcome(DatabaseCatalogue(engine), query) == ()

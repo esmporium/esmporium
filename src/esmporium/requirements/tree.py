@@ -39,6 +39,7 @@ from esmporium.query import (
     ClashingFacetsError,
     QueryCanonical,
     QueryProtocol,
+    modelled_facet_names,
     to_canonical,
 )
 from esmporium.requirements.catalogue import set_facets
@@ -184,6 +185,62 @@ class EmptyLeafQueryError(ValueError):
             "long way from the mistake: solving an empty query reports an ambiguous "
             "group with as many candidates as the catalogue holds, "
             "rather than an error where the requirement was written."
+        )
+
+
+# A note for developers: this is the only check in this package which consults
+# `esmporium.query` for *names* rather than translating with it, and the reason is that
+# `group_by` and `prefer` are the only facets in a requirement which arrive as bare
+# strings. A leaf's query carries its facets in homes which already say how to read
+# them; `group_by=("realm",)` says nothing, so the name is all there is to go on.
+#
+# Deliberately not a check against the data, which was the first instinct and is wrong:
+# a raw search document records far more than any query class names (`mip_era`,
+# `member_id`, `variable_long_name`, CORDEX's `driving_source_id`), and grouping on one
+# of those is a real analysis. That is what `group_by_other_terms` is for, and nothing
+# in it is checked here. The data question -- "a facet we model, but did anything record
+# it?" -- is the solver's, and is
+# [UngroupableFacetError][esmporium.requirements.UngroupableFacetError].
+class UnmodelledFacetError(ValueError):
+    """
+    Raised when a requirement groups or prefers on a facet name we do not model
+
+    Refused where the requirement is written rather than left to the solver, for the
+    same reason as [EmptyLeafQueryError][(m).EmptyLeafQueryError]: the mistake is a
+    name, which needs no catalogue to spot, and the error is far more useful next to
+    the line that wrote it than wrapped in a solve of someone else's data.
+    """
+
+    def __init__(self, facets: Iterable[str], field_name: str) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        facets
+            The names we do not model
+
+        field_name
+            Field they were set on, e.g. `"group_by"`
+        """
+        self.facets = tuple(sorted(facets))
+        self.field_name = field_name
+        # The whole list rather than a guess at what was meant. It is short enough to
+        # read, it is the complete answer, and a near-miss suggester here would be a
+        # second copy of
+        # [close_matches_difflib][esmporium.search.close_matches_difflib] which this
+        # package may not import -- free to drift from it, and no more use than the
+        # list it would be drawn from.
+        modelled = readable_list(sorted(modelled_facet_names()))
+        super().__init__(
+            f"{field_name} names {readable_list(self.facets)}, "
+            f"which {'is' if len(self.facets) == 1 else 'are'} not "
+            f"a facet any query class models. We model: {modelled}. "
+            "For a facet only a search document knows (`mip_era`, "
+            "`variable_long_name`, CORDEX's `cordex-cmip6:driving_source_id`), "
+            f"use `{field_name}_other_terms` instead, which is never translated and "
+            "never checked -- so the name has to be spelled exactly as the search "
+            "document spells it, prefixes included."
         )
 
 
@@ -626,12 +683,42 @@ class Requirement(BaseModel):
 
     group_by: tuple[str, ...]
     """
-    Facets which define a group
+    Facets which define a group, named in facets we model
 
     Required, deliberately. `("model", "variant_label")` is what most analyses want,
     and is the reason this has no default: a grouping decides what one group is,
     and a requirement which never said so is indistinguishable from one which meant
     something else. Write the usual pair out when it is what you want.
+
+    Every name here has to be one
+    [modelled_facet_names][esmporium.query.modelled_facet_names] knows -- a canonical
+    facet or a project-specific one like CMIP5's `product` -- and is checked when the
+    requirement is built, so a typo is refused rather than quietly producing a group
+    of `None`. For a facet only a search document knows, use
+    [group_by_other_terms][(m).Requirement.group_by_other_terms].
+
+    Grouping is project-blind, which matters for a facet only some projects have:
+    see the note above `_group_values` in [esmporium.requirements.solve][].
+    """
+
+    group_by_other_terms: tuple[str, ...] = ()
+    """
+    Further facets which define a group, named exactly as a search document names them
+
+    The escape hatch, and the same bargain as
+    [Query.other_terms][esmporium.query.Query.other_terms]: nothing here is
+    translated, normalised or checked, so the names have to be the ones the stored
+    documents use, prefixes included. `("cordex-cmip6:driving_source_id",)` groups
+    CORDEX runs by the global model that drove them -- a real analysis, and one no
+    facet we model can express.
+
+    Because it is unchecked, a name nothing records is not an error here: every
+    dataset answers `None` for it and they all land in one group, whereas the same
+    situation in `group_by` raises
+    [UngroupableFacetError][esmporium.requirements.UngroupableFacetError]. That is
+    the price of not being checked, and it is the point.
+
+    These come after `group_by` in the group's key.
     """
 
     prefer: dict[str, tuple[str, ...]] = Field(default_factory=dict)
@@ -642,9 +729,25 @@ class Requirement(BaseModel):
     `prefer={"grid_label": ("gn", "gr")}` breaks the same kind of tie. A tie which
     survives `prefer` is settled by [cardinality][(m).Requirement.cardinality].
 
-    Project-specific facets can be used, on the same terms as `group_by`.
+    Project-specific facets can be used, on the same terms as `group_by`: the keys are
+    checked against [modelled_facet_names][esmporium.query.modelled_facet_names] when
+    the requirement is built, and
+    [prefer_other_terms][(m).Requirement.prefer_other_terms] is where an unmodelled
+    name goes.
 
     A value not listed here is not refused, only ranked behind every value which is.
+    """
+
+    prefer_other_terms: dict[str, tuple[str, ...]] = Field(default_factory=dict)
+    """
+    Further preferences, keyed exactly as a search document names the facet
+
+    `prefer`'s escape hatch, on the same terms as
+    [group_by_other_terms][(m).Requirement.group_by_other_terms]: unchecked and
+    untranslated, and the names must be the stored documents' own.
+
+    Applied after `prefer`, so a modelled facet always out-ranks an unmodelled one
+    rather than the two interleaving alphabetically.
     """
     # A note on why this is a mapping rather than a callable, which would let a user
     # inject their own ranking. A requirement is fingerprinted by
@@ -698,6 +801,7 @@ class Requirement(BaseModel):
     def _check_tree(self) -> Requirement:
         check_roles_are_distinct(self.tree)
         check_where_agrees_with_leaves(self.tree, self.where)
+        check_grouping_facets_are_modelled(self.group_by, self.prefer)
 
         return self
 
@@ -980,6 +1084,49 @@ def check_roles_are_distinct(node: Node) -> None:
     role_paths(node)
 
 
+def check_grouping_facets_are_modelled(
+    group_by: Iterable[str], prefer: Iterable[str]
+) -> None:
+    """
+    Check that every facet a requirement groups or prefers on is one we model
+
+    Returns nothing: this is here to raise, and exists so that a caller which wants
+    the check can ask for the check, the way
+    [check_roles_are_distinct][(m).check_roles_are_distinct] does.
+
+    Only the modelled fields are checked. `group_by_other_terms` and
+    `prefer_other_terms` are the escape hatch and are never checked, which is the
+    whole reason the fields are separate: without them, a typo
+    (`group_by=("relam",)`) would be indistinguishable from a facet only a search
+    document knows (`group_by=("variable_long_name",)`), and neither could be
+    reported.
+
+    Parameters
+    ----------
+    group_by
+        Facets to group on, as
+        [Requirement.group_by][(m).Requirement.group_by] holds them
+
+    prefer
+        Facets to break ties on, i.e. the keys of
+        [Requirement.prefer][(m).Requirement.prefer]
+
+    Raises
+    ------
+    UnmodelledFacetError
+        A name is not one
+        [modelled_facet_names][esmporium.query.modelled_facet_names] knows
+
+        Raised for `group_by` first if both are wrong, so that one fix at a time is
+        what the message asks for.
+    """
+    modelled = modelled_facet_names()
+    for field_name, facets in (("group_by", group_by), ("prefer", prefer)):
+        unmodelled = [facet for facet in facets if facet not in modelled]
+        if unmodelled:
+            raise UnmodelledFacetError(unmodelled, field_name)
+
+
 def leaf(query: QueryProtocol, role: str) -> Leaf:
     """
     Require one dataset, in a role
@@ -1055,7 +1202,9 @@ def requirement(  # noqa: PLR0913 - one argument per field of the requirement
     group_by: tuple[str, ...],
     *,
     where: QueryProtocol | None = None,
+    group_by_other_terms: tuple[str, ...] = (),
     prefer: Mapping[str, tuple[str, ...]] | None = None,
+    prefer_other_terms: Mapping[str, tuple[str, ...]] | None = None,
     cardinality: Cardinality = Cardinality.ONE,
 ) -> Requirement:
     """
@@ -1082,9 +1231,19 @@ def requirement(  # noqa: PLR0913 - one argument per field of the requirement
         Facets added to every leaf's query, in any query style. Stored canonical, see
         [Requirement.where][(m).Requirement.where]. `None`, the default, adds nothing.
 
+    group_by_other_terms
+        Further grouping facets, named exactly as a search document names them.
+        See
+        [Requirement.group_by_other_terms][(m).Requirement.group_by_other_terms];
+        unchecked, so spell them as the documents do.
+
     prefer
         Facet -> values in order of preference, used to break ties between candidates.
         See [Requirement.prefer][(m).Requirement.prefer].
+
+    prefer_other_terms
+        Further preferences, keyed as a search document names the facet.
+        See [Requirement.prefer_other_terms][(m).Requirement.prefer_other_terms].
 
     cardinality
         How many datasets fill each leaf's role, per group.
@@ -1201,13 +1360,18 @@ def requirement(  # noqa: PLR0913 - one argument per field of the requirement
     # Same order as that validator, so the two agree on which complaint comes first.
     check_roles_are_distinct(tree)
     check_where_agrees_with_leaves(tree, canonical_where)
+    check_grouping_facets_are_modelled(group_by, () if prefer is None else prefer)
 
     return Requirement(
         name=name,
         tree=tree,
         where=canonical_where,
         group_by=group_by,
+        group_by_other_terms=group_by_other_terms,
         prefer={} if prefer is None else dict(prefer),
+        prefer_other_terms=(
+            {} if prefer_other_terms is None else dict(prefer_other_terms)
+        ),
         cardinality=cardinality,
     )
 

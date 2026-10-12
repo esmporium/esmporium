@@ -174,6 +174,105 @@ This is our default. Anywhere we use it, you can pass your own mapping instead
 """
 
 
+def modelled_facet_names(
+    project_query_map: Mapping[str, type[QueryProtocol]] = PROJECT_QUERY_MAP_DEFAULT,
+) -> frozenset[str]:
+    """
+    Get every facet name we model, across all the projects we know
+
+    "Model" means a query class names it, so we can translate it and a typo in it is
+    a mistake we can point at. Anything outside this set is a facet only a search
+    API and its documents know, and is therefore
+    [other_terms][esmporium.query.Query.other_terms] territory: ours to pass through
+    untouched, and not ours to check.
+
+    The names are canonical where there is a canonical name, and the query class's own
+    name otherwise (CMIP5's `product`), which is how facets are spelled everywhere
+    except `other_terms`.
+
+    This deliberately pools every project, because the callers which need it are
+    checking a name that carries no project with it:
+    [Requirement.group_by][esmporium.requirements.Requirement.group_by] and
+    [Requirement.prefer][esmporium.requirements.Requirement.prefer] are bare strings.
+    `product` therefore passes even for a requirement which only names CMIP6, and is
+    then simply a facet no CMIP6 dataset can answer for.
+    Deciding what *one* project models is
+    [facet_spec][esmporium.query.facet_spec] on that project's class, and that is the
+    right question when a project is in hand.
+
+    Parameters
+    ----------
+    project_query_map
+        Mapping from projects to the query class which names their facets
+
+    Returns
+    -------
+    :
+        Every facet name any of those query classes models
+
+    Examples
+    --------
+    >>> names = modelled_facet_names()
+    >>> "realm" in names, "product" in names
+    (True, True)
+
+    `variable_long_name` is a real field of a CMIP6 search document,
+    and no query class names it:
+
+    >>> "variable_long_name" in names
+    False
+    """
+    return frozenset(CANONICAL_FACETS) | project_specific_facet_names(project_query_map)
+
+
+def project_specific_facet_names(
+    project_query_map: Mapping[str, type[QueryProtocol]] = PROJECT_QUERY_MAP_DEFAULT,
+) -> frozenset[str]:
+    """
+    Get every facet name we model which belongs to some projects and not others
+
+    The part of [modelled_facet_names][(m).modelled_facet_names] which is *not*
+    canonical: a facet one query class declares with
+    `QueryFacet(None)` because it has no equivalent elsewhere. CMIP5's `product` is
+    the worked example, and the two sets are disjoint by construction -- a canonical
+    facet is one every class can be asked to express.
+
+    "Project-specific" does not mean "one project only": CMIP6 and CMIP6Plus both
+    declare `sub_experiment_id`, so a catalogue holding both can be asked about it
+    throughout. Which projects own a given facet is
+    [facet_spec][esmporium.query.facet_spec] on each class, and the useful question
+    about stored data is usually not that but whether every dataset in hand can answer
+    for it.
+
+    Parameters
+    ----------
+    project_query_map
+        Mapping from projects to the query class which names their facets
+
+    Returns
+    -------
+    :
+        Every facet name any of those query classes declares as its own
+
+    Examples
+    --------
+    >>> names = project_specific_facet_names()
+    >>> sorted(names)[:3]
+    ['area_label', 'horizontal_label', 'product']
+
+    `realm` has no column either, but every query class names it, so it is canonical
+    rather than project-specific:
+
+    >>> "realm" in names
+    False
+    """
+    own: frozenset[str] = frozenset()
+    for query_class in project_query_map.values():
+        own |= facet_spec(query_class).query_specific_facets
+
+    return own
+
+
 def translate_to_type(
     query: QueryProtocol,
     *,

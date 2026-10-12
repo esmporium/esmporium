@@ -12,9 +12,12 @@ from esmporium.requirements import (
     ExplanationStatusNotOk,
     ExplanationStatusOk,
     InMemoryCatalogue,
+    MixedProjectFacetError,
     NotANodeError,
     Requirement,
-    UnrecordedFacetError,
+    UngroupableFacetError,
+    UnmodelledFacetError,
+    UnrankableFacetError,
     all_of,
     leaf,
     requirement,
@@ -93,8 +96,8 @@ def dataset(make_entry):
     """
     Get a factory for one stored dataset, with facet values a person can read
 
-    Takes what `make_entry` takes: the entry's `id`, optionally `extra` and
-    `label`, and any facet to override.
+    Takes what `make_entry` takes: the entry's `id`, optionally `project_facets`,
+    `other_terms` and `label`, and any facet to override.
     """
 
     def factory(entry_id, **facets):
@@ -429,13 +432,14 @@ def test_prefer_applies_every_facet_it_names(dataset):
 
 
 def test_differing_facets_only_names_what_every_candidate_knows(dataset):
-    # `realm` is in one candidate's `extra` and not the other's, so asking either
-    # about it would raise. A message about an ambiguity must not fail with an
-    # error of its own, so only the facets every candidate knows are compared.
+    # `realm` is in one candidate's `project_facets` and not the other's, so the two
+    # would read as differing on it when really one of them just does not record it.
+    # Only the facets every candidate knows are compared, so that the message names
+    # something `prefer` could actually act on.
     catalogue = InMemoryCatalogue(
         entries=(
-            dataset(1, extra={"product": "output1", "realm": "atmos"}),
-            dataset(2, extra={"product": "output2"}),
+            dataset(1, project_facets={"product": "output1", "realm": "atmos"}),
+            dataset(2, project_facets={"product": "output2"}),
         )
     )
 
@@ -640,38 +644,186 @@ def test_explain_covers_every_group(dataset):
 # -------------------------------------------------------------------------- errors
 
 
-@pytest.mark.parametrize(
-    ("build", "facet"),
-    [
-        pytest.param(
-            lambda: tas_requirement(
-                tree=leaf(Query(variable="tas", activity="CMIP"), "tas")
-            ),
-            "activity",
-            id="leaf-query",
-        ),
-        pytest.param(
-            lambda: tas_requirement(group_by=("model", "prodcut")),
-            "prodcut",
-            id="group_by",
-        ),
-        pytest.param(
-            lambda: tas_requirement(prefer={"prodcut": ("output1",)}),
-            "prodcut",
-            id="prefer",
-        ),
-    ],
-)
-def test_facet_no_dataset_knows_is_an_error(build, facet, dataset):
-    # Raised rather than reported as an unsolved group, wherever the facet was
-    # named: it is a mistake in the requirement rather than a fact about the data,
-    # and no amount of new data would make the facet answerable.
-    # A fragment plus the attribute, not the whole message: `test_catalogue.py`
-    # owns the wording, and `facets` is what a caller would catch and read.
-    with pytest.raises(UnrecordedFacetError, match=facet) as excinfo:
-        solve(build(), InMemoryCatalogue(entries=(dataset(1),)))
+@pytest.mark.parametrize("field_name", ["group_by", "prefer"])
+def test_a_facet_we_do_not_model_is_refused_when_the_requirement_is_built(field_name):
+    # A typo needs no catalogue to spot, so it is refused where it was written rather
+    # than carried into somebody else's solve. A fragment plus the attributes, not the
+    # whole message: `test_tree.py` owns the wording.
+    named = {"group_by": ("model", "prodcut"), "prefer": {"prodcut": ("output1",)}}
 
-    assert excinfo.value.facets == (facet,)
+    with pytest.raises(UnmodelledFacetError, match="prodcut") as excinfo:
+        tas_requirement(**{field_name: named[field_name]})
+
+    assert excinfo.value.facets == ("prodcut",)
+    assert excinfo.value.field_name == field_name
+
+
+def test_a_modelled_facet_nothing_records_cannot_be_grouped_on(dataset):
+    # `activity` is a facet we model and store only in the raw search documents, so a
+    # catalogue whose documents never carried it cannot be grouped on it. No group can
+    # be formed, so this raises rather than reporting a group of `None`.
+    with pytest.raises(UngroupableFacetError, match="activity") as excinfo:
+        solve(
+            tas_requirement(group_by=("model", "activity")),
+            InMemoryCatalogue(entries=(dataset(1),)),
+        )
+
+    assert excinfo.value.facets == ("activity",)
+    assert excinfo.value.candidates == 1
+
+
+def test_a_modelled_facet_nothing_records_cannot_break_a_tie(dataset):
+    # `prefer` is only read when there is a tie, so this is raised lazily: two
+    # candidates and nothing able to answer for the facet meant to separate them.
+    with pytest.raises(UnrankableFacetError, match="activity") as excinfo:
+        solve(
+            tas_requirement(prefer={"activity": ("CMIP",)}),
+            InMemoryCatalogue(
+                entries=(dataset(1, grid_label="gn"), dataset(2, grid_label="gr"))
+            ),
+        )
+
+    assert excinfo.value.facets == ("activity",)
+    assert excinfo.value.candidates == 2
+
+
+def test_a_facet_nothing_records_in_a_leaf_query_finds_nothing(dataset):
+    # Not an error, unlike the two above, and the asymmetry is the point. A query
+    # naming a facet nothing records is a question whose answer is "nothing", which is
+    # a fact about the data; a grouping on one cannot produce groups at all.
+    asked = tas_requirement(tree=leaf(Query(variable="tas", activity="CMIP"), "tas"))
+
+    result = solve(asked, InMemoryCatalogue(entries=(dataset(1),)))
+
+    assert not result.satisfied
+    assert not result.unsatisfied
+    assert not result.ambiguous
+
+
+# ------------------------------------- project-specific facets across projects
+
+
+def test_a_project_specific_group_facet_across_projects_stops(dataset):
+    # `product` is CMIP5's, so over a catalogue holding CMIP5 and CMIP6 every CMIP6
+    # dataset would land in one group keyed `product=None`. That is either exactly
+    # what was meant or a silent accident, so we stop rather than guess.
+    mixed = InMemoryCatalogue(
+        entries=(
+            dataset(1, project="CMIP5", project_facets={"product": "output1"}),
+            dataset(2, project="CMIP6", model="ModelB"),
+        )
+    )
+
+    with pytest.raises(MixedProjectFacetError, match="product") as excinfo:
+        solve(tas_requirement(group_by=("product",)), mixed)
+
+    # A `NotImplementedError`, because the requirement is a fair thing to want and the
+    # answer is "not yet" rather than "no".
+    assert isinstance(excinfo.value, NotImplementedError)
+    assert excinfo.value.facets == ("product",)
+    assert (excinfo.value.knowing, excinfo.value.total) == (1, 2)
+    assert excinfo.value.field_name == "group_by"
+
+
+def test_grouping_by_project_too_allows_a_project_specific_facet(dataset):
+    # The way through, and the reason it works: each group then holds one project, so
+    # the facet is answerable throughout it and the `None` group is the group for the
+    # projects which do not have the facet rather than an accident.
+    mixed = InMemoryCatalogue(
+        entries=(
+            dataset(1, project="CMIP5", project_facets={"product": "output1"}),
+            dataset(2, project="CMIP6", model="ModelB"),
+        )
+    )
+
+    result = solve(tas_requirement(group_by=("project", "product")), mixed)
+
+    assert sorted(result.satisfied) == [
+        (("project", "CMIP5"), ("product", "output1")),
+        (("project", "CMIP6"), ("product", None)),
+    ]
+
+
+def test_a_project_specific_facet_every_candidate_knows_is_allowed(dataset):
+    """
+    Two projects which both declare the facet group fine
+
+    The case a "do the datasets span more than one project?" test would wrongly refuse:
+    CMIP6 and CMIP6Plus both declare `sub_experiment_id`, so every candidate can
+    answer for it and there is nothing undecided. What matters is what the candidates
+    know, not where they came from.
+    """
+    both = InMemoryCatalogue(
+        entries=(
+            dataset(1, project="CMIP6", project_facets={"sub_experiment_id": "none"}),
+            dataset(
+                2,
+                project="CMIP6Plus",
+                model="ModelB",
+                project_facets={"sub_experiment_id": "none"},
+            ),
+        )
+    )
+
+    result = solve(tas_requirement(group_by=("sub_experiment_id",)), both)
+
+    # One group, which is then ambiguous because two datasets fill the one role --
+    # an ordinary outcome, and the point is that it was reached rather than refused.
+    assert list(result.ambiguous) == [(("sub_experiment_id", "none"),)]
+
+
+def test_a_project_specific_prefer_facet_across_projects_stops(dataset):
+    # Worse here than for grouping, which is why `prefer` gets the same check. An
+    # unlisted value ranks behind every listed one, so a `product` preference would
+    # rank every CMIP6 dataset last purely for not having `product` -- quietly turning
+    # `prefer={"product": ...}` into "prefer CMIP5", with nothing in the result to show
+    # it. Lazy like the rest of `prefer`: only reached because there is a tie.
+    tie = InMemoryCatalogue(
+        entries=(
+            dataset(1, project="CMIP6"),
+            dataset(2, project="CMIP5", project_facets={"product": "output2"}),
+        )
+    )
+
+    with pytest.raises(MixedProjectFacetError, match="product") as excinfo:
+        solve(tas_requirement(prefer={"product": ("output2",)}), tie)
+
+    assert excinfo.value.field_name == "prefer"
+
+
+def test_partial_coverage_of_a_canonical_facet_is_still_allowed(dataset):
+    # The restriction to *project-specific* facets, guarded. `realm` is canonical and
+    # has no column, so partial coverage is ordinary -- two mirrors of one project
+    # return different fields, and a multi-valued facet is recorded as nothing at all.
+    # One `None` group is the honest answer there, so this must not be refused.
+    partial = InMemoryCatalogue(
+        entries=(
+            dataset(1, project_facets={"realm": "atmos"}),
+            dataset(2, model="ModelB"),
+        )
+    )
+
+    result = solve(tas_requirement(group_by=("realm",)), partial)
+
+    assert sorted(result.satisfied, key=lambda key: [v or "" for _, v in key]) == [
+        (("realm", None),),
+        (("realm", "atmos"),),
+    ]
+
+
+def test_an_unmodelled_group_facet_nothing_records_is_one_group(dataset):
+    # The escape hatch is never checked, which is what being an escape hatch means. So
+    # unlike `group_by`, a name here which nothing records does not raise: every
+    # dataset answers `None` and they all land in the one group.
+    asked = tas_requirement(
+        group_by=("model",), group_by_other_terms=("cordex-cmip6:driving_source_id",)
+    )
+
+    result = solve(asked, InMemoryCatalogue(entries=(dataset(1),)))
+
+    assert list(result.satisfied) == [
+        (("model", "ModelA"), ("cordex-cmip6:driving_source_id", None))
+    ]
 
 
 # ------------------------------------------------------- project-specific facets
@@ -679,15 +831,15 @@ def test_facet_no_dataset_knows_is_an_error(build, facet, dataset):
 
 def test_project_specific_facets_come_from_the_catalogue(dataset):
     # CMIP5's `product` has no column, so the catalogue answers for it out of each
-    # entry's `extra`. That is what lets a requirement match, group and prefer on
-    # it, which is the whole contract between the solver and a catalogue.
+    # entry's `project_facets`. That is what lets a requirement match, group and
+    # prefer on it, which is the whole contract between the solver and a catalogue.
     cmip5 = requirement(
         name="cmip5",
         tree=leaf(QueryCMIP5(variable="tas", product="output1"), "tas"),
         group_by=("model", "product"),
     )
-    wanted = dataset(1, project="CMIP5", extra={"product": "output1"})
-    other = dataset(2, project="CMIP5", extra={"product": "output2"})
+    wanted = dataset(1, project="CMIP5", project_facets={"product": "output1"})
+    other = dataset(2, project="CMIP5", project_facets={"product": "output2"})
 
     result = solve(cmip5, InMemoryCatalogue(entries=(wanted, other)))
 

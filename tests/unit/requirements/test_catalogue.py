@@ -30,7 +30,7 @@ from esmporium.requirements import (
     Catalogue,
     DuplicateEntryIDError,
     InMemoryCatalogue,
-    UnrecordedFacetError,
+    asked_facets,
     matches,
     matches_facets,
     set_facets,
@@ -51,56 +51,58 @@ def test_facet_returns_none_for_a_dataset_with_no_grid(make_entry):
     assert make_entry(1, grid_label=None).facet("grid_label") is None
 
 
-def test_facet_reads_extra(make_entry):
-    assert make_entry(1).extra == {}
+def test_facet_reads_both_facet_mappings(make_entry):
+    assert make_entry(1).project_facets == {}
+    assert make_entry(1).other_terms == {}
 
-    entry = make_entry(1, extra={"product": "output1", "realm": None})
+    entry = make_entry(
+        1,
+        project_facets={"product": "output1", "realm": None},
+        other_terms={"cmip6:mip_era": "CMIP6"},
+    )
 
     assert entry.facet("product") == "output1"
-    # A facet `extra` records as `None` is known to have no value, which is not the
-    # same as a facet `extra` has never heard of.
+    assert entry.facet("cmip6:mip_era") == "CMIP6"
+    # A facet recorded as `None` is known to have no value, which is a different
+    # question from a facet the entry has never heard of -- and `known_facets` is
+    # where that difference is visible, because `facet` answers `None` to both.
     assert entry.facet("realm") is None
 
 
-def test_facet_error_names_the_columns_and_extra(make_entry):
-    entry = make_entry(7)
-
-    with pytest.raises(UnrecordedFacetError) as excinfo:
-        entry.facet("nonsense")
-
-    error = excinfo.value
-    assert error.facets == ("nonsense",)
-    assert error.entry_id == 7
-
-    # The whole message, pinned once, here. `match=` is `re.search`, so it cannot
-    # notice text added to either end of a message; this can. The other tests use
-    # `match=` on a fragment and lean on this one for the wording, so there is one
-    # place to edit when the wording changes rather than four.
-    #
-    # The columns are interpolated rather than spelled out, so adding a facet to
-    # `Dataset` does not mean editing this. Their *order* is pinned by
-    # `test_catalogue_entry_mirrors_dataset_columns`, not here.
-    assert str(error) == (
-        "Cannot select datasets on nonsense (asked of entry 7): "
-        f"every dataset records {', '.join(DATASET_FACET_COLUMNS)}. "
-        "For project-specific facets (e.g. CMIP5 `product`), "
-        "or facets we can search but do not store "
-        "(e.g. `activity`, `realm` and `resolution`), "
-        "the catalogue has to put it in each entry's `extra`."
-    )
+def test_facet_answers_none_for_a_facet_it_does_not_know(make_entry):
+    # Deliberately not an error. `matches_facets` is an `all`, so an entry which
+    # raised here would make the result of a query depend on which row happened to be
+    # asked first: see the note above `Catalogue`. A facet value is always a string,
+    # so `None` cannot match anything a query asks for.
+    assert make_entry(1).facet("nonsense") is None
 
 
 @pytest.mark.parametrize("name", ["id", "id_project_specific"])
-def test_facet_refuses_identifiers(name: str, make_entry):
+def test_facet_does_not_answer_for_identifiers(name: str, make_entry):
     # These say *which* dataset an entry is, not what it is like, so selecting on
-    # them is not what `facet` is for.
-    #
-    # The trailing space in the match matters: without it, `id` would also match the
-    # message about `id_project_specific`.
-    with pytest.raises(
-        UnrecordedFacetError, match=re.escape(f"Cannot select datasets on {name} ")
-    ):
-        make_entry(1).facet(name)
+    # them is not what `facet` is for. They are columns of `Dataset` but not of
+    # `DATASET_FACET_COLUMNS`, so they read as unknown rather than being returned.
+    assert make_entry(1).facet(name) is None
+
+
+def test_known_facets_covers_the_columns_and_both_mappings(make_entry):
+    # The seam which tells "no value" from "no such facet". `group_by` needs it:
+    # grouping CMIP5 on `grid_label` is one group of datasets which genuinely have no
+    # grid, whereas grouping on a facet nothing recorded is no grouping at all.
+    entry = make_entry(
+        1,
+        grid_label=None,
+        project_facets={"realm": None},
+        other_terms={"cmip6:mip_era": "CMIP6"},
+    )
+
+    known = entry.known_facets()
+
+    assert known == frozenset(DATASET_FACET_COLUMNS) | {"realm", "cmip6:mip_era"}
+    # Both of these answer `None` from `facet`, and only one of them is known.
+    assert "grid_label" in known
+    assert "realm" in known
+    assert "nonsense" not in known
 
 
 # -------------------------------------------------------------------------- set_facets
@@ -202,12 +204,12 @@ def test_matches_facets_checks_already_flattened_facets(make_entry):
     only an entry can answer for is exactly what sharing this function buys.
     """
     entry = make_entry(1, variable="tas", experiment="historical")
-    facets = set_facets(Query(variable="tas", experiment="historical"))
+    asked = asked_facets(Query(variable="tas", experiment="historical"))
 
-    assert matches_facets(facets, entry)
-    assert not matches_facets(set_facets(Query(variable="pr")), entry)
+    assert matches_facets(asked, entry)
+    assert not matches_facets(asked_facets(Query(variable="pr")), entry)
     # Nothing to check means nothing to fail, as with an empty query one level up.
-    assert matches_facets({}, entry)
+    assert matches_facets(asked_facets(Query()), entry)
 
 
 @pytest.mark.parametrize(
@@ -220,7 +222,7 @@ def test_matches_facets_and_matches_agree(make_entry, variable, expected):
     query = Query(variable=variable, project=entry.project)
 
     assert matches(query, entry) is expected
-    assert matches_facets(set_facets(query), entry) is expected
+    assert matches_facets(asked_facets(query), entry) is expected
 
 
 def test_matches_on_one_facet(make_entry):
@@ -243,30 +245,77 @@ def test_an_empty_query_matches_everything(make_entry):
     assert matches(Query(), make_entry(1))
 
 
-def test_finding_an_unrecorded_facet_raises(make_entry):
-    # The failure has to survive the trip out through `find`, not just be raised
-    # inside `facet`: swallowing it on the way would quietly turn "we cannot answer
-    # that" into "nothing matched", which is the one answer we must never invent.
-    catalogue = InMemoryCatalogue(entries=(make_entry(1), make_entry(2)))
+@pytest.mark.parametrize(
+    "query",
+    [
+        pytest.param(Query(variable="tas", activity="CMIP"), id="declared"),
+        pytest.param(
+            Query(variable="tas", other_terms={"activity": ("CMIP",)}),
+            id="other-terms",
+        ),
+    ],
+)
+@pytest.mark.parametrize("populated", [False, True], ids=["empty", "populated"])
+def test_a_facet_nothing_records_finds_nothing_either_way(query, populated, make_entry):
+    # The defect this replaced. `matches_facets` is an `all`, which stops at the first
+    # facet that does not match, and `facet` used to raise for a facet an entry did not
+    # know -- so the same query raised or quietly found nothing depending on where the
+    # facet sorted and on whether any row got far enough to be asked.
+    #
+    # Parametrised over both homes and over an empty and a populated catalogue because
+    # the point is that all four answers are the same one.
+    entries = (make_entry(1, variable="tas"),) if populated else ()
 
-    # Only enough of the message to show it is about the facet we asked for; the
-    # whole message is pinned in `test_facet_error_names_the_columns_and_extra`.
-    with pytest.raises(UnrecordedFacetError, match="activity"):
-        catalogue.find(Query(activity="CMIP"))
+    assert InMemoryCatalogue(entries=entries).find(query) == ()
 
 
-def test_other_terms_are_facets_too(make_entry):
-    # `other_terms` names a facet no query class models, so an entry can only answer
-    # it from `extra` -- but once it does, it narrows a search like any other facet.
+def test_other_terms_match_the_document_spelling(make_entry):
+    # `other_terms` is matched against `other_terms`, which is keyed as the search
+    # document keyed it. Nothing is translated at either end, so the name the user
+    # would have sent to the API is the name which matches it back.
     entries = (
-        make_entry(1, extra={"driving_model": "ACCESS-CM2"}),
-        make_entry(2, extra={"driving_model": "MIROC6"}),
+        make_entry(1, other_terms={"cordex-cmip6:driving_source_id": "ACCESS-CM2"}),
+        make_entry(2, other_terms={"cordex-cmip6:driving_source_id": "MIROC6"}),
     )
-    query = Query(other_terms={"driving_model": ("ACCESS-CM2",)})
+    query = Query(other_terms={"cordex-cmip6:driving_source_id": ("ACCESS-CM2",)})
 
     found = InMemoryCatalogue(entries=entries).find(query)
 
     assert [entry.id for entry in found] == [1]
+
+
+def test_other_terms_do_not_read_the_facets_we_model(make_entry):
+    # The two mappings are matched separately, and that is what keeps the escape hatch
+    # an escape hatch: `realm` in `other_terms` asks for the document's own spelling of
+    # `realm`, not for the canonical facet an entry answers under.
+    entry = make_entry(1, project_facets={"realm": "atmos"})
+
+    assert matches(Query(realm="atmos"), entry)
+    assert not matches(Query(other_terms={"realm": ("atmos",)}), entry)
+
+
+def test_two_spellings_of_one_facet_match_nothing(make_entry):
+    # Several values for one facet are an "or"; several facet names are an "and". So
+    # naming one facet under both a STAC and a Solr spelling cannot match, because no
+    # single document carries both. This is why `other_terms` is per-API, and why
+    # covering both needs a solve per spelling.
+    stac = make_entry(1, other_terms={"cmip6:source_id": "ACCESS-CM2"})
+    solr = make_entry(2, other_terms={"source_id": "ACCESS-CM2"})
+    query = Query(
+        other_terms={
+            "cmip6:source_id": ("ACCESS-CM2",),
+            "source_id": ("ACCESS-CM2",),
+        }
+    )
+
+    assert InMemoryCatalogue(entries=(stac, solr)).find(query) == ()
+    # Either one on its own finds its own source.
+    assert [
+        entry.id
+        for entry in InMemoryCatalogue(entries=(stac, solr)).find(
+            Query(other_terms={"source_id": ("ACCESS-CM2",)})
+        )
+    ] == [2]
 
 
 def test_a_dataset_with_no_grid_never_matches_a_grid_label(make_entry):

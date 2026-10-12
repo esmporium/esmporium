@@ -29,11 +29,12 @@ from esmporium.query import (
 from esmporium.requirements import (
     CatalogueEntry,
     UnrecordedFacetError,
+    asked_facets,
     matches_facets,
-    set_facets,
 )
 from esmporium.search.result_normalisation import (
     DEFAULT_NORMALISERS,
+    VERBATIM_NORMALISERS,
     normalise_stored_document,
 )
 
@@ -42,7 +43,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy import ColumnElement, Engine
 
-    from esmporium.query import QueryProtocol
+    from esmporium.query import FacetSpec, QueryProtocol
     from esmporium.search.result_normalisation import NormaliseFunc
 
 
@@ -193,6 +194,38 @@ def availability_filter(availability: Availability) -> ColumnElement[bool] | Non
     )
 
 
+def _spec_for(
+    project: str, project_query_map: Mapping[str, type[QueryProtocol]]
+) -> FacetSpec | None:
+    """
+    Get the facet spec of the query class a project uses
+
+    Parameters
+    ----------
+    project
+        The project to look up, as [Dataset.project][(m).Dataset] records it
+
+    project_query_map
+        Mapping from projects to the query class which names their facets
+
+    Returns
+    -------
+    :
+        The spec, or `None` for a project `project_query_map` has no query class for
+
+        `None` is not a failure. It means we model nothing about that project's
+        facets, so everything its documents record is
+        [other_terms][esmporium.requirements.CatalogueEntry.other_terms] territory.
+        CORDEX is exactly that case today: `cordex-cmip6:driving_source_id` is a real
+        facet properly modelled by CORDEX, and no query class of ours names it.
+    """
+    for known, query_class in project_query_map.items():
+        if known.lower() == project.lower():
+            return facet_spec(query_class)
+
+    return None
+
+
 def _canonical_name_for(
     project: str, project_query_map: Mapping[str, type[QueryProtocol]]
 ) -> Mapping[str, str]:
@@ -218,29 +251,34 @@ def _canonical_name_for(
         Native facet name -> canonical facet name
 
         Empty for a project `project_query_map` has no query class for, in which case
-        the native names are kept as they are, which is the best we can do and still
-        better than nothing.
+        nothing that project records is a facet we model.
     """
-    for known, query_class in project_query_map.items():
-        if known.lower() == project.lower():
-            return facet_spec(query_class).native_to_canonical
+    spec = _spec_for(project, project_query_map)
 
-    return {}
+    return {} if spec is None else spec.native_to_canonical
 
 
-def _extra_from_documents(
+def _facets_from_documents(
     project: str,
     documents: list[tuple[dict[str, Any], str]],
     normalisers: Mapping[str, NormaliseFunc],
+    verbatim_normalisers: Mapping[str, NormaliseFunc],
     project_query_map: Mapping[str, type[QueryProtocol]],
-) -> dict[str, str | None]:
+) -> tuple[dict[str, str | None], dict[str, str | None]]:
     """
-    Build an entry's `extra` from the raw documents describing it
+    Build an entry's two facet mappings from the raw documents describing it
+
+    One pass per document per mapping, over documents which have already been parsed,
+    because this is the hot part of a `find`: the fetch-and-parse above it is the bulk
+    of the cost and this should not add another walk of the same data. It is also the
+    one place a future "skip the documents when nothing needs them" filter has to
+    land, which is another reason to keep it a single function rather than two.
 
     Parameters
     ----------
     project
-        The dataset's project, which decides how its facet names translate
+        The dataset's project, which decides which of its facets we model and how
+        their names translate
 
     documents
         The raw documents, as `(parsed JSON, format tag)` pairs, in the order they
@@ -248,7 +286,10 @@ def _extra_from_documents(
         it
 
     normalisers
-        How to flatten a document of each format
+        See [DEFAULT_NORMALISERS][esmporium.search.DEFAULT_NORMALISERS].
+
+    verbatim_normalisers
+        See [VERBATIM_NORMALISERS][esmporium.search.VERBATIM_NORMALISERS].
 
     project_query_map
         Mapping from projects to the query class which names their facets, used to
@@ -257,39 +298,73 @@ def _extra_from_documents(
     Returns
     -------
     :
-        Facet name -> value, for the facets which are not already columns
+        `(project_facets, other_terms)`, as
+        [CatalogueEntry.project_facets][esmporium.requirements.CatalogueEntry.project_facets]
+        and
+        [CatalogueEntry.other_terms][esmporium.requirements.CatalogueEntry.other_terms]
+        describe them
 
     Raises
     ------
     UnknownRawDocFormatTagError
-        A document's format tag has no flattener in `normalisers`
+        A document's format tag has no flattener in either set of normalisers
     """
     to_canonical_name = _canonical_name_for(project, project_query_map)
+    spec = _spec_for(project, project_query_map)
+    # What *this* project models, rather than what any project models. A CMIP6 search
+    # document carries a `product` field, and `product` is CMIP5's facet, so pooling
+    # every project's names would have a CMIP6 entry claiming to answer for a facet
+    # CMIP6 does not have. That value still reaches `other_terms`, under the
+    # document's own spelling, which is the honest place for it.
+    modelled: frozenset[str] = (
+        frozenset()
+        if spec is None
+        else frozenset(spec.canonical_to_native) | spec.query_specific_facets
+    )
 
-    extra: dict[str, str | None] = {}
+    project_facets: dict[str, str | None] = {}
+    other_terms: dict[str, str | None] = {}
     for raw, tag in documents:
-        flat = normalise_stored_document(raw, tag, normalisers)
-        for native, value in flat.items():
-            # `extra` holds single facet values. A document can carry a list (several
-            # realms, say) or a nested object, and there is no one value to answer
-            # with, so it is left out rather than guessed at.
-            if not isinstance(value, str):
-                continue
+        canonical_flat = normalise_stored_document(raw, tag, normalisers)
+        # Flattened once when the two flatteners are the same function, which they are
+        # for every format that does not prefix its facet names -- Solr, and so most
+        # stored documents. Flattening builds a dict of every field in the document, so
+        # doing it twice for the same answer is the one avoidable cost in here.
+        verbatim_flat = (
+            canonical_flat
+            if verbatim_normalisers.get(tag) is normalisers.get(tag)
+            else normalise_stored_document(raw, tag, verbatim_normalisers)
+        )
 
-            # Recorded under the canonical name a query asks with, and under the
-            # document's own spelling too, so a facet named through `other_terms`
-            # exactly as the API writes it is not left unanswerable. `dict.fromkeys`
-            # rather than a set, so the two are deduplicated without the order
-            # becoming undefined.
-            canonical = to_canonical_name.get(native, native)
-            for name in dict.fromkeys((canonical, native)):
+        for source, destination in (
+            (canonical_flat, project_facets),
+            (verbatim_flat, other_terms),
+        ):
+            for name, value in source.items():
+                # Both mappings hold single facet values. A document can carry a list
+                # (several realms, say) or a nested object, and there is no one value
+                # to answer with, so it is left out rather than guessed at.
+                if not isinstance(value, str):
+                    continue
+
+                if destination is project_facets:
+                    # Canonical names only, and only facets this project models: those
+                    # are the names a translated query asks with.
+                    canonical = to_canonical_name.get(name, name)
+                    if canonical not in modelled:
+                        continue
+                    name = canonical  # noqa: PLW2901 - the canonical name is the key
+
                 # The columns answer for themselves, and `CatalogueEntry.facet` looks
                 # there first, so repeating them here would be dead weight at best and
-                # a second, disagreeing answer at worst.
-                if name not in DATASET_FACET_COLUMNS and name not in extra:
-                    extra[name] = value
+                # a second, disagreeing answer at worst. Note this excludes a *name*
+                # which is a column, not a value: `variable` is dropped and
+                # `variable_id` is kept, which is right -- the latter is the document's
+                # own spelling and the only thing an `other_terms` lookup could use.
+                if name not in DATASET_FACET_COLUMNS and name not in destination:
+                    destination[name] = value
 
-    return extra
+    return project_facets, other_terms
 
 
 def _documents_by_dataset(
@@ -369,7 +444,9 @@ def _documents_by_dataset(
 
 
 def to_catalogue_entry(
-    dataset: Dataset, extra: Mapping[str, str | None] | None = None
+    dataset: Dataset,
+    project_facets: Mapping[str, str | None] | None = None,
+    other_terms: Mapping[str, str | None] | None = None,
 ) -> CatalogueEntry:
     """
     Read a stored dataset row as the solver's view of it
@@ -383,10 +460,15 @@ def to_catalogue_entry(
     dataset
         The row to read
 
-    extra
-        The facets which are not columns, as
-        [CatalogueEntry.extra][esmporium.requirements.CatalogueEntry.extra]
+    project_facets
+        The facets we model which are not columns, as
+        [CatalogueEntry.project_facets][esmporium.requirements.CatalogueEntry.project_facets]
         describes them. If `None`, the entry can answer only for its columns.
+
+    other_terms
+        The facets only a search document knows, as
+        [CatalogueEntry.other_terms][esmporium.requirements.CatalogueEntry.other_terms]
+        describes them. If `None`, the entry answers for none of them.
 
     Returns
     -------
@@ -413,16 +495,18 @@ def to_catalogue_entry(
         id=dataset.id,
         id_project_specific=dataset.id_project_specific,
         **{column: getattr(dataset, column) for column in DATASET_FACET_COLUMNS},
-        extra={} if extra is None else dict(extra),
+        project_facets={} if project_facets is None else dict(project_facets),
+        other_terms={} if other_terms is None else dict(other_terms),
     )
 
 
-def find_datasets(
+def find_datasets(  # noqa: PLR0913 - one argument per thing a find has to be told
     session: Session,
     query: QueryProtocol,
     *,
     availability: Availability = Availability.LATEST_NOT_RETRACTED,
     normalisers: Mapping[str, NormaliseFunc] = DEFAULT_NORMALISERS,
+    verbatim_normalisers: Mapping[str, NormaliseFunc] = VERBATIM_NORMALISERS,
     project_query_map: Mapping[str, type[QueryProtocol]] = PROJECT_QUERY_MAP_DEFAULT,
 ) -> tuple[CatalogueEntry, ...]:
     """
@@ -444,7 +528,10 @@ def find_datasets(
         Which datasets count as available. See [Availability][(m).Availability].
 
     normalisers
-        How to flatten a stored raw document of each format, when filling `extra`
+        See [DEFAULT_NORMALISERS][esmporium.search.DEFAULT_NORMALISERS].
+
+    verbatim_normalisers
+        See [VERBATIM_NORMALISERS][esmporium.search.VERBATIM_NORMALISERS].
 
     project_query_map
         Mapping from projects to the query class which names their facets, used to
@@ -459,10 +546,6 @@ def find_datasets(
 
     Raises
     ------
-    UnrecordedFacetError
-        `query` names a facet which is neither a column nor anything the datasets'
-        raw documents record
-
     ClashingFacetsError
         `query` sets the same facet in more than one place
 
@@ -472,15 +555,21 @@ def find_datasets(
     UnknownRawDocFormatTagError
         A stored raw document's format tag has no flattener in `normalisers`
     """
-    facets = set_facets(query)
+    asked = asked_facets(query)
+    # Only modelled facets can become SQL, and only the ones which are columns. A
+    # facet from `other_terms` cannot: its name is the search API's spelling, and
+    # mapping that back to a column is exactly the translation `other_terms` exists to
+    # avoid. So a leaf constrained *only* through `other_terms` pulls every row the
+    # availability filter allows, and their documents with it, which is the expensive
+    # shape to know about.
     column_facets = {
-        name: values for name, values in facets.items() if name in DATASET_FACET_COLUMNS
-    }
-    other_facets = {
         name: values
-        for name, values in facets.items()
-        if name not in DATASET_FACET_COLUMNS
+        for name, values in asked.modelled.items()
+        if name in DATASET_FACET_COLUMNS
     }
+    matched_on_entry = bool(asked.literal) or any(
+        name not in DATASET_FACET_COLUMNS for name in asked.modelled
+    )
 
     statement = select(Dataset).where(*facet_filters(column_facets))
 
@@ -492,10 +581,21 @@ def find_datasets(
     # the ordering costs nothing (it is the primary key).
     rows = list(session.exec(statement.order_by(col(Dataset.id))))
 
-    # `extra` is filled for every entry, not just when the query asks for one of its
-    # facets, because `solve` groups and prefers on *entries*: a `group_by=("realm",)`
-    # reads `realm` off each entry whether or not any query mentioned it. The cost is
-    # one JSON parse per stored document per `find`.
+    # Both facet mappings are filled for every entry, not just when the query asks for
+    # one of their facets, because `solve` groups and prefers on *entries*: a
+    # `group_by=("realm",)` reads `realm` off each entry whether or not any query
+    # mentioned it, and `known_facets` has to be able to say whether it could.
+    #
+    # The cost is one fetch plus one JSON parse per stored document per `find`, and it
+    # is the bulk of a `find`: measured over 20,000 datasets with one 57-key Solr
+    # document each, the fetch-and-parse is ~59% of the time and flattening ~25%, so
+    # skipping the documents entirely would be roughly a 6x saving. We cannot skip
+    # them from here, because `Catalogue.find` is given a query and not the
+    # `group_by`/`prefer` which decide what else will be read. Giving it that -- e.g.
+    # `find(query, *, needs_facets=...)` derived from the requirement -- is the
+    # optimisation to reach for, and it is a change to the protocol, so it is not done
+    # here. Note also that `solve` calls `find` once per leaf and then once per leaf
+    # per group, so the repetition matters more than the parse does.
     documents = _documents_by_dataset(
         session, [row.id for row in rows if row.id is not None], availability
     )
@@ -503,24 +603,26 @@ def find_datasets(
     entries = [
         to_catalogue_entry(
             row,
-            _extra_from_documents(
+            *_facets_from_documents(
                 row.project,
                 documents.get(row.id, []) if row.id else [],
                 normalisers,
+                verbatim_normalisers,
                 project_query_map,
             ),
         )
         for row in rows
     ]
 
-    if not other_facets:
+    if not matched_on_entry:
         return tuple(entries)
 
     # Matched here rather than in SQL, by the same function the in-memory catalogue
     # uses, so that a facet only a raw document knows about is answered identically
-    # whichever catalogue is asked -- including the `UnrecordedFacetError` for one
-    # nothing knows about.
-    return tuple(entry for entry in entries if matches_facets(other_facets, entry))
+    # whichever catalogue is asked. Nothing here raises: a facet an entry cannot answer
+    # for reads as `None` and so does not match, which is what makes the answer the
+    # same whether or not any row got far enough to be asked.
+    return tuple(entry for entry in entries if matches_facets(asked, entry))
 
 
 @dataclass(frozen=True)
@@ -551,10 +653,25 @@ class DatabaseCatalogue:
         default_factory=lambda: DEFAULT_NORMALISERS
     )
     """
-    How to flatten a stored raw document of each format, when filling `extra`
+    How to flatten a stored raw document of each format, when filling `project_facets`
 
-    The default covers the search APIs we ship. Override it if you bypassed our
-    facades with a search API of your own, whose documents carry your own format tag.
+    See [DEFAULT_NORMALISERS][esmporium.search.DEFAULT_NORMALISERS]. The default covers
+    the search APIs we ship. Override it if you bypassed our facades with a search API
+    of your own, whose documents carry your own format tag.
+    """
+
+    verbatim_normalisers: Mapping[str, NormaliseFunc] = field(
+        default_factory=lambda: VERBATIM_NORMALISERS
+    )
+    """
+    The same, but keeping each document's own facet names, when filling `other_terms`
+
+    See [VERBATIM_NORMALISERS][esmporium.search.VERBATIM_NORMALISERS]. Override this
+    alongside `normalisers` for a search API of your own: the two differ only where a
+    format puts a prefix on its facet names, so for a format which does not, the same
+    flattener serves both -- which is also why
+    [_facets_from_documents][(m)._facets_from_documents] flattens once when they are
+    the same function.
     """
 
     project_query_map: Mapping[str, type[QueryProtocol]] = field(
@@ -565,9 +682,10 @@ class DatabaseCatalogue:
 
     Used to translate a stored document's native facet names (`activity_id`) into the
     canonical ones a query asks with (`activity`), when filling
-    [CatalogueEntry.extra][esmporium.requirements.CatalogueEntry.extra]. Override it
-    for a project whose query class is your own; a project which is not in here keeps
-    its documents' native spellings.
+    [CatalogueEntry.project_facets][esmporium.requirements.CatalogueEntry.project_facets],
+    and to decide which of its facets we model at all. Override it for a project whose
+    query class is your own; for a project which is not in here we model nothing, so
+    everything its documents record is reachable only through `other_terms`.
     """
 
     def find(self, query: QueryProtocol) -> tuple[CatalogueEntry, ...]:
@@ -597,9 +715,6 @@ class DatabaseCatalogue:
 
         Raises
         ------
-        UnrecordedFacetError
-            `query` names a facet nothing can answer for
-
         ClashingFacetsError
             `query` sets the same facet in more than one place
         """
@@ -609,5 +724,6 @@ class DatabaseCatalogue:
                 query,
                 availability=self.availability,
                 normalisers=self.normalisers,
+                verbatim_normalisers=self.verbatim_normalisers,
                 project_query_map=self.project_query_map,
             )

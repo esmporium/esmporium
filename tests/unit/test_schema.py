@@ -344,9 +344,11 @@ def test_dataset_facets_mirror_dataset_columns():
 # assigned, whereas `Dataset.id` is `None` until the database assigns it.
 CATALOGUE_ENTRY_EXCEPTIONS = {"id": (int, int | None)}
 
-# `extra` is the entry's own addition, with no column behind it: it is where a
-# catalogue puts facets we have no column for.
-CATALOGUE_ENTRY_ONLY_FIELDS = {"extra"}
+# The entry's own additions, with no column behind them: the two mappings a catalogue
+# puts facets we have no column for into. `project_facets` holds the ones we model,
+# under canonical names; `other_terms` holds the ones only a search document knows,
+# under the document's own spelling.
+CATALOGUE_ENTRY_ONLY_FIELDS = {"project_facets", "other_terms"}
 
 
 def test_catalogue_entry_mirrors_dataset_columns():
