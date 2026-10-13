@@ -20,7 +20,7 @@ from esmporium.search import to_search_plan
 
 def a_requirement(tree, **kwargs):
     """
-    Build a requirement, defaulting everything the plan does not care about
+    Build a requirement when the details don't matter
     """
     kwargs.setdefault("group_by", ("model",))
     return requirement(name="an-analysis", tree=tree, **kwargs)
