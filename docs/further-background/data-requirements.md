@@ -320,7 +320,7 @@ each new piece of this design gets written and is expected to stay. `parent_of`,
 
 **Searching saves everything it finds, not just what the requirement asked for**, and
 that is deliberate. Working out what the records add up to is the solver's job, against
-the stored data, which is what makes step 3 repeatable: run the same requirement
+the stored data, which is what makes step 3 repeatable: search then solve with the same requirement
 tomorrow and the difference between the two `SolveResult`s is what changed. A search
 which filtered as it went would have thrown away the evidence needed to answer that.
 
