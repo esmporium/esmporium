@@ -211,6 +211,13 @@ class CatalogueEntry:
     anything it should be able to group by, prefer on, or match auxiliary data on is
     here by the time `find` returns, because those comparisons happen on the entry
     rather than in the query.
+
+    One value per facet, as a string. A facet a search document records with several
+    values at once -- a genuinely multi-realm dataset -- is therefore recorded here not
+    at all rather than partly, so it reads as a facet this entry does not know. That is
+    a known limit we have thought about rather than an oversight, and what supporting
+    it would take is written down beside the line which drops it, in
+    [esmporium.db.database_catalogue][].
     """
     other_terms: Mapping[str, str | None] = field(default_factory=dict)
     """
@@ -258,6 +265,11 @@ class CatalogueEntry:
         :
             The facet's value, or `None` if this entry has no value for it or does not
             know it at all
+
+            A third reason for `None` is worth knowing when one is unexpected: a facet
+            the search document recorded with *several* values is not recorded at all,
+            because a facet value is one string. See
+            [project_facets][(m).CatalogueEntry.project_facets].
         """
         modelled = self.modelled_facet(name)
 

@@ -399,9 +399,27 @@ def _facets_from_documents(
             (verbatim_flat, other_terms),
         ):
             for name, value in source.items():
-                # Both mappings hold single facet values. A document can carry a list
-                # (several realms, say) or a nested object, and there is no one value
-                # to answer with, so it is left out rather than guessed at.
+                # TODO future: multi-valued facets are dropped, and this is the line
+                # which drops them. Both mappings hold a single string per facet,
+                # because that is what a group key and a `prefer` ranking compare, so a
+                # document field carrying a list of several -- or a nested object --
+                # has no one value to answer with and is left out rather than guessed
+                # at.
+                #
+                # Written as a note rather than a comment because it has a visible
+                # consequence and we would rather be reminded that we foresaw it than
+                # rediscover it as a bug: a genuinely multi-realm dataset
+                # (`realm: ["atmos", "ocean"]`) records *no* `realm` at all, so
+                # `Query(realm="atmos")` does not match it and `group_by=("realm",)`
+                # cannot group it, while its single-realm sibling is fine.
+                # `test_a_non_scalar_document_value_is_left_out` pins it.
+                #
+                # Supporting them is a feature, not a fix, and it is a bigger change
+                # than it looks: a facet with several values needs deciding what a
+                # group key made from it means (one group per value? one group for the
+                # set?), what `matches` should do (any of them? all of them?), and
+                # whether `CatalogueEntry.facet` can keep returning `str | None`. If
+                # you need it, that is the shape of the issue to raise.
                 if not isinstance(value, str):
                     continue
 

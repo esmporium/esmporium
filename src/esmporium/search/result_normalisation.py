@@ -267,11 +267,21 @@ class UnknownRawDocFormatTagError(ValueError):
         self.tag = tag
         self.known = tuple(sorted(normalisers))
         known = ", ".join(repr(name) for name in self.known) or "(none)"
+        # Both mappings, deliberately. A reader who reaches this is being asked to
+        # register a flattener, and a catalogue flattens each document twice: once
+        # canonicalising its keys and once keeping them
+        # (see [VERBATIM_NORMALISERS][(m).VERBATIM_NORMALISERS]). Naming only
+        # `normalisers` sends them round the loop again -- they do exactly as told and
+        # get this same error from the second pass, with nothing to say why.
         super().__init__(
             f"No flattener is registered for raw_docs_format_tag {tag!r}. "
             f"Known tags: {known}. If this document came from a search API you "
-            "injected, pass a `normalisers` mapping that includes this tag, e.g. "
-            "{**DEFAULT_NORMALISERS, <your tag>: <your flattener>}."
+            "injected, register the tag in both of the mappings a reader takes: "
+            "`normalisers={**DEFAULT_NORMALISERS, <your tag>: <your flattener>}` and "
+            "`verbatim_normalisers={**VERBATIM_NORMALISERS, <your tag>: "
+            "<your flattener>}`. The same flattener serves both unless your format "
+            "puts a prefix on its facet names, which is the only thing the two "
+            "built-in mappings differ on."
         )
 
 

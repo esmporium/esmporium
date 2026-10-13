@@ -40,7 +40,11 @@ from esmporium.requirements import (
     requirement,
     solve,
 )
-from esmporium.search import UnknownRawDocFormatTagError
+from esmporium.search import (
+    DEFAULT_NORMALISERS,
+    VERBATIM_NORMALISERS,
+    UnknownRawDocFormatTagError,
+)
 
 SOLR = "solr"
 """The format tag of the raw documents these tests store"""
@@ -212,7 +216,9 @@ def test_facet_filters_refuses_a_non_column(engine):
 # ------------------------------------------------------------------- availability
 
 
-def test_a_dataset_whose_only_version_is_retracted_is_not_available_by_default(engine, store):
+def test_a_dataset_whose_only_version_is_retracted_is_not_available_by_default(
+    engine, store
+):
     store("retracted", variable="tas", versions=(("20200101", True, True, None),))
 
     assert found(DatabaseCatalogue(engine), Query(variable="tas")) == []
@@ -605,10 +611,34 @@ def test_a_facet_no_document_knows_is_refused(engine, store, populated):
     assert catalogue.find(asked) == ()
 
 
-def test_an_unknown_format_tag_is_refused(engine, get_dataset_kwargs):
-    """A stored document we have no flattener for raises rather than being skipped"""
+OUR_OWN_TAG = "a-format-we-never-shipped"
+"""A `raw_docs_format_tag` no flattener we ship knows"""
+
+
+def flatten_our_own(raw):
+    """
+    Flatten a document of our own format, for the injection tests
+
+    Deliberately keys-untouched, which is what makes it usable as both of the
+    flatteners a reader takes: the two built-in mappings differ only for a format which
+    prefixes its facet names, and this one does not.
+    """
+    return dict(raw)
+
+
+@pytest.fixture
+def stored_in_our_own_format(engine, get_dataset_kwargs):
+    """
+    Store one dataset whose only document carries a format tag we do not ship
+
+    `project` is named, and has to be: a facet is only answerable as one we model when
+    the row's project is one we have a query class for, so with the fixture default
+    label the injected flattener would be exercised without `realm` ever reaching
+    `project_facets`. See
+    `test_a_project_we_have_no_query_class_for_models_nothing`.
+    """
     with Session(engine) as session:
-        dataset = Dataset(**get_dataset_kwargs("one", variable="tas"))
+        dataset = Dataset(**get_dataset_kwargs("one", project="CMIP6", variable="tas"))
         session.add(dataset)
         session.flush()
         version = DatasetVersion(
@@ -619,15 +649,66 @@ def test_an_unknown_format_tag_is_refused(engine, get_dataset_kwargs):
         doc = DatasetRawDoc(
             esgf_doc_id="one-doc",
             raw_json=json.dumps({"realm": "atmos"}),
-            raw_docs_format_tag="a-format-we-never-shipped",
+            raw_docs_format_tag=OUR_OWN_TAG,
         )
         session.add(doc)
         session.flush()
         session.add(RawDocVersionLink(raw_doc_id=doc.id, dataset_version_id=version.id))
         session.commit()
 
-    with pytest.raises(UnknownRawDocFormatTagError):
-        DatabaseCatalogue(engine).find(Query(variable="tas"))
+    return engine
+
+
+def test_an_unknown_format_tag_is_refused(stored_in_our_own_format):
+    """A stored document we have no flattener for raises rather than being skipped"""
+    with pytest.raises(UnknownRawDocFormatTagError, match=OUR_OWN_TAG):
+        DatabaseCatalogue(stored_in_our_own_format).find(Query(variable="tas"))
+
+
+def test_injecting_a_flattener_for_our_own_format_makes_it_readable(
+    stored_in_our_own_format,
+):
+    """
+    Registering the tag in both mappings is what clears the error
+
+    The pair is the point. A reader flattens each document twice -- once
+    canonicalising its keys, once keeping them -- so a tag has to be known to both
+    before anything can be read, and the same function serves both here because this
+    format does not prefix its facet names.
+    """
+    catalogue = DatabaseCatalogue(
+        stored_in_our_own_format,
+        normalisers={**DEFAULT_NORMALISERS, OUR_OWN_TAG: flatten_our_own},
+        verbatim_normalisers={**VERBATIM_NORMALISERS, OUR_OWN_TAG: flatten_our_own},
+    )
+
+    (entry,) = catalogue.find(Query(variable="tas"))
+
+    # `realm` is modelled, so it lands under its canonical name and a query can use it.
+    assert entry.project_facets["realm"] == "atmos"
+    assert found(catalogue, Query(variable="tas", realm="atmos")) == ["one_ps"]
+
+
+def test_registering_only_one_of_the_two_mappings_still_refuses(
+    stored_in_our_own_format,
+):
+    """
+    Half the registration is no registration, and the message has to say so
+
+    Here because it is the case which made the message wrong once: it used to name
+    `normalisers` alone, so a reader did exactly as told, hit this, and saw the very
+    same sentence again with nothing to say which pass had failed. Pinned on the
+    message rather than only on the type, because the fix *was* the message.
+    """
+    catalogue = DatabaseCatalogue(
+        stored_in_our_own_format,
+        normalisers={**DEFAULT_NORMALISERS, OUR_OWN_TAG: flatten_our_own},
+    )
+
+    with pytest.raises(UnknownRawDocFormatTagError) as excinfo:
+        catalogue.find(Query(variable="tas"))
+
+    assert "verbatim_normalisers" in str(excinfo.value)
 
 
 # ------------------------------------------------------------- the protocol itself
