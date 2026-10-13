@@ -212,7 +212,7 @@ def test_facet_filters_refuses_a_non_column(engine):
 # ------------------------------------------------------------------- availability
 
 
-def test_a_dataset_whose_only_version_is_retracted_is_not_available(engine, store):
+def test_a_dataset_whose_only_version_is_retracted_is_not_available_by_default(engine, store):
     store("retracted", variable="tas", versions=(("20200101", True, True, None),))
 
     assert found(DatabaseCatalogue(engine), Query(variable="tas")) == []
