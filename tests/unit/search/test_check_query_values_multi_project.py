@@ -68,7 +68,7 @@ def facet_values(**fields: object) -> httpx.Response:
 
 
 def a_requirement(*leaves, where=None):
-    """Build a requirement from leaves, defaulting what the checker does not look at"""
+    """Build a requirement from leaves where the details of the requirement don't matter"""
     tree = leaves[0] if len(leaves) == 1 else all_of(*leaves)
     return requirement(name="an-analysis", tree=tree, group_by=("model",), where=where)
 
