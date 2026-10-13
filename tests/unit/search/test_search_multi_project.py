@@ -137,7 +137,7 @@ def saved_master_ids(engine: Engine) -> set[str]:
 
 def a_requirement(*leaves, where=None):
     """
-    Build a requirement from leaves, defaulting what `search` does not look at
+    Build a requirement from leaves, when the details don't matter
 
     `search` reads the tree and `where` and nothing else, so `group_by` and the rest
     are here only because a requirement needs them.
