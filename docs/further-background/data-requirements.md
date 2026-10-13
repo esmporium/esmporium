@@ -315,7 +315,7 @@ each new piece of this design gets written and is expected to stay. `parent_of`,
    `ancestry_until` as the tree does, and merging leaves which differ only in variable.
 2. `search(requirement)` fires those: each is split into one search per project it
    names, and every record that comes back is handed to the processor. Then parent links
-   get added from file headers (PR6).
+   get added from file headers (PR6) and auxiliary files are added too (add PR number here).
 3. `solve(requirement, catalogue)`.
 
 **Searching saves everything it finds, not just what the requirement asked for**, and
