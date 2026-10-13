@@ -259,18 +259,61 @@ class CatalogueEntry:
             The facet's value, or `None` if this entry has no value for it or does not
             know it at all
         """
+        modelled = self.modelled_facet(name)
+
+        return self.other_terms.get(name) if modelled is None else modelled
+
+    def modelled_facet(self, name: str) -> str | None:
+        """
+        Get the value of a facet we model, without consulting `other_terms`
+
+        The accessor for anything which arrived as a facet *we named*: a declared
+        field of a query, a query-specific one, or
+        [group_by][esmporium.requirements.Requirement.group_by]. It must not read
+        `other_terms`, and the reason is a real failure rather than tidiness. A CMIP6
+        search document carries a `product` field of its own, which is not CMIP5's
+        `product` -- the two mean different things, which is why CMIP5 declares it and
+        CMIP6 does not. That value is recorded in `other_terms` under the document's
+        own spelling, so a lookup which fell through to it would answer `product` for a
+        CMIP6 dataset and quietly undo the per-project decision
+        [project_facets][(m).CatalogueEntry.project_facets] exists to make.
+
+        Parameters
+        ----------
+        name
+            Facet to get, under its canonical name
+
+        Returns
+        -------
+        :
+            The facet's value, or `None` if this entry has no value for it or does not
+            model it
+        """
         if name in DATASET_FACET_COLUMNS:
             value: str | None = getattr(self, name)
             return value
 
-        if name in self.project_facets:
-            return self.project_facets[name]
+        return self.project_facets.get(name)
 
-        return self.other_terms.get(name)
+    def modelled_facets(self) -> frozenset[str]:
+        """
+        Get every facet name this entry can answer for as a facet we model
+
+        The name-set companion to [modelled_facet][(m).CatalogueEntry.modelled_facet],
+        and what the solver's checks on `group_by` and `prefer` are asked against:
+        those name facets we model, so a name only `other_terms` carries is not an
+        answer to them.
+
+        Returns
+        -------
+        :
+            The stored columns, plus whatever keys this entry's `project_facets` carry
+        """
+        return frozenset(DATASET_FACET_COLUMNS) | frozenset(self.project_facets)
 
     def known_facets(self) -> frozenset[str]:
         """
-        Get every facet name this entry can answer for
+        Get every facet name this entry can answer for, by any route
 
         The companion to [facet][(m).CatalogueEntry.facet], which cannot tell
         "no value" from "no such facet" because both are `None`. The difference matters
@@ -279,17 +322,18 @@ class CatalogueEntry:
         CMIP5 is one group of datasets which genuinely have no grid, whereas grouping
         on a facet nothing recorded is no grouping at all.
 
+        Wider than [modelled_facets][(m).CatalogueEntry.modelled_facets] by the
+        `other_terms` keys, so use this where the question spans both homes -- what a
+        requirement could possibly name, in either field of a pair -- and that one
+        where it does not.
+
         Returns
         -------
         :
             The stored columns, plus whatever keys this entry's `project_facets` and
             `other_terms` carry
         """
-        return (
-            frozenset(DATASET_FACET_COLUMNS)
-            | frozenset(self.project_facets)
-            | frozenset(self.other_terms)
-        )
+        return self.modelled_facets() | frozenset(self.other_terms)
 
 
 # A note for developers:
@@ -516,7 +560,7 @@ def matches_facets(asked: AskedFacets, entry: CatalogueEntry) -> bool:
         `True` if `entry` matches every facet in `asked`
     """
     return all(
-        entry.facet(name) in values for name, values in asked.modelled.items()
+        entry.modelled_facet(name) in values for name, values in asked.modelled.items()
     ) and all(
         entry.other_terms.get(name) in values for name, values in asked.literal.items()
     )
@@ -568,13 +612,23 @@ def matches(query: QueryProtocol, entry: CatalogueEntry) -> bool:
 # - **Which document answers.** A dataset has many versions and a version can be
 #   described by several documents. The one that answers belongs to the newest version
 #   which passed the catalogue's `availability` filter -- not simply the newest version
-#   -- so a caller who excluded a retracted version is not then described by it. This
-#   is the piece which will need revisiting once a requirement can ask for a particular
-#   version, which it cannot today: `version` lives on
-#   [DatasetVersion][esmporium.db.schema.DatasetVersion], not on `Dataset`, and is
-#   neither a canonical facet nor something a [Query][esmporium.query.Query] can
-#   name. Making it one would touch `esmporium.query`, the canonical facets and every
-#   search API's parameter mapping, so it is a change of its own.
+#   -- so a caller who excluded a retracted version is not then described by it.
+#
+#   TODO future: this is the piece to revisit when a requirement can ask for a
+#   particular version, which it cannot today. The reason is not that version is hard
+#   to plumb, it is what an entry *is*: **one entry describes one `Dataset` row, not one
+#   `DatasetVersion`**, and the availability filter decides which version's documents
+#   speak for it. So "prefer version X" has nothing to range over -- there is a single
+#   entry per dataset however many versions exist -- and expressing it needs either a
+#   `version` field on the entry (making "prefer latest" trivially true and "this
+#   version" a filter rather than a preference) or one entry per
+#   `(dataset, version)`, which changes what `id` means and what a group is.
+#
+#   Note also where version would *not* go. It is not a facet: facets are what a query
+#   matches on, and version is metadata about which snapshot answered, like `id`. So it
+#   belongs as a field of its own rather than in `project_facets` or `other_terms`,
+#   both of which are built *from* a particular version's documents and so cannot be
+#   how you choose between them.
 #
 # - **A facet nothing records finds nothing, unconditionally.** `facet` answers `None`
 #   for one, and no query can ask for `None`, so an empty table and a populated one

@@ -10,6 +10,7 @@ the same answers, because that is the promise which lets everything in
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 
 import pytest
 from sqlmodel import Session
@@ -238,12 +239,18 @@ def test_a_dataset_with_a_live_and_a_retracted_version_is_available(engine, stor
     assert found(DatabaseCatalogue(engine), Query(variable="tas")) == ["mixed_ps"]
 
 
-def test_latest_not_retracted_excludes_a_superseded_version(engine, store):
+def test_a_superseded_dataset_is_available_from_its_newest_live_version(engine, store):
     """
-    A dataset whose only live version is no longer the latest is not available
+    A dataset whose latest version was retracted is kept, from the version before it
 
-    `not_retracted` keeps it, which is the setting for "we have not re-searched this
-    yet, and what we have is still usable".
+    The default's whole point: a dataset's newest usable version beats nothing. ESGF
+    retracting the newest version does not unpublish the one before it, so a solve
+    should be able to satisfy a role from that one rather than reporting the dataset
+    missing.
+
+    `latest_not_retracted` is the stricter question -- "only what is current" -- and
+    still answers it, which is why the member survives the default moving. Both are
+    asserted here so that the difference between them is visible in one place.
     """
     store(
         "superseded",
@@ -254,11 +261,47 @@ def test_latest_not_retracted_excludes_a_superseded_version(engine, store):
         ),
     )
 
-    assert found(DatabaseCatalogue(engine), Query(variable="tas")) == []
-    assert found(
-        DatabaseCatalogue(engine, availability=Availability.NOT_RETRACTED),
-        Query(variable="tas"),
-    ) == ["superseded_ps"]
+    catalogue = DatabaseCatalogue(engine)
+
+    assert found(catalogue, Query(variable="tas")) == ["superseded_ps"]
+    assert (
+        found(
+            replace(catalogue, availability=Availability.LATEST_NOT_RETRACTED),
+            Query(variable="tas"),
+        )
+        == []
+    )
+
+
+def test_the_default_describes_a_superseded_dataset_by_its_live_version(engine, store):
+    """
+    Availability chooses which version speaks for a dataset, not only whether it is kept
+
+    Worth pinning separately, because it is the part of the default change which is
+    easy to miss: the facet values an entry reports come from the newest version the
+    setting *accepted*. Here the retracted latest says `ocean` and the live older one
+    says `atmos`, so the default answers `atmos` -- a caller is described by the
+    version they would actually get, rather than by one they were not offered.
+    """
+    store(
+        "superseded",
+        project="CMIP6",
+        variable="tas",
+        versions=(
+            ("20200101", False, False, [{"realm": ["atmos"]}]),
+            ("20200202", True, True, [{"realm": ["ocean"]}]),
+        ),
+    )
+
+    catalogue = DatabaseCatalogue(engine)
+    (entry,) = catalogue.find(Query(variable="tas"))
+
+    assert entry.facet("realm") == "atmos"
+    # `any` reaches past the retraction, and then the newest version does speak.
+    (any_entry,) = replace(catalogue, availability=Availability.ANY).find(
+        Query(variable="tas")
+    )
+    assert any_entry.facet("realm") == "ocean"
 
 
 def test_a_dataset_with_no_versions_is_only_found_under_any(engine, store):
@@ -298,6 +341,12 @@ def test_realm_comes_from_the_raw_document(engine, store):
     (entry,) = DatabaseCatalogue(engine).find(Query(variable="tas"))
 
     assert entry.facet("realm") == "atmos"
+    # Which mapping it landed in, not just that something answers. `facet` reads
+    # `other_terms` as well, so a `realm` recorded only there would satisfy the line
+    # above while no longer matching `Query(realm=...)` -- see
+    # `test_a_modelled_facet_recorded_only_in_other_terms_does_not_answer`.
+    assert entry.project_facets["realm"] == "atmos"
+    assert "realm" in entry.modelled_facets()
 
 
 def test_a_facet_is_translated_out_of_the_document_into_its_canonical_name(
@@ -344,12 +393,88 @@ def test_a_project_specific_facet_comes_from_the_raw_document(engine, store):
 
 
 def test_a_query_can_select_on_a_facet_only_the_document_knows(engine, store):
-    store("atmos", variable="tas", versions=live([{"realm": ["atmos"]}]))
-    store("ocean", variable="tas", versions=live([{"realm": ["ocean"]}]))
+    """
+    `realm` has no column, so only the stored document can answer -- and a query can
+
+    `project` is named rather than left to the fixture default, and it has to be: a
+    facet is only answerable as one we model when the row's project is one we have a
+    query class for. The default label is not a real project, so these rows would
+    record `realm` in `other_terms` alone and the query would correctly match nothing
+    -- which would be testing the unmodelled-project rule rather than this.
+    """
+    store(
+        "atmos", project="CMIP6", variable="tas", versions=live([{"realm": ["atmos"]}])
+    )
+    store(
+        "ocean", project="CMIP6", variable="tas", versions=live([{"realm": ["ocean"]}])
+    )
 
     catalogue = DatabaseCatalogue(engine)
 
     assert found(catalogue, Query(variable="tas", realm="atmos")) == ["atmos_ps"]
+
+
+def test_a_project_we_have_no_query_class_for_models_nothing(engine, store):
+    """
+    Everything an unmodelled project records is `other_terms`, canonical spellings too
+
+    We do not own that project's facet names, so we do not claim to translate them --
+    not even one spelled exactly like a canonical facet of ours, because whether it
+    means the same thing is a question about conventions we have not looked at. The
+    route for a user is `other_terms`, which promises nothing and checks nothing; the
+    route for a maintainer is a query class, which is what makes the names ours.
+    """
+    store(
+        "cordex",
+        project="CORDEX-CMIP6",
+        variable="tas",
+        versions=live([{"realm": ["atmos"], "driving_source_id": ["MPI-ESM1-2-HR"]}]),
+    )
+
+    catalogue = DatabaseCatalogue(engine)
+    (entry,) = catalogue.find(Query(variable="tas"))
+
+    assert entry.project_facets == {}
+    assert entry.other_terms["realm"] == "atmos"
+    assert entry.other_terms["driving_source_id"] == "MPI-ESM1-2-HR"
+
+    # So the facet we model finds nothing, and the escape hatch finds it.
+    assert found(catalogue, Query(variable="tas", realm="atmos")) == []
+    assert found(
+        catalogue, Query(variable="tas", other_terms={"realm": ("atmos",)})
+    ) == ["cordex_ps"]
+
+
+def test_a_modelled_facet_recorded_only_in_other_terms_does_not_answer(engine, store):
+    """
+    A document's own field does not stand in for the facet we model of that name
+
+    A CMIP6 search document carries a `product` field, and it is not CMIP5's `product`
+    -- the two mean different things, which is why CMIP5 declares the facet and CMIP6
+    does not. So the value is recorded under the document's own spelling in
+    `other_terms` and *not* in `project_facets`, and a lookup for the facet we model
+    must not find it. Letting it through would undo the per-project decision and, worse
+    than a stray match, would let a requirement group CMIP6 data on a CMIP5 facet.
+    """
+    store(
+        "one",
+        project="CMIP6",
+        variable="tas",
+        versions=live([{"product": ["model-output"], "realm": ["atmos"]}]),
+    )
+
+    (entry,) = DatabaseCatalogue(engine).find(Query(variable="tas"))
+
+    assert entry.other_terms["product"] == "model-output"
+    assert "product" not in entry.project_facets
+
+    # `facet` still answers, because `group_by_other_terms` and `prefer_other_terms`
+    # reach the escape hatch through it.
+    assert entry.facet("product") == "model-output"
+    # The modelled accessors do not, which is what matching and the solver's checks use.
+    assert entry.modelled_facet("product") is None
+    assert "product" not in entry.modelled_facets()
+    assert "product" in entry.known_facets()
 
 
 def test_extra_comes_from_the_version_the_availability_filter_matched(engine, store):
@@ -370,8 +495,16 @@ def test_extra_comes_from_the_version_the_availability_filter_matched(engine, st
         ),
     )
 
-    not_retracted = DatabaseCatalogue(engine, availability=Availability.NOT_RETRACTED)
-    anything = DatabaseCatalogue(engine, availability=Availability.ANY)
+    # `replace` rather than two constructions, because that is what asking the same
+    # database two questions actually costs: `DatabaseCatalogue` is a frozen dataclass
+    # around the engine, so this builds no connection and copies no state. Availability
+    # stays an attribute rather than an argument to `find` so that the catalogue still
+    # satisfies [Catalogue][esmporium.requirements.Catalogue], which `solve` calls
+    # knowing nothing about versions -- and `find_datasets` takes it per call for a
+    # caller who wants one session across several.
+    base = DatabaseCatalogue(engine)
+    not_retracted = replace(base, availability=Availability.NOT_RETRACTED)
+    anything = replace(base, availability=Availability.ANY)
 
     (live_entry,) = not_retracted.find(Query(variable="tas"))
     (any_entry,) = anything.find(Query(variable="tas"))
@@ -402,6 +535,18 @@ def test_several_documents_for_one_version_merge_deterministically(engine, store
 
     They can disagree, and there is no principled way to choose, so the first one
     stored wins and the rule is written down rather than left to chance.
+
+    The cost of merging rather than taking the first document whole: the entry can end
+    up asserting a combination no single node published, as it does here (`atmos` from
+    the first, `activity` from the second). We merge anyway because the alternative
+    loses facets that exist -- two ESGF-NG mirrors of the same project differ by ten
+    field names in `tests/test-data/search/`, so a sparser first document would make
+    `group_by` on the others silently impossible -- and because "first" is
+    `DatasetRawDoc.id` ascending, i.e. earliest stored, which is arbitrary rather than
+    authoritative. Disagreement is at least deterministic. If that trade is ever
+    revisited, the thing to reach for is surfacing the disagreement (the repo already
+    has the notion in `UnhandledDatasetClashError` and `facet_differences`) rather than
+    discarding the data.
     """
     store(
         "one",

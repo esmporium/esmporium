@@ -299,6 +299,16 @@ def test_a_retracted_dataset_drops_its_group_from_the_solve(migrated, selector, 
 
     The rows are not deleted, and `Availability.ANY` still resolves the group, which
     is what makes this a statement about availability rather than about data loss.
+
+    TODO future: this pins today's behaviour, where retraction is a setting on the
+    catalogue. It is expected to become a constraint on the requirement instead, with
+    recency a preference -- see the note above
+    [Availability][esmporium.db.database_catalogue.Availability] for the shape and
+    what it needs first. This test should survive that: both versions are retracted
+    here, so there is nothing non-retracted left to fall back to however the setting is
+    spelled. It is the *superseded* case which moves, and
+    `test_latest_not_retracted_excludes_a_superseded_version` in
+    `tests/unit/db/test_database_catalogue.py` is where that lives.
     """
     req = a_requirement(prefer={"processing_id": (TMIN,)})
     catalogue = DatabaseCatalogue(migrated)
@@ -340,6 +350,10 @@ def test_a_group_whose_other_leaf_is_retracted_becomes_unsatisfied(
     Together with the test above this is the whole of the day-to-day story: a
     retraction either takes the group with it or leaves it unsatisfied, and either way
     the requirement's hash is untouched.
+
+    TODO future: as above, the *statement* here should outlive retraction moving onto
+    the requirement -- what changes is how the retraction is expressed, not that a
+    half-retracted group reports unsatisfied. Worth re-reading when it does.
     """
     req = a_requirement(
         tree=all_of(

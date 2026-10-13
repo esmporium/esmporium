@@ -982,7 +982,15 @@ def _unanswerable_facets(
     facets: Iterable[str], candidates: Sequence[CatalogueEntry]
 ) -> list[str]:
     """
-    Get the facets not one of the candidates can answer for
+    Get the modelled facets not one of the candidates can answer for
+
+    Asked through
+    [modelled_facets][esmporium.requirements.CatalogueEntry.modelled_facets] rather
+    than `known_facets`, because every caller passes a field which names facets *we
+    model* -- `group_by` and `prefer`, not their `_other_terms` counterparts. A name
+    which only a search document carries is not an answer to those: a CMIP6 document
+    has a `product` field of its own which is not CMIP5's `product`, and reading it
+    here would turn a grouping we cannot do into one keyed on the wrong thing.
 
     Asked of the candidates rather than of the facets we model, because the question is
     about the data: `realm` is a facet we model, and a catalogue whose documents never
@@ -1013,7 +1021,7 @@ def _unanswerable_facets(
     """
     answerable: set[str] = set()
     for entry in candidates:
-        answerable |= entry.known_facets()
+        answerable |= entry.modelled_facets()
 
     return [facet for facet in facets if facet not in answerable]
 
@@ -1052,7 +1060,7 @@ def _check_project_facets_are_shared(
         return
 
     for facet in named:
-        knowing = sum(1 for entry in candidates if facet in entry.known_facets())
+        knowing = sum(1 for entry in candidates if facet in entry.modelled_facets())
         if knowing != len(candidates):
             raise MixedProjectFacetError([facet], field_name, knowing, len(candidates))
 

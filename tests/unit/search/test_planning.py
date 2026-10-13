@@ -9,7 +9,6 @@ import pytest
 from esmporium.query import Query, QueryCMIP6, to_canonical
 from esmporium.requirements import (
     ConflictingFacetsError,
-    Requirement,
     all_of,
     leaf,
     requirement,
@@ -158,22 +157,15 @@ def test_a_facet_set_twice_differently_is_refused_with_the_role_named():
     """
     A `where` which contradicts a leaf raises, and says which leaf
 
-    `Requirement` makes this unreachable through the public factories -- it runs the
-    same check when it is built -- so the requirement is assembled field by field to
-    get a tree the plan has to refuse. Pinned because the error naming the role is
-    the whole value of raising it here rather than later.
+    `Requirement` runs the same check when it is built, so the factories cannot produce
+    this -- but `model_copy(update=...)` can, and that is an ordinary pydantic call
+    rather than a contrivance: it skips validation by design, and this repo uses it in
+    three places. So the state is reachable without anyone doing anything unusual,
+    which is why `to_search_plan` checks rather than trusting its input. Pinned because
+    the error naming the role is the whole value of raising it here rather than later.
     """
     req = a_requirement(leaf(Query(project="CMIP7", variable="tas"), "control"))
-    # `model_construct` skips the validators, which is the only way to get a
-    # requirement whose `where` contradicts a leaf.
-    contradicting = Requirement.model_construct(
-        name=req.name,
-        tree=req.tree,
-        where=to_canonical(Query(variable="pr")),
-        group_by=req.group_by,
-        prefer=req.prefer,
-        cardinality=req.cardinality,
-    )
+    contradicting = req.model_copy(update={"where": to_canonical(Query(variable="pr"))})
 
     with pytest.raises(ConflictingFacetsError, match="control"):
         to_search_plan(contradicting)

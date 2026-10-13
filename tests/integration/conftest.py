@@ -4,9 +4,21 @@ Re-useable fixtures etc. for our integration tests
 The tests use a file-backed SQLite database rather than an in-memory one,
 because an in-memory database only lives as long as the connection that made it,
 and migrating is inherently a multi-connection exercise.
+
+`skip_or_fail` is here rather than beside either set of live tests because both sets
+need it and the policy has to agree between them: whether an unreachable endpoint
+skips or fails is a decision about this test suite, not about the layer under test.
+`tests/integration/search/` drives the search APIs directly and
+`tests/integration/requirements/` drives the whole chain through to a solve, and a
+skip rule which differed between them would mean one of the two quietly passing on a
+failure the other reports. A fixture is the way to share it: `tests` is not a package,
+so importing across these directories would work only by pytest putting the rootdir on
+`sys.path`, which is not something to build on.
 """
 
 from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 import pytest
 from alembic.autogenerate import compare_metadata
@@ -14,6 +26,53 @@ from alembic.runtime.migration import MigrationContext
 from sqlmodel import create_engine
 
 from esmporium.db import METADATA, configure_sqlite_for_concurrency
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Mapping
+    from typing import NoReturn
+
+
+@pytest.fixture
+def skip_or_fail() -> Callable[..., NoReturn]:
+    """
+    Get a function which turns every endpoint failing into a skip or a failure
+
+    Call it with the failures carried by an error saying nobody answered
+    (`NoFacadeAnsweredError.failures`),
+    the failure type to skip,
+    and the reason to skip with.
+
+    For example, an endpoint which did not answer is down or unwell,
+    which says nothing about the behaviour under test,
+    so if that is every failure, the test skips.
+    Any other failure fails the test.
+
+    Failing on anything but certain exceptions
+    means a kind of failure we add later fails loudly instead of quietly skipping.
+
+    Note what this is *not* for. An endpoint which answers and returns nothing has not
+    failed: these APIs report a mis-spelled facet name or value as a successful empty
+    result, so emptiness is a finding and belongs in an assertion or a `pytest.fail`,
+    never a skip.
+    """
+
+    def check(
+        failures: Mapping[object, Exception], *, skippable: type[Exception], reason: str
+    ) -> NoReturn:
+        other_failures = [
+            failure
+            for failure in failures.values()
+            if not isinstance(failure, skippable)
+        ]
+        if other_failures:
+            pytest.fail(
+                "\n".join(str(failure) for failure in other_failures),
+                pytrace=False,
+            )
+
+        pytest.skip(reason)
+
+    return check
 
 
 @pytest.fixture

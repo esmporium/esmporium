@@ -294,6 +294,30 @@ def test_other_terms_do_not_read_the_facets_we_model(make_entry):
     assert not matches(Query(other_terms={"realm": ("atmos",)}), entry)
 
 
+def test_a_modelled_facet_is_not_answered_from_other_terms(make_entry):
+    """
+    The two mappings do not stand in for each other, in either direction
+
+    `other_terms` holds a document's own field names, and one of them can coincide with
+    a facet we model without meaning it: a CMIP6 document's `product` is not CMIP5's
+    `product`. So a facet which arrived as one we model is answered from the columns and
+    `project_facets` only, and the escape hatch is answered from `other_terms` only.
+
+    Pinned on the entry as well as through `matches`, because `facet` deliberately reads
+    both -- `group_by_other_terms` needs it to -- so a mix-up is invisible there.
+    """
+    entry = make_entry(1, other_terms={"product": "model-output"})
+
+    assert entry.facet("product") == "model-output"
+    assert entry.modelled_facet("product") is None
+    assert "product" not in entry.modelled_facets()
+    assert "product" in entry.known_facets()
+
+    # A query naming the facet we model finds nothing; the escape hatch finds it.
+    assert not matches(QueryCMIP5(product="model-output"), entry)
+    assert matches(Query(other_terms={"product": ("model-output",)}), entry)
+
+
 def test_two_spellings_of_one_facet_match_nothing(make_entry):
     # Several values for one facet are an "or"; several facet names are an "and". So
     # naming one facet under both a STAC and a Solr spelling cannot match, because no

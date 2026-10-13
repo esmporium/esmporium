@@ -12,6 +12,11 @@ a requirement plans into real searches, the real endpoints answer, what they ans
 saves, and the solver can read it back and account for every group it discovers. If the
 recorded test passes and this fails, the thing that changed is on the other end of the
 wire.
+
+Loose does not extend to finding nothing. A node which cannot be reached is skipped,
+because that says nothing about the chain; a node which answers and returns nothing is
+a failure, because a mis-spelled facet name or value is answered by these APIs as a
+successful empty result and would otherwise look exactly like quiet weather.
 """
 
 from __future__ import annotations
@@ -33,6 +38,12 @@ from esmporium.search import AllSubQueriesFailedError, search
 
 pytestmark = pytest.mark.hits_esgf_search_api
 
+# Deliberately not shared with the search-layer live tests, which declare their own
+# `TIMEOUT`. `tests` is not a package, so sharing a constant between these directories
+# means either an import that works only by pytest putting the rootdir on `sys.path`,
+# or a fixture wrapping a float -- neither of which is worth it for one number. The
+# thing which *does* have to agree between the two is the skip policy, and that is
+# `skip_or_fail` in `tests/integration/conftest.py`.
 TIMEOUT = 60.0
 """How long to wait for a node, in seconds"""
 
@@ -51,7 +62,12 @@ def skip_if_a_node_was_down(outcomes) -> None:
 
     A node being down shows up as an outcome with `answered` `False`. A real bug (e.g.
     a facet name we got wrong) is different: it comes back as a *successful, empty*
-    answer, so the assertions below still catch it.
+    answer, so the assertions below still catch it -- see the module docstring.
+
+    The same policy as `skip_or_fail` in `tests/integration/conftest.py`, which the
+    search-layer live tests use: unreachable skips, everything else is a finding. This
+    is the shape that policy takes for a `search` which returned outcomes rather than
+    raising.
     """
     if not all(outcome.answered for outcome in outcomes):
         pytest.skip("a node did not answer, so it is down or unwell")
@@ -110,8 +126,20 @@ def test_a_cmip7_requirement_is_searched_saved_and_solved_live(engine):
 
     rows = saved(engine)
     if not rows:
-        pytest.skip(
-            "CMIP7 published no monthly tas today, so there is nothing to solve"
+        # A failure rather than a skip, and the reason it is safe to fail is above:
+        # `search_live` has already skipped if any node did not answer. So reaching
+        # here means every node answered *and answered empty*, which is a result worth
+        # looking at. Most likely it is ours -- a facet name or value we got wrong, so
+        # the query is well-formed and matches nothing -- and if it is not ours, that
+        # CMIP7 holds no monthly `tas` at all is still something to know rather than
+        # pass over.
+        pytest.fail(
+            "every node answered and none returned a CMIP7 monthly `tas` dataset. "
+            "Either the query is wrong (a facet name or value we have mis-spelled, "
+            "which an API answers as an empty result rather than an error) or CMIP7 "
+            "genuinely publishes none. Both are worth knowing, so this fails rather "
+            "than skipping.",
+            pytrace=False,
         )
 
     result = solve(req, DatabaseCatalogue(engine))

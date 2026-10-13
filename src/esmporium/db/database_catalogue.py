@@ -47,6 +47,38 @@ if TYPE_CHECKING:
     from esmporium.search.result_normalisation import NormaliseFunc
 
 
+# TODO future: these three settings are meant to become two, and this is half way
+# there. The direction is to express retraction and recency where the *requirement* can
+# see them rather than here: "not retracted" as a constraint, and recency as a
+# preference, so that "latest", "this particular version" and "give me everything, with
+# `Cardinality.ALL`" are all things a requirement says rather than settings on the
+# catalogue reading it. That leaves this enum needing only "not retracted" and
+# "everything", because `LATEST_NOT_RETRACTED` is exactly the part which becomes a
+# preference.
+#
+# What has happened already: `NOT_RETRACTED` is the default, so the common path no
+# longer drops a dataset whose newest version was retracted but which has a usable
+# older one. What has not: `LATEST_NOT_RETRACTED` still exists, because until a
+# requirement can say "prefer the latest" there would be no way left to ask "only what
+# is current", and removing the member would delete the question rather than move it.
+# Deleting it is the last step, not the first.
+#
+# Two things to know before starting:
+#
+# - Search does not take availability at all, and should not be given it. A search
+#   saves everything it is told, not only what the requirement asked for (see
+#   [build_result_processor_factory][esmporium.db.build_result_processor_factory]), so
+#   this is a read-side setting and the "how much should search fetch?" question is a
+#   different one.
+# - The preference half needs a version on the entry first. Why that is not a small
+#   change is in the note above [Catalogue][esmporium.requirements.Catalogue]: an entry
+#   describes a `Dataset`, not a `DatasetVersion`, so today there is nothing for a
+#   preference to range over.
+#
+# `test_a_retracted_dataset_drops_its_group_from_the_solve` and
+# `test_a_group_whose_other_leaf_is_retracted_becomes_unsatisfied` in
+# `tests/integration/requirements/test_search_to_solve_recorded.py` are what pin the
+# current behaviour, and are the tests to re-read when this moves.
 class Availability(str, Enum):
     """
     Which of the datasets we have stored count as available
@@ -69,14 +101,24 @@ class Availability(str, Enum):
     """
     The dataset has a version which was not retracted, latest or not
 
-    Use this to keep datasets whose newest version has not been re-searched yet.
+    The default, because a dataset's newest usable version beats nothing. A dataset
+    whose latest version was retracted is still usable from the one before it, and the
+    document which describes it here is that older version's -- so what the entry says
+    matches what a caller would get.
     """
 
     LATEST_NOT_RETRACTED = "latest_not_retracted"
     """
     The dataset has a version which was both the latest and not retracted
 
-    The default: it is what "I can go and use this" means.
+    Stricter than the default: the dataset drops out entirely unless what ESGF last
+    called its newest version is also one it has not retracted. Use it to ask "only
+    what is current", and note it also drops a dataset whose single live version is
+    simply not flagged latest.
+
+    Expected to go once recency can be said in a requirement rather than here, at
+    which point this becomes a preference -- see the note above
+    [Availability][(m).Availability].
     """
 
 
@@ -213,11 +255,13 @@ def _spec_for(
     :
         The spec, or `None` for a project `project_query_map` has no query class for
 
-        `None` is not a failure. It means we model nothing about that project's
-        facets, so everything its documents record is
-        [other_terms][esmporium.requirements.CatalogueEntry.other_terms] territory.
-        CORDEX is exactly that case today: `cordex-cmip6:driving_source_id` is a real
-        facet properly modelled by CORDEX, and no query class of ours names it.
+        `None` is not a failure. It means we model nothing about that project's facets,
+        so *everything* its documents record is
+        [other_terms][esmporium.requirements.CatalogueEntry.other_terms] territory --
+        including a key spelled like one of our canonical facets, because we have not
+        looked at that project's conventions and will not guess that it means the same
+        thing. CORDEX is exactly that case today: `cordex-cmip6:driving_source_id` is a
+        real facet properly modelled by CORDEX, and no query class of ours names it.
     """
     for known, query_class in project_query_map.items():
         if known.lower() == project.lower():
@@ -316,6 +360,20 @@ def _facets_from_documents(
     # every project's names would have a CMIP6 entry claiming to answer for a facet
     # CMIP6 does not have. That value still reaches `other_terms`, under the
     # document's own spelling, which is the honest place for it.
+    #
+    # A project we have no query class for models nothing at all, rather than falling
+    # back to the canonical names. It is tempting to admit a document key already
+    # spelled `realm`, on the grounds that `realm` is our vocabulary rather than the
+    # project's -- but taking it at face value is a guess about a project whose
+    # conventions we have not looked at, and a facet which means something slightly
+    # different there would match silently. We do not own that project's names, so we
+    # do not claim to translate them.
+    #
+    # The route for a user who wants them is the one we already offer, and it is
+    # honest about what it is: name the facets in `other_terms`, spelled as that
+    # project's API and documents spell them, with no checking from us. Someone who
+    # wants them modelled properly writes a query class, which is what makes the
+    # names ours to translate -- see [QueryFacet][esmporium.query.QueryFacet].
     modelled: frozenset[str] = (
         frozenset()
         if spec is None
@@ -504,7 +562,7 @@ def find_datasets(  # noqa: PLR0913 - one argument per thing a find has to be to
     session: Session,
     query: QueryProtocol,
     *,
-    availability: Availability = Availability.LATEST_NOT_RETRACTED,
+    availability: Availability = Availability.NOT_RETRACTED,
     normalisers: Mapping[str, NormaliseFunc] = DEFAULT_NORMALISERS,
     verbatim_normalisers: Mapping[str, NormaliseFunc] = VERBATIM_NORMALISERS,
     project_query_map: Mapping[str, type[QueryProtocol]] = PROJECT_QUERY_MAP_DEFAULT,
@@ -640,13 +698,14 @@ class DatabaseCatalogue:
     engine: Engine
     """The database to read from"""
 
-    availability: Availability = Availability.LATEST_NOT_RETRACTED
+    availability: Availability = Availability.NOT_RETRACTED
     """
     Which datasets count as available
 
-    See [Availability][(m).Availability]. The default is the strict one, so a dataset
-    whose latest version was retracted reads as missing rather than as satisfying the
-    requirement.
+    See [Availability][(m).Availability]. The default keeps a dataset which has any
+    version ESGF had not retracted when we last looked, described by the newest such
+    version -- so a dataset whose latest version was retracted reads as available from
+    the one before it rather than as missing.
     """
 
     normalisers: Mapping[str, NormaliseFunc] = field(
