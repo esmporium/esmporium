@@ -180,8 +180,8 @@ def modelled_facet_names(
     """
     Get every facet name we model, across all the projects we know
 
-    "Model" means a query class names it, so we can translate it and a typo in it is
-    a mistake we can point at. Anything outside this set is a facet only a search
+    "Model" means a query class names it, so we can translate it.
+    Anything outside this set is a facet only a search
     API and its documents know, and is therefore
     [other_terms][esmporium.query.Query.other_terms] territory: ours to pass through
     untouched, and not ours to check.
@@ -230,19 +230,6 @@ def project_specific_facet_names(
 ) -> frozenset[str]:
     """
     Get every facet name we model which belongs to some projects and not others
-
-    The part of [modelled_facet_names][(m).modelled_facet_names] which is *not*
-    canonical: a facet one query class declares with
-    `QueryFacet(None)` because it has no equivalent elsewhere. CMIP5's `product` is
-    the worked example, and the two sets are disjoint by construction -- a canonical
-    facet is one every class can be asked to express.
-
-    "Project-specific" does not mean "one project only": CMIP6 and CMIP6Plus both
-    declare `sub_experiment_id`, so a catalogue holding both can be asked about it
-    throughout. Which projects own a given facet is
-    [facet_spec][esmporium.query.facet_spec] on each class, and the useful question
-    about stored data is usually not that but whether every dataset in hand can answer
-    for it.
 
     Parameters
     ----------
