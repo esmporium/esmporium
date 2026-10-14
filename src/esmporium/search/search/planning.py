@@ -5,19 +5,6 @@ A requirement says what an analysis needs. Searching is a separate step, and a n
 one: a search API answers "what exists that matches these facets?", one set of facets
 at a time. This module is the join between the two -- it reads the tree and says which
 searches have to be fired to have any chance of satisfying it.
-
-That happens in two steps, and both are here.
-[to_search_plan][(m).to_search_plan] reads the tree and gives one query per distinct
-leaf, saying nothing about where those queries go. One search goes to one project and
-a query may name several, so [plan_sub_searches][(m).plan_sub_searches] then splits
-each of them into one query per project it names, in the style that project uses. A
-leaf which names no project is an error raised there, naming the roles which asked.
-
-Shared by [search][esmporium.search.search] and
-[check_query_values][esmporium.search.check_query_values] because they ask the same
-question of the same requirement -- one sends it to the search endpoints, the other
-asks whether its values exist -- and the error raised for a leaf which names no
-project should read the same either way.
 """
 
 from __future__ import annotations
@@ -67,9 +54,7 @@ class LeafSearch:
     The role paths which asked for this query, in tree order
 
     Usually one. It is several when two leaves ask for exactly the same thing under
-    different roles, which is a real thing to write -- a pattern-scaling requirement
-    might want the same `tas` as both the field and the reference -- and is searched
-    for once.
+    different roles, which is a real thing to write.
 
     Never empty.
     """
@@ -94,17 +79,6 @@ class SearchPlan:
 def _dedupe_key(query: QueryCanonical) -> str:
     """
     Get a key which is equal for two queries exactly when they would search the same
-
-    Not `hash(query)`: [QueryCanonical][esmporium.query.QueryCanonical] is frozen
-    but carries mappings, so it is unhashable.
-
-    Not [set_facets][esmporium.requirements.set_facets] either, which is the
-    tempting one. That flattens a query's three *homes* into one mapping, so it
-    cannot tell `Query(realm="atmos")` from
-    `Query(other_terms={"realm": ("atmos",)})`. Those two ask the same question of a
-    catalogue and build different requests of a search API -- the second reaches the
-    API spelled exactly as written -- so merging them here would silently drop one of
-    the two searches.
 
     Parameters
     ----------
@@ -147,14 +121,7 @@ def to_search_plan(requirement: Requirement) -> SearchPlan:
     ------
     ConflictingFacetsError
         The requirement's `where` and one of its leaves set the same facet to
-        different values
-
-        Near-unreachable in practice:
-        [Requirement][esmporium.requirements.Requirement] runs
-        [check_where_agrees_with_leaves][esmporium.requirements.tree.check_where_agrees_with_leaves]
-        when it is built, so a requirement which would raise here cannot be
-        constructed. It is documented because this is where it would surface if that
-        check were ever relaxed, and because the error names the role.
+        different values. Near-unreachable.
 
     ClashingFacetsError
         The requirement's `where` and one of its leaves agree on a facet's value but
@@ -280,10 +247,6 @@ def plan_sub_searches(
 ) -> tuple[SubSearch, ...]:
     """
     Work out every search a requirement asks for, one project at a time
-
-    Two steps: [to_search_plan][(m).to_search_plan] reads the tree
-    and gives one query per distinct leaf, then each of those is split into one query
-    per project it names.
 
     Parameters
     ----------
