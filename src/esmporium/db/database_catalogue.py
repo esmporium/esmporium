@@ -63,13 +63,7 @@ if TYPE_CHECKING:
 # is current", and removing the member would delete the question rather than move it.
 # Deleting it is the last step, not the first.
 #
-# Two things to know before starting:
-#
-# - Search does not take availability at all, and should not be given it. A search
-#   saves everything it is told, not only what the requirement asked for (see
-#   [build_result_processor_factory][esmporium.db.build_result_processor_factory]), so
-#   this is a read-side setting and the "how much should search fetch?" question is a
-#   different one.
+# Important to note:
 # - The preference half needs a version on the entry first. Why that is not a small
 #   change is in the note above [Catalogue][esmporium.requirements.Catalogue]: an entry
 #   describes a `Dataset`, not a `DatasetVersion`, so today there is nothing for a
@@ -79,6 +73,8 @@ if TYPE_CHECKING:
 # `test_a_group_whose_other_leaf_is_retracted_becomes_unsatisfied` in
 # `tests/integration/requirements/test_search_to_solve_recorded.py` are what pin the
 # current behaviour, and are the tests to re-read when this moves.
+
+
 class Availability(str, Enum):
     """
     Which of the datasets we have stored count as available
@@ -107,6 +103,9 @@ class Availability(str, Enum):
     matches what a caller would get.
     """
 
+    # Note: Expected to go once recency can be said in a requirement rather than here,
+    # at which point this becomes a preference -- see the note above
+    # [Availability][(m).Availability].
     LATEST_NOT_RETRACTED = "latest_not_retracted"
     """
     The dataset has a version which was both the latest and not retracted
@@ -115,10 +114,6 @@ class Availability(str, Enum):
     called its newest version is also one it has not retracted. Use it to ask "only
     what is current", and note it also drops a dataset whose single live version is
     simply not flagged latest.
-
-    Expected to go once recency can be said in a requirement rather than here, at
-    which point this becomes a preference -- see the note above
-    [Availability][(m).Availability].
     """
 
 
@@ -192,12 +187,6 @@ def availability_filter(availability: Availability) -> ColumnElement[bool] | Non
     a join, because a dataset has many versions and a join would return it once per
     version.
 
-    One consequence worth knowing: under either filtering setting, a `Dataset` with no
-    `DatasetVersion` rows at all is *not* available. That is the right answer --
-    nothing has told us it exists anywhere -- and it cannot arise from a search, since
-    [ingest_parsed_documents][esmporium.db.ingest_parsed_documents] always writes a
-    version.
-
     Parameters
     ----------
     availability
@@ -257,11 +246,7 @@ def _spec_for(
 
         `None` is not a failure. It means we model nothing about that project's facets,
         so *everything* its documents record is
-        [other_terms][esmporium.requirements.CatalogueEntry.other_terms] territory --
-        including a key spelled like one of our canonical facets, because we have not
-        looked at that project's conventions and will not guess that it means the same
-        thing. CORDEX is exactly that case today: `cordex-cmip6:driving_source_id` is a
-        real facet properly modelled by CORDEX, and no query class of ours names it.
+        [other_terms][esmporium.requirements.CatalogueEntry.other_terms] territory.
     """
     for known, query_class in project_query_map.items():
         if known.lower() == project.lower():
@@ -302,6 +287,9 @@ def _canonical_name_for(
     return {} if spec is None else spec.native_to_canonical
 
 
+# Note: It is also the
+# one place a future "skip the documents when nothing needs them" filter has to
+# land, which is another reason to keep it a single function rather than two.
 def _facets_from_documents(
     project: str,
     documents: list[tuple[dict[str, Any], str]],
@@ -314,9 +302,7 @@ def _facets_from_documents(
 
     One pass per document per mapping, over documents which have already been parsed,
     because this is the hot part of a `find`: the fetch-and-parse above it is the bulk
-    of the cost and this should not add another walk of the same data. It is also the
-    one place a future "skip the documents when nothing needs them" filter has to
-    land, which is another reason to keep it a single function rather than two.
+    of the cost and this should not add another walk of the same data.
 
     Parameters
     ----------
@@ -355,25 +341,7 @@ def _facets_from_documents(
     """
     to_canonical_name = _canonical_name_for(project, project_query_map)
     spec = _spec_for(project, project_query_map)
-    # What *this* project models, rather than what any project models. A CMIP6 search
-    # document carries a `product` field, and `product` is CMIP5's facet, so pooling
-    # every project's names would have a CMIP6 entry claiming to answer for a facet
-    # CMIP6 does not have. That value still reaches `other_terms`, under the
-    # document's own spelling, which is the honest place for it.
-    #
-    # A project we have no query class for models nothing at all, rather than falling
-    # back to the canonical names. It is tempting to admit a document key already
-    # spelled `realm`, on the grounds that `realm` is our vocabulary rather than the
-    # project's -- but taking it at face value is a guess about a project whose
-    # conventions we have not looked at, and a facet which means something slightly
-    # different there would match silently. We do not own that project's names, so we
-    # do not claim to translate them.
-    #
-    # The route for a user who wants them is the one we already offer, and it is
-    # honest about what it is: name the facets in `other_terms`, spelled as that
-    # project's API and documents spell them, with no checking from us. Someone who
-    # wants them modelled properly writes a query class, which is what makes the
-    # names ours to translate -- see [QueryFacet][esmporium.query.QueryFacet].
+
     modelled: frozenset[str] = (
         frozenset()
         if spec is None
@@ -448,13 +416,6 @@ def _documents_by_dataset(
 ) -> dict[int, list[tuple[dict[str, Any], str]]]:
     """
     Get the raw documents which answer for each dataset, newest available version first
-
-    Which version's documents answer matters, and is why this takes `availability`
-    rather than just reading the newest version: with
-    [Availability.ANY][(m).Availability.ANY] and only an old version on record, that
-    old version's document is the one describing the dataset we just said was
-    available. Reading the newest version regardless would describe a version the
-    caller has excluded.
 
     Parameters
     ----------
@@ -657,11 +618,7 @@ def find_datasets(  # noqa: PLR0913 - one argument per thing a find has to be to
     # the ordering costs nothing (it is the primary key).
     rows = list(session.exec(statement.order_by(col(Dataset.id))))
 
-    # Both facet mappings are filled for every entry, not just when the query asks for
-    # one of their facets, because `solve` groups and prefers on *entries*: a
-    # `group_by=("realm",)` reads `realm` off each entry whether or not any query
-    # mentioned it, and `known_facets` has to be able to say whether it could.
-    #
+    # Possible future TODO:
     # The cost is one fetch plus one JSON parse per stored document per `find`, and it
     # is the bulk of a `find`: measured over 20,000 datasets with one 57-key Solr
     # document each, the fetch-and-parse is ~59% of the time and flattening ~25%, so
@@ -707,8 +664,8 @@ class DatabaseCatalogue:
     A [Catalogue][esmporium.requirements.Catalogue] backed by our own database
 
     Answers from the [Dataset][(m).Dataset] rows a search saved, so
-    [solve][esmporium.requirements.solve] can be run against everything found so far
-    rather than against a catalogue written out by hand. Run the same requirement
+    [solve][esmporium.requirements.solve] can be run against everything found so far.
+    Run the same requirement
     again tomorrow and the difference between the two
     [SolveResult][esmporium.requirements.SolveResult]s is what changed.
     """
@@ -720,10 +677,7 @@ class DatabaseCatalogue:
     """
     Which datasets count as available
 
-    See [Availability][(m).Availability]. The default keeps a dataset which has any
-    version ESGF had not retracted when we last looked, described by the newest such
-    version -- so a dataset whose latest version was retracted reads as available from
-    the one before it rather than as missing.
+    See [Availability][(m).Availability].
     """
 
     normalisers: Mapping[str, NormaliseFunc] = field(
@@ -744,11 +698,7 @@ class DatabaseCatalogue:
     The same, but keeping each document's own facet names, when filling `other_terms`
 
     See [VERBATIM_NORMALISERS][esmporium.search.VERBATIM_NORMALISERS]. Override this
-    alongside `normalisers` for a search API of your own: the two differ only where a
-    format puts a prefix on its facet names, so for a format which does not, the same
-    flattener serves both -- which is also why
-    [_facets_from_documents][(m)._facets_from_documents] flattens once when they are
-    the same function.
+    alongside `normalisers` for a search API of your own.
     """
 
     project_query_map: Mapping[str, type[QueryProtocol]] = field(
