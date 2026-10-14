@@ -173,13 +173,6 @@ class UnrankableFacetError(ValueError):
     """
     Raised when nothing in a tie records a facet the requirement prefers on
 
-    Raised lazily, unlike
-    [UngroupableFacetError][(m).UngroupableFacetError]: `prefer` is only read when
-    there is a tie to break, so a requirement whose data never ties never reaches it.
-    That is deliberate -- a preference nothing needed is not a mistake worth stopping
-    for -- and it means the same requirement can raise against one catalogue and not
-    another.
-
     Only for [Requirement.prefer][esmporium.requirements.Requirement.prefer].
     `prefer_other_terms` is the escape hatch: a name there which nothing records
     ranks every candidate equally, so it narrows nothing and the tie is reported as
@@ -219,6 +212,7 @@ class UnrankableFacetError(ValueError):
         )
 
 
+# @Claude is this note below still necessary?
 # A note for developers: a `NotImplementedError` rather than a `ValueError`, because
 # the requirement is a fair thing to want and the answer is "not yet" rather than "no".
 # Grouping CMIP5 by `product` is right, and grouping CMIP5 *and* CMIP6 by it has an
@@ -248,11 +242,6 @@ class UnrankableFacetError(ValueError):
 class MixedProjectFacetError(NotImplementedError):
     """
     Raised when a project-specific facet is used across datasets of several projects
-
-    Not a permanent rule. Deciding what `group_by=("product",)` should mean when the
-    catalogue holds CMIP5 and CMIP6 needs the solver to know which projects are in
-    play and what the caller intended by naming a facet only one of them has, and it
-    knows neither today. Until then this stops rather than answering quietly.
 
     Naming `project` in
     [group_by][esmporium.requirements.Requirement.group_by] is the way through: each
@@ -959,10 +948,7 @@ def group_facets(requirement: Requirement) -> tuple[str, ...]:
     Get the facets a group is keyed on, in the order the key uses
 
     The modelled facets first, then the escape-hatch ones, so that reading a group key
-    does not depend on how the two happen to sort against each other. One function
-    rather than the same concatenation written at each of the four places which need
-    it, because the *order* is what a [GroupKey][(m).GroupKey] means and two spellings
-    of it would be free to disagree.
+    does not depend on how the two happen to sort against each other.
 
     Parameters
     ----------
@@ -983,28 +969,6 @@ def _unanswerable_facets(
 ) -> list[str]:
     """
     Get the modelled facets not one of the candidates can answer for
-
-    Asked through
-    [modelled_facets][esmporium.requirements.CatalogueEntry.modelled_facets] rather
-    than `known_facets`, because every caller passes a field which names facets *we
-    model* -- `group_by` and `prefer`, not their `_other_terms` counterparts. A name
-    which only a search document carries is not an answer to those: a CMIP6 document
-    has a `product` field of its own which is not CMIP5's `product`, and reading it
-    here would turn a grouping we cannot do into one keyed on the wrong thing.
-
-    Asked of the candidates rather than of the facets we model, because the question is
-    about the data: `realm` is a facet we model, and a catalogue whose documents never
-    carried it still cannot be grouped or ranked on it. Whether the *name* is one we
-    model was settled when the requirement was built, by
-    [UnmodelledFacetError][esmporium.requirements.UnmodelledFacetError].
-
-    "Not one of them" rather than "any of them": partial coverage is ordinary. Two
-    mirrors of one project return different field sets, Solr and STAC documents differ
-    in shape, and a facet whose value is a list of several is recorded as nothing at
-    all -- so a facet some rows answer for and others do not still groups, with one
-    `None` group. The exception is a facet which belongs to some projects and not
-    others, which is
-    [_check_project_facets_are_shared][(m)._check_project_facets_are_shared].
 
     Parameters
     ----------
@@ -1172,10 +1136,6 @@ def solve(requirement: Requirement, catalogue: Catalogue) -> SolveResult:
     UngroupableFacetError
         `group_by` names a facet no dataset can answer for, so no group can be formed.
 
-        Raised rather than reported as an unsolved group, because it is a mistake in
-        the requirement rather than a fact about the data: reporting it group by group
-        would make one mistake look like missing data everywhere.
-
     MixedProjectFacetError
         A project-specific facet in `group_by` or `prefer` is answerable by only some
         of the datasets found, i.e. they span more than one project.
@@ -1186,13 +1146,6 @@ def solve(requirement: Requirement, catalogue: Catalogue) -> SolveResult:
     UnrankableFacetError
         `prefer` names a facet no tied candidate can answer for.
 
-        Raised only when a tie actually has to be broken, so unlike the above this
-        depends on the data -- a requirement whose candidates never tie never reaches
-        it.
-
-        A leaf's query naming a facet nothing records raises neither: that is a
-        question with the answer "nothing", so the group is reported as unsatisfied.
-        See the note above [Catalogue][esmporium.requirements.Catalogue].
     """
     satisfied: dict[GroupKey, Solution] = {}
     unsatisfied: dict[ExplanationStatusNotOk, dict[GroupKey, UnsolvedGroup]] = {
