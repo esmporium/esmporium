@@ -181,63 +181,24 @@ class CatalogueEntry:
     """
     Facets we model which no column stores, under their canonical names
 
-    Two kinds of facet live here, and what they have in common is that *we own the
-    name*: some query class declares it, so we can translate it and a typo in it is a
-    mistake we can point at.
-    Project-specific ones, which have no canonical name at all
-    (CMIP5's `product`, CMIP6's `sub_experiment_id`).
-    And `activity`, `realm` and `resolution`, which *are* canonical facets
-    — [Query][esmporium.query.Query] can ask for them and the search APIs
-    answer — but which [Dataset][esmporium.db.schema.Dataset] has no column for,
-    so they are not in
+    Some query class declares this facet, so we can translate it.
+
+    This includes, for example, a project-specific facet, which have no canonical
+    name at all, such as CMIP5's `product` or CMIP6's `sub_experiment_id`, or a
+    facet which has a canonical name but no column stores it, such as `activity`,
+    `realm`, or `resolution`. For the latter, this means [Query][esmporium.query.Query]
+    can ask for them, but they are not in
     [DATASET_FACET_COLUMNS][esmporium.datasets.DATASET_FACET_COLUMNS].
-
-    Which of them an entry may hold is decided by *its own project's* query class, not
-    by pooling every class: a CMIP6 search document happens to carry a `product` field,
-    and `product` is CMIP5's facet, so a CMIP6 entry records that value in
-    `other_terms` rather than claiming to answer for a facet CMIP6 does not have.
-
-    This deliberately does **not** mirror one field of
-    [QueryCanonical][esmporium.query.QueryCanonical], and the near-miss is worth
-    naming:
-    [QueryCanonical.query_specific_facets][esmporium.query.QueryCanonical.query_specific_facets]
-    is only the *project-specific*
-    part of this (`product`, `sub_experiment_id`), because `activity`, `realm` and
-    `resolution` are declared fields there rather than query-specific ones. A query
-    reaches everything here through either home, so the split matters on the query
-    side and does not on this one.
-
-    How a catalogue fills this is its own business. What the solver needs is that
-    anything it should be able to group by, prefer on, or match auxiliary data on is
-    here by the time `find` returns, because those comparisons happen on the entry
-    rather than in the query.
-
-    One value per facet, as a string. A facet a search document records with several
-    values at once -- a genuinely multi-realm dataset -- is therefore recorded here not
-    at all rather than partly, so it reads as a facet this entry does not know. That is
-    a known limit we have thought about rather than an oversight, and what supporting
-    it would take is written down beside the line which drops it, in
-    [esmporium.db.database_catalogue][].
     """
+
     other_terms: Mapping[str, str | None] = field(default_factory=dict)
     """
     Facets only a search document knows, spelled exactly as the document spelled them
 
     The read side of [Query.other_terms][esmporium.query.Query.other_terms], and the
     same bargain: nothing here is translated, normalised or checked. The keys are the
-    document's own, prefixes included, so a stored ESGF-NG STAC document contributes
-    `cmip6:activity_id` and a Solr one contributes `activity_id`. That is what makes
-    the escape hatch usable from both ends -- the string you sent to the API is the
-    string that matches it back -- and it is also why it is per-API: no single document
-    uses both spellings, and [matches_facets][(m).matches_facets] is an `and` across
-    facet names, so asking for both matches nothing.
-
-    The one difference from the query side is which direction it faces. There it holds
-    what the user asked for; here it holds what the documents recorded.
-
-    Values are flattened to a single string because a facet value is a string, so a
-    document field holding a list of several or a nested object is left out rather than
-    guessed at. The *key* is never touched.
+    document's own. The one difference from the query side is which direction it faces.
+    There it holds what the user asked for; here it holds what the documents recorded.
     """
 
     def facet(self, name: str) -> str | None:
@@ -247,13 +208,6 @@ class CatalogueEntry:
         `id` and `id_project_specific` are deliberately not facets:
         they identify the dataset rather than describe it,
         so selecting on them is not what this is for.
-
-        A facet this entry does not know reads as `None`, the same as a facet it knows
-        and has no value for (CMIP5 and `grid_label`). The two are different questions
-        and [known_facets][(m).CatalogueEntry.known_facets] is how to ask the other
-        one; they are answered the same way here because *matching* does not care,
-        and because an entry which raised would make the result of a query depend on
-        which row happened to be asked first.
 
         Parameters
         ----------
@@ -280,8 +234,7 @@ class CatalogueEntry:
         Get the value of a facet we model, without consulting `other_terms`
 
         The accessor for anything which arrived as a facet *we named*: a declared
-        field of a query, a query-specific one, or
-        [group_by][esmporium.requirements.Requirement.group_by]. It must not read
+        field of a query, or a query-specific one. It must not read
         `other_terms`, and the reason is a real failure rather than tidiness. A CMIP6
         search document carries a `product` field of its own, which is not CMIP5's
         `product` -- the two mean different things, which is why CMIP5 declares it and
@@ -312,9 +265,10 @@ class CatalogueEntry:
         Get every facet name this entry can answer for as a facet we model
 
         The name-set companion to [modelled_facet][(m).CatalogueEntry.modelled_facet],
-        and what the solver's checks on `group_by` and `prefer` are asked against:
-        those name facets we model, so a name only `other_terms` carries is not an
-        answer to them.
+        and what the solver's checks on `group_by` and `prefer` are asked against --
+        not their `_other_terms` counterparts, which are never checked: those name
+        facets we model, so a name only `other_terms` carries is not an answer to
+        them.
 
         Returns
         -------
@@ -326,18 +280,6 @@ class CatalogueEntry:
     def known_facets(self) -> frozenset[str]:
         """
         Get every facet name this entry can answer for, by any route
-
-        The companion to [facet][(m).CatalogueEntry.facet], which cannot tell
-        "no value" from "no such facet" because both are `None`. The difference matters
-        exactly once, and it is load-bearing:
-        [group_by][esmporium.requirements.Requirement.group_by] on `grid_label` across
-        CMIP5 is one group of datasets which genuinely have no grid, whereas grouping
-        on a facet nothing recorded is no grouping at all.
-
-        Wider than [modelled_facets][(m).CatalogueEntry.modelled_facets] by the
-        `other_terms` keys, so use this where the question spans both homes -- what a
-        requirement could possibly name, in either field of a pair -- and that one
-        where it does not.
 
         Returns
         -------
@@ -401,8 +343,7 @@ class AskedFacets:
 
     Not translated, because that is the whole point of the escape hatch. Matched
     against an entry's [other_terms][(m).CatalogueEntry.other_terms], which is keyed
-    by the search document's own spelling -- so these have to be the search API's
-    names, prefixes and all, to match anything.
+    by the search document's own spelling.
     """
 
 
@@ -410,11 +351,8 @@ def asked_facets(query: QueryProtocol) -> AskedFacets:
     """
     Get the facets a query constrains, split by whether we model their names
 
-    `query` may be written in any query style
-    ([QueryCMIP6][esmporium.query.QueryCMIP6], say): the facets it declares are
-    translated to canonical names on the way in, so a caller does not have to know
-    that our columns are named `experiment` rather than `experiment_id`.
-    `other_terms` is deliberately not translated.
+    `query` may be written in any query style, we handle the translation to
+    canonical facet names for modelled facets.
 
     Parameters
     ----------
@@ -476,30 +414,6 @@ def set_facets(query: QueryProtocol) -> dict[str, tuple[str, ...]]:
     """
     Get the facets a query actually constrains, under canonical names, flattened
 
-    A query holds its facets in three places, and all three are facets:
-    the fields it declares, the facets it names which have no canonical
-    equivalent, and `other_terms`, which is esmporium's escape hatch for facets no
-    query class names. This flattens all three into one mapping, for the questions
-    which do not care where a facet came from: whether a query constrains anything at
-    all, and whether two queries constrain the same things.
-
-    Matching *does* care, because a declared facet and an `other_terms` facet of the
-    same name are answered from different places, so it uses
-    [asked_facets][(m).asked_facets] instead.
-
-    `query` may be written in any query style
-    ([QueryCMIP6][esmporium.query.QueryCMIP6], say):
-    it is translated to canonical names on the way in, so a caller does not have to
-    know that our columns are named `experiment` rather than `experiment_id`.
-
-    `other_terms` is deliberately not translated: it is the escape hatch for facets
-    no query class names. Its keys here have to be facet names
-    a catalogue can use.
-    Note too that a facet a query class *does* name is translated while the same
-    facet in `other_terms` is not, so `QueryCMIP6(table_id="Amon")` asks for
-    `processing_id`, whereas `QueryCMIP6(other_terms={"table_id": ("Amon",)})` asks
-    for `table_id` (and likely finds no entry which knows it).
-
     Parameters
     ----------
     query
@@ -546,18 +460,6 @@ def matches_facets(asked: AskedFacets, entry: CatalogueEntry) -> bool:
     [esmporium.db.DatabaseCatalogue][] over the rows its `select` returned -- which
     is how the two come to agree about a facet only an entry can answer for.
 
-    Each group is looked up where that group's facets live:
-    `modelled` against the entry's columns and
-    [project_facets][(m).CatalogueEntry.project_facets],
-    `literal` against its [other_terms][(m).CatalogueEntry.other_terms].
-    A facet the entry cannot answer for reads as `None`, which no query can ask for
-    (facet values are strings), so it simply does not match. Nothing here raises.
-
-    Several values for one facet are an "or", exactly as they are when searching.
-    Several facet *names* are an "and", which is why naming one facet under two
-    spellings (`cmip6:source_id` and `source_id`, say) matches nothing: no one search
-    document carries both.
-
     Parameters
     ----------
     asked
@@ -581,11 +483,6 @@ def matches_facets(asked: AskedFacets, entry: CatalogueEntry) -> bool:
 def matches(query: QueryProtocol, entry: CatalogueEntry) -> bool:
     """
     Determine whether a dataset matches a query
-
-    An entry matches if, for every facet the query sets,
-    the entry's value is one of the query's values.
-    Several values for one facet are therefore an "or",
-    exactly as they are when searching.
 
     A query which sets no facets constrains nothing, so it matches every entry.
     That is the right answer to the question as asked here, but it is a sharp edge
@@ -641,22 +538,6 @@ def matches(query: QueryProtocol, entry: CatalogueEntry) -> bool:
 #   belongs as a field of its own rather than in `project_facets` or `other_terms`,
 #   both of which are built *from* a particular version's documents and so cannot be
 #   how you choose between them.
-#
-# - **A facet nothing records finds nothing, unconditionally.** `facet` answers `None`
-#   for one, and no query can ask for `None`, so an empty table and a populated one
-#   give the same answer. That is what makes this one rule rather than two, and
-#   `test_solving_against_the_database_matches_the_in_memory_catalogue` holds both
-#   catalogues to it. It used to depend on which row happened to be asked first;
-#   `test_a_facet_nothing_records_finds_nothing_either_way` records why.
-#
-#   What is *not* silent is a facet a requirement groups or prefers on: see
-#   [UngroupableFacetError][esmporium.requirements.UngroupableFacetError] and
-#   [UnrankableFacetError][esmporium.requirements.UnrankableFacetError]. The asymmetry
-#   is deliberate. A query naming a facet nothing records is a question with the answer
-#   "nothing", which is a fact about the data. A *grouping* on one cannot produce
-#   groups at all, so it is a mistake in the requirement, and
-#   [known_facets][(m).CatalogueEntry.known_facets] is what lets the solver tell that
-#   apart from a facet which is known and simply has no value.
 
 
 class Catalogue(Protocol):
@@ -667,18 +548,6 @@ class Catalogue(Protocol):
     def find(self, query: QueryProtocol) -> tuple[CatalogueEntry, ...]:
         """
         Find every dataset which matches a query
-
-        Note for implementers: Matching on a facet we have no column for is essential.
-        For example, a query naming `product` or `realm` must match whenever the
-        entry's [project_facets][(m).CatalogueEntry.project_facets] carries it, and a
-        query naming something through `other_terms` must match whenever the entry's
-        [other_terms][(m).CatalogueEntry.other_terms] carries that exact spelling.
-        What is up to each catalogue is where those come from —
-        [esmporium.db.DatabaseCatalogue][] reads them out of the raw search documents,
-        another might consult a project-specific table, or simply know.
-        So anything the solver should be able to group by, prefer on or match
-        auxiliary data on has to be in one of the two by the time `find` returns,
-        whether or not `query` happens to mention it.
 
         Parameters
         ----------
