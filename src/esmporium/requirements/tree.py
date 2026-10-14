@@ -194,7 +194,7 @@ class EmptyLeafQueryError(ValueError):
 # strings. A leaf's query carries its facets in homes which already say how to read
 # them; `group_by=("realm",)` says nothing, so the name is all there is to go on.
 #
-# Deliberately not a check against the data, which was the first instinct and is wrong:
+# Deliberately not a check against the data.
 # a raw search document records far more than any query class names (`mip_era`,
 # `member_id`, `variable_long_name`, CORDEX's `driving_source_id`), and grouping on one
 # of those is a real analysis. That is what `group_by_other_terms` is for, and nothing
@@ -204,11 +204,6 @@ class EmptyLeafQueryError(ValueError):
 class UnmodelledFacetError(ValueError):
     """
     Raised when a requirement groups or prefers on a facet name we do not model
-
-    Refused where the requirement is written rather than left to the solver, for the
-    same reason as [EmptyLeafQueryError][(m).EmptyLeafQueryError]: the mistake is a
-    name, which needs no catalogue to spot, and the error is far more useful next to
-    the line that wrote it than wrapped in a solve of someone else's data.
     """
 
     def __init__(self, facets: Iterable[str], field_name: str) -> None:
@@ -225,22 +220,16 @@ class UnmodelledFacetError(ValueError):
         """
         self.facets = tuple(sorted(facets))
         self.field_name = field_name
-        # The whole list rather than a guess at what was meant. It is short enough to
-        # read, it is the complete answer, and a near-miss suggester here would be a
-        # second copy of
-        # [close_matches_difflib][esmporium.search.close_matches_difflib] which this
-        # package may not import -- free to drift from it, and no more use than the
-        # list it would be drawn from.
         modelled = readable_list(sorted(modelled_facet_names()))
         super().__init__(
             f"{field_name} names {readable_list(self.facets)}, "
             f"which {'is' if len(self.facets) == 1 else 'are'} not "
             f"a facet any query class models. We model: {modelled}. "
-            "For a facet only a search document knows (`mip_era`, "
+            "For a facet only a search document knows (e.g., `mip_era`, "
             "`variable_long_name`, CORDEX's `cordex-cmip6:driving_source_id`), "
             f"use `{field_name}_other_terms` instead, which is never translated and "
             "never checked -- so the name has to be spelled exactly as the search "
-            "document spells it, prefixes included."
+            "document spells it."
         )
 
 
@@ -708,9 +697,7 @@ class Requirement(BaseModel):
     The escape hatch, and the same bargain as
     [Query.other_terms][esmporium.query.Query.other_terms]: nothing here is
     translated, normalised or checked, so the names have to be the ones the stored
-    documents use, prefixes included. `("cordex-cmip6:driving_source_id",)` groups
-    CORDEX runs by the global model that drove them -- a real analysis, and one no
-    facet we model can express.
+    documents use.
 
     Because it is unchecked, a name nothing records is not an error here: every
     dataset answers `None` for it and they all land in one group, whereas the same
@@ -1096,10 +1083,7 @@ def check_grouping_facets_are_modelled(
 
     Only the modelled fields are checked. `group_by_other_terms` and
     `prefer_other_terms` are the escape hatch and are never checked, which is the
-    whole reason the fields are separate: without them, a typo
-    (`group_by=("relam",)`) would be indistinguishable from a facet only a search
-    document knows (`group_by=("variable_long_name",)`), and neither could be
-    reported.
+    whole reason the fields are separate.
 
     Parameters
     ----------
