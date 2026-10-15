@@ -88,6 +88,7 @@ def _bundle_document(product: str) -> ParsedDocument:
             }
         ),
         raw_docs_format_tag=SOLR_FORMAT_TAG,
+        search_host="a-search-host",
     )
 
 

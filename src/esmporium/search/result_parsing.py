@@ -110,6 +110,9 @@ class ParsedDocument:
     raw_docs_format_tag: str
     """See [SearchAPI][esmporium.search.apis.SearchAPI.raw_docs_format_tag]"""
 
+    search_host: str
+    """See [DatasetRawDoc.search_host][esmporium.db.schema.DatasetRawDoc.search_host]."""  # noqa: E501
+
 
 # Note: this shape will likely need to change once we want to link Datasets
 # and searches/query collections in our database.

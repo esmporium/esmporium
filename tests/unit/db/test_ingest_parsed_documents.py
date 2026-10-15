@@ -148,6 +148,7 @@ def test_ingest_propagates_a_dataset_clash(engine):
             esgf_doc_id=esgf_doc_id,
             raw_json="{}",
             raw_docs_format_tag=SOLR_FORMAT_TAG,
+            search_host="a-search-host",
         )
 
     # Distinct esgf_doc_ids, so if the clash somehow did not fire on the dataset it
@@ -211,6 +212,7 @@ def test_injected_normalisers_reach_clash_diagnosis(engine, ingest):
             esgf_doc_id=f"my.native.id|{driving_model}",
             raw_json=json.dumps({"blob": f"driving_model={driving_model}"}),
             raw_docs_format_tag="acme-format",
+            search_host="a-search-host",
         )
 
     # NULL vs '' grid_label gets past the get-or-create lookup
@@ -227,8 +229,8 @@ def test_injected_normalisers_reach_clash_diagnosis(engine, ingest):
 
     assert excinfo.value.differences == {
         "driving_model": {
-            "stored: my.native.id|MPI-ESM": "MPI-ESM",
-            "new: my.native.id|CNRM-CM6": "CNRM-CM6",
+            "stored: my.native.id|MPI-ESM @ a-search-host": "MPI-ESM",
+            "new: my.native.id|CNRM-CM6 @ a-search-host": "CNRM-CM6",
         }
     }
 
@@ -330,6 +332,7 @@ def test_bypassing_user_must_inject_a_normaliser_for_their_tag(engine):
         esgf_doc_id="my.native.id|node.example",
         raw_json=json.dumps({"blob": "product=output1"}),
         raw_docs_format_tag="acme-format",
+        search_host="a-search-host",
     )
 
     with Session(engine) as session:
@@ -385,7 +388,137 @@ def _cmip6_document(
         esgf_doc_id=esgf_doc_id,
         raw_json="{}",
         raw_docs_format_tag=SOLR_FORMAT_TAG,
+        search_host="a-search-host",
     )
+
+
+def _one_document(
+    *,
+    raw_docs_format_tag: str,
+    search_host: str,
+    realm: str,
+    extra: dict[str, str] | None = None,
+) -> ParsedDocument:
+    """
+    One document for a fixed dataset version, as served by `search_host`
+
+    `esgf_doc_id` is the same whatever the host, which is the ESGF-NG situation these
+    tests are about: a STAC id is the dataset version alone, so both mirrors issue it.
+    """
+    properties = {"cmip6:realm": realm, **(extra or {})}
+
+    return ParsedDocument(
+        id_project_specific="CMIP6.same",
+        datasets=(
+            DatasetFacets(
+                id_project_specific="CMIP6.same",
+                project="CMIP6",
+                model="ACCESS",
+                institution="CSIRO",
+                experiment="historical",
+                variant_label="r1i1p1f1",
+                variable="tas",
+                reporting_interval="mon",
+                grid_label="gn",
+                processing_id="Amon",
+            ),
+        ),
+        version="20200101",
+        is_latest=True,
+        retracted=False,
+        nodes=(DataNodeInfo("node.example"),),
+        esgf_doc_id="CMIP6.same.v20200101",
+        raw_json=json.dumps({"id": "CMIP6.same.v20200101", "properties": properties}),
+        raw_docs_format_tag=raw_docs_format_tag,
+        search_host=search_host,
+    )
+
+
+def _raw_docs(engine) -> list[DatasetRawDoc]:
+    """Every stored raw document, oldest first"""
+    with Session(engine) as session:
+        return list(session.exec(select(DatasetRawDoc).order_by(DatasetRawDoc.id)))
+
+
+def test_two_stac_mirrors_of_one_version_are_two_documents(engine):
+    """
+    Both ESGF-NG mirrors' descriptions are kept, because each mirror wrote its own
+    """
+    east = _one_document(
+        raw_docs_format_tag=STAC_FORMAT_TAG,
+        search_host="search.east.esgf.io",
+        realm="atmos",
+        extra={"license": "CC-BY-4.0"},
+    )
+    west = _one_document(
+        raw_docs_format_tag=STAC_FORMAT_TAG,
+        search_host="search.west.esgf.io",
+        realm="ocean",
+        extra={"access": "public"},
+    )
+
+    with Session(engine) as session:
+        ingest_parsed_documents(session, (east, west), DEFAULT_NORMALISERS)
+        session.commit()
+
+    stored = _raw_docs(engine)
+
+    assert [doc.search_host for doc in stored] == [
+        "search.east.esgf.io",
+        "search.west.esgf.io",
+    ]
+    assert len({doc.esgf_doc_id for doc in stored}) == 1
+
+
+def test_one_solr_record_relayed_by_two_hosts_is_one_document(engine):
+    """
+    Solr keeps one row per record however many index hosts relayed it
+
+    If this test fails because two rows were stored, the conditional in
+    `_get_or_create_raw_doc` has probably been "tidied" into an unconditional pair
+    lookup. That is the thing it exists to catch.
+    """
+    via_nci = _one_document(
+        raw_docs_format_tag=SOLR_FORMAT_TAG,
+        search_host="esgf.nci.org.au",
+        realm="atmos",
+    )
+    via_ceda = _one_document(
+        raw_docs_format_tag=SOLR_FORMAT_TAG,
+        search_host="esgf.ceda.ac.uk",
+        realm="atmos",
+    )
+
+    with Session(engine) as session:
+        ingest_parsed_documents(session, (via_nci, via_ceda), DEFAULT_NORMALISERS)
+        session.commit()
+
+    stored = _raw_docs(engine)
+
+    assert len(stored) == 1
+    # The host which relayed it first, kept rather than updated by the later search.
+    assert stored[0].search_host == "esgf.nci.org.au"
+
+
+@pytest.mark.parametrize("format_tag", [STAC_FORMAT_TAG, SOLR_FORMAT_TAG])
+def test_re_ingesting_one_hosts_document_reuses_its_row(engine, format_tag):
+    """
+    The same document from the same host is stored once, whichever format
+
+    The dedupe still does its original job. For STAC that is the pair matching, for
+    Solr the id alone; either way re-ingesting what we already have adds nothing.
+    """
+    document = _one_document(
+        raw_docs_format_tag=format_tag,
+        search_host="search.east.esgf.io",
+        realm="atmos",
+    )
+
+    with Session(engine) as session:
+        ingest_parsed_documents(session, (document, document), DEFAULT_NORMALISERS)
+        session.commit()
+
+    assert len(_raw_docs(engine)) == 1
 
 
 def test_a_host_that_fails_partway_leaves_nothing_behind(engine):

@@ -232,6 +232,7 @@ def test_clash_reports_facets_that_differ_in_raw_docs(engine):
                 esgf_doc_id="doc-a",
                 raw_json='{"driving_source_id": ["MPI-ESM"], "variable": ["tas"]}',
                 raw_docs_format_tag=SOLR_FORMAT_TAG,
+                search_host="a-search-host",
             ),
         )
 
@@ -239,12 +240,19 @@ def test_clash_reports_facets_that_differ_in_raw_docs(engine):
             esgf_doc_id="doc-b",
             raw_json='{"driving_source_id": ["CNRM-CM6"], "variable": ["tas"]}',
             raw_docs_format_tag=SOLR_FORMAT_TAG,
+            search_host="a-search-host",
         )
         with pytest.raises(UnhandledDatasetClashError) as excinfo:
             save_dataset(session, Dataset(**VALID_DATASET_KWARGS), raw_doc=new_raw_doc)
 
     assert excinfo.value.differences == {
-        "driving_source_id": {"stored: doc-a": "MPI-ESM", "new: doc-b": "CNRM-CM6"}
+        # Labelled by document id *and* search host: the id alone is no longer
+        # unique, and a repeated key would make `facet_differences` raise instead
+        # of reporting the clash.
+        "driving_source_id": {
+            "stored: doc-a @ a-search-host": "MPI-ESM",
+            "new: doc-b @ a-search-host": "CNRM-CM6",
+        }
     }
     assert "driving_source_id" in str(excinfo.value)
 
@@ -258,12 +266,18 @@ def test_clash_with_unknown_raw_doc_format_tag_still_raises_clash(engine):
             session,
             Dataset(**VALID_DATASET_KWARGS),
             DatasetRawDoc(
-                esgf_doc_id="doc-a", raw_json="{}", raw_docs_format_tag="acme-format"
+                esgf_doc_id="doc-a",
+                raw_json="{}",
+                raw_docs_format_tag="acme-format",
+                search_host="a-search-host",
             ),
         )
 
         new_raw_doc = DatasetRawDoc(
-            esgf_doc_id="doc-b", raw_json="{}", raw_docs_format_tag="acme-format"
+            esgf_doc_id="doc-b",
+            raw_json="{}",
+            raw_docs_format_tag="acme-format",
+            search_host="a-search-host",
         )
         with pytest.raises(UnhandledDatasetClashError) as excinfo:
             save_dataset(session, Dataset(**VALID_DATASET_KWARGS), raw_doc=new_raw_doc)
@@ -544,27 +558,51 @@ def test_version_node_link_is_many_to_many(engine):
         assert len(session.exec(select(DatasetVersionDataNodeLink)).all()) == 3
 
 
-def test_raw_doc_esgf_id_is_unique(engine):
-    """The exact JSON is stored once per source document, keyed by `esgf_doc_id`."""
+def test_raw_doc_id_and_search_host_are_unique_together(engine):
+    """
+    The exact JSON is stored once per `(esgf_doc_id, search_host)` pair
+
+    Not per `esgf_doc_id`: the two ESGF-NG mirrors issue the same id for one dataset
+    version while describing it differently, so the id alone cannot identify a
+    document. See the note above `DatasetRawDoc.__table_args__`.
+    """
     with Session(engine) as session:
         session.add(
             DatasetRawDoc(
                 esgf_doc_id="instance_id|node",
                 raw_json="{}",
                 raw_docs_format_tag="solr",
+                search_host="a-search-host",
             )
         )
         session.commit()
 
+        # The same document from the same host is a duplicate, as it always was.
         session.add(
             DatasetRawDoc(
                 esgf_doc_id="instance_id|node",
                 raw_json="{}",
                 raw_docs_format_tag="solr",
+                search_host="a-search-host",
             )
         )
         with pytest.raises(IntegrityError):
             session.commit()
+        session.rollback()
+
+        # The same id from a different host is not: that is the pair doing its job,
+        # and it is what lets both ESGF-NG mirrors be stored.
+        session.add(
+            DatasetRawDoc(
+                esgf_doc_id="instance_id|node",
+                raw_json="{}",
+                raw_docs_format_tag="solr",
+                search_host="another-search-host",
+            )
+        )
+        session.commit()
+
+        assert len(session.exec(select(DatasetRawDoc)).all()) == 2
 
 
 def test_raw_doc_version_link_pair_is_unique(engine):

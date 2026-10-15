@@ -26,6 +26,7 @@ from esmporium.db.schema import (
 )
 from esmporium.search.result_normalisation import (
     DEFAULT_NORMALISERS,
+    STAC_FORMAT_TAG,
     NormaliseFunc,
     UnknownRawDocFormatTagError,
     normalise_stored_document,
@@ -245,13 +246,19 @@ def _get_clash_facet_differences(
     Diff the normalised raw documents of a clashing dataset and the stored one
 
     Every raw document linked to the stored dataset is included
-    (it may have several, e.g. one per version or data node),
+    (it may have several, e.g. one per version, data node or search host),
     so facets like `version` or `data_node` may show up as noise too.
 
     Returns `None` if there is nothing to diff against
     (the stored dataset has no raw documents)
     or a raw document's format tag has no normaliser.
-    Keys are `"stored: <esgf_doc_id>"` and `"new: <esgf_doc_id>"`.
+
+    Keys are `"stored: <esgf_doc_id> @ <search_host>"` and the same for `"new: "`.
+    The host is part of the label because `esgf_doc_id` is not unique on its own:
+    two ESGF-NG mirrors share one id, so labelling by id alone would repeat a key and
+    [facet_differences][esmporium.db.facet_differences] refuses that -- which would
+    replace the clash we are trying to explain with an unrelated error.
+    The `new` document has not been flushed, so it has no `id` to use instead.
     """
     # Find the stored dataset the same way the identity index does,
     # i.e. with `grid_label` coalesced, so NULL and '' match.
@@ -282,8 +289,11 @@ def _get_clash_facet_differences(
         return None
 
     labelled_raw_docs = [
-        *((f"stored: {doc.esgf_doc_id}", doc) for doc in stored_raw_docs),
-        (f"new: {raw_doc.esgf_doc_id}", raw_doc),
+        *(
+            (f"stored: {doc.esgf_doc_id} @ {doc.search_host}", doc)
+            for doc in stored_raw_docs
+        ),
+        (f"new: {raw_doc.esgf_doc_id} @ {raw_doc.search_host}", raw_doc),
     ]
     try:
         normalised_info = tuple(
@@ -690,12 +700,31 @@ def _get_or_create_version_node_link(
 
 
 def _get_or_create_raw_doc(session: Session, parsed: ParsedDocument) -> DatasetRawDoc:
-    """Store the raw JSON once, keyed by `esgf_doc_id`."""
+    """
+    Store the raw JSON once per distinct source document
+
+    What counts as distinct depends on the format, because the formats differ in
+    whether the index which served a document also wrote it:
+
+    - A STAC document is the serving mirror's own description, and the mirrors
+      disagree, so two mirrors of one dataset version are two different documents which
+      happen to share an `esgf_doc_id` (their ids carry no host). The host has to be in
+      the lookup or the second one is discarded, which is what used to happen.
+    - A Solr document is the federation's record, relayed by whichever index we asked,
+      and its id already carries the data node. Adding the host would store one copy
+      per host asked, each falsely claiming to be a different document.
+
+    So the host joins the lookup for STAC only. See the note above
+    [DatasetRawDoc][esmporium.db.schema.DatasetRawDoc]'s `__table_args__`: the database
+    constraint is the looser pair, so this function is what keeps Solr to one row.
+    """
+    where = [DatasetRawDoc.esgf_doc_id == parsed.esgf_doc_id]
+    if parsed.raw_docs_format_tag == STAC_FORMAT_TAG:
+        where.append(DatasetRawDoc.search_host == parsed.search_host)
+
     return _get_or_create(
         session,
-        lambda: session.exec(
-            select(DatasetRawDoc).where(DatasetRawDoc.esgf_doc_id == parsed.esgf_doc_id)
-        ).one_or_none(),
+        lambda: session.exec(select(DatasetRawDoc).where(*where)).one_or_none(),
         lambda: _build_raw_doc(parsed),
     )
 
@@ -706,6 +735,7 @@ def _build_raw_doc(parsed: ParsedDocument) -> DatasetRawDoc:
         esgf_doc_id=parsed.esgf_doc_id,
         raw_json=parsed.raw_json,
         raw_docs_format_tag=parsed.raw_docs_format_tag,
+        search_host=parsed.search_host,
     )
 
 

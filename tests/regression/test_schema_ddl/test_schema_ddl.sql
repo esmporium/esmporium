@@ -28,13 +28,17 @@ CREATE INDEX ix_dataset_id_project_specific ON dataset (id_project_specific);
 CREATE TABLE datasetrawdoc (
 	id INTEGER NOT NULL,
 	esgf_doc_id VARCHAR NOT NULL,
+	search_host VARCHAR NOT NULL,
 	raw_json VARCHAR NOT NULL,
 	raw_docs_format_tag VARCHAR NOT NULL,
 	retrieved_at DATETIME NOT NULL,
-	CONSTRAINT pk_datasetrawdoc PRIMARY KEY (id)
+	CONSTRAINT pk_datasetrawdoc PRIMARY KEY (id),
+	CONSTRAINT uq_datasetrawdoc_esgf_doc_id_search_host UNIQUE (esgf_doc_id, search_host)
 );
 
-CREATE UNIQUE INDEX ix_datasetrawdoc_esgf_doc_id ON datasetrawdoc (esgf_doc_id);
+CREATE INDEX ix_datasetrawdoc_esgf_doc_id ON datasetrawdoc (esgf_doc_id);
+
+CREATE INDEX ix_datasetrawdoc_search_host ON datasetrawdoc (search_host);
 
 CREATE TABLE searchapicallrecord (
 	id INTEGER NOT NULL,

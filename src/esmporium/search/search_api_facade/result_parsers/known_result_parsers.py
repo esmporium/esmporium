@@ -226,6 +226,7 @@ def solr_parsed_document(
         esgf_doc_id=read("id", "this record's id"),
         raw_json=json.dumps(doc),
         raw_docs_format_tag=api.raw_docs_format_tag,
+        search_host=api.host,
     )
 
 
@@ -445,6 +446,7 @@ def stac_parsed_document(
         esgf_doc_id=read("id", "this record's id"),
         raw_json=json.dumps(feature),
         raw_docs_format_tag=api.raw_docs_format_tag,
+        search_host=api.host,
     )
 
 

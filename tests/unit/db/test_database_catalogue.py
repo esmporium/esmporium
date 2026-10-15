@@ -49,6 +49,9 @@ from esmporium.search import (
 SOLR = "solr"
 """The format tag of the raw documents these tests store"""
 
+STAC = "stac"
+"""The format tag of ESGF-NG's documents, where one id can come from two mirrors"""
+
 
 @pytest.fixture
 def store(engine, get_dataset_kwargs):
@@ -82,6 +85,7 @@ def store(engine, get_dataset_kwargs):
                         esgf_doc_id=f"{label}-{version}-{index}",
                         raw_json=json.dumps(document),
                         raw_docs_format_tag=SOLR,
+                        search_host="a-search-host",
                     )
                     session.add(doc)
                     session.flush()
@@ -546,6 +550,62 @@ def test_several_documents_for_one_version_merge_deterministically(engine, store
     assert entry.facet("activity") == "CMIP"
 
 
+def test_two_stac_mirrors_of_one_version_both_reach_the_entry(
+    engine, get_dataset_kwargs
+):
+    """
+    A facet only one ESGF-NG mirror recorded still answers
+
+    This is what the `search_host` half of document identity buys. Both mirrors issue
+    the same `esgf_doc_id` for a dataset version, because a STAC id carries no host, so
+    before they were two documents only the first-stored one existed and anything only
+    the other knew was unrecoverable. Now both are stored and the ordinary merge picks
+    up each one's contribution.
+
+    Written against the raw tables rather than the `store` fixture because the point is
+    two documents with the *same* id and different hosts, which the fixture's
+    `label-version-index` ids cannot express.
+    """
+    shared_id = "CMIP6.same.v20200101"
+    mirrors = (
+        ("search.east.esgf.io", {"cmip6:realm": "atmos", "license": "CC-BY-4.0"}),
+        ("search.west.esgf.io", {"cmip6:realm": "ocean", "access": "public"}),
+    )
+
+    with Session(engine) as session:
+        dataset = Dataset(**get_dataset_kwargs("one", project="CMIP6", variable="tas"))
+        session.add(dataset)
+        session.flush()
+        version = DatasetVersion(
+            dataset_id=dataset.id, version="20200101", is_latest=True, retracted=False
+        )
+        session.add(version)
+        session.flush()
+
+        for host, properties in mirrors:
+            doc = DatasetRawDoc(
+                esgf_doc_id=shared_id,
+                raw_json=json.dumps({"id": shared_id, "properties": properties}),
+                raw_docs_format_tag=STAC,
+                search_host=host,
+            )
+            session.add(doc)
+            session.flush()
+            session.add(
+                RawDocVersionLink(raw_doc_id=doc.id, dataset_version_id=version.id)
+            )
+        session.commit()
+
+    (entry,) = DatabaseCatalogue(engine).find(Query(variable="tas"))
+
+    # The first-stored mirror still wins a facet they both record.
+    assert entry.facet("realm") == "atmos"
+    # And each mirror's own contribution survives, which is the part that used to be
+    # lost: `access` is west-only and reachable only because west's document is stored.
+    assert entry.facet("license") == "CC-BY-4.0"
+    assert entry.facet("access") == "public"
+
+
 def test_a_non_scalar_document_value_is_left_out(engine, store):
     """
     A facet with several values has no single answer, so the entry does not claim one
@@ -621,6 +681,7 @@ def stored_in_our_own_format(engine, get_dataset_kwargs):
             esgf_doc_id="one-doc",
             raw_json=json.dumps({"realm": "atmos"}),
             raw_docs_format_tag=OUR_OWN_TAG,
+            search_host="a-search-host",
         )
         session.add(doc)
         session.flush()

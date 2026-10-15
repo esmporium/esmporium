@@ -239,8 +239,9 @@ def _canonical_name_for(
 #
 # What it means for a user: the answer is **pinned early and then stable**. "First" is
 # `DatasetRawDoc.id` ascending, i.e. first ingested, and a document already stored
-# keeps its row (`_get_or_create_raw_doc` dedupes on `esgf_doc_id`), so the search
-# which *first found a dataset* is the one whose node describes it from then on. A
+# keeps its row (see [_get_or_create_raw_doc][esmporium.db.results_to_database]), so
+# the search which *first found a dataset* is the one whose node describes it from
+# then on. A
 # later search reaching a different node can only add facets no stored document
 # carried; it cannot overwrite one already answered. So this does not drift under you
 # as you work, and the only things which legitimately change an answer are a new
@@ -256,16 +257,17 @@ def _canonical_name_for(
 # over is what to be careful about, and a scratch database, a post-migration rebuild
 # and recorded test fixtures are all separate stores in this sense.
 #
-# One important exception to the merge, which is not a merge at all: a format whose
-# document id carries the data node (Solr: `<dataset_id>|<data_node>`) stores one row
-# per node, so the merge above is what happens. A format whose id does not (STAC, where
-# the id is the dataset id alone) gives both index mirrors the *same* `esgf_doc_id`, so
-# the second is deduped away by `_get_or_create_raw_doc` and never stored -- whichever
-# mirror arrived first is the only description there will ever be, and re-searching
-# cannot repair it because the dedupe key matches. For ESGF-NG the east and west
-# fixtures in `tests/test-data/search/` differ by eleven property names, so this is
-# real rather than theoretical. Whether that dedupe is right is an open question, not
-# a settled decision.
+# What is merged, now that both formats contribute every document they have: Solr's
+# ids carry the data node (`<instance_id>|<data_node>`), so one row per node, which
+# is what this has always merged. STAC ids carry no host, so both ESGF-NG mirrors
+# issue the same `esgf_doc_id` for one dataset version while describing it
+# differently -- the east and west fixtures in `tests/test-data/search/` differ by
+# eleven property names. Those used to be deduped down to whichever mirror arrived
+# first, permanently and unrepairably; `DatasetRawDoc.search_host` now makes them two
+# documents, so a facet only one mirror recorded reaches the entry through the merge
+# below rather than being lost. Solr is unaffected: the host stays out of its
+# identity, because its documents are relayed rather than authored by the index we
+# asked.
 #
 # There is no sensible way around the disagreement itself on our side. The APIs should
 # not disagree and we have no third source to arbitrate with; picking a winner by node,

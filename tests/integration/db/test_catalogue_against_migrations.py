@@ -52,6 +52,7 @@ def test_finds_rows_in_a_migrated_database(engine):
             esgf_doc_id="a-document",
             raw_json=json.dumps({"realm": ["atmos"], "activity_id": ["CMIP"]}),
             raw_docs_format_tag="solr",
+            search_host="a-search-host",
         )
         session.add(document)
         session.flush()

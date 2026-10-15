@@ -448,7 +448,8 @@ class DatasetRawDoc(EsmporiumBase, table=True):
 
     We keep the exact JSON a search API returned,
     so nothing a record carried is lost to our column choices.
-    One row per distinct source document, deduplicated by `esgf_doc_id`.
+    One row per distinct source document, where what counts as *distinct* depends on
+    the format -- see `esgf_doc_id` and `search_host` below.
 
     The raw document relates to versions through
     [RawDocVersionLink][esmporium.db.schema.RawDocVersionLink] (many-to-many).
@@ -460,15 +461,64 @@ class DatasetRawDoc(EsmporiumBase, table=True):
     # See the note on `Dataset.model_config`.
     model_config = {"validate_assignment": True}
 
+    # A note for developers: why this is the pair and not `esgf_doc_id` alone.
+    #
+    # The two formats mean different things by "a document", because they differ in
+    # whether the index which served it also *wrote* it:
+    #
+    # - STAC (ESGF-NG) gives each mirror's own description of a dataset, and the
+    #   mirrors disagree -- the east and west fixtures in `tests/test-data/search/`
+    #   differ by eleven property names. Their ids carry no host, so both mirrors
+    #   return the *same* `esgf_doc_id` for the same dataset version. Keyed on the id
+    #   alone, the second mirror's document was discarded and could never be recovered,
+    #   because re-searching found the id already present.
+    # - Solr relays the federation's record, whose id already carries the data node
+    #   (`<instance_id>|<data_node>`). `distrib=True` is the default, so every index
+    #   returns the whole federation and which host we asked is not part of what the
+    #   document is.
+    #
+    # This constraint is therefore *deliberately looser than the rule we want for
+    # Solr*: it has to permit per-host rows so that STAC cannot lose one, which means
+    # it also permits Solr rows it should not. Solr's tighter rule is enforced in
+    # [_get_or_create_raw_doc][esmporium.db.results_to_database], which leaves the host
+    # out of the lookup for every format but STAC. Please do not "tidy" this into
+    # `unique=True` on `esgf_doc_id`: that is the bug it was written to fix.
+    # `test_ingest_parsed_documents.py` holds both halves.
+    __table_args__ = (UniqueConstraint("esgf_doc_id", "search_host"),)
+
     id: int | None = Field(default=None, primary_key=True)
     """Surrogate key; assigned by the database"""
 
-    esgf_doc_id: str = Field(unique=True, index=True)
+    esgf_doc_id: str = Field(index=True)
     """
-    The source document's own ESGF id
+    The source document's own ESGF id, exactly as the API gave it
 
-    Unique, so re-ingesting the same document reuses this row
-    rather than duplicating the JSON.
+    Not unique on its own, deliberately: two ESGF-NG mirrors issue the same id for the
+    same dataset version while describing it differently. Unique together with
+    `search_host`; indexed alone so that "every host's copy of this document" stays a
+    cheap query. See the note above `__table_args__`.
+    """
+
+    search_host: str = Field(index=True)
+    """
+    The host we asked, e.g. `esgf-node.ornl.gov`
+
+    Provenance, recorded for every document of every format. The same vocabulary as
+    [SearchAPICallRecord.host][esmporium.db.schema.SearchAPICallRecord.host], so the two
+    can be read together.
+
+    **Not the data node.** [DataNode][esmporium.db.schema.DataNode] is where the files
+    live, which is a fact about the dataset and is read out of the document itself;
+    this is which search endpoint answered, which is a fact about our request. Nor is
+    it the document's own `index_node`, which Solr records carry: under `distrib=True`
+    that is frequently not the host that answered, which is also why this cannot be
+    recovered from `raw_json` after the fact.
+
+    It only takes part in deciding whether two documents are the same one for STAC,
+    where the serving mirror authored the description. For other formats it is recorded
+    but not part of identity, so a row keeps the host which relayed it *first*: a later
+    search of a different host reuses the row rather than updating this. So it means
+    "who first gave us this", not "everyone who has it".
     """
 
     raw_json: str
