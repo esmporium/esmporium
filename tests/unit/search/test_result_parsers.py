@@ -301,3 +301,58 @@ def test_a_solr_record_without_a_retracted_field_is_read_as_not_retracted(
     )
 
     assert parsed[0].retracted is exp
+
+
+def _parse_one_solr():
+    """Parse one Solr record through the real parser, with `solr_api()` answering"""
+    return SolrVariableBundleResultParser().parse_search_results(
+        {"response": {"docs": [solr_doc(ESGF1_CMIP5_FACADE_PARAMETERS, CMIP5_ROW)]}},
+        api=solr_api(),
+        facade_parameters=ESGF1_CMIP5_FACADE_PARAMETERS,
+    )[0]
+
+
+def _parse_one_stac():
+    """The same for a STAC feature, with `stac_api()` answering"""
+    feature = stac_feature(
+        ESGFNG_CMIP6_FACADE_PARAMETERS,
+        CMIP6_ROW,
+        f"{CMIP6_ROW.id_project_specific}.v20200623",
+        title=CMIP6_ROW.id_project_specific,
+        collection="CMIP6",
+    )
+
+    return esgfng_parser().parse_search_results(
+        {"features": [feature]},
+        api=stac_api(),
+        facade_parameters=ESGFNG_CMIP6_FACADE_PARAMETERS,
+    )[0]
+
+
+@pytest.mark.parametrize(
+    "parse, expected_host",
+    (
+        pytest.param(_parse_one_solr, "node.example", id="solr"),
+        pytest.param(_parse_one_stac, "search.example.io", id="stac"),
+    ),
+)
+def test_a_parsed_document_records_the_host_that_answered(parse, expected_host):
+    """
+    `search_host` comes from the API we asked, not from anything in the document
+
+    Worth pinning even though it is one line per parser, because getting it wrong is
+    silent. For STAC it is load-bearing: both ESGF-NG mirrors issue the same
+    `esgf_doc_id` for one dataset version, so this is the only thing which tells their
+    documents apart when they are stored (see `_get_or_create_raw_doc` in
+    [esmporium.db.results_to_database][]). Wire it to anything which is equal across
+    the mirrors -- `api.raw_docs_format_tag` is the plausible copy-paste -- and the two
+    collapse back into one row, losing whatever only one mirror recorded, with every
+    database-side test still passing: those build their documents by hand, and the
+    recorded east/west responses share no dataset ids.
+
+    Note this cannot be read off the document instead. A Solr record carries its own
+    `index_node`, but `distrib=True` is the default so that is the index the record
+    came from rather than the host which answered, and a STAC feature has no such
+    field at all.
+    """
+    assert parse().search_host == expected_host
