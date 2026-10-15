@@ -191,9 +191,7 @@ def modelled_facet_names(
     except `other_terms`.
 
     This deliberately pools every project, because the callers which need it are
-    checking a name that carries no project with it:
-    [Requirement.group_by][esmporium.requirements.Requirement.group_by] and
-    [Requirement.prefer][esmporium.requirements.Requirement.prefer] are bare strings.
+    checking a name that carries no project with it.
     `product` therefore passes even for a requirement which only names CMIP6, and is
     then simply a facet no CMIP6 dataset can answer for.
     Deciding what *one* project models is

@@ -212,7 +212,6 @@ class UnrankableFacetError(ValueError):
         )
 
 
-# @Claude is this note below still necessary?
 # A note for developers: a `NotImplementedError` rather than a `ValueError`, because
 # the requirement is a fair thing to want and the answer is "not yet" rather than "no".
 # Grouping CMIP5 by `product` is right, and grouping CMIP5 *and* CMIP6 by it has an

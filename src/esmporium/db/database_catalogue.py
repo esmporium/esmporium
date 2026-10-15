@@ -280,6 +280,12 @@ def _canonical_name_for(
 # Note: It is also the
 # one place a future "skip the documents when nothing needs them" filter has to
 # land, which is another reason to keep it a single function rather than two.
+# @Claude make sure that we have a note to put this in a "Potential gotchas" section
+# in FUTURE-DOCS.md. This is super nasty, and we don't want users spinning in circles
+# rather than just raising an issue.
+# Can you also please see if this ESGF-NG disagreement is there for any CMIP7 datasets.
+# If it is, can you pull the example out into something that we can turn into an issue
+# on https://github.com/ESGF/esgf-roadmap/issues
 def _facets_from_documents(
     project: str,
     documents: list[tuple[dict[str, Any], str]],
@@ -378,6 +384,11 @@ def _facets_from_documents(
                 # set?), what `matches` should do (any of them? all of them?), and
                 # whether `CatalogueEntry.facet` can keep returning `str | None`. If
                 # you need it, that is the shape of the issue to raise.
+                # @Claude make sure that we have a note to
+                # put this in a "Potential gotchas" section
+                # in FUTURE-DOCS.md. This is super nasty,
+                # and we don't want users spinning in circles
+                # rather than just raising an issue.
                 if not isinstance(value, str):
                     continue
 
