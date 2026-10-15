@@ -639,7 +639,8 @@ def _upsert_version(
     It matters more than the facet merge does. Replicas lag on retraction, so two
     nodes disagreeing here is likely rather than exotic, and the consequence is that
     the dataset appears or vanishes under
-    [VersionFilter.NOT_RETRACTED][esmporium.requirements.VersionFilter] rather than
+    [VersionFilter.NOT_RETRACTED][esmporium.requirements.VersionFilter.NOT_RETRACTED]
+    rather than
     reading oddly -- which, because groups are discovered, shows up as a group that
     is missing rather than one that is unsatisfied. Which answer we store depends on
     ingest order. If you hit it, please raise an issue at

@@ -120,12 +120,14 @@ def version_filter(versions: VersionFilter) -> ColumnElement[bool] | None:
     Parameters
     ----------
     versions
-        Which datasets to keep. See [VersionFilter][(m).VersionFilter].
+        Which datasets to keep. See
+        [VersionFilter][esmporium.requirements.VersionFilter].
 
     Returns
     -------
     :
-        The clause, or `None` for [VersionFilter.ANY][(m).VersionFilter.ANY], which
+        The clause, or `None` for
+        [VersionFilter.ANY][esmporium.requirements.VersionFilter.ANY], which
         filters nothing
 
     Raises
@@ -559,7 +561,8 @@ def find_datasets(  # noqa: PLR0913 - one argument per thing a find has to be to
         Query to match, in any query style
 
     versions
-        Which of a dataset's versions count. See [VersionFilter][(m).VersionFilter].
+        Which of a dataset's versions count. See
+        [VersionFilter][esmporium.requirements.VersionFilter].
 
     normalisers
         See [DEFAULT_NORMALISERS][esmporium.search.DEFAULT_NORMALISERS].
