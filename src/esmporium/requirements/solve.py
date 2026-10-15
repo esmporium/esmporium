@@ -676,7 +676,8 @@ def _ambiguous_message(candidates: Sequence[CatalogueEntry], ctx: _Context) -> s
         # every column, `id_project_specific` included (see
         # [UnhandledDatasetClashError][esmporium.db.UnhandledDatasetClashError]),
         # so these two differ in a facet which exists but reached neither a column
-        # nor `extra`. That is ours to fix, not the user's to work around, and
+        # nor `project_facets` nor `other_terms`. That is ours to fix, not the
+        # user's to work around, and
         # "narrow the query" is not offered because there is nothing visible to
         # narrow on.
         return (

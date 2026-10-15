@@ -29,7 +29,7 @@ def test_finds_rows_in_a_migrated_database(engine):
     A dataset saved into a migrated database reads back as a catalogue entry
 
     Covers the whole read path -- the facet columns, the availability `EXISTS`, and
-    `extra` from the raw document -- against the migrated schema.
+    `project_facets` from the raw document -- against the migrated schema.
     """
     upgrade_to_head(engine)
 

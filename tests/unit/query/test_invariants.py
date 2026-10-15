@@ -73,7 +73,8 @@ def test_dataset_facet_columns_are_canonical_facets():
     checks them against each other. The
     difference is the interesting half: those three facets can be *searched* for, and
     every query class names them, but `Dataset` has no column for them, so a stored
-    row cannot answer for one without help (see `CatalogueEntry.extra`).
+    row cannot answer for one without help
+    (see `CatalogueEntry.project_facets`).
     """
     assert set(DATASET_FACET_COLUMNS) <= set(CANONICAL_FACETS)
     assert set(CANONICAL_FACETS) - set(DATASET_FACET_COLUMNS) == {

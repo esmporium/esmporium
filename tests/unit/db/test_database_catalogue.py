@@ -327,7 +327,7 @@ def test_an_availability_we_do_not_know_is_refused(engine):
         DatabaseCatalogue(engine, availability="whatever").find(Query(variable="tas"))  # type: ignore[arg-type]
 
 
-# --------------------------------------------------------------------------- extra
+# -------------------------------------------------- project_facets and other_terms
 
 
 def test_realm_comes_from_the_raw_document(engine, store):
@@ -466,7 +466,9 @@ def test_a_modelled_facet_recorded_only_in_other_terms_does_not_answer(engine, s
     assert "product" in entry.known_facets()
 
 
-def test_extra_comes_from_the_version_the_availability_filter_matched(engine, store):
+def test_document_facets_come_from_the_version_the_availability_filter_matched(
+    engine, store
+):
     """
     The document which answers belongs to the newest version the caller *accepted*
 
