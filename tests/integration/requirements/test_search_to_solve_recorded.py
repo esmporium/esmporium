@@ -16,14 +16,20 @@ import pytest
 from sqlmodel import Session, select
 
 from esmporium.db import (
-    Availability,
     DatabaseCatalogue,
     Dataset,
     build_result_processor_factory,
 )
 from esmporium.db.migrate import upgrade_to_head
 from esmporium.query import Query
-from esmporium.requirements import Cardinality, all_of, leaf, requirement, solve
+from esmporium.requirements import (
+    Cardinality,
+    VersionFilter,
+    all_of,
+    leaf,
+    requirement,
+    solve,
+)
 from esmporium.search import (
     INBUILT_SEARCH_API_FACADE_STORE,
     build_list_selector,
@@ -266,13 +272,14 @@ def test_everything_we_searched_for_is_findable_through_the_catalogue(
         assert [entry.id for entry in found] == [row.id]
 
 
-# TODO future: this pins today's behaviour, where retraction is a setting on the
-# catalogue. It is expected to become a constraint on the requirement instead, with
-# recency a preference -- see the note above
-# [Availability][esmporium.db.database_catalogue.Availability] for the shape and
-# what it needs first. This test should survive that: both versions are retracted
-# here, so there is nothing non-retracted left to fall back to however the setting is
-# spelled. It is the *superseded* case which moves, and
+# TODO future: retraction is now said on the requirement
+# ([Requirement.versions][esmporium.requirements.Requirement.versions]) rather than
+# held on the catalogue, which was the first half of the move. What is still ahead is
+# recency becoming a *preference* rather than a filter -- see the note above
+# [VersionFilter][esmporium.requirements.VersionFilter] for the shape and what it
+# needs first. This test should survive that too: both versions are retracted here, so
+# there is nothing non-retracted left to fall back to however it is spelled. It is the
+# *superseded* case which moves, and
 # `test_latest_not_retracted_excludes_a_superseded_version` in
 # `tests/unit/db/test_database_catalogue.py` is where that lives.
 def test_a_retracted_dataset_drops_its_group_from_the_solve(migrated, selector, served):
@@ -308,8 +315,13 @@ def test_a_retracted_dataset_drops_its_group_from_the_solve(migrated, selector, 
     )
 
     # Nothing was deleted: the rows are still there, they just no longer count.
+    # Asking what is on record is a different question, so it is a different
+    # requirement -- the same catalogue answers both.
     assert len(saved_datasets(migrated)) == 2
-    on_record = solve(req, DatabaseCatalogue(migrated, availability=Availability.ANY))
+    on_record = solve(
+        a_requirement(prefer={"processing_id": (TMIN,)}, versions=VersionFilter.ANY),
+        catalogue,
+    )
     assert set(on_record.satisfied) == set(today.satisfied)
 
 

@@ -13,7 +13,7 @@ import json
 from sqlmodel import Session
 
 from esmporium.datasets import DATASET_FACET_COLUMNS
-from esmporium.db import Availability, DatabaseCatalogue
+from esmporium.db import DatabaseCatalogue
 from esmporium.db.migrate import upgrade_to_head
 from esmporium.db.schema import (
     Dataset,
@@ -22,13 +22,14 @@ from esmporium.db.schema import (
     RawDocVersionLink,
 )
 from esmporium.query import Query
+from esmporium.requirements import VersionFilter
 
 
 def test_finds_rows_in_a_migrated_database(engine):
     """
     A dataset saved into a migrated database reads back as a catalogue entry
 
-    Covers the whole read path -- the facet columns, the availability `EXISTS`, and
+    Covers the whole read path -- the facet columns, the versions `EXISTS`, and
     `project_facets` from the raw document -- against the migrated schema.
     """
     upgrade_to_head(engine)
@@ -71,7 +72,7 @@ def test_finds_rows_in_a_migrated_database(engine):
 
 
 def test_a_retracted_dataset_is_not_available_in_a_migrated_database(engine):
-    """The availability `EXISTS` subquery works against the migrated schema"""
+    """The versions `EXISTS` subquery works against the migrated schema"""
     upgrade_to_head(engine)
 
     facets = dict.fromkeys(DATASET_FACET_COLUMNS, "placeholder")
@@ -91,12 +92,7 @@ def test_a_retracted_dataset_is_not_available_in_a_migrated_database(engine):
         )
         session.commit()
 
-    assert DatabaseCatalogue(engine).find(Query(variable="tas")) == ()
-    assert (
-        len(
-            DatabaseCatalogue(engine, availability=Availability.ANY).find(
-                Query(variable="tas")
-            )
-        )
-        == 1
-    )
+    catalogue = DatabaseCatalogue(engine)
+
+    assert catalogue.find(Query(variable="tas")) == ()
+    assert len(catalogue.find(Query(variable="tas"), versions=VersionFilter.ANY)) == 1

@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Protocol
 
 from esmporium.datasets import DATASET_FACET_COLUMNS
@@ -536,13 +537,14 @@ def matches(query: QueryProtocol, entry: CatalogueEntry) -> bool:
 #
 # - **Which document answers.** A dataset has many versions and a version can be
 #   described by several documents. The one that answers belongs to the newest version
-#   which passed the catalogue's `availability` filter -- not simply the newest version
-#   -- so a caller who excluded a retracted version is not then described by it.
+#   which passed the lookup's [VersionFilter][(m).VersionFilter] -- not simply the
+#   newest version -- so a caller who excluded a retracted version is not then
+#   described by it.
 #
 #   TODO future: this is the piece to revisit when a requirement can ask for a
 #   particular version, which it cannot today. The reason is not that version is hard
 #   to plumb, it is what an entry *is*: **one entry describes one `Dataset` row, not one
-#   `DatasetVersion`**, and the availability filter decides which version's documents
+#   `DatasetVersion`**, and the versions filter decides which version's documents
 #   speak for it. So "prefer version X" has nothing to range over -- there is a single
 #   entry per dataset however many versions exist -- and expressing it needs either a
 #   `version` field on the entry (making "prefer latest" trivially true and "this
@@ -556,19 +558,112 @@ def matches(query: QueryProtocol, entry: CatalogueEntry) -> bool:
 #   how you choose between them.
 
 
-class Catalogue(Protocol):
+# TODO future: these three settings are meant to become two, and the first half of that
+# has now happened. The direction was to express retraction and recency where the
+# *requirement* can see them rather than as settings on the catalogue reading it, so
+# that "latest", "this particular version" and "give me everything, with
+# `Cardinality.ALL`" are all things a requirement says.
+#
+# What has happened: `NOT_RETRACTED` is the default, so the common path no longer drops
+# a dataset whose newest version was retracted but which has a usable older one; and
+# this is now an argument to [Catalogue.find][(m).Catalogue.find], carried there by
+# [Requirement.versions][esmporium.requirements.Requirement.versions] rather than held
+# on a catalogue. So retraction is said in the requirement, is fingerprinted by
+# `requirement_hash` along with everything else it asks for, and a catalogue is once
+# again just "everything we have stored".
+#
+# What has not: `LATEST_NOT_RETRACTED` still exists, because recency is still a filter
+# here rather than a preference in the requirement, and until a requirement can say
+# "prefer the latest" there would be no way left to ask "only what is current" --
+# removing the member would delete the question rather than move it. Deleting it is the
+# last step, not the first.
+#
+# Important to note:
+# - The preference half needs a version on the entry first. Why that is not a small
+#   change is in the note above [Catalogue][(m).Catalogue]: an entry describes a
+#   `Dataset`, not a `DatasetVersion`, so today there is nothing for a preference to
+#   range over.
+#
+# `test_a_retracted_dataset_drops_its_group_from_the_solve` and
+# `test_a_group_whose_other_leaf_is_retracted_becomes_unsatisfied` in
+# `tests/integration/requirements/test_search_to_solve_recorded.py` are what pin the
+# current behaviour, and are the tests to re-read when this moves.
+
+
+class VersionFilter(str, Enum):
     """
-    The datasets available to the solver, and what is known about them
+    Which of a dataset's stored versions count when looking for it
+
+    A dataset has many versions and this says which of them a lookup accepts. It
+    decides two things, not one: whether the dataset is found at all (it needs a
+    version which qualifies), and which version's search documents describe it (the
+    newest which qualifies). So this is not a filter applied to a finished answer,
+    it is part of how the answer is read.
     """
 
-    def find(self, query: QueryProtocol) -> tuple[CatalogueEntry, ...]:
+    ANY = "any"
+    """
+    Every dataset on record, including ones whose only versions are retracted
+
+    Use this to ask what we have ever seen rather than what is usable.
+    """
+
+    NOT_RETRACTED = "not_retracted"
+    """
+    The dataset has a version which was not retracted, latest or not
+
+    The default, because a dataset's newest usable version beats nothing. A dataset
+    whose latest version was retracted is still usable from the one before it, and the
+    document which describes it here is that older version's -- so what the entry says
+    matches what a caller would get.
+    """
+
+    # Note: Expected to go once recency can be expressed as a *preference* rather
+    # than a filter -- see the note above [VersionFilter][(m).VersionFilter].
+    LATEST_NOT_RETRACTED = "latest_not_retracted"
+    """
+    The dataset has a version which was both the latest and not retracted
+
+    Stricter than the default: the dataset drops out entirely unless what ESGF last
+    called its newest version is also one it has not retracted. Use it to ask "only
+    what is current", and note it also drops a dataset whose single live version is
+    simply not flagged latest.
+    """
+
+
+class Catalogue(Protocol):
+    """
+    Every dataset we have, and what is known about them
+
+    A catalogue is the *contents*: every dataset on record and every version of each.
+    """
+
+    def find(
+        self,
+        query: QueryProtocol,
+        *,
+        versions: VersionFilter = VersionFilter.NOT_RETRACTED,
+    ) -> tuple[CatalogueEntry, ...]:
         """
         Find every dataset which matches a query
+
+        The two arguments narrow a lookup along two different axes, and neither is a
+        property of the catalogue: `query` says which facet values are acceptable,
+        `versions` says which of a dataset's versions are.
 
         Parameters
         ----------
         query
             Query to match
+
+        versions
+            Which of a dataset's versions count. See
+            [VersionFilter][(m).VersionFilter].
+
+            Not only a filter on what comes back: it also decides which version's
+            search documents describe each entry, so two lookups which differ only in
+            this can report different values for a facet no column holds. They are
+            therefore not subsets of one another.
 
         Returns
         -------
@@ -591,6 +686,14 @@ class InMemoryCatalogue:
     give the same answers -- that is what makes testing against this one mean anything
     -- and `test_solving_against_the_database_matches_the_in_memory_catalogue` is what
     holds them together.
+
+    It has no concept of a version, so every
+    [VersionFilter][(m).VersionFilter] gives the same entries back. That is the true
+    answer rather than the argument being ignored: an entry here is a dataset somebody
+    wrote down as present, so there is no retracted version to leave out and no newer
+    one to prefer. A test which needs retraction to matter needs
+    [esmporium.db.DatabaseCatalogue][], because retraction is something stored versions
+    have and written-down entries do not.
     """
 
     entries: tuple[CatalogueEntry, ...]
@@ -620,7 +723,12 @@ class InMemoryCatalogue:
         if collisions:
             raise DuplicateEntryIDError(collisions)
 
-    def find(self, query: QueryProtocol) -> tuple[CatalogueEntry, ...]:
+    def find(
+        self,
+        query: QueryProtocol,
+        *,
+        versions: VersionFilter = VersionFilter.NOT_RETRACTED,
+    ) -> tuple[CatalogueEntry, ...]:
         """
         Find every dataset which matches a query
 
@@ -628,6 +736,10 @@ class InMemoryCatalogue:
         ----------
         query
             Query to match
+
+        versions
+            Accepted, and makes no difference, for the reason given on the class: these
+            entries have no versions for it to choose between.
 
         Returns
         -------

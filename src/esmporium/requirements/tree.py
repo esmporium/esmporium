@@ -42,7 +42,7 @@ from esmporium.query import (
     modelled_facet_names,
     to_canonical,
 )
-from esmporium.requirements.catalogue import set_facets
+from esmporium.requirements.catalogue import VersionFilter, set_facets
 
 NODE_MODEL_CONFIG = ConfigDict(frozen=True, extra="forbid")
 """
@@ -761,6 +761,19 @@ class Requirement(BaseModel):
     # and nothing reads `prefer` until R3, so this waits for it rather than guessing
     # at it now.
 
+    versions: VersionFilter = VersionFilter.NOT_RETRACTED
+    """
+    Which of a dataset's stored versions count when looking for it
+
+    [solve][esmporium.requirements.solve] passes this to every
+    [Catalogue.find][esmporium.requirements.Catalogue.find] it makes, so one solve
+    cannot end up part-answered from two different sets of versions.
+
+    See [VersionFilter][esmporium.requirements.VersionFilter], and note that it
+    changes what entries *say* as well as which come back: it decides which version's
+    search documents describe a dataset.
+    """
+
     cardinality: Cardinality = Cardinality.ONE
     """
     How many datasets fill each leaf's role, per group
@@ -1202,6 +1215,7 @@ def requirement(  # noqa: PLR0913 - one argument per field of the requirement
     group_by_other_terms: tuple[str, ...] = (),
     prefer: Mapping[str, tuple[str, ...]] | None = None,
     prefer_other_terms: Mapping[str, tuple[str, ...]] | None = None,
+    versions: VersionFilter = VersionFilter.NOT_RETRACTED,
     cardinality: Cardinality = Cardinality.ONE,
 ) -> Requirement:
     """
@@ -1241,6 +1255,10 @@ def requirement(  # noqa: PLR0913 - one argument per field of the requirement
     prefer_other_terms
         Further preferences, keyed as a search document names the facet.
         See [Requirement.prefer_other_terms][(m).Requirement.prefer_other_terms].
+
+    versions
+        Which of a dataset's stored versions count when looking for it.
+        See [Requirement.versions][(m).Requirement.versions].
 
     cardinality
         How many datasets fill each leaf's role, per group.
@@ -1369,6 +1387,7 @@ def requirement(  # noqa: PLR0913 - one argument per field of the requirement
         prefer_other_terms=(
             {} if prefer_other_terms is None else dict(prefer_other_terms)
         ),
+        versions=versions,
         cardinality=cardinality,
     )
 

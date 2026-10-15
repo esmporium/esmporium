@@ -9,16 +9,15 @@ the same answers, because that is the promise which lets everything in
 
 from __future__ import annotations
 
+import inspect
 import json
-from dataclasses import replace
 
 import pytest
 from sqlmodel import Session
 
 from esmporium.db import (
-    Availability,
     DatabaseCatalogue,
-    UnknownAvailabilityError,
+    UnknownVersionFilterError,
     facet_filters,
     find_datasets,
     to_catalogue_entry,
@@ -35,6 +34,7 @@ from esmporium.requirements import (
     CatalogueEntry,
     InMemoryCatalogue,
     UnrecordedFacetError,
+    VersionFilter,
     all_of,
     leaf,
     requirement,
@@ -100,9 +100,9 @@ def live(raw=None):
     return (("20200101", True, False, raw),)
 
 
-def found(catalogue, query) -> list[str]:
+def found(catalogue, query, **kwargs) -> list[str]:
     """The `id_project_specific` of everything a query finds, in the order given"""
-    return [entry.id_project_specific for entry in catalogue.find(query)]
+    return [entry.id_project_specific for entry in catalogue.find(query, **kwargs)]
 
 
 # ---------------------------------------------------------------- matching on facets
@@ -213,7 +213,7 @@ def test_facet_filters_refuses_a_non_column(engine):
         facet_filters({"realm": ("atmos",)})
 
 
-# ------------------------------------------------------------------- availability
+# ------------------------------------------------------------------- versions
 
 
 def test_a_dataset_whose_only_version_is_retracted_is_not_available_by_default(
@@ -224,12 +224,14 @@ def test_a_dataset_whose_only_version_is_retracted_is_not_available_by_default(
     assert found(DatabaseCatalogue(engine), Query(variable="tas")) == []
 
 
-def test_availability_any_includes_a_retracted_dataset(engine, store):
+def test_version_filter_any_includes_a_retracted_dataset(engine, store):
     store("retracted", variable="tas", versions=(("20200101", True, True, None),))
 
-    catalogue = DatabaseCatalogue(engine, availability=Availability.ANY)
+    catalogue = DatabaseCatalogue(engine)
 
-    assert found(catalogue, Query(variable="tas")) == ["retracted_ps"]
+    assert found(catalogue, Query(variable="tas"), versions=VersionFilter.ANY) == [
+        "retracted_ps"
+    ]
 
 
 def test_a_dataset_with_a_live_and_a_retracted_version_is_available(engine, store):
@@ -268,8 +270,9 @@ def test_a_superseded_dataset_is_available_from_its_newest_live_version(engine, 
     assert found(catalogue, Query(variable="tas")) == ["superseded_ps"]
     assert (
         found(
-            replace(catalogue, availability=Availability.LATEST_NOT_RETRACTED),
+            catalogue,
             Query(variable="tas"),
+            versions=VersionFilter.LATEST_NOT_RETRACTED,
         )
         == []
     )
@@ -277,7 +280,7 @@ def test_a_superseded_dataset_is_available_from_its_newest_live_version(engine, 
 
 def test_the_default_describes_a_superseded_dataset_by_its_live_version(engine, store):
     """
-    Availability chooses which version speaks for a dataset, not only whether it is kept
+    The filter chooses which version speaks for a dataset, not only whether it is kept
 
     Worth pinning separately, because it is the part of the default change which is
     easy to miss: the facet values an entry reports come from the newest version the
@@ -300,31 +303,28 @@ def test_the_default_describes_a_superseded_dataset_by_its_live_version(engine, 
 
     assert entry.facet("realm") == "atmos"
     # `any` reaches past the retraction, and then the newest version does speak.
-    (any_entry,) = replace(catalogue, availability=Availability.ANY).find(
-        Query(variable="tas")
-    )
+    (any_entry,) = catalogue.find(Query(variable="tas"), versions=VersionFilter.ANY)
     assert any_entry.facet("realm") == "ocean"
 
 
 def test_a_dataset_with_no_versions_is_only_found_under_any(engine, store):
     store("no-versions", variable="tas", versions=())
 
-    assert found(DatabaseCatalogue(engine), Query(variable="tas")) == []
+    catalogue = DatabaseCatalogue(engine)
+
+    assert found(catalogue, Query(variable="tas")) == []
     assert (
-        found(
-            DatabaseCatalogue(engine, availability=Availability.NOT_RETRACTED),
-            Query(variable="tas"),
-        )
+        found(catalogue, Query(variable="tas"), versions=VersionFilter.NOT_RETRACTED)
         == []
     )
-    assert found(
-        DatabaseCatalogue(engine, availability=Availability.ANY), Query(variable="tas")
-    ) == ["no-versions_ps"]
+    assert found(catalogue, Query(variable="tas"), versions=VersionFilter.ANY) == [
+        "no-versions_ps"
+    ]
 
 
-def test_an_availability_we_do_not_know_is_refused(engine):
-    with pytest.raises(UnknownAvailabilityError, match="latest_not_retracted"):
-        DatabaseCatalogue(engine, availability="whatever").find(Query(variable="tas"))  # type: ignore[arg-type]
+def test_a_version_filter_we_do_not_know_is_refused(engine):
+    with pytest.raises(UnknownVersionFilterError, match="latest_not_retracted"):
+        DatabaseCatalogue(engine).find(Query(variable="tas"), versions="whatever")  # type: ignore[arg-type]
 
 
 # -------------------------------------------------- project_facets and other_terms
@@ -466,7 +466,7 @@ def test_a_modelled_facet_recorded_only_in_other_terms_does_not_answer(engine, s
     assert "product" in entry.known_facets()
 
 
-def test_document_facets_come_from_the_version_the_availability_filter_matched(
+def test_document_facets_come_from_the_version_the_version_filter_matched(
     engine, store
 ):
     """
@@ -486,19 +486,10 @@ def test_document_facets_come_from_the_version_the_availability_filter_matched(
         ),
     )
 
-    # `replace` rather than two constructions, because that is what asking the same
-    # database two questions actually costs: `DatabaseCatalogue` is a frozen dataclass
-    # around the engine, so this builds no connection and copies no state. Availability
-    # stays an attribute rather than an argument to `find` so that the catalogue still
-    # satisfies [Catalogue][esmporium.requirements.Catalogue], which `solve` calls
-    # knowing nothing about versions -- and `find_datasets` takes it per call for a
-    # caller who wants one session across several.
-    base = DatabaseCatalogue(engine)
-    not_retracted = replace(base, availability=Availability.NOT_RETRACTED)
-    anything = replace(base, availability=Availability.ANY)
+    catalogue = DatabaseCatalogue(engine)
 
-    (live_entry,) = not_retracted.find(Query(variable="tas"))
-    (any_entry,) = anything.find(Query(variable="tas"))
+    (live_entry,) = catalogue.find(Query(variable="tas"))
+    (any_entry,) = catalogue.find(Query(variable="tas"), versions=VersionFilter.ANY)
 
     assert live_entry.facet("realm") == "atmos"
     assert any_entry.facet("realm") == "ocean"
@@ -693,6 +684,11 @@ def test_it_satisfies_the_catalogue_protocol(engine):
     """Structural conformance, which the type checkers also read off this line"""
     catalogue: Catalogue = DatabaseCatalogue(engine)
 
+    # The signature, not just the call: `versions` is keyword-only with a default, so
+    # an implementation which dropped it would still answer `find(query)` and only
+    # fail once someone asked for a different filter. The in-memory catalogue is held
+    # to the same comparison in `tests/unit/requirements/test_catalogue.py`.
+    assert inspect.signature(type(catalogue).find) == inspect.signature(Catalogue.find)
     assert catalogue.find(Query(variable="tas")) == ()
 
 

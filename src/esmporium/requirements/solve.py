@@ -834,7 +834,7 @@ def _in_group(entry: CatalogueEntry, ctx: _Context) -> bool:
 def _eval_leaf(leaf: Leaf, ctx: _Context, role_prefix: str) -> NodeResult:
     path = f"{role_prefix}{leaf.role}"
     query = effective_query(leaf, ctx.requirement.where)
-    found = ctx.catalogue.find(query)
+    found = ctx.catalogue.find(query, versions=ctx.requirement.versions)
 
     candidates = [entry for entry in found if _in_group(entry, ctx)]
     if not candidates:
@@ -1089,7 +1089,7 @@ def _group_values(
     candidates: list[CatalogueEntry] = []
     for _, leaf in walk_leaves(requirement.tree):
         query = effective_query(leaf, requirement.where)
-        candidates.extend(catalogue.find(query))
+        candidates.extend(catalogue.find(query, versions=requirement.versions))
 
     if not candidates:
         return []

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 from sqlmodel import Session, col, select
@@ -29,6 +28,7 @@ from esmporium.query import (
 from esmporium.requirements import (
     CatalogueEntry,
     UnrecordedFacetError,
+    VersionFilter,
     asked_facets,
     matches_facets,
 )
@@ -47,92 +47,22 @@ if TYPE_CHECKING:
     from esmporium.search.result_normalisation import NormaliseFunc
 
 
-# TODO future: these three settings are meant to become two, and this is half way
-# there. The direction is to express retraction and recency where the *requirement* can
-# see them rather than here: "not retracted" as a constraint, and recency as a
-# preference, so that "latest", "this particular version" and "give me everything, with
-# `Cardinality.ALL`" are all things a requirement says rather than settings on the
-# catalogue reading it. That leaves this enum needing only "not retracted" and
-# "everything", because `LATEST_NOT_RETRACTED` is exactly the part which becomes a
-# preference.
-#
-# What has happened already: `NOT_RETRACTED` is the default, so the common path no
-# longer drops a dataset whose newest version was retracted but which has a usable
-# older one. What has not: `LATEST_NOT_RETRACTED` still exists, because until a
-# requirement can say "prefer the latest" there would be no way left to ask "only what
-# is current", and removing the member would delete the question rather than move it.
-# Deleting it is the last step, not the first.
-#
-# Important to note:
-# - The preference half needs a version on the entry first. Why that is not a small
-#   change is in the note above [Catalogue][esmporium.requirements.Catalogue]: an entry
-#   describes a `Dataset`, not a `DatasetVersion`, so today there is nothing for a
-#   preference to range over.
-#
-# `test_a_retracted_dataset_drops_its_group_from_the_solve` and
-# `test_a_group_whose_other_leaf_is_retracted_becomes_unsatisfied` in
-# `tests/integration/requirements/test_search_to_solve_recorded.py` are what pin the
-# current behaviour, and are the tests to re-read when this moves.
+class UnknownVersionFilterError(ValueError):
+    """Raised when `versions` is not one of the version filters we know."""
 
-
-class Availability(str, Enum):
-    """
-    Which of the datasets we have stored count as available
-
-    Every setting is "as far as we last looked": `is_latest` and `retracted` are what
-    ESGF said when the search ran, not what it says now
-    (see [DatasetVersion.retracted][esmporium.db.schema.DatasetVersion.retracted]).
-    Re-searching updates them in place, which is what makes "this stopped being
-    available since yesterday" a thing the catalogue can show.
-    """
-
-    ANY = "any"
-    """
-    Every dataset on record, including ones whose only versions are retracted
-
-    Use this to ask what we have ever seen rather than what is usable.
-    """
-
-    NOT_RETRACTED = "not_retracted"
-    """
-    The dataset has a version which was not retracted, latest or not
-
-    The default, because a dataset's newest usable version beats nothing. A dataset
-    whose latest version was retracted is still usable from the one before it, and the
-    document which describes it here is that older version's -- so what the entry says
-    matches what a caller would get.
-    """
-
-    # Note: Expected to go once recency can be said in a requirement rather than here,
-    # at which point this becomes a preference -- see the note above
-    # [Availability][(m).Availability].
-    LATEST_NOT_RETRACTED = "latest_not_retracted"
-    """
-    The dataset has a version which was both the latest and not retracted
-
-    Stricter than the default: the dataset drops out entirely unless what ESGF last
-    called its newest version is also one it has not retracted. Use it to ask "only
-    what is current", and note it also drops a dataset whose single live version is
-    simply not flagged latest.
-    """
-
-
-class UnknownAvailabilityError(ValueError):
-    """Raised when `availability` is not one of the settings we know."""
-
-    def __init__(self, availability: object) -> None:
+    def __init__(self, versions: object) -> None:
         """
         Initialise the error
 
         Parameters
         ----------
-        availability
+        versions
             What was asked for
         """
-        self.availability = availability
-        known = ", ".join(repr(each.value) for each in Availability)
+        self.versions = versions
+        known = ", ".join(repr(each.value) for each in VersionFilter)
         super().__init__(
-            f"{availability!r} is not an availability we know. Use one of: {known}."
+            f"{versions!r} is not a version filter we know. Use one of: {known}."
         )
 
 
@@ -179,9 +109,9 @@ def facet_filters(
     return [col(getattr(Dataset, name)).in_(values) for name, values in facets.items()]
 
 
-def availability_filter(availability: Availability) -> ColumnElement[bool] | None:
+def version_filter(versions: VersionFilter) -> ColumnElement[bool] | None:
     """
-    Get the `where` clause which keeps only the datasets an availability allows
+    Get the `where` clause which keeps only the datasets a version filter allows
 
     An `EXISTS` over [DatasetVersion][esmporium.db.schema.DatasetVersion] rather than
     a join, because a dataset has many versions and a join would return it once per
@@ -189,31 +119,31 @@ def availability_filter(availability: Availability) -> ColumnElement[bool] | Non
 
     Parameters
     ----------
-    availability
-        Which datasets to keep. See [Availability][(m).Availability].
+    versions
+        Which datasets to keep. See [VersionFilter][(m).VersionFilter].
 
     Returns
     -------
     :
-        The clause, or `None` for [Availability.ANY][(m).Availability.ANY], which
+        The clause, or `None` for [VersionFilter.ANY][(m).VersionFilter.ANY], which
         filters nothing
 
     Raises
     ------
-    UnknownAvailabilityError
-        `availability` is not one of the settings we know
+    UnknownVersionFilterError
+        `versions` is not one of the settings we know
     """
-    if availability == Availability.ANY:
+    if versions == VersionFilter.ANY:
         return None
 
-    if availability == Availability.NOT_RETRACTED:
+    if versions == VersionFilter.NOT_RETRACTED:
         version_is_ok: ColumnElement[bool] = col(DatasetVersion.retracted).is_(False)
-    elif availability == Availability.LATEST_NOT_RETRACTED:
+    elif versions == VersionFilter.LATEST_NOT_RETRACTED:
         version_is_ok = col(DatasetVersion.retracted).is_(False) & col(
             DatasetVersion.is_latest
         ).is_(True)
     else:
-        raise UnknownAvailabilityError(availability)
+        raise UnknownVersionFilterError(versions)
 
     return (
         select(DatasetVersion.id)
@@ -314,7 +244,7 @@ def _canonical_name_for(
 # later search reaching a different node can only add facets no stored document
 # carried; it cannot overwrite one already answered. So this does not drift under you
 # as you work, and the only things which legitimately change an answer are a new
-# version being published and `availability` changing which version qualifies.
+# version being published and `versions` changing which version qualifies.
 #
 # Where it does bite is **rebuilding**. Which node answered first is the order a
 # search happened to return and which endpoints were reachable that day -- see
@@ -471,7 +401,7 @@ def _facets_from_documents(
 
 
 def _documents_by_dataset(
-    session: Session, dataset_ids: list[int], availability: Availability
+    session: Session, dataset_ids: list[int], versions: VersionFilter
 ) -> dict[int, list[tuple[dict[str, Any], str]]]:
     """
     Get the raw documents which answer for each dataset, newest available version first
@@ -484,7 +414,7 @@ def _documents_by_dataset(
     dataset_ids
         The datasets to get documents for
 
-    availability
+    versions
         Which versions count, matching the filter the datasets were selected with
 
     Returns
@@ -515,9 +445,9 @@ def _documents_by_dataset(
         .where(col(DatasetVersion.dataset_id).in_(dataset_ids))
     )
 
-    if availability == Availability.NOT_RETRACTED:
+    if versions == VersionFilter.NOT_RETRACTED:
         statement = statement.where(col(DatasetVersion.retracted).is_(False))
-    elif availability == Availability.LATEST_NOT_RETRACTED:
+    elif versions == VersionFilter.LATEST_NOT_RETRACTED:
         statement = statement.where(
             col(DatasetVersion.retracted).is_(False),
             col(DatasetVersion.is_latest).is_(True),
@@ -606,7 +536,7 @@ def find_datasets(  # noqa: PLR0913 - one argument per thing a find has to be to
     session: Session,
     query: QueryProtocol,
     *,
-    availability: Availability = Availability.NOT_RETRACTED,
+    versions: VersionFilter = VersionFilter.NOT_RETRACTED,
     normalisers: Mapping[str, NormaliseFunc] = DEFAULT_NORMALISERS,
     verbatim_normalisers: Mapping[str, NormaliseFunc] = VERBATIM_NORMALISERS,
     project_query_map: Mapping[str, type[QueryProtocol]] = PROJECT_QUERY_MAP_DEFAULT,
@@ -626,8 +556,8 @@ def find_datasets(  # noqa: PLR0913 - one argument per thing a find has to be to
     query
         Query to match, in any query style
 
-    availability
-        Which datasets count as available. See [Availability][(m).Availability].
+    versions
+        Which of a dataset's versions count. See [VersionFilter][(m).VersionFilter].
 
     normalisers
         See [DEFAULT_NORMALISERS][esmporium.search.DEFAULT_NORMALISERS].
@@ -651,8 +581,8 @@ def find_datasets(  # noqa: PLR0913 - one argument per thing a find has to be to
     ClashingFacetsError
         `query` sets the same facet in more than one place
 
-    UnknownAvailabilityError
-        `availability` is not one of the settings we know
+    UnknownVersionFilterError
+        `versions` is not one of the settings we know
 
     UnknownRawDocFormatTagError
         A stored raw document's format tag has no flattener in `normalisers`
@@ -662,7 +592,7 @@ def find_datasets(  # noqa: PLR0913 - one argument per thing a find has to be to
     # facet from `other_terms` cannot: its name is the search API's spelling, and
     # mapping that back to a column is exactly the translation `other_terms` exists to
     # avoid. So a leaf constrained *only* through `other_terms` pulls every row the
-    # availability filter allows, and their documents with it, which is the expensive
+    # versions filter allows, and their documents with it, which is the expensive
     # shape to know about.
     column_facets = {
         name: values
@@ -675,7 +605,7 @@ def find_datasets(  # noqa: PLR0913 - one argument per thing a find has to be to
 
     statement = select(Dataset).where(*facet_filters(column_facets))
 
-    keep_available = availability_filter(availability)
+    keep_available = version_filter(versions)
     if keep_available is not None:
         statement = statement.where(keep_available)
 
@@ -695,7 +625,7 @@ def find_datasets(  # noqa: PLR0913 - one argument per thing a find has to be to
     # here. Note also that `solve` calls `find` once per leaf and then once per leaf
     # per group, so the repetition matters more than the parse does.
     documents = _documents_by_dataset(
-        session, [row.id for row in rows if row.id is not None], availability
+        session, [row.id for row in rows if row.id is not None], versions
     )
 
     entries = [
@@ -750,13 +680,6 @@ class DatabaseCatalogue:
     engine: Engine
     """The database to read from"""
 
-    availability: Availability = Availability.NOT_RETRACTED
-    """
-    Which datasets count as available
-
-    See [Availability][(m).Availability].
-    """
-
     normalisers: Mapping[str, NormaliseFunc] = field(
         default_factory=lambda: DEFAULT_NORMALISERS
     )
@@ -792,7 +715,12 @@ class DatabaseCatalogue:
     everything its documents record is reachable only through `other_terms`.
     """
 
-    def find(self, query: QueryProtocol) -> tuple[CatalogueEntry, ...]:
+    def find(
+        self,
+        query: QueryProtocol,
+        *,
+        versions: VersionFilter = VersionFilter.NOT_RETRACTED,
+    ) -> tuple[CatalogueEntry, ...]:
         """
         Find every stored dataset which matches a query
 
@@ -812,6 +740,9 @@ class DatabaseCatalogue:
         query
             Query to match, in any query style
 
+        versions
+            Which of a dataset's versions count.
+
         Returns
         -------
         :
@@ -821,12 +752,15 @@ class DatabaseCatalogue:
         ------
         ClashingFacetsError
             `query` sets the same facet in more than one place
+
+        UnknownVersionFilterError
+            `versions` is not one of the version filters we know
         """
         with Session(self.engine) as session:
             return find_datasets(
                 session,
                 query,
-                availability=self.availability,
+                versions=versions,
                 normalisers=self.normalisers,
                 verbatim_normalisers=self.verbatim_normalisers,
                 project_query_map=self.project_query_map,
