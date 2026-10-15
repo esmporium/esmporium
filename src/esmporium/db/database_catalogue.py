@@ -287,6 +287,65 @@ def _canonical_name_for(
     return {} if spec is None else spec.native_to_canonical
 
 
+# A note for developers: the merge, and what pins its answer
+#
+# A dataset version is published on several data nodes and indexed by several index
+# nodes, and each returns its *own* document for it. In principle those documents
+# describe the same thing and agree. In practice they do not: two ESGF-NG mirrors of
+# one project in `tests/test-data/search/` differ by ten field names. An entry has to
+# answer one string per facet, because that is what a group key and a `prefer` ranking
+# compare, so the documents are merged first-writer-wins in the order
+# [_documents_by_dataset][(m)._documents_by_dataset] returns them.
+#
+# The cost of merging rather than taking the first document whole: the entry can end up
+# asserting a combination no single node published. We merge anyway, because the
+# alternative loses facets which exist -- a sparser first document would make
+# `group_by` on the others silently impossible -- and because "first" is arbitrary
+# rather than authoritative, so there is nothing to be faithful to. Disagreement is at
+# least deterministic. If that trade is ever revisited, the thing to reach for is
+# surfacing the disagreement (this repo already has the notion, in
+# [UnhandledDatasetClashError][esmporium.db.UnhandledDatasetClashError] and
+# [facet_differences][esmporium.db.facet_differences]) rather than discarding the data.
+#
+# What it means for a user: the answer is **pinned early and then stable**. "First" is
+# `DatasetRawDoc.id` ascending, i.e. first ingested, and a document already stored
+# keeps its row (`_get_or_create_raw_doc` dedupes on `esgf_doc_id`), so the search
+# which *first found a dataset* is the one whose node describes it from then on. A
+# later search reaching a different node can only add facets no stored document
+# carried; it cannot overwrite one already answered. So this does not drift under you
+# as you work, and the only things which legitimately change an answer are a new
+# version being published and `availability` changing which version qualifies.
+#
+# Where it does bite is **rebuilding**. Which node answered first is the order a
+# search happened to return and which endpoints were reachable that day -- see
+# `stop_at_first_result` in [esmporium.search.search_single_project][], and
+# [build_health_selector][esmporium.db.build_health_selector], which reorders endpoints
+# per run by design. So a database rebuilt from scratch can answer differently for a
+# facet no column holds, and `group_by` can split the same datasets differently. That
+# makes this a reproducibility property of the store: re-searching is safe, starting
+# over is what to be careful about, and a scratch database, a post-migration rebuild
+# and recorded test fixtures are all separate stores in this sense.
+#
+# One important exception to the merge, which is not a merge at all: a format whose
+# document id carries the data node (Solr: `<dataset_id>|<data_node>`) stores one row
+# per node, so the merge above is what happens. A format whose id does not (STAC, where
+# the id is the dataset id alone) gives both index mirrors the *same* `esgf_doc_id`, so
+# the second is deduped away by `_get_or_create_raw_doc` and never stored -- whichever
+# mirror arrived first is the only description there will ever be, and re-searching
+# cannot repair it because the dedupe key matches. For ESGF-NG the east and west
+# fixtures in `tests/test-data/search/` differ by eleven property names, so this is
+# real rather than theoretical. Whether that dedupe is right is an open question, not
+# a settled decision.
+#
+# There is no sensible way around the disagreement itself on our side. The APIs should
+# not disagree and we have no third source to arbitrate with; picking a winner by node,
+# by `retrieved_at` or by majority vote would be a guess dressed up as a policy.
+# Merging deterministically is the most we can honestly do. The disagreement is ESGF's
+# to fix,
+# so **if this bites you, please raise an issue at
+# https://github.com/esmporium/esmporium/issues** quoting the dataset and the
+# disagreeing values: we cannot ask upstream for a fix without cases.
+#
 # Note: It is also the
 # one place a future "skip the documents when nothing needs them" filter has to
 # land, which is another reason to keep it a single function rather than two.
@@ -469,6 +528,12 @@ def _documents_by_dataset(
     # resolve the same way every time. Version strings are compared as strings, which
     # is right for the dates ESGF usually publishes and is noted as unreliable for
     # CMIP5 replicas on `DatasetVersion.version` itself.
+    #
+    # `DatasetRawDoc.id` ascending is first-ingested, which is the order a search
+    # happened to return and which endpoint was up -- arbitrary, chosen for
+    # determinism within one database rather than for authority. The note above
+    # [_facets_from_documents][(m)._facets_from_documents] says what follows from
+    # that, and it is the thing to read before trusting a facet no column holds.
     statement = statement.order_by(
         col(DatasetVersion.version).desc(), col(DatasetRawDoc.id).asc()
     )
@@ -668,6 +733,18 @@ class DatabaseCatalogue:
     Run the same requirement
     again tomorrow and the difference between the two
     [SolveResult][esmporium.requirements.SolveResult]s is what changed.
+
+    One limit to know before **rebuilding** a database: for a facet no column holds,
+    the answer comes from whichever of a dataset's stored search documents was
+    ingested first, and ESGF's index nodes do not always agree. Searching again is
+    safe -- a stored document keeps its place, so an answer can be added but not
+    changed -- but a store built from scratch may have a different node answering
+    first, and so a different value for such a facet and a different `group_by`
+    split. The disagreement is upstream of us and we have no way to arbitrate it; the
+    note above `_facets_from_documents` in this module explains what we do instead
+    and why. **If it bites you, please raise an issue at
+    https://github.com/esmporium/esmporium/issues** quoting the dataset and the
+    values, so we can take it to ESGF.
     """
 
     engine: Engine

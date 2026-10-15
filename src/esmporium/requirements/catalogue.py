@@ -189,6 +189,14 @@ class CatalogueEntry:
     `realm`, or `resolution`. For the latter, this means [Query][esmporium.query.Query]
     can ask for them, but they are not in
     [DATASET_FACET_COLUMNS][esmporium.datasets.DATASET_FACET_COLUMNS].
+
+    A facet which several of a dataset's stored documents record is answered by the
+    first-stored one, so the search which first found a dataset is the one whose
+    index node describes it. That is stable from then on -- re-searching can add a
+    facet but not change one -- and differs in a database rebuilt from scratch. See
+    the note above `_facets_from_documents` in
+    [esmporium.db.database_catalogue][], which is also where to look when a value
+    here is not the one you expected.
     """
 
     other_terms: Mapping[str, str | None] = field(default_factory=dict)
@@ -199,6 +207,11 @@ class CatalogueEntry:
     same bargain: nothing here is translated, normalised or checked. The keys are the
     document's own. The one difference from the query side is which direction it faces.
     There it holds what the user asked for; here it holds what the documents recorded.
+
+    Subject to the same first-stored-document merge as
+    [project_facets][(m).CatalogueEntry.project_facets], and more exposed to it: a
+    facet we do not model is exactly the kind the index nodes are least consistent
+    about recording.
     """
 
     def facet(self, name: str) -> str | None:
@@ -220,10 +233,13 @@ class CatalogueEntry:
             The facet's value, or `None` if this entry has no value for it or does not
             know it at all
 
-            A third reason for `None` is worth knowing when one is unexpected: a facet
-            the search document recorded with *several* values is not recorded at all,
-            because a facet value is one string. See
-            [project_facets][(m).CatalogueEntry.project_facets].
+            Two further reasons for `None` are worth knowing when one is unexpected.
+            A facet the search document recorded with *several* values is not
+            recorded at all, because a facet value is one string. And a facet only
+            *some* of the dataset's documents recorded reads as `None` when the
+            document which answered was not one of them -- which depends on which
+            index node answered the search, not on the data. See
+            [project_facets][(m).CatalogueEntry.project_facets] for both.
         """
         modelled = self.modelled_facet(name)
 

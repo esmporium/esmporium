@@ -616,7 +616,26 @@ def _get_or_create_dataset(
 def _upsert_version(
     session: Session, dataset_id: int, parsed: ParsedDocument
 ) -> DatasetVersion:
-    """Insert this dataset's version, or refresh its snapshot flags if seen before."""
+    """
+    Insert this dataset's version, or refresh its snapshot flags if seen before
+
+    The flags are refreshed from *every* document, so for a version described by
+    several documents this is **last-write-wins** -- the opposite convention to the
+    first-wins facet merge in [esmporium.db.database_catalogue][]. There is no
+    "first" to prefer for a boolean snapshot: unlike a facet, where an absent value
+    means the document is silent, every document asserts an `is_latest` and a
+    `retracted`.
+
+    It matters more than the facet merge does. Replicas lag on retraction, so two
+    nodes disagreeing here is likely rather than exotic, and the consequence is that
+    the dataset appears or vanishes under
+    [Availability.NOT_RETRACTED][esmporium.db.Availability] rather than merely
+    reading oddly -- which, because groups are discovered, shows up as a group that
+    is missing rather than one that is unsatisfied. Which answer we store depends on
+    ingest order. If you hit it, please raise an issue at
+    https://github.com/esmporium/esmporium/issues: the disagreement is ESGF's to
+    fix, and we cannot ask upstream without cases.
+    """
     version = _get_or_create(
         session,
         lambda: session.exec(

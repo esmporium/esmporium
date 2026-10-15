@@ -706,6 +706,13 @@ class Requirement(BaseModel):
     the price of not being checked, and it is the point.
 
     These come after `group_by` in the group's key.
+
+    One thing to know before rebuilding a database: a facet only the documents know
+    is answered by whichever of a dataset's documents was stored first, so which
+    group a dataset lands in can depend on which index node answered the search
+    that first found it. Stable once stored, so this will not shift as you
+    re-search. See
+    [CatalogueEntry.other_terms][esmporium.requirements.CatalogueEntry.other_terms].
     """
 
     prefer: dict[str, tuple[str, ...]] = Field(default_factory=dict)
@@ -735,6 +742,12 @@ class Requirement(BaseModel):
 
     Applied after `prefer`, so a modelled facet always out-ranks an unmodelled one
     rather than the two interleaving alphabetically.
+
+    Ranking on one of these carries the same caveat as
+    [group_by_other_terms][(m).Requirement.group_by_other_terms]: the value ranked
+    on came from whichever document was stored first, so which candidate wins -- or
+    whether the group is reported ambiguous instead -- can differ in a database
+    rebuilt from scratch.
     """
     # A note on why this is a mapping rather than a callable, which would let a user
     # inject their own ranking. A requirement is fingerprinted by

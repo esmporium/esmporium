@@ -120,6 +120,12 @@ def search_single_project(  # noqa: PLR0913 - the keyword-only extras are delibe
         so the union across them is more complete than any single node
         (callers must handle merging and de-duplicating the union themselves).
 
+        Either way, which endpoints answered decides *whose* description of a
+        dataset gets stored, and so what a catalogue entry later says about facets
+        no column holds. The nodes can disagree, and the stored answer is then the
+        first document ingested: see the note above `_facets_from_documents` in
+        [esmporium.db.database_catalogue][].
+
     limit
         The page size to ask each endpoint for,
         i.e. the most records to get in one response, not the total matched.
