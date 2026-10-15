@@ -125,7 +125,8 @@ def version_filter(versions: VersionFilter) -> ColumnElement[bool] | None:
     Returns
     -------
     :
-        The clause, or `None` for [VersionFilter.ANY][(m).VersionFilter.ANY], which
+        The clause, or `None` for
+        [VersionFilter.ANY][esmporium.requirements.VersionFilter], which
         filters nothing
 
     Raises
