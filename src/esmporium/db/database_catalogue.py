@@ -263,10 +263,11 @@ def _canonical_name_for(
 # the id is the dataset id alone) gives both index mirrors the *same* `esgf_doc_id`, so
 # the second is deduped away by `_get_or_create_raw_doc` and never stored -- whichever
 # mirror arrived first is the only description there will ever be, and re-searching
-# cannot repair it because the dedupe key matches. For ESGF-NG the east and west
-# fixtures in `tests/test-data/search/` differ by eleven property names, so this is
-# real rather than theoretical. Whether that dedupe is right is an open question, not
-# a settled decision.
+# cannot repair it because the dedupe key matches. For ESGF-NG CMIP6, the east and
+# west fixtures in `tests/test-data/search/` differ by eleven property names, so this
+# is real rather than theoretical. (As of 2026-10-15, this only applies to CMIP6:
+# the CMIP7 documents agree on their facets.) Whether that dedupe is right is an open
+# question, not a settled decision.
 #
 # There is no sensible way around the disagreement itself on our side. The APIs should
 # not disagree and we have no third source to arbitrate with; picking a winner by node,
@@ -280,12 +281,6 @@ def _canonical_name_for(
 # Note: It is also the
 # one place a future "skip the documents when nothing needs them" filter has to
 # land, which is another reason to keep it a single function rather than two.
-# @Claude make sure that we have a note to put this in a "Potential gotchas" section
-# in FUTURE-DOCS.md. This is super nasty, and we don't want users spinning in circles
-# rather than just raising an issue.
-# Can you also please see if this ESGF-NG disagreement is there for any CMIP7 datasets.
-# If it is, can you pull the example out into something that we can turn into an issue
-# on https://github.com/ESGF/esgf-roadmap/issues
 def _facets_from_documents(
     project: str,
     documents: list[tuple[dict[str, Any], str]],
@@ -384,11 +379,6 @@ def _facets_from_documents(
                 # set?), what `matches` should do (any of them? all of them?), and
                 # whether `CatalogueEntry.facet` can keep returning `str | None`. If
                 # you need it, that is the shape of the issue to raise.
-                # @Claude make sure that we have a note to
-                # put this in a "Potential gotchas" section
-                # in FUTURE-DOCS.md. This is super nasty,
-                # and we don't want users spinning in circles
-                # rather than just raising an issue.
                 if not isinstance(value, str):
                     continue
 

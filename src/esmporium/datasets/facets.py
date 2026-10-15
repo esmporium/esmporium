@@ -28,7 +28,6 @@ but the project-specific ID tells us that they're not)
 or that we have deliberately decided not to support this difference
 via the 'standard path'
 (e.g. we know we can handle CMIP5's 'product' facet, but it's not via these columns,
-it's via project-specific facet handling instead.)
-[@Claude can you suggest a good cross-reference for this,
-or make a note in FUTURE-DOCS.md]
+it's via project-specific facet handling instead, see
+[CatalogueEntry.project_facets][esmporium.requirements.CatalogueEntry.project_facets]).
 """

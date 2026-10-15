@@ -179,3 +179,43 @@ Probably include:
 
 1. using the database as a 'plain' database
 1. using query objects to drive searches (this will also be a good test to make sure that, if you have a QueryCMIP5 object, that the functions know to look in the CMIP5 table for any CMIP5 specific search facets e.g. product)
+
+## Potential gotchas
+
+These are behaviours that are nasty enough
+that we would rather users raise an issue
+than spend time trying to work out what is going on themselves.
+Each section should end by pointing people at
+https://github.com/esmporium/esmporium/issues.
+
+### Index mirrors that disagree
+
+When more than one index node returns a document for the same dataset,
+the facets that no database column holds
+(e.g. `realm`, `activity`, CMIP5's `product`)
+are answered by the first document we stored.
+If the mirrors disagree, which answer you get depends on
+which node a search happened to hit first.
+Re-searching won't change an answer, but rebuilding the database from scratch can,
+so `group_by` and `prefer` can behave differently in a rebuilt database.
+For STAC (ESGF-NG), the second mirror's document isn't stored at all
+because both mirrors use the same document ID.
+This is real, not theoretical:
+the ESGF-NG east and west CMIP6 documents differ by eleven property names
+(as of 2026-10-15, the CMIP7 documents agree on their facets).
+The disagreement is ESGF's to fix, and we can't pick a winner for you,
+so if this bites, raise an issue quoting the dataset and the disagreeing values.
+Source: the note above `_facets_from_documents` in `esmporium.db.database_catalogue`.
+
+### Multi-valued facets are dropped
+
+A facet whose document value is a list (e.g. a multi-realm dataset
+with `realm: ["atmos", "ocean"]`) is treated as not recorded at all.
+So `Query(realm="atmos")` doesn't match the dataset
+and `group_by=("realm",)` can't group it,
+while a single-realm dataset next to it works fine.
+This shows up as a dataset that is "missing"
+or as an `UngroupableFacetError`
+when the data clearly has the facet.
+Supporting this is a feature, not a fix, so raise an issue if you need it.
+Source: the `TODO future` note in `_facets_from_documents` in `esmporium.db.database_catalogue`.
