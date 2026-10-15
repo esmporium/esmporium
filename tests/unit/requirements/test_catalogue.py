@@ -257,13 +257,6 @@ def test_an_empty_query_matches_everything(make_entry):
 )
 @pytest.mark.parametrize("populated", [False, True], ids=["empty", "populated"])
 def test_a_facet_nothing_records_finds_nothing_either_way(query, populated, make_entry):
-    # The defect this replaced. `matches_facets` is an `all`, which stops at the first
-    # facet that does not match, and `facet` used to raise for a facet an entry did not
-    # know -- so the same query raised or quietly found nothing depending on where the
-    # facet sorted and on whether any row got far enough to be asked.
-    #
-    # Parametrised over both homes and over an empty and a populated catalogue because
-    # the point is that all four answers are the same one.
     entries = (make_entry(1, variable="tas"),) if populated else ()
 
     assert InMemoryCatalogue(entries=entries).find(query) == ()

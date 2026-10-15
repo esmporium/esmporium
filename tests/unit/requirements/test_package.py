@@ -103,12 +103,6 @@ def test_imports_only_the_esmporium_it_needs():
     ever point back this way?" -- `esmporium.formatting` and `esmporium.datasets`
     pass because they import nothing but the standard library, so neither can be half
     of a cycle.
-
-    There was an `esmporium.db.schema` entry here, for `DATASET_FACET_COLUMNS`. It did
-    not grow, it went away: the constant moved to `esmporium.datasets`, because
-    reading it from `db` meant importing `db`, and importing `db` reaches
-    `esmporium.search`. See `test_importing_requirements_imports_nothing_else` for
-    what that costs.
     """
     imported = set()
     for module in requirements_modules():
@@ -132,20 +126,7 @@ def test_importing_requirements_imports_nothing_else():
 
     The two tests above read each module's own source, so neither can see a
     *transitive* edge -- and a transitive edge is how this package's import rule gets
-    broken in practice. Before `DATASET_FACET_COLUMNS` moved out of `db`, this
-    package imported `esmporium.db.schema`, which looks harmless and is not:
-
-        requirements -> db -> search -> requirements
-
-    because `esmporium.db.__init__` imports `results_to_database`, which imports
-    `esmporium.search.result_normalisation`, which initialises the whole of
-    `esmporium.search`. Importing this package pulled in twenty search modules, and
-    `esmporium.search.search.run` could not then import `Requirement` from a package
-    still half-way through its own `__init__`.
-
-    So this test is the one that would have caught it, and it has to run in a
-    subprocess: inside pytest the whole of esmporium is imported already, so
-    `sys.modules` says nothing.
+    broken in practice.
     """
     script = """
 import sys

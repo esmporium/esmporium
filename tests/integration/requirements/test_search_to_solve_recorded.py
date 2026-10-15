@@ -1,21 +1,9 @@
 """
 A requirement searched, saved and solved, end to end, with no network
 
-This is the point of R4, and the loop we actually want to run daily: write a
-requirement, search for it, dump everything the search found into the database, and
-ask [solve][esmporium.requirements.solve] what it adds up to. Run it again tomorrow
-and the difference between the two
-[SolveResult][esmporium.requirements.SolveResult]s is what changed.
-
 It runs off a recorded ESGF-NG response (`tests/test-data/search/`) through a mock
 transport, so it is deterministic and part of the ordinary test run. The live
-counterpart is `test_search_to_solve_live.py`, which can only assert loosely because
-what CMIP7 holds changes by the day.
-
-The recorded CMIP7 response is a convenient fixture for this: it carries exactly two
-datasets which differ *only* in `processing_id` (`tminavg-h2m-hxy-u` and
-`tmaxavg-h2m-hxy-u`), so one requirement can be made to resolve, go ambiguous, or keep
-both, by changing nothing but `prefer` and `cardinality`.
+counterpart is `test_search_to_solve_live.py`.
 """
 
 from __future__ import annotations
@@ -68,11 +56,6 @@ def recorded_body(*, retract: tuple[str, ...] = ()) -> dict:
     `retract` holds `processing_id`s, so a test can retire one of the two datasets and
     leave the other, which is how a group survives a retraction instead of vanishing
     with it.
-
-    The `next` link is stripped. `collect_all_pages` follows `next`, and a mock
-    transport which answers every request with the same body would hand back a page it
-    had already seen, which `PaginationLimitError` (rightly) refuses. Removing the link
-    is how a one-page answer is expressed, not a convenience.
     """
     raw = json.loads((RECORDED / "esgf-ng-stac-cmip7-east-search.json").read_text())
 
@@ -283,6 +266,15 @@ def test_everything_we_searched_for_is_findable_through_the_catalogue(
         assert [entry.id for entry in found] == [row.id]
 
 
+# TODO future: this pins today's behaviour, where retraction is a setting on the
+# catalogue. It is expected to become a constraint on the requirement instead, with
+# recency a preference -- see the note above
+# [Availability][esmporium.db.database_catalogue.Availability] for the shape and
+# what it needs first. This test should survive that: both versions are retracted
+# here, so there is nothing non-retracted left to fall back to however the setting is
+# spelled. It is the *superseded* case which moves, and
+# `test_latest_not_retracted_excludes_a_superseded_version` in
+# `tests/unit/db/test_database_catalogue.py` is where that lives.
 def test_a_retracted_dataset_drops_its_group_from_the_solve(migrated, selector, served):
     """
     The day-to-day question: a dataset retracted overnight stops satisfying anything
@@ -293,22 +285,6 @@ def test_a_retracted_dataset_drops_its_group_from_the_solve(migrated, selector, 
     them: it leaves `satisfied` and turns up in none of the three mappings. The change
     to watch for day to day is therefore the set of satisfied groups, not a group's
     status.
-
-    (A group whose *other* leaf is retracted does become `unsatisfied` -- the group is
-    still discovered, from the leaf which survived. That is the test below.)
-
-    The rows are not deleted, and `Availability.ANY` still resolves the group, which
-    is what makes this a statement about availability rather than about data loss.
-
-    TODO future: this pins today's behaviour, where retraction is a setting on the
-    catalogue. It is expected to become a constraint on the requirement instead, with
-    recency a preference -- see the note above
-    [Availability][esmporium.db.database_catalogue.Availability] for the shape and
-    what it needs first. This test should survive that: both versions are retracted
-    here, so there is nothing non-retracted left to fall back to however the setting is
-    spelled. It is the *superseded* case which moves, and
-    `test_latest_not_retracted_excludes_a_superseded_version` in
-    `tests/unit/db/test_database_catalogue.py` is where that lives.
     """
     req = a_requirement(prefer={"processing_id": (TMIN,)})
     catalogue = DatabaseCatalogue(migrated)
@@ -337,23 +313,14 @@ def test_a_retracted_dataset_drops_its_group_from_the_solve(migrated, selector, 
     assert set(on_record.satisfied) == set(today.satisfied)
 
 
+# TODO future: as above, the *statement* here should outlive retraction moving onto
+# the requirement -- what changes is how the retraction is expressed, not that a
+# half-retracted group reports unsatisfied. Worth re-reading when it does.
 def test_a_group_whose_other_leaf_is_retracted_becomes_unsatisfied(
     migrated, selector, served
 ):
     """
     A retraction which leaves the group standing turns it `unsatisfied`, and says why
-
-    Two leaves over the same `tas` data, told apart by `processing_id`. Retracting one
-    of the two datasets leaves the other available, so the group is still discovered --
-    and now one of its roles cannot be filled.
-
-    Together with the test above this is the whole of the day-to-day story: a
-    retraction either takes the group with it or leaves it unsatisfied, and either way
-    the requirement's hash is untouched.
-
-    TODO future: as above, the *statement* here should outlive retraction moving onto
-    the requirement -- what changes is how the retraction is expressed, not that a
-    half-retracted group reports unsatisfied. Worth re-reading when it does.
     """
     req = a_requirement(
         tree=all_of(

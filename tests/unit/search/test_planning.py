@@ -63,9 +63,6 @@ def test_where_is_added_to_every_leaf_query():
 def test_identical_leaves_share_one_search():
     """
     Two roles asking for the same dataset are searched for once
-
-    Not a contrived case: pattern scaling wants the same `tas` as both the field it
-    scales and the reference it scales against.
     """
     req = a_requirement(
         all_of(

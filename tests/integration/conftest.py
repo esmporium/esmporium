@@ -4,16 +4,6 @@ Re-useable fixtures etc. for our integration tests
 The tests use a file-backed SQLite database rather than an in-memory one,
 because an in-memory database only lives as long as the connection that made it,
 and migrating is inherently a multi-connection exercise.
-
-`skip_or_fail` is here rather than beside either set of live tests because both sets
-need it and the policy has to agree between them: whether an unreachable endpoint
-skips or fails is a decision about this test suite, not about the layer under test.
-`tests/integration/search/` drives the search APIs directly and
-`tests/integration/requirements/` drives the whole chain through to a solve, and a
-skip rule which differed between them would mean one of the two quietly passing on a
-failure the other reports. A fixture is the way to share it: `tests` is not a package,
-so importing across these directories would work only by pytest putting the rootdir on
-`sys.path`, which is not something to build on.
 """
 
 from __future__ import annotations

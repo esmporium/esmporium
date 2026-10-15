@@ -253,10 +253,6 @@ def test_a_superseded_dataset_is_available_from_its_newest_live_version(engine, 
     retracting the newest version does not unpublish the one before it, so a solve
     should be able to satisfy a role from that one rather than reporting the dataset
     missing.
-
-    `latest_not_retracted` is the stricter question -- "only what is current" -- and
-    still answers it, which is why the member survives the default moving. Both are
-    asserted here so that the difference between them is visible in one place.
     """
     store(
         "superseded",
@@ -423,12 +419,6 @@ def test_a_query_can_select_on_a_facet_only_the_document_knows(engine, store):
 def test_a_project_we_have_no_query_class_for_models_nothing(engine, store):
     """
     Everything an unmodelled project records is `other_terms`, canonical spellings too
-
-    We do not own that project's facet names, so we do not claim to translate them --
-    not even one spelled exactly like a canonical facet of ours, because whether it
-    means the same thing is a question about conventions we have not looked at. The
-    route for a user is `other_terms`, which promises nothing and checks nothing; the
-    route for a maintainer is a query class, which is what makes the names ours.
     """
     store(
         "cordex",
@@ -454,13 +444,6 @@ def test_a_project_we_have_no_query_class_for_models_nothing(engine, store):
 def test_a_modelled_facet_recorded_only_in_other_terms_does_not_answer(engine, store):
     """
     A document's own field does not stand in for the facet we model of that name
-
-    A CMIP6 search document carries a `product` field, and it is not CMIP5's `product`
-    -- the two mean different things, which is why CMIP5 declares the facet and CMIP6
-    does not. So the value is recorded under the document's own spelling in
-    `other_terms` and *not* in `project_facets`, and a lookup for the facet we model
-    must not find it. Letting it through would undo the per-project decision and, worse
-    than a stray match, would let a requirement group CMIP6 data on a CMIP5 facet.
     """
     store(
         "one",
@@ -535,24 +518,24 @@ def test_the_newest_accepted_version_wins_over_an_older_one(engine, store):
     assert entry.facet("realm") == "atmos"
 
 
+# A note for developers:
+# The cost of merging rather than taking the first document whole: the entry can end
+# up asserting a combination no single node published, as it does here (`atmos` from
+# the first, `activity` from the second). We merge anyway because the alternative
+# loses facets that exist -- two ESGF-NG mirrors of the same project differ by ten
+# field names in `tests/test-data/search/`, so a sparser first document would make
+# `group_by` on the others silently impossible -- and because "first" is
+# `DatasetRawDoc.id` ascending, i.e. earliest stored, which is arbitrary rather than
+# authoritative. Disagreement is at least deterministic. If that trade is ever
+# revisited, the thing to reach for is surfacing the disagreement (the repo already
+# has the notion in `UnhandledDatasetClashError` and `facet_differences`) rather than
+# discarding the data.
 def test_several_documents_for_one_version_merge_deterministically(engine, store):
     """
     One version can be described by several documents (one per data node)
 
     They can disagree, and there is no principled way to choose, so the first one
     stored wins and the rule is written down rather than left to chance.
-
-    The cost of merging rather than taking the first document whole: the entry can end
-    up asserting a combination no single node published, as it does here (`atmos` from
-    the first, `activity` from the second). We merge anyway because the alternative
-    loses facets that exist -- two ESGF-NG mirrors of the same project differ by ten
-    field names in `tests/test-data/search/`, so a sparser first document would make
-    `group_by` on the others silently impossible -- and because "first" is
-    `DatasetRawDoc.id` ascending, i.e. earliest stored, which is arbitrary rather than
-    authoritative. Disagreement is at least deterministic. If that trade is ever
-    revisited, the thing to reach for is surfacing the disagreement (the repo already
-    has the notion in `UnhandledDatasetClashError` and `facet_differences`) rather than
-    discarding the data.
     """
     store(
         "one",
@@ -596,11 +579,6 @@ def test_a_non_scalar_document_value_is_left_out(engine, store):
 def test_a_facet_no_document_knows_is_refused(engine, store, populated):
     """
     Asking for a facet nothing records finds nothing, whatever the table holds
-
-    Parametrised over an empty and a populated table because the point is that the
-    *answer* is the same either way: this is a fact about what we store, not about
-    which rows happen to be present. It used to raise when populated and return `()`
-    when empty, which is the defect the tier split removed.
     """
     if populated:
         store("one", variable="tas", versions=live([{"realm": ["atmos"]}]))
@@ -694,11 +672,6 @@ def test_registering_only_one_of_the_two_mappings_still_refuses(
 ):
     """
     Half the registration is no registration, and the message has to say so
-
-    Here because it is the case which made the message wrong once: it used to name
-    `normalisers` alone, so a reader did exactly as told, hit this, and saw the very
-    same sentence again with nothing to say which pass had failed. Pinned on the
-    message rather than only on the type, because the fix *was* the message.
     """
     catalogue = DatabaseCatalogue(
         stored_in_our_own_format,
@@ -746,11 +719,6 @@ def test_solving_against_the_database_matches_the_in_memory_catalogue(engine, st
     This is the promise the database-backed one has to keep: everything in
     `esmporium.requirements` is written and tested against `InMemoryCatalogue`, so if
     the two diverge then none of those tests mean anything about real data.
-
-    The requirement is deliberately awkward -- a group discovered from the data, a
-    `prefer` tie-break, one leaf nothing was stored for, and a facet only the raw
-    documents know about -- so that all three of `satisfied`, `unsatisfied` and the
-    grouping are exercised through both.
     """
     rows = [
         ("tas-gn", {"variable": "tas", "grid_label": "gn", "model": "A"}, "atmos"),
@@ -765,7 +733,6 @@ def test_solving_against_the_database_matches_the_in_memory_catalogue(engine, st
             versions=live([{"realm": [realm]}]),
             **facets,
         )
-
     in_memory = InMemoryCatalogue(
         entries=tuple(
             CatalogueEntry(
@@ -832,10 +799,6 @@ def outcome(catalogue, query):
 
     Returned rather than asserted on directly, so that the two catalogues can be
     compared without this test caring which of the two answers is the right one.
-
-    The `except` is kept although nothing in the matching path raises any more, so
-    that a regression which reintroduced an error here would show up as a difference
-    between the two catalogues rather than as this helper blowing up.
     """
     try:
         return tuple(entry.id_project_specific for entry in catalogue.find(query))
@@ -867,26 +830,6 @@ def test_both_catalogues_answer_alike_about_a_facet_nothing_records(
 ):
     """
     Both catalogues give the same answer when asked for a facet nothing records
-
-    `realm` is the facet here: a canonical facet every query class names, with no
-    column on [Dataset][esmporium.db.schema.Dataset], so only a raw document can
-    answer for it -- and the dataset stored here has no raw documents, so nothing
-    can. Whether that is an error or an empty result is not what this test is about.
-    What it is about is that both catalogues decide it the same way, because
-    everything in `esmporium.requirements` is written against `InMemoryCatalogue`
-    and solving against the database has to mean the same thing.
-
-    `test_solving_against_the_database_matches_the_in_memory_catalogue` cannot see
-    this: every entry in it records `realm`, so the question never arises.
-
-    This used to disagree on `declared-column-matches-nothing`, and why is worth
-    keeping: the two catalogues reach the facet by different routes -- the in-memory
-    one checked every facet of every entry in alphabetical order (so `realm` before
-    `variable`), while the database one filters on the columns in SQL and only asks
-    the surviving rows about the rest. With `facet` raising, the in-memory catalogue
-    still asked `realm` and raised, and the database one never asked at all. `facet`
-    answering `None` is what makes the route stop mattering, so all four cases now
-    find nothing. The parametrisation is kept to hold it that way.
     """
     store("one", variable="tas", versions=live())
 

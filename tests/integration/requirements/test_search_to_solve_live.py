@@ -2,21 +2,7 @@
 A requirement searched, saved and solved against the live ESGF APIs
 
 The deterministic version of this is `test_search_to_solve_recorded.py`, which runs off
-a recorded response and pins the behaviour. This is the live counterpart, and it
-asserts **loosely on purpose**: what CMIP7 holds changes by the day, so any assertion
-about particular models, or counts, would be a test which fails for reasons that are
-nobody's fault.
-
-What it does check is that the whole chain still fits together against the real thing:
-a requirement plans into real searches, the real endpoints answer, what they answer
-saves, and the solver can read it back and account for every group it discovers. If the
-recorded test passes and this fails, the thing that changed is on the other end of the
-wire.
-
-Loose does not extend to finding nothing. A node which cannot be reached is skipped,
-because that says nothing about the chain; a node which answers and returns nothing is
-a failure, because a mis-spelled facet name or value is answered by these APIs as a
-successful empty result and would otherwise look exactly like quiet weather.
+a recorded response and pins the behaviour.
 """
 
 from __future__ import annotations
@@ -38,12 +24,6 @@ from esmporium.search import AllSubQueriesFailedError, search
 
 pytestmark = pytest.mark.hits_esgf_search_api
 
-# Deliberately not shared with the search-layer live tests, which declare their own
-# `TIMEOUT`. `tests` is not a package, so sharing a constant between these directories
-# means either an import that works only by pytest putting the rootdir on `sys.path`,
-# or a fixture wrapping a float -- neither of which is worth it for one number. The
-# thing which *does* have to agree between the two is the skip policy, and that is
-# `skip_or_fail` in `tests/integration/conftest.py`.
 TIMEOUT = 60.0
 """How long to wait for a node, in seconds"""
 
@@ -63,11 +43,6 @@ def skip_if_a_node_was_down(outcomes) -> None:
     A node being down shows up as an outcome with `answered` `False`. A real bug (e.g.
     a facet name we got wrong) is different: it comes back as a *successful, empty*
     answer, so the assertions below still catch it -- see the module docstring.
-
-    The same policy as `skip_or_fail` in `tests/integration/conftest.py`, which the
-    search-layer live tests use: unreachable skips, everything else is a finding. This
-    is the shape that policy takes for a `search` which returned outcomes rather than
-    raising.
     """
     if not all(outcome.answered for outcome in outcomes):
         pytest.skip("a node did not answer, so it is down or unwell")
@@ -164,7 +139,7 @@ def test_a_requirement_whose_leaves_span_two_projects_saves_both_live(engine):
     """
     One requirement, two projects, both saved and both solvable
 
-    CMIP5 and CMIP6 rather than CMIP7: both are well populated at NCI, so this is not
+    CMIP5 and CMIP6: both are well populated at NCI, so this is not
     a near-permanent skip. The project-specific facet *values* differ (the two name the
     same model differently), which is why these are two leaves in each project's own
     query style rather than one multi-project leaf.

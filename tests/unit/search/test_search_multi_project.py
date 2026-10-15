@@ -235,10 +235,6 @@ def test_splits_a_multi_project_leaf_into_one_search_per_project(engine):
 def test_two_leaves_asking_the_same_thing_are_searched_once(engine):
     """
     Two roles wanting the same dataset are one search, and one outcome naming both
-
-    Writing the same dataset twice is a real thing to do -- pattern scaling wants the
-    same `tas` as both the field and the reference -- and asking the endpoint for it
-    twice would be pure waste.
     """
     requests_made = 0
 
