@@ -1,8 +1,8 @@
 # Expressing analysis data requirements
 
-Design note for the requirements system in `src/esmporium/requirements/`. It lands
-ahead of the implementation (R0 in the *Requirements (R0–R12)* section of `PLAN.md`)
-so that every later PR can be read against a stated target.
+Design note for the requirements system in `src/esmporium/requirements/`. It landed
+ahead of the implementation (R0, see `PLAN.md`) so that every later PR can be read
+against a stated target.
 
 Written: 2026-09-14.
 Updated: 2026-09-30
