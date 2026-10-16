@@ -191,7 +191,11 @@ class AllSubQueriesFailedError(RuntimeError):
     Raised when every sub-query of a multi-query search or value check failed
     """
 
-    def __init__(self, failures: tuple[NoFacadeAnsweredError, ...]) -> None:
+    def __init__(
+        self,
+        failures: tuple[NoFacadeAnsweredError, ...],
+        labels: tuple[str, ...] | None = None,
+    ) -> None:
         """
         Initialise the error
 
@@ -199,9 +203,24 @@ class AllSubQueriesFailedError(RuntimeError):
         ----------
         failures
             Each failed sub-query's error, in the order the sub-queries ran
+
+        labels
+            What to call each sub-query, in the same order as `failures`
+
+            A sub-query of a requirement-driven search is one leaf's query against
+            one project, and the error is much more useful if it says which
+            (`"tas (CMIP7)"`). If `None`, the failures are listed unlabelled.
         """
         self.failures = failures
-        joined = "\n".join(f"  - {failure}" for failure in failures)
+        self.labels = labels
+        if labels is None:
+            lines = [f"  - {failure}" for failure in failures]
+        else:
+            lines = [
+                f"  - {label}: {failure}"
+                for label, failure in zip(labels, failures, strict=True)
+            ]
+        joined = "\n".join(lines)
         super().__init__(
             f"All {len(failures)} sub-queries failed to return anything we could use:\n"
             f"{joined}"

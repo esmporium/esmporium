@@ -22,8 +22,8 @@ def configure_sqlite_for_concurrency(
     Make an SQLite engine's transactions real, and safe to run from several connections
 
     For many functions
-    (e.g. [`ingest_parsed_documents`][esmporium.db.ingest_parsed_documents] and
-    [`save_dataset`][esmporium.db.save_dataset]),
+    (e.g. [ingest_parsed_documents][esmporium.db.ingest_parsed_documents] and
+    [save_dataset][esmporium.db.save_dataset]),
     every SQLite engine that is passed must be configured with this,
     whether the search runs serially or in parallel.
 

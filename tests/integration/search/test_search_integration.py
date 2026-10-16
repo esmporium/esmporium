@@ -1,5 +1,12 @@
 """
 Integration tests of the search API
+
+Every test here is a message test: a query whose `other_terms` collides with a facet
+it already sets, against one explicitly-named facade, checking that the refusal says
+which facet and what to do about it. No network and no requirement involved, so these
+go through [search_single_project][esmporium.search.search_single_project], the
+single-project primitive, rather than through
+[search][esmporium.search.search], which takes a whole requirement.
 """
 
 from __future__ import annotations
@@ -18,7 +25,7 @@ from esmporium.search import (
     INBUILT_SEARCH_API_FACADE_STORE,
     NoFacadeAnsweredError,
     build_list_selector,
-    search,
+    search_single_project,
 )
 
 
@@ -38,7 +45,7 @@ def test_search_esgf1_request_raises_on_other_terms_clash():
         "don't do both. query=QueryCMIP6"
     )
     with pytest.raises(NoFacadeAnsweredError, match=error_msg):
-        search(
+        search_single_project(
             query,
             build_list_selector(
                 [
@@ -66,7 +73,7 @@ def test_search_esgf1_request_raises_on_other_terms_clash_cross_project():
         "don't do both. query=QueryCMIP6"
     )
     with pytest.raises(NoFacadeAnsweredError, match=error_msg):
-        search(
+        search_single_project(
             query,
             build_list_selector(
                 [
@@ -95,7 +102,7 @@ def test_search_esgfng_request_raises_on_other_terms_clash():
         "don't do both. query=QueryCMIP6"
     )
     with pytest.raises(NoFacadeAnsweredError, match=error_msg):
-        search(
+        search_single_project(
             query,
             build_list_selector(
                 [
@@ -129,7 +136,7 @@ def test_search_esgfng_request_raises_on_other_terms_clash_cross_project():
         "don't do both. query=QueryCMIP6"
     )
     with pytest.raises(NoFacadeAnsweredError, match=error_msg):
-        search(
+        search_single_project(
             query,
             build_list_selector(
                 [
@@ -165,7 +172,7 @@ def test_search_raises_on_other_terms_multiple_clashes():
     )
 
     with pytest.raises(NoFacadeAnsweredError, match=error_msg):
-        search(
+        search_single_project(
             query,
             build_list_selector(
                 [
@@ -202,7 +209,7 @@ def test_search_other_terms_clash_alongside_a_query_specific_facet():
         "don't do both. query=QueryCMIP6"
     )
     with pytest.raises(NoFacadeAnsweredError, match=error_msg):
-        search(
+        search_single_project(
             query,
             build_list_selector(
                 [
@@ -233,7 +240,7 @@ def test_search_other_terms_clash_on_a_query_specific_facet():
         "query=QueryCMIP6"
     )
     with pytest.raises(NoFacadeAnsweredError, match=error_msg):
-        search(
+        search_single_project(
             query,
             build_list_selector(
                 [
@@ -265,7 +272,7 @@ def test_search_other_terms_clash_alongside_a_query_specific_facet_cmip5():
         "don't do both. query=QueryCMIP5"
     )
     with pytest.raises(NoFacadeAnsweredError, match=error_msg):
-        search(
+        search_single_project(
             query,
             build_list_selector(
                 [
@@ -302,7 +309,7 @@ def test_search_other_terms_clash_alongside_a_query_specific_facet_stac():
         "don't do both. query=QueryCMIP7"
     )
     with pytest.raises(NoFacadeAnsweredError, match=error_msg):
-        search(
+        search_single_project(
             query,
             build_list_selector(
                 [
@@ -335,7 +342,7 @@ def test_search_other_terms_clash_generic_and_query_specific_facet_cmip5():
         "query=QueryCMIP5"
     )
     with pytest.raises(NoFacadeAnsweredError, match=error_msg):
-        search(
+        search_single_project(
             query,
             build_list_selector(
                 [
@@ -369,7 +376,7 @@ def test_search_other_terms_clash_generic_and_query_specific_facet_stac():
         "don't do both. query=QueryCMIP7"
     )
     with pytest.raises(NoFacadeAnsweredError, match=error_msg):
-        search(
+        search_single_project(
             query,
             build_list_selector(
                 [
@@ -404,7 +411,7 @@ def test_search_other_terms_clash_on_a_facet_the_facade_injects():
         "query=QueryCMIP6"
     )
     with pytest.raises(NoFacadeAnsweredError, match=error_msg):
-        search(
+        search_single_project(
             query,
             build_list_selector(
                 [
@@ -440,7 +447,7 @@ def test_search_other_terms_clash_on_a_query_facet_and_an_injected_facet():
         "query=QueryCMIP6"
     )
     with pytest.raises(NoFacadeAnsweredError, match=error_msg):
-        search(
+        search_single_project(
             query,
             build_list_selector(
                 [

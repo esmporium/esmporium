@@ -28,6 +28,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable, Iterable, Iterator, Mapping
+from enum import Enum
 from typing import Annotated, Any, Literal, TypeVar, Union, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -38,9 +39,10 @@ from esmporium.query import (
     ClashingFacetsError,
     QueryCanonical,
     QueryProtocol,
+    modelled_facet_names,
     to_canonical,
 )
-from esmporium.requirements.catalogue import set_facets
+from esmporium.requirements.catalogue import VersionFilter, set_facets
 
 NODE_MODEL_CONFIG = ConfigDict(frozen=True, extra="forbid")
 """
@@ -66,7 +68,7 @@ Separator between the parts of a role path, e.g. the `.` in `abrupt4x.control.ta
 
 # A note for developers:
 # This looks like a duplicate of
-# [`ClashingFacetsError`][esmporium.query.ClashingFacetsError] and is not one, so it
+# [ClashingFacetsError][esmporium.query.ClashingFacetsError] and is not one, so it
 # stays here rather than moving to `esmporium.query`.
 # This error is about values, rather than facets.
 class ConflictingFacetsError(ValueError):
@@ -76,7 +78,7 @@ class ConflictingFacetsError(ValueError):
     Repeating a facet is fine as long as the values agree *and* both sides keep it in
     the same home. Agreeing on the value but disagreeing on the home -- a declared
     field on one side, `other_terms` on the other -- raises
-    [`ClashingFacetsError`][esmporium.query.ClashingFacetsError] instead.
+    [ClashingFacetsError][esmporium.query.ClashingFacetsError] instead.
     """
 
     def __init__(self, role: str, facets: Iterable[str], source_name: str) -> None:
@@ -186,6 +188,51 @@ class EmptyLeafQueryError(ValueError):
         )
 
 
+# A note for developers: this is the only check in this package which consults
+# `esmporium.query` for *names* rather than translating with it, and the reason is that
+# `group_by` and `prefer` are the only facets in a requirement which arrive as bare
+# strings. A leaf's query carries its facets in homes which already say how to read
+# them; `group_by=("realm",)` says nothing, so the name is all there is to go on.
+#
+# Deliberately not a check against the data.
+# a raw search document records far more than any query class names (`mip_era`,
+# `member_id`, `variable_long_name`, CORDEX's `driving_source_id`), and grouping on one
+# of those is a real analysis. That is what `group_by_other_terms` is for, and nothing
+# in it is checked here. The data question -- "a facet we model, but did anything record
+# it?" -- is the solver's, and is
+# [UngroupableFacetError][esmporium.requirements.UngroupableFacetError].
+class UnmodelledFacetError(ValueError):
+    """
+    Raised when a requirement groups or prefers on a facet name we do not model
+    """
+
+    def __init__(self, facets: Iterable[str], field_name: str) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        facets
+            The names we do not model
+
+        field_name
+            Field they were set on, e.g. `"group_by"`
+        """
+        self.facets = tuple(sorted(facets))
+        self.field_name = field_name
+        modelled = readable_list(sorted(modelled_facet_names()))
+        super().__init__(
+            f"{field_name} names {readable_list(self.facets)}, "
+            f"which {'is' if len(self.facets) == 1 else 'are'} not "
+            f"a facet any query class models. We model: {modelled}. "
+            "For a facet only a search document knows (e.g., `mip_era`, "
+            "`variable_long_name`, CORDEX's `cordex-cmip6:driving_source_id`), "
+            f"use `{field_name}_other_terms` instead, which is never translated and "
+            "never checked -- so the name has to be spelled exactly as the search "
+            "document spells it."
+        )
+
+
 def _canonical(query: QueryProtocol) -> QueryCanonical:
     """
     Put a query into the form a requirement stores
@@ -227,7 +274,7 @@ def _accept_any_query_style(value: Any) -> Any:
     Returns
     -------
     :
-        A [`QueryCanonical`][esmporium.query.QueryCanonical] if `value` was a query of
+        A [QueryCanonical][esmporium.query.QueryCanonical] if `value` was a query of
         some kind, and `value` untouched otherwise, so that pydantic reports anything
         unusable in its own words.
 
@@ -399,9 +446,9 @@ class Leaf(BaseModel):
     instead.
 
     Write it in whichever style suits the project --
-    [`Query`][esmporium.query.Query], [`QueryCMIP5`][esmporium.query.QueryCMIP5] and
+    [Query][esmporium.query.Query], [QueryCMIP5][esmporium.query.QueryCMIP5] and
     the rest all work. It is translated on the way in and stored as a
-    [`QueryCanonical`][esmporium.query.QueryCanonical]
+    [QueryCanonical][esmporium.query.QueryCanonical]
     (to make the rest of the package and functionality work)
     """
     # For developers: the reason we store this as `QueryCanonical` is that a stored
@@ -458,7 +505,7 @@ class Leaf(BaseModel):
         Takes a query rather than keyword facets, for the same reason
         [Leaf.query][(m).Leaf.query] does: a query in any style can name any facet,
         including one only a project names. Keywords could only reach the facets
-        [`Query`][esmporium.query.Query] declares, so a facet a leaf could hold --
+        [Query][esmporium.query.Query] declares, so a facet a leaf could hold --
         CMIP5's `product` -- was one `.where()` could not add.
 
         Whatever `Query` decides about a facet still applies, because the query is
@@ -567,6 +614,20 @@ A new node type is added here as well as to the union.
 """
 
 
+class Cardinality(str, Enum):
+    """
+    How many datasets fill a leaf's role, per group
+
+    See [Requirement.cardinality][(m).Requirement.cardinality] for which to use when.
+    """
+
+    ONE = "one"
+    """One dataset, or the group is ambiguous"""
+
+    ALL = "all"
+    """Every candidate which survived `prefer`"""
+
+
 class Requirement(BaseModel):
     """
     The root of a requirement: the tree, plus how solving splits it into groups
@@ -611,12 +672,47 @@ class Requirement(BaseModel):
 
     group_by: tuple[str, ...]
     """
-    Facets which define a group
+    Facets which define a group, named in facets we model
 
     Required, deliberately. `("model", "variant_label")` is what most analyses want,
     and is the reason this has no default: a grouping decides what one group is,
     and a requirement which never said so is indistinguishable from one which meant
     something else. Write the usual pair out when it is what you want.
+
+    Every name here has to be one
+    [modelled_facet_names][esmporium.query.modelled_facet_names] knows -- a canonical
+    facet or a project-specific one like CMIP5's `product` -- and is checked when the
+    requirement is built, so a typo is refused rather than quietly producing a group
+    of `None`. For a facet only a search document knows, use
+    [group_by_other_terms][(m).Requirement.group_by_other_terms].
+
+    Grouping is project-blind, which matters for a facet only some projects have:
+    see the note above `_group_values` in [esmporium.requirements.solve][].
+    """
+
+    group_by_other_terms: tuple[str, ...] = ()
+    """
+    Further facets which define a group, named exactly as a search document names them
+
+    The escape hatch, and the same bargain as
+    [Query.other_terms][esmporium.query.Query.other_terms]: nothing here is
+    translated, normalised or checked, so the names have to be the ones the stored
+    documents use.
+
+    Because it is unchecked, a name nothing records is not an error here: every
+    dataset answers `None` for it and they all land in one group, whereas the same
+    situation in `group_by` raises
+    [UngroupableFacetError][esmporium.requirements.UngroupableFacetError]. That is
+    the price of not being checked, and it is the point.
+
+    These come after `group_by` in the group's key.
+
+    One thing to know before rebuilding a database: a facet only the documents know
+    is answered by whichever of a dataset's documents was stored first, so which
+    group a dataset lands in can depend on which index node answered the search
+    that first found it. Stable once stored, so this will not shift as you
+    re-search. See
+    [CatalogueEntry.other_terms][esmporium.requirements.CatalogueEntry.other_terms].
     """
 
     prefer: dict[str, tuple[str, ...]] = Field(default_factory=dict)
@@ -627,9 +723,31 @@ class Requirement(BaseModel):
     `prefer={"grid_label": ("gn", "gr")}` breaks the same kind of tie. A tie which
     survives `prefer` is settled by [cardinality][(m).Requirement.cardinality].
 
-    Project-specific facets can be used, on the same terms as `group_by`.
+    Project-specific facets can be used, on the same terms as `group_by`: the keys are
+    checked against [modelled_facet_names][esmporium.query.modelled_facet_names] when
+    the requirement is built, and
+    [prefer_other_terms][(m).Requirement.prefer_other_terms] is where an unmodelled
+    name goes.
 
     A value not listed here is not refused, only ranked behind every value which is.
+    """
+
+    prefer_other_terms: dict[str, tuple[str, ...]] = Field(default_factory=dict)
+    """
+    Further preferences, keyed exactly as a search document names the facet
+
+    `prefer`'s escape hatch, on the same terms as
+    [group_by_other_terms][(m).Requirement.group_by_other_terms]: unchecked and
+    untranslated, and the names must be the stored documents' own.
+
+    Applied after `prefer`, so a modelled facet always out-ranks an unmodelled one
+    rather than the two interleaving alphabetically.
+
+    Ranking on one of these carries the same caveat as
+    [group_by_other_terms][(m).Requirement.group_by_other_terms]: the value ranked
+    on came from whichever document was stored first, so which candidate wins -- or
+    whether the group is reported ambiguous instead -- can differ in a database
+    rebuilt from scratch.
     """
     # A note on why this is a mapping rather than a callable, which would let a user
     # inject their own ranking. A requirement is fingerprinted by
@@ -643,24 +761,40 @@ class Requirement(BaseModel):
     # and nothing reads `prefer` until R3, so this waits for it rather than guessing
     # at it now.
 
-    cardinality: Literal["one", "all"] = "one"
+    versions: VersionFilter = VersionFilter.NOT_RETRACTED
+    """
+    Which of a dataset's stored versions count when looking for it
+
+    [solve][esmporium.requirements.solve] passes this to every
+    [Catalogue.find][esmporium.requirements.Catalogue.find] it makes, so one solve
+    cannot end up part-answered from two different sets of versions.
+
+    See [VersionFilter][esmporium.requirements.VersionFilter], and note that it
+    changes what entries *say* as well as which come back: it decides which version's
+    search documents describe a dataset.
+    """
+
+    cardinality: Cardinality = Cardinality.ONE
     """
     How many datasets fill each leaf's role, per group
 
-    `"one"`, the default, is the usual case: a leaf fills one slot, so several
-    surviving candidates are a question nobody has answered rather than a result.
+    [Cardinality.ONE][(m).Cardinality.ONE], the default, is the usual case: a leaf
+    fills one slot, so several surviving candidates are a question nobody has
+    answered rather than a result.
     The group is reported `ambiguous` and nothing is picked, which is the point --
     guessing would make the analysis depend on which dataset happened to be listed
     first. `prefer` is how a tie is settled on purpose.
 
-    `"all"` is for an analysis whose subject *is* the spread across candidates.
+    [Cardinality.ALL][(m).Cardinality.ALL] is for an analysis whose subject *is* the
+    spread across candidates.
     Ensemble member (variant) spread is the worked example: the variance across a
     model's variants is one number computed from every variant together, so the leaf
     wants all of them.
-    Written with `group_by=("model",)` and `cardinality="all"`, that is one group per
-    model, each holding however many variants that model published.
+    Written with `group_by=("model",)` and `cardinality=Cardinality.ALL`, that is one
+    group per model, each holding however many variants that model published.
 
-    Why `"one"` cannot express that, however it is grouped: `group_by` splits the
+    Why `Cardinality.ONE` cannot express that, however it is grouped: `group_by`
+    splits the
     datasets into groups, and `cardinality` says how many datasets a role holds
     *inside* one group. They are different questions, and grouping does not answer the
     second. Adding `variant_label` to `group_by` does give each of a model's variants a
@@ -680,6 +814,7 @@ class Requirement(BaseModel):
     def _check_tree(self) -> Requirement:
         check_roles_are_distinct(self.tree)
         check_where_agrees_with_leaves(self.tree, self.where)
+        check_grouping_facets_are_modelled(self.group_by, self.prefer)
 
         return self
 
@@ -962,6 +1097,46 @@ def check_roles_are_distinct(node: Node) -> None:
     role_paths(node)
 
 
+def check_grouping_facets_are_modelled(
+    group_by: Iterable[str], prefer: Iterable[str]
+) -> None:
+    """
+    Check that every facet a requirement groups or prefers on is one we model
+
+    Returns nothing: this is here to raise, and exists so that a caller which wants
+    the check can ask for the check, the way
+    [check_roles_are_distinct][(m).check_roles_are_distinct] does.
+
+    Only the modelled fields are checked. `group_by_other_terms` and
+    `prefer_other_terms` are the escape hatch and are never checked, which is the
+    whole reason the fields are separate.
+
+    Parameters
+    ----------
+    group_by
+        Facets to group on, as
+        [Requirement.group_by][(m).Requirement.group_by] holds them
+
+    prefer
+        Facets to break ties on, i.e. the keys of
+        [Requirement.prefer][(m).Requirement.prefer]
+
+    Raises
+    ------
+    UnmodelledFacetError
+        A name is not one
+        [modelled_facet_names][esmporium.query.modelled_facet_names] knows
+
+        Raised for `group_by` first if both are wrong, so that one fix at a time is
+        what the message asks for.
+    """
+    modelled = modelled_facet_names()
+    for field_name, facets in (("group_by", group_by), ("prefer", prefer)):
+        unmodelled = [facet for facet in facets if facet not in modelled]
+        if unmodelled:
+            raise UnmodelledFacetError(unmodelled, field_name)
+
+
 def leaf(query: QueryProtocol, role: str) -> Leaf:
     """
     Require one dataset, in a role
@@ -1037,8 +1212,11 @@ def requirement(  # noqa: PLR0913 - one argument per field of the requirement
     group_by: tuple[str, ...],
     *,
     where: QueryProtocol | None = None,
+    group_by_other_terms: tuple[str, ...] = (),
     prefer: Mapping[str, tuple[str, ...]] | None = None,
-    cardinality: Literal["one", "all"] = "one",
+    prefer_other_terms: Mapping[str, tuple[str, ...]] | None = None,
+    versions: VersionFilter = VersionFilter.NOT_RETRACTED,
+    cardinality: Cardinality = Cardinality.ONE,
 ) -> Requirement:
     """
     Create a [Requirement][(m).Requirement]
@@ -1064,9 +1242,23 @@ def requirement(  # noqa: PLR0913 - one argument per field of the requirement
         Facets added to every leaf's query, in any query style. Stored canonical, see
         [Requirement.where][(m).Requirement.where]. `None`, the default, adds nothing.
 
+    group_by_other_terms
+        Further grouping facets, named exactly as a search document names them.
+        See
+        [Requirement.group_by_other_terms][(m).Requirement.group_by_other_terms];
+        unchecked, so spell them as the documents do.
+
     prefer
         Facet -> values in order of preference, used to break ties between candidates.
         See [Requirement.prefer][(m).Requirement.prefer].
+
+    prefer_other_terms
+        Further preferences, keyed as a search document names the facet.
+        See [Requirement.prefer_other_terms][(m).Requirement.prefer_other_terms].
+
+    versions
+        Which of a dataset's stored versions count when looking for it.
+        See [Requirement.versions][(m).Requirement.versions].
 
     cardinality
         How many datasets fill each leaf's role, per group.
@@ -1099,7 +1291,12 @@ def requirement(  # noqa: PLR0913 - one argument per field of the requirement
     `tas` three times, once per variant:
 
     >>> from esmporium.query import Query
-    >>> from esmporium.requirements import CatalogueEntry, InMemoryCatalogue, solve
+    >>> from esmporium.requirements import (
+    ...     Cardinality,
+    ...     CatalogueEntry,
+    ...     InMemoryCatalogue,
+    ...     solve,
+    ... )
     >>> def published(entry_id: int, variant_label: str) -> CatalogueEntry:
     ...     return CatalogueEntry(
     ...         id=entry_id,
@@ -1121,7 +1318,7 @@ def requirement(  # noqa: PLR0913 - one argument per field of the requirement
     ...     )
     ... )
 
-    Grouping on the variant, with the default `cardinality="one"`, is three groups of
+    Grouping on the variant, with the default `Cardinality.ONE`, is three groups of
     one dataset each. This is the right answer when the analysis is per-variant and
     simply repeats itself:
 
@@ -1137,7 +1334,8 @@ def requirement(  # noqa: PLR0913 - one argument per field of the requirement
     [1, 1, 1]
 
     Dropping `variant_label` from `group_by` asks for one group instead, but leaves
-    `cardinality="one"`, so the single `tas` slot now has three candidates and
+    `cardinality` at `Cardinality.ONE`, so the single `tas` slot now has three
+    candidates and
     nothing to choose between them. The group is `ambiguous` rather than satisfied:
 
     >>> still_one = requirement(
@@ -1149,7 +1347,7 @@ def requirement(  # noqa: PLR0913 - one argument per field of the requirement
     >>> len(solved.satisfied), len(solved.ambiguous)
     (0, 1)
 
-    `cardinality="all"` is what that group was missing: one group, with every variant
+    `Cardinality.ALL` is what that group was missing: one group, with every variant
     in it. An analysis which takes the variance across a model's ensemble needs its
     datasets this way round, because the answer is one number computed from all of
     them, not three numbers computed one at a time:
@@ -1158,7 +1356,7 @@ def requirement(  # noqa: PLR0913 - one argument per field of the requirement
     ...     name="variant-spread",
     ...     tree=leaf(Query(variable="tas"), "tas"),
     ...     group_by=("model",),
-    ...     cardinality="all",
+    ...     cardinality=Cardinality.ALL,
     ... )
     >>> solved = solve(together, catalogue)
     >>> len(solved.satisfied)
@@ -1177,13 +1375,19 @@ def requirement(  # noqa: PLR0913 - one argument per field of the requirement
     # Same order as that validator, so the two agree on which complaint comes first.
     check_roles_are_distinct(tree)
     check_where_agrees_with_leaves(tree, canonical_where)
+    check_grouping_facets_are_modelled(group_by, () if prefer is None else prefer)
 
     return Requirement(
         name=name,
         tree=tree,
         where=canonical_where,
         group_by=group_by,
+        group_by_other_terms=group_by_other_terms,
         prefer={} if prefer is None else dict(prefer),
+        prefer_other_terms=(
+            {} if prefer_other_terms is None else dict(prefer_other_terms)
+        ),
+        versions=versions,
         cardinality=cardinality,
     )
 

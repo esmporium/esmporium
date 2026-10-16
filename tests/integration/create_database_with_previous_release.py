@@ -20,7 +20,8 @@ import argparse
 
 from sqlmodel import Session, create_engine
 
-from esmporium.db import DATASET_FACET_COLUMNS, Dataset, migrate
+from esmporium.datasets import DATASET_FACET_COLUMNS
+from esmporium.db import Dataset, migrate
 
 
 def main(database_path: str, dataset_id: str) -> None:

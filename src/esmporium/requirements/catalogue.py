@@ -10,9 +10,10 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Protocol
 
-from esmporium.db.schema import DATASET_FACET_COLUMNS
+from esmporium.datasets import DATASET_FACET_COLUMNS
 from esmporium.query import (
     CANONICAL_FACETS,
     ClashingFacetsError,
@@ -24,18 +25,25 @@ from esmporium.query import (
 
 # A note for developers:
 # This looks like a duplicate of
-# [`UnaskableFacetError`][esmporium.search.UnaskableFacetError] and is not one.
+# [UnaskableFacetError][esmporium.search.UnaskableFacetError] and is not one.
 # That error is an `AssertionError`: reaching it means a request was
 # built naming a facet a query style has no parameter for, i.e. a guard was bypassed
 # and the bug is ours. This one is a `ValueError`, because asking is reasonable and
 # the answer is simply no: `Query(realm="atmos")` is a fair question that a catalogue
-# which did not fill `extra` cannot answer.
+# which did not fill `project_facets` cannot answer.
 #
 # The two also describe different things. `UnaskableFacetError` is about *names*,
 # whether a query style has a parameter for a facet. This is about *recorded values*,
 # whether one stored dataset knows a facet -- hence "unrecorded". Search has no
 # equivalent, because it asks an API and the API either knows the parameter or errors;
 # "what does this stored row know?" only exists on this side of the boundary.
+#
+# Matching no longer raises this: [CatalogueEntry.facet][(m).CatalogueEntry.facet]
+# answers `None` for a facet an entry does not know, so a query naming one finds
+# nothing rather than erroring (see the note above [Catalogue][(m).Catalogue]).
+# What is left is the one case which really is a caller mistake:
+# [facet_filters][esmporium.db.facet_filters] builds SQL and is handed something which
+# is not a column, which means the column/non-column split one level up has gone wrong.
 class UnrecordedFacetError(ValueError):
     """Raised when an entry does not know a facet it was asked about."""
 
@@ -61,7 +69,8 @@ class UnrecordedFacetError(ValueError):
             "For project-specific facets (e.g. CMIP5 `product`), "
             "or facets we can search but do not store "
             "(e.g. `activity`, `realm` and `resolution`), "
-            "the catalogue has to put it in each entry's `extra`."
+            "the catalogue has to put it in each entry's `project_facets`; "
+            "for a facet only a search document knows, in `other_terms`."
         )
 
 
@@ -70,13 +79,13 @@ class DuplicateEntryIDError(ValueError):
     Two or more of a catalogue's entries share an ID
 
     Not to be confused with
-    [`UnhandledDatasetClashError`][esmporium.db.UnhandledDatasetClashError],
+    [UnhandledDatasetClashError][esmporium.db.UnhandledDatasetClashError],
     which is about the *data*: two rows our dataset model cannot tell apart, where
     the fix is to work out which facet we are missing.
     This is about the *code*: an ID identifies one row, so a catalogue which repeats
     one has been built wrongly.
     It cannot arise from the database, where `id` is
-    [`Dataset.id`][esmporium.db.schema.Dataset.id], a primary key.
+    [Dataset.id][esmporium.db.schema.Dataset.id], a primary key.
     """
 
     def __init__(self, collisions: Mapping[int, int]) -> None:
@@ -110,19 +119,19 @@ class CatalogueEntry:
     """
     A dataset, as far as the solver is concerned
 
-    The fields mirror the columns of [`Dataset`][esmporium.db.schema.Dataset],
+    The fields mirror the columns of [Dataset][esmporium.db.schema.Dataset],
     so that the two cannot drift apart unnoticed.
-    [`DatasetFacets`][esmporium.search.DatasetFacets] is the mirror image of this
+    [DatasetFacets][esmporium.search.DatasetFacets] is the mirror image of this
     class on the write side: parsers produce those, and this is what reading a
     stored row gives back.
 
-    An entry is compared by value but is not hashable, because `extra` is a mapping.
-    Anything which needs a key should use `id`.
+    An entry is compared by value but is not hashable, because its facet mappings are
+    mappings. Anything which needs a key should use `id`.
     """
 
     id: int
     """
-    See [`Dataset.id`][esmporium.db.schema.Dataset.id]
+    See [Dataset.id][esmporium.db.schema.Dataset.id]
 
     Not optional, unlike the column it mirrors:
     an entry describes a row which is already in the database,
@@ -133,33 +142,33 @@ class CatalogueEntry:
     id_project_specific: str
     """
     See
-    [`Dataset.id_project_specific`][esmporium.db.schema.Dataset.id_project_specific]
+    [Dataset.id_project_specific][esmporium.db.schema.Dataset.id_project_specific]
     """
 
     project: str
-    """See [`Dataset.project`][esmporium.db.schema.Dataset.project]."""
+    """See [Dataset.project][esmporium.db.schema.Dataset.project]."""
 
     model: str
-    """See [`Dataset.model`][esmporium.db.schema.Dataset.model]."""
+    """See [Dataset.model][esmporium.db.schema.Dataset.model]."""
 
     institution: str
-    """See [`Dataset.institution`][esmporium.db.schema.Dataset.institution]."""
+    """See [Dataset.institution][esmporium.db.schema.Dataset.institution]."""
 
     experiment: str
-    """See [`Dataset.experiment`][esmporium.db.schema.Dataset.experiment]."""
+    """See [Dataset.experiment][esmporium.db.schema.Dataset.experiment]."""
 
     variant_label: str
-    """See [`Dataset.variant_label`][esmporium.db.schema.Dataset.variant_label]."""
+    """See [Dataset.variant_label][esmporium.db.schema.Dataset.variant_label]."""
 
     variable: str
-    """See [`Dataset.variable`][esmporium.db.schema.Dataset.variable]."""
+    """See [Dataset.variable][esmporium.db.schema.Dataset.variable]."""
 
     reporting_interval: str
-    """See [`Dataset.reporting_interval`][esmporium.db.schema.Dataset.reporting_interval]."""  # noqa: E501
+    """See [Dataset.reporting_interval][esmporium.db.schema.Dataset.reporting_interval]."""  # noqa: E501
 
     grid_label: str | None
     """
-    See [`Dataset.grid_label`][esmporium.db.schema.Dataset.grid_label]
+    See [Dataset.grid_label][esmporium.db.schema.Dataset.grid_label]
 
     `None` for a project with no concept of a grid (CMIP5), exactly as the column is.
     A query can therefore never match this facet for such a dataset:
@@ -167,25 +176,43 @@ class CatalogueEntry:
     """
 
     processing_id: str
-    """See [`Dataset.processing_id`][esmporium.db.schema.Dataset.processing_id]."""
+    """See [Dataset.processing_id][esmporium.db.schema.Dataset.processing_id]."""
 
-    extra: Mapping[str, str | None] = field(default_factory=dict)
+    project_facets: Mapping[str, str | None] = field(default_factory=dict)
     """
-    Facets beyond the ones every dataset records
+    Facets we model which no column stores, under their canonical names
 
-    How a catalogue answers a query which names a facet we have no column for is
-    its own business. What the solver needs is this: anything it should be able to
-    group by, prefer on, or match auxiliary data on has to appear here, because
-    those comparisons happen on the entry rather than in the query.
+    Some query class declares this facet, so we can translate it.
 
-    Two kinds of facet live here.
-    Project-specific ones, which have no canonical name at all
-    (CMIP5's `product`, CMIP6's `sub_experiment_id`).
-    And `activity`, `realm` and `resolution`, which *are* canonical facets
-    — [`Query`][esmporium.query.Query] can ask for them and the search APIs
-    answer — but which [`Dataset`][esmporium.db.schema.Dataset] has no column for,
-    so they are not in
-    [`DATASET_FACET_COLUMNS`][esmporium.db.schema.DATASET_FACET_COLUMNS].
+    This includes, for example, a project-specific facet, which have no canonical
+    name at all, such as CMIP5's `product` or CMIP6's `sub_experiment_id`, or a
+    facet which has a canonical name but no column stores it, such as `activity`,
+    `realm`, or `resolution`. For the latter, this means [Query][esmporium.query.Query]
+    can ask for them, but they are not in
+    [DATASET_FACET_COLUMNS][esmporium.datasets.DATASET_FACET_COLUMNS].
+
+    A facet which several of a dataset's stored documents record is answered by the
+    first-stored one, so the search which first found a dataset is the one whose
+    index node describes it. That is stable from then on -- re-searching can add a
+    facet but not change one -- and differs in a database rebuilt from scratch. See
+    the note above `_facets_from_documents` in
+    [esmporium.db.database_catalogue][], which is also where to look when a value
+    here is not the one you expected.
+    """
+
+    other_terms: Mapping[str, str | None] = field(default_factory=dict)
+    """
+    Facets only a search document knows, spelled exactly as the document spelled them
+
+    The read side of [Query.other_terms][esmporium.query.Query.other_terms], and the
+    same bargain: nothing here is translated, normalised or checked. The keys are the
+    document's own. The one difference from the query side is which direction it faces.
+    There it holds what the user asked for; here it holds what the documents recorded.
+
+    Subject to the same first-stored-document merge as
+    [project_facets][(m).CatalogueEntry.project_facets], and more exposed to it: a
+    facet we do not model is exactly the kind the index nodes are least consistent
+    about recording.
     """
 
     def facet(self, name: str) -> str | None:
@@ -204,63 +231,205 @@ class CatalogueEntry:
         Returns
         -------
         :
-            The facet's value
+            The facet's value, or `None` if this entry has no value for it or does not
+            know it at all
 
-        Raises
-        ------
-        UnrecordedFacetError
-            `name` is neither one of
-            [`DATASET_FACET_COLUMNS`][esmporium.db.schema.DATASET_FACET_COLUMNS]
-            nor a key of this entry's `extra`
+            Two further reasons for `None` are worth knowing when one is unexpected.
+            A facet the search document recorded with *several* values is not
+            recorded at all, because a facet value is one string. And a facet only
+            *some* of the dataset's documents recorded reads as `None` when the
+            document which answered was not one of them -- which depends on which
+            index node answered the search, not on the data. See
+            [project_facets][(m).CatalogueEntry.project_facets] for both.
+        """
+        modelled = self.modelled_facet(name)
+
+        return self.other_terms.get(name) if modelled is None else modelled
+
+    def modelled_facet(self, name: str) -> str | None:
+        """
+        Get the value of a facet we model, without consulting `other_terms`
+
+        The accessor for anything which arrived as a facet *we named*: a declared
+        field of a query, or a query-specific one. It must not read
+        `other_terms`, and the reason is a real failure rather than tidiness. A CMIP6
+        search document carries a `product` field of its own, which is not CMIP5's
+        `product` -- the two mean different things, which is why CMIP5 declares it and
+        CMIP6 does not. That value is recorded in `other_terms` under the document's
+        own spelling, so a lookup which fell through to it would answer `product` for a
+        CMIP6 dataset and quietly undo the per-project decision
+        [project_facets][(m).CatalogueEntry.project_facets] exists to make.
+
+        Parameters
+        ----------
+        name
+            Facet to get, under its canonical name
+
+        Returns
+        -------
+        :
+            The facet's value, or `None` if this entry has no value for it or does not
+            model it
         """
         if name in DATASET_FACET_COLUMNS:
             value: str | None = getattr(self, name)
             return value
 
-        if name in self.extra:
-            return self.extra[name]
+        return self.project_facets.get(name)
 
-        raise UnrecordedFacetError([name], self.id)
+    def modelled_facets(self) -> frozenset[str]:
+        """
+        Get every facet name this entry can answer for as a facet we model
+
+        The name-set companion to [modelled_facet][(m).CatalogueEntry.modelled_facet],
+        and what the solver's checks on `group_by` and `prefer` are asked against --
+        not their `_other_terms` counterparts, which are never checked: those name
+        facets we model, so a name only `other_terms` carries is not an answer to
+        them.
+
+        Returns
+        -------
+        :
+            The stored columns, plus whatever keys this entry's `project_facets` carry
+        """
+        return frozenset(DATASET_FACET_COLUMNS) | frozenset(self.project_facets)
+
+    def known_facets(self) -> frozenset[str]:
+        """
+        Get every facet name this entry can answer for, by any route
+
+        Returns
+        -------
+        :
+            The stored columns, plus whatever keys this entry's `project_facets` and
+            `other_terms` carry
+        """
+        return self.modelled_facets() | frozenset(self.other_terms)
 
 
 # A note for developers:
-# `other_terms` is an escape hatch for facet names we do not translate or model,
-# and it is a short-term one. The difficulty is that it carries two incompatible
-# contracts in one field. Outbound, its keys reach a search API exactly as written,
-# prefixes included, so `cmip6:experiment_id` is correct for one STAC endpoint and
-# wrong everywhere else. Inbound, a catalogue needs a facet name an entry can
-# answer, which is `experiment`. No single spelling satisfies both, which is why
-# `other_terms` is hard to handle well anywhere in the stack.
+# `other_terms` is an escape hatch for facet names we do not translate or model.
+# Both ends of it are the user's to get right, and that is the deal rather than a
+# shortcoming: its keys reach a search API exactly as written, prefixes included, and
+# they are matched against a stored document's own keys, also exactly as written. So
+# `cmip6:experiment_id` is right for an ESGF-NG STAC endpoint at both ends, and
+# `experiment_id` is right for a Solr one at both ends.
+#
+# What this cannot do is span the two. `matches_facets` is an `and` across facet names,
+# so naming one facet under both spellings matches nothing: no single document carries
+# both. An analysis which needs both has to solve once per spelling. The thing which
+# would lift that is an `any_of` node -- an "or" over leaves -- which
+# [Node][esmporium.requirements.Node] does not have (it is `Leaf | AllOf`), so this is
+# a limit of the tree rather than of `other_terms`.
 #
 # For anything longer-lived than a one-off, declare the facet on a query class of
 # your own instead: annotate it `QueryFacet(None)` the way CMIP5's `product` is,
-# and the facade does the prefixing while `to_canonical` does the translating.
-# See [`QueryFacet`][esmporium.query.QueryFacet] and
+# and the facade does the prefixing while `to_canonical` does the translating. It then
+# lands in [project_facets][(m).CatalogueEntry.project_facets] under one canonical
+# name, askable whichever API found the data.
+# See [QueryFacet][esmporium.query.QueryFacet] and
 # [esmporium.query.known_queries][].
+
+
+@dataclass(frozen=True)
+class AskedFacets:
+    """
+    The facets a query constrains, kept in the two groups which are matched differently
+
+    A query holds its facets in three homes and the homes are not interchangeable:
+    a facet it declares and a facet of the same name in `other_terms` are different
+    questions. [set_facets][(m).set_facets] flattens all three, which is the right
+    shape for "does this query constrain anything?" and the wrong shape for matching.
+    This keeps the distinction that matching needs.
+    """
+
+    modelled: Mapping[str, tuple[str, ...]]
+    """
+    Facets we model, under canonical names
+
+    The query's declared fields plus its query-specific ones
+    ([QueryCanonical.query_specific_facets][esmporium.query.QueryCanonical.query_specific_facets]),
+    translated on the way in. Matched against
+    an entry's columns and its
+    [project_facets][(m).CatalogueEntry.project_facets].
+    """
+
+    literal: Mapping[str, tuple[str, ...]]
+    """
+    Facets from `other_terms`, exactly as the user wrote them
+
+    Not translated, because that is the whole point of the escape hatch. Matched
+    against an entry's [other_terms][(m).CatalogueEntry.other_terms], which is keyed
+    by the search document's own spelling.
+    """
+
+
+def asked_facets(query: QueryProtocol) -> AskedFacets:
+    """
+    Get the facets a query constrains, split by whether we model their names
+
+    `query` may be written in any query style, we handle the translation to
+    canonical facet names for modelled facets.
+
+    Parameters
+    ----------
+    query
+        Query to inspect
+
+    Returns
+    -------
+    :
+        The facets, in the two groups [AskedFacets][(m).AskedFacets] describes, each
+        holding only facets with at least one value
+
+    Raises
+    ------
+    ClashingFacetsError
+        The same facet is set in more than one of the three homes
+
+    Examples
+    --------
+    >>> from esmporium.query import Query, QueryCMIP5
+    >>> asked = asked_facets(QueryCMIP5(variable="tas", product="output1"))
+    >>> dict(asked.modelled)
+    {'project': ('CMIP5',), 'variable': ('tas',), 'product': ('output1',)}
+    >>> dict(asked.literal)
+    {}
+
+    The escape hatch stays where it was put, under the spelling it was given:
+
+    >>> asked = asked_facets(Query(other_terms={"cmip6:mip_era": ("CMIP6",)}))
+    >>> dict(asked.literal)
+    {'cmip6:mip_era': ('CMIP6',)}
+    """
+    canonical = query if isinstance(query, QueryCanonical) else to_canonical(query)
+
+    declared = {
+        name: values
+        for name in sorted(CANONICAL_FACETS)
+        if (values := getattr(canonical, name))
+    }
+    query_specific = {
+        name: values
+        for name, values in canonical.query_specific_facets.items()
+        if values
+    }
+    other = {name: values for name, values in canonical.other_terms.items() if values}
+
+    clashes = (
+        (set(declared) & set(query_specific))
+        | (set(declared) & set(other))
+        | (set(query_specific) & set(other))
+    )
+    if clashes:
+        raise ClashingFacetsError(clashes)
+
+    return AskedFacets(modelled={**declared, **query_specific}, literal=other)
 
 
 def set_facets(query: QueryProtocol) -> dict[str, tuple[str, ...]]:
     """
     Get the facets a query actually constrains, under canonical names, flattened
-
-    A query holds its facets in three places, and all three are facets:
-    the fields it declares, the facets it names which have no canonical
-    equivalent, and `other_terms`, which is esmporium's escape hatch for facets no
-    query class names. This flattens all three into one mapping, so that matching
-    has a single thing to loop over.
-
-    `query` may be written in any query style
-    ([`QueryCMIP6`][esmporium.query.QueryCMIP6], say):
-    it is translated to canonical names on the way in, so a caller does not have to
-    know that our columns are named `experiment` rather than `experiment_id`.
-
-    `other_terms` is deliberately not translated: it is the escape hatch for facets
-    no query class names. Its keys here have to be facet names
-    a catalogue can use.
-    Note too that a facet a query class *does* name is translated while the same
-    facet in `other_terms` is not, so `QueryCMIP6(table_id="Amon")` asks for
-    `processing_id`, whereas `QueryCMIP6(other_terms={"table_id": ("Amon",)})` asks
-    for `table_id` (and likely finds no entry which knows it).
 
     Parameters
     ----------
@@ -291,47 +460,27 @@ def set_facets(query: QueryProtocol) -> dict[str, tuple[str, ...]]:
     >>> set_facets(QueryCMIP6(variable_id="tas", frequency="mon"))
     {'project': ('CMIP6',), 'reporting_interval': ('mon',), 'variable': ('tas',)}
     """
-    canonical = query if isinstance(query, QueryCanonical) else to_canonical(query)
+    asked = asked_facets(query)
 
-    declared = {
-        name: values
-        for name in sorted(CANONICAL_FACETS)
-        if (values := getattr(canonical, name))
-    }
-    query_specific = {
-        name: values
-        for name, values in canonical.query_specific_facets.items()
-        if values
-    }
-    other = {name: values for name, values in canonical.other_terms.items() if values}
-
-    clashes = (
-        (set(declared) & set(query_specific))
-        | (set(declared) & set(other))
-        | (set(query_specific) & set(other))
-    )
-    if clashes:
-        raise ClashingFacetsError(clashes)
-
-    return {**declared, **query_specific, **other}
+    return {**asked.modelled, **asked.literal}
 
 
-def _matches_facets(
-    facets: Mapping[str, tuple[str, ...]], entry: CatalogueEntry
-) -> bool:
+def matches_facets(asked: AskedFacets, entry: CatalogueEntry) -> bool:
     """
-    Determine whether an entry matches already-flattened facets
+    Determine whether an entry matches already-split facets
 
-    Separate from [matches][(m).matches] so that
-    [InMemoryCatalogue.find][(m).InMemoryCatalogue.find] can flatten a query once
-    and then check every entry against the result, rather than re-flattening the
-    same query for each entry.
+    The companion to [asked_facets][(m).asked_facets], and separate from
+    [matches][(m).matches] so that a catalogue can split a query once and then check
+    every entry against the result, rather than re-splitting the same query for each
+    entry. Both catalogues we ship do exactly that --
+    [InMemoryCatalogue.find][(m).InMemoryCatalogue.find] over its own entries, and
+    [esmporium.db.DatabaseCatalogue][] over the rows its `select` returned -- which
+    is how the two come to agree about a facet only an entry can answer for.
 
     Parameters
     ----------
-    facets
-        Facet name -> the values which are acceptable,
-        as returned by [set_facets][(m).set_facets]
+    asked
+        The facets to match, as returned by [asked_facets][(m).asked_facets]
 
     entry
         Entry to check
@@ -339,29 +488,25 @@ def _matches_facets(
     Returns
     -------
     :
-        `True` if `entry` matches every facet in `facets`
-
-    Raises
-    ------
-    UnrecordedFacetError
-        `facets` names a facet `entry` does not know
+        `True` if `entry` matches every facet in `asked`
     """
-    return all(entry.facet(name) in values for name, values in facets.items())
+    return all(
+        entry.modelled_facet(name) in values for name, values in asked.modelled.items()
+    ) and all(
+        entry.other_terms.get(name) in values for name, values in asked.literal.items()
+    )
 
 
 def matches(query: QueryProtocol, entry: CatalogueEntry) -> bool:
     """
     Determine whether a dataset matches a query
 
-    An entry matches if, for every facet the query sets,
-    the entry's value is one of the query's values.
-    Several values for one facet are therefore an "or",
-    exactly as they are when searching.
-
     A query which sets no facets constrains nothing, so it matches every entry.
     That is the right answer to the question as asked here, but it is a sharp edge
     one level up: an empty query on a requirement's leaf would quietly select the
-    whole catalogue. See the note above [set_facets][(m).set_facets].
+    whole catalogue, which is why
+    [EmptyLeafQueryError][esmporium.requirements.EmptyLeafQueryError] refuses one
+    there.
 
     Parameters
     ----------
@@ -378,73 +523,155 @@ def matches(query: QueryProtocol, entry: CatalogueEntry) -> bool:
 
     Raises
     ------
-    UnrecordedFacetError
-        `query` sets a facet `entry` does not know, i.e. one which is neither one of
-        [`DATASET_FACET_COLUMNS`][esmporium.db.schema.DATASET_FACET_COLUMNS]
-        nor in the entry's `extra`
-
     ClashingFacetsError
         `query` sets the same facet in more than one place
     """
-    return _matches_facets(set_facets(query), entry)
+    return matches_facets(asked_facets(query), entry)
 
 
-# TODO for future: whoever writes the database-backed catalogue has to fill `extra`
-# from the raw search documents, or three facets stay unaskable.
+# A note for developers: the database-backed catalogue
+# ([esmporium.db.DatabaseCatalogue][]) is what fills both facet mappings, out of the
+# stored raw search documents. What goes in which is on the fields themselves; two
+# things about doing it from documents are decisions rather than details, and belong
+# here:
 #
-# `activity`, `realm` and `resolution` are canonical facets: a query may ask for them,
-# every query class declares them under those exact names (no translation involved),
-# the search APIs answer, and the values come back and are kept verbatim in
-# [`DatasetRawDoc.raw_json`][esmporium.db.schema.DatasetRawDoc]. What they are not is
-# columns of [`Dataset`][esmporium.db.schema.Dataset], so
-# [`DatasetFacets`][esmporium.search.DatasetFacets] drops them on the way in and
-# [CatalogueEntry.facet][(m).CatalogueEntry.facet] cannot answer for them. The data is
-# there; only the route from the raw document to the entry is missing, and
-# [esmporium.search.normalise_stored_document][] is what flattens a stored document
-# back out.
+# - **Which document answers.** A dataset has many versions and a version can be
+#   described by several documents. The one that answers belongs to the newest version
+#   which passed the lookup's [VersionFilter][(m).VersionFilter] -- not simply the
+#   newest version -- so a caller who excluded a retracted version is not then
+#   described by it.
 #
-# Until that lands, a requirement naming one of them fails in a way which depends on
-# the data rather than on the requirement, because
-# [_matches_facets][(m)._matches_facets] is an `all`, which stops at the first facet
-# that does not match:
+#   TODO future: this is the piece to revisit when a requirement can ask for a
+#   particular version, which it cannot today. The reason is not that version is hard
+#   to plumb, it is what an entry *is*: **one entry describes one `Dataset` row, not one
+#   `DatasetVersion`**, and the versions filter decides which version's documents
+#   speak for it. So "prefer version X" has nothing to range over -- there is a single
+#   entry per dataset however many versions exist -- and expressing it needs either a
+#   `version` field on the entry (making "prefer latest" trivially true and "this
+#   version" a filter rather than a preference) or one entry per
+#   `(dataset, version)`, which changes what `id` means and what a group is.
 #
-#   Query(variable="ta", realm="atmos")                  facets checked: realm, variable
-#     -> `realm` is checked first, so it always raises
-#   Query(variable="ta", other_terms={"realm": ("atmos",)})
-#                                                        facets checked: variable, realm
-#     -> `other_terms` is always checked last, so this raises only when `variable`
-#        matched something first, and silently finds nothing otherwise
+#   Note also where version would *not* go. It is not a facet: facets are what a query
+#   matches on, and version is metadata about which snapshot answered, like `id`. So it
+#   belongs as a field of its own rather than in `project_facets` or `other_terms`,
+#   both of which are built *from* a particular version's documents and so cannot be
+#   how you choose between them.
+
+
+# TODO future: these three settings are meant to become two, and the first half of that
+# has now happened. The direction was to express retraction and recency where the
+# *requirement* can see them rather than as settings on the catalogue reading it, so
+# that "latest", "this particular version" and "give me everything, with
+# `Cardinality.ALL`" are all things a requirement says.
 #
-# Deliberately not fixed here, and deliberately untested: with no catalogue reading the
-# database there is nothing yet to assert against, and a check which rejects these three
-# facets today would have to be taken out again the moment `extra` is filled. The thing
-# to add then is one pass over the facets a requirement names, before any matching, so
-# the answer does not depend on which rows happen to be present.
+# What has happened: `NOT_RETRACTED` is the default, so the common path no longer drops
+# a dataset whose newest version was retracted but which has a usable older one; and
+# this is now an argument to [Catalogue.find][(m).Catalogue.find], carried there by
+# [Requirement.versions][esmporium.requirements.Requirement.versions] rather than held
+# on a catalogue. So retraction is said in the requirement, is fingerprinted by
+# `requirement_hash` along with everything else it asks for, and a catalogue is once
+# again just "everything we have stored".
+#
+# What has not: `LATEST_NOT_RETRACTED` still exists, because recency is still a filter
+# here rather than a preference in the requirement, and until a requirement can say
+# "prefer the latest" there would be no way left to ask "only what is current" --
+# removing the member would delete the question rather than move it. Deleting it is the
+# last step, not the first.
+#
+# Important to note:
+# - The preference half needs a version on the entry first. Why that is not a small
+#   change is in the note above [Catalogue][(m).Catalogue]: an entry describes a
+#   `Dataset`, not a `DatasetVersion`, so today there is nothing for a preference to
+#   range over.
+#
+# `test_a_retracted_dataset_drops_its_group_from_the_solve` and
+# `test_a_group_whose_other_leaf_is_retracted_becomes_unsatisfied` in
+# `tests/integration/requirements/test_search_to_solve_recorded.py` are what pin the
+# current behaviour, and are the tests to re-read when this moves.
+#
+# When we do this, also consider whether not retracted
+# should just become something we express via preference,
+# rather than requiring its own special 'VersionFilter' concept
+# (thinking about it now, it is kind of special so having it as a filter,
+# or a constraint when we get them, is better than as a preference I think
+# (unlike versions, which are more naturally expressed as preferences,
+# but could also be constraints I guess))
+
+
+class VersionFilter(str, Enum):
+    """
+    Which of a dataset's stored versions count when looking for it
+
+    A dataset has many versions and this says which of them a lookup accepts. It
+    decides two things, not one: whether the dataset is found at all (it needs a
+    version which qualifies), and which version's search documents describe it (the
+    newest which qualifies). So this is not a filter applied to a finished answer,
+    it is part of how the answer is read.
+    """
+
+    ANY = "any"
+    """
+    Every dataset on record, including ones whose only versions are retracted
+
+    Use this to ask what we have ever seen rather than what is usable.
+    """
+
+    NOT_RETRACTED = "not_retracted"
+    """
+    The dataset has a version which was not retracted, latest or not
+
+    The default, because a dataset's newest usable version beats nothing. A dataset
+    whose latest version was retracted is still usable from the one before it, and the
+    document which describes it here is that older version's -- so what the entry says
+    matches what a caller would get.
+    """
+
+    # Note: Expected to go once recency can be expressed as a *preference* rather
+    # than a filter -- see the note above [VersionFilter][(m).VersionFilter].
+    LATEST_NOT_RETRACTED = "latest_not_retracted"
+    """
+    The dataset has a version which was both the latest and not retracted
+
+    Stricter than the default: the dataset drops out entirely unless what ESGF last
+    called its newest version is also one it has not retracted. Use it to ask "only
+    what is current", and note it also drops a dataset whose single live version is
+    simply not flagged latest.
+    """
 
 
 class Catalogue(Protocol):
     """
-    The datasets available to the solver, and what is known about them
+    Every dataset we have, and what is known about them
+
+    A catalogue is the *contents*: every dataset on record and every version of each.
     """
 
-    def find(self, query: QueryProtocol) -> tuple[CatalogueEntry, ...]:
+    def find(
+        self,
+        query: QueryProtocol,
+        *,
+        versions: VersionFilter = VersionFilter.NOT_RETRACTED,
+    ) -> tuple[CatalogueEntry, ...]:
         """
         Find every dataset which matches a query
 
-        Note for implementers: Matching on a facet we have no column for is essential.
-        For example, a query naming
-        `product` or `realm` must match whenever the entry's `extra` carries it
-        (see [`CatalogueEntry.extra`][(m).CatalogueEntry.extra]).
-        What is up to each catalogue is where `extra` comes from — one backed by our
-        database would read it out of the raw search documents, another might consult
-        a project-specific table, or simply know.
-        So anything the solver should be able to group by, prefer on or match
-        auxiliary data on has to be in `extra` by the time `find` returns.
+        The two arguments narrow a lookup along two different axes, and neither is a
+        property of the catalogue: `query` says which facet values are acceptable,
+        `versions` says which of a dataset's versions are.
 
         Parameters
         ----------
         query
             Query to match
+
+        versions
+            Which of a dataset's versions count. See
+            [VersionFilter][(m).VersionFilter].
+
+            Not only a filter on what comes back: it also decides which version's
+            search documents describe each entry, so two lookups which differ only in
+            this can report different values for a facet no column holds. They are
+            therefore not subsets of one another.
 
         Returns
         -------
@@ -459,11 +686,29 @@ class InMemoryCatalogue:
     """
     A catalogue held entirely in memory
 
-    Intended for tests and for prototyping.
-    The catalogue we want is backed by our database;
-    this one lets everything built on top of
-    [`Catalogue`][(m).Catalogue] be written and tested without one.
+    Intended for tests and for prototyping, and expected to stay that way: it lets
+    everything built on top of [Catalogue][(m).Catalogue] be written and tested
+    without a database, which is how each new piece of this package gets written.
+
+    The database-backed one is [esmporium.db.DatabaseCatalogue][]. The two have to
+    give the same answers -- that is what makes testing against this one mean anything
+    -- and `test_solving_against_the_database_matches_the_in_memory_catalogue` is what
+    holds them together.
+
+    It has no concept of a version, so every
+    [VersionFilter][(m).VersionFilter] gives the same entries back. That is the true
+    answer rather than the argument being ignored: an entry here is a dataset somebody
+    wrote down as present, so there is no retracted version to leave out and no newer
+    one to prefer. A test which needs retraction to matter needs
+    [esmporium.db.DatabaseCatalogue][], because retraction is something stored versions
+    have and written-down entries do not.
     """
+
+    # When we come back to handling VersionFilter more carefully,
+    # add the concept of version to this catalogue.
+    # We don't want to have to pull out an entire DatabaseCatalogue
+    # to be able to test whether our logic around picking latest versions,
+    # second-latest, non-retracted etc. works
 
     entries: tuple[CatalogueEntry, ...]
     """The datasets available"""
@@ -492,7 +737,12 @@ class InMemoryCatalogue:
         if collisions:
             raise DuplicateEntryIDError(collisions)
 
-    def find(self, query: QueryProtocol) -> tuple[CatalogueEntry, ...]:
+    def find(
+        self,
+        query: QueryProtocol,
+        *,
+        versions: VersionFilter = VersionFilter.NOT_RETRACTED,
+    ) -> tuple[CatalogueEntry, ...]:
         """
         Find every dataset which matches a query
 
@@ -501,6 +751,10 @@ class InMemoryCatalogue:
         query
             Query to match
 
+        versions
+            Accepted, and makes no difference, for the reason given on the class: these
+            entries have no versions for it to choose between.
+
         Returns
         -------
         :
@@ -508,12 +762,9 @@ class InMemoryCatalogue:
 
         Raises
         ------
-        UnrecordedFacetError
-            `query` sets a facet an entry does not know
-
         ClashingFacetsError
             `query` sets the same facet in more than one place
         """
-        facets = set_facets(query)
+        asked = asked_facets(query)
 
-        return tuple(entry for entry in self.entries if _matches_facets(facets, entry))
+        return tuple(entry for entry in self.entries if matches_facets(asked, entry))

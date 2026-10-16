@@ -1,8 +1,13 @@
 """
 Searching ESGF
 
-Queries can be written in whichever query style suits the user (see [esmporium.query][])
-and search results are (will be) automatically translated into the database
+[search][esmporium.search.search] takes a
+[Requirement][esmporium.requirements.Requirement] and searches based on it.
+Working out which queries a requirement asks for is
+[to_search_plan][esmporium.search.to_search_plan]'s job,
+and splitting those into various searches is
+[plan_sub_searches][esmporium.search.plan_sub_searches]'s job.
+If desired, search results can be automatically written into the database
 (see [esmporium.db][]).
 """
 
@@ -29,6 +34,7 @@ from esmporium.search.check_query_values import (
     CouldNotUseAllowedValuesError,
     FacetFinding,
     FindingKind,
+    LeafValueCheckOutcome,
     NotAFacetOfTheQueryError,
     ValueCheckOutcome,
     ValueReport,
@@ -50,6 +56,7 @@ from esmporium.search.result_normalisation import (
     DEFAULT_NORMALISERS,
     SOLR_FORMAT_TAG,
     STAC_FORMAT_TAG,
+    VERBATIM_NORMALISERS,
     NormaliseFunc,
     UnknownRawDocFormatTagError,
     normalise_stored_document,
@@ -67,19 +74,25 @@ from esmporium.search.search import (
     CouldNotSearchError,
     CouldNotUseSearchResultsError,
     FacadePages,
+    LeafSearch,
+    LeafSearchOutcome,
     NoFacadeAnsweredError,
     PaginationLimitError,
     PaginationWarning,
     ProcessorFactory,
     SearchAPIRequestError,
     SearchOutcome,
+    SearchPlan,
+    SubSearch,
     collect_all_pages,
     curl_equivalent,
     fire,
     get_url,
     log_request_as_url_and_curl,
+    plan_sub_searches,
     search,
     search_single_project,
+    to_search_plan,
 )
 from esmporium.search.search_api_facade import (
     DEFAULT_SEARCH_API_FACADES_BY_PROJECT,
@@ -137,6 +150,7 @@ __all__ = [
     "INBUILT_SEARCH_API_FACADE_STORE",
     "SOLR_FORMAT_TAG",
     "STAC_FORMAT_TAG",
+    "VERBATIM_NORMALISERS",
     "AllSubQueriesFailedError",
     "AllowedValues",
     "ClashingFacetsError",
@@ -159,6 +173,9 @@ __all__ = [
     "FacadePages",
     "FacetFinding",
     "FindingKind",
+    "LeafSearch",
+    "LeafSearchOutcome",
+    "LeafValueCheckOutcome",
     "LimitOutOfRangeError",
     "MissingResultFieldError",
     "MultipleFacetValuesError",
@@ -191,9 +208,11 @@ __all__ = [
     "SearchAPIFacadeStore",
     "SearchAPIRequestError",
     "SearchOutcome",
+    "SearchPlan",
     "SelectorOfferedNoAPIFacadeError",
     "SolrSingleRowResultParser",
     "SolrVariableBundleResultParser",
+    "SubSearch",
     "UnaskableFacetError",
     "UncompilableFacetPatternError",
     "UnknownRawDocFormatTagError",
@@ -226,8 +245,10 @@ __all__ = [
     "log_request_as_url_and_curl",
     "merge_other_terms",
     "normalise_stored_document",
+    "plan_sub_searches",
     "read_response_path",
     "search",
     "search_single_project",
+    "to_search_plan",
     "values_set_for",
 ]

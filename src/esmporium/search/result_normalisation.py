@@ -10,17 +10,17 @@ For example, when saving a dataset clashes with one already stored
 or when datasets our model cannot tell apart are loaded.
 
 It is currently used by the database layer, possibly long after the search,
-so there is no live [`SearchAPI`][esmporium.search.apis.SearchAPI] in scope
+so there is no live [SearchAPI][esmporium.search.apis.SearchAPI] in scope
 and it cannot ask the API how to read its own format.
 Instead each raw doc should be stored with a `raw_docs_format_tag`.
-This string allows [`normalise_stored_document`][(m).] to dispatch to the right parser
+This string allows [normalise_stored_document][(m).] to dispatch to the right parser
 on that tag through a registry of per-format flatteners.
 
-The registry ([`DEFAULT_NORMALISERS`][(m).]) covers the search APIs we ship.
+The registry ([DEFAULT_NORMALISERS][(m).]) covers the search APIs we ship.
 It is a parameter, so a user who bypasses our facade with their own search API
 can inject the flattener for their own tag.
 A tag with no registered flattener raises
-[`UnknownRawDocFormatTagError`][(m).] rather than guessing.
+[UnknownRawDocFormatTagError][(m).] rather than guessing.
 
 Living here (in `search`) rather than in `db`
 keeps the format knowledge out of the database layer:
@@ -140,9 +140,9 @@ def _normalise_stac(raw: dict[str, Any]) -> dict[str, Any]:
     STAC nests its facets inside `properties`, under project-prefixed keys, e.g.
     `{"properties": {"cmip7:activity_id": "ScenarioMIP"}}`. The `cmipN:` prefix is
     dropped and any single-element list is unwrapped, so the result is keyed the same
-    way [`_normalise_solr`][(m).]'s is.
+    way [_normalise_solr][(m).]'s is.
 
-    Kept separate from [`_normalise_solr`][(m).] on purpose: the two search generations
+    Kept separate from [_normalise_solr][(m).] on purpose: the two search generations
     are handled by independent code so neither is coupled to the other's shape.
 
     Parameters
@@ -173,11 +173,61 @@ def _normalise_stac(raw: dict[str, Any]) -> dict[str, Any]:
         )
 
     flat: dict[str, Any] = {}
-    for key, value in properties.items():
+    for key, value in _normalise_stac_verbatim(raw).items():
         name = key.split(":", 1)[1] if ":" in key else key  # drop any `cmipN:` prefix
-        flat[name] = value[0] if isinstance(value, list) and len(value) == 1 else value
+        flat[name] = value
 
     return flat
+
+
+def _normalise_stac_verbatim(raw: dict[str, Any]) -> dict[str, Any]:
+    """
+    Flatten a STAC feature without touching its keys
+
+    [_normalise_stac][(m).] does two separable things: it gets to a scalar *value*,
+    and it rewrites the *key*. This is the first without the second, so
+    `{"properties": {"cmip7:activity_id": ["ScenarioMIP"]}}` flattens to
+    `{"cmip7:activity_id": "ScenarioMIP"}` with the prefix intact.
+
+    Getting to a scalar is not optional -- every Solr value is a list, so a flattener
+    which skipped it would answer almost nothing -- but rewriting the key is, and for
+    [CatalogueEntry.other_terms][esmporium.requirements.CatalogueEntry.other_terms] it
+    must not happen: that mapping is matched against
+    [Query.other_terms][esmporium.query.Query.other_terms], which is never translated
+    either, so the name the user sent to the API is the name which has to match it
+    back.
+
+    Parameters
+    ----------
+    raw
+        One raw STAC feature, already parsed from its stored JSON
+
+    Returns
+    -------
+    :
+        The feature's facets as a flat mapping of the document's own name to scalar
+        (or list) value
+
+    Raises
+    ------
+    UnreadableResponseError
+        `raw`'s facets are not keyed by facet name,
+        so there is nothing here to flatten
+    """
+    # A stored feature with no `properties` at all has no facets.
+    # This is a different thing from a feature whose `properties` is not a mapping.
+    # The first is an empty document,
+    # the second (`properties` is not a mapping) is one we cannot read.
+    properties = raw.get("properties", {}) if isinstance(raw, Mapping) else None
+    if not isinstance(properties, Mapping):
+        raise _unreadable_stored_document(
+            raw, "properties", "the facets of this document"
+        )
+
+    return {
+        key: value[0] if isinstance(value, list) and len(value) == 1 else value
+        for key, value in properties.items()
+    }
 
 
 DEFAULT_NORMALISERS: Mapping[str, NormaliseFunc] = {
@@ -186,6 +236,25 @@ DEFAULT_NORMALISERS: Mapping[str, NormaliseFunc] = {
 }
 """
 The flattener for each known search API format, keyed by its `raw_docs_format_tag`
+"""
+
+VERBATIM_NORMALISERS: Mapping[str, NormaliseFunc] = {
+    SOLR_FORMAT_TAG: _normalise_solr,
+    STAC_FORMAT_TAG: _normalise_stac_verbatim,
+}
+"""
+Flatteners which keep each document's own facet names, keyed by `raw_docs_format_tag`
+
+The same as [DEFAULT_NORMALISERS][(m).DEFAULT_NORMALISERS] except that a STAC feature
+keeps its `cmipN:` prefixes. Solr needs no second entry: its documents are already
+keyed by their own names, so the one flattener serves both.
+
+Used to fill
+[CatalogueEntry.other_terms][esmporium.requirements.CatalogueEntry.other_terms], which
+has to answer under the name a user would have sent to the search API. Everything else
+wants `DEFAULT_NORMALISERS`, because comparing a STAC document with a Solr one -- which
+is what [esmporium.db.dataset_uniqueness.facet_differences][] does -- needs the two
+keyed the same way.
 """
 
 
@@ -198,11 +267,21 @@ class UnknownRawDocFormatTagError(ValueError):
         self.tag = tag
         self.known = tuple(sorted(normalisers))
         known = ", ".join(repr(name) for name in self.known) or "(none)"
+        # Both mappings, deliberately. A reader who reaches this is being asked to
+        # register a flattener, and a catalogue flattens each document twice: once
+        # canonicalising its keys and once keeping them
+        # (see [VERBATIM_NORMALISERS][(m).VERBATIM_NORMALISERS]). Naming only
+        # `normalisers` sends them round the loop again -- they do exactly as told and
+        # get this same error from the second pass, with nothing to say why.
         super().__init__(
             f"No flattener is registered for raw_docs_format_tag {tag!r}. "
             f"Known tags: {known}. If this document came from a search API you "
-            "injected, pass a `normalisers` mapping that includes this tag, e.g. "
-            "{**DEFAULT_NORMALISERS, <your tag>: <your flattener>}."
+            "injected, register the tag in both of the mappings a reader takes: "
+            "`normalisers={**DEFAULT_NORMALISERS, <your tag>: <your flattener>}` and "
+            "`verbatim_normalisers={**VERBATIM_NORMALISERS, <your tag>: "
+            "<your flattener>}`. The same flattener serves both unless your format "
+            "puts a prefix on its facet names, which is the only thing the two "
+            "built-in mappings differ on."
         )
 
 
@@ -220,7 +299,7 @@ def normalise_stored_document(
         One raw search document, already parsed from its stored JSON
 
     raw_docs_format_tag
-        See [`DatasetRawDoc.raw_docs_format_tag`][esmporium.db.schema.DatasetRawDoc])
+        See [DatasetRawDoc.raw_docs_format_tag][esmporium.db.schema.DatasetRawDoc])
 
     normalisers
         The flattener to use for each tag.

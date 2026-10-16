@@ -45,7 +45,7 @@ def get_alembic_config() -> Config:
 
         This has no database URL set.
         Callers are expected to supply a connection instead,
-        which is what [`upgrade_to_head`][esmporium.db.migrate.upgrade_to_head] does.
+        which is what [upgrade_to_head][esmporium.db.migrate.upgrade_to_head] does.
     """
     config = Config()
     config.set_main_option("script_location", str(MIGRATIONS_DIR))

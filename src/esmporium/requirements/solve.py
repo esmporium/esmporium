@@ -8,7 +8,7 @@ and the solver works out whether the one can be satisfied from the other.
 We attempt to solve the same tree multiple times, one attempt per group.
 A group is a set of datasets from which we try to meet the requirement.
 The grouping is set by
-[`Requirement.group_by`][esmporium.requirements.Requirement.group_by].
+[Requirement.group_by][esmporium.requirements.Requirement.group_by].
 Each attempt either leads to a solution ([Solution][(m).Solution])
 or not ([UnsolvedGroup][(m).UnsolvedGroup]).
 
@@ -27,14 +27,13 @@ defining whether we found a solution or not.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Literal
 
-from esmporium.db.schema import DATASET_FACET_COLUMNS
+from esmporium.datasets import DATASET_FACET_COLUMNS
 from esmporium.formatting import readable_list
-from esmporium.query import QueryProtocol
+from esmporium.query import QueryProtocol, project_specific_facet_names
 from esmporium.requirements.catalogue import (
     Catalogue,
     CatalogueEntry,
@@ -42,6 +41,7 @@ from esmporium.requirements.catalogue import (
 )
 from esmporium.requirements.tree import (
     AllOf,
+    Cardinality,
     Leaf,
     Node,
     NotANodeError,
@@ -55,7 +55,7 @@ GroupKey = tuple[tuple[str, str | None], ...]
 `(facet, value)` pairs identifying a group
 
 A value can be `None` because a facet can be: CMIP5 has no concept of a grid, so
-[`CatalogueEntry.grid_label`][esmporium.requirements.CatalogueEntry.grid_label] is
+[CatalogueEntry.grid_label][esmporium.requirements.CatalogueEntry.grid_label] is
 `None` for every CMIP5 dataset.
 """
 
@@ -113,6 +113,177 @@ however the ambiguity is settled, so the missing dataset is the honest headline.
 explanation still carries both, because nothing short-circuits -- see
 [_eval_all_of][(m)._eval_all_of].
 """
+
+
+# A note for developers: these two raise rather than being reported as an unsolved
+# group, and the dividing line is worth stating because it is the same line
+# `solve` draws everywhere. An unsatisfied or ambiguous group is a fact about the
+# *data*: more searching could change it, so it is a result. These are facts about the
+# *requirement*: no amount of new data makes a grouping work when nothing records the
+# facet it groups on, and reporting it group by group would make one mistake look like
+# missing data everywhere.
+#
+# They are also the second half of a pair. A name we do not model is caught when the
+# requirement is built, by
+# [UnmodelledFacetError][esmporium.requirements.UnmodelledFacetError], because that
+# needs no data. These are the half which does: a name we *do* model, which nothing in
+# this catalogue happens to record.
+class UngroupableFacetError(ValueError):
+    """
+    Raised when nothing in the catalogue records a facet the requirement groups on
+
+    Only for [Requirement.group_by][esmporium.requirements.Requirement.group_by].
+    `group_by_other_terms` is the escape hatch and is never checked, so a name there
+    which nothing records simply puts every dataset in one group.
+    """
+
+    def __init__(self, facets: Iterable[str], candidates: int) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        facets
+            The facets no candidate can answer for
+
+        candidates
+            How many datasets were looked at, which is what makes the message
+            actionable: it says the search found data and this facet was missing from
+            it, rather than that nothing was found at all
+        """
+        self.facets = tuple(sorted(facets))
+        self.candidates = candidates
+        them = "it" if len(self.facets) == 1 else "them"
+        super().__init__(
+            f"Cannot group on {readable_list(self.facets)}: "
+            f"none of the {candidates} datasets found records {them}. "
+            "A group needs a value for every facet it is keyed on, so no group can "
+            "be formed and the requirement cannot be solved as written. "
+            "These are facets we can search but store only in the raw search "
+            f"documents, so re-searching may populate {them}; "
+            "otherwise group on a facet the datasets do record. "
+            "Note that a facet whose value is a list of several (a multi-realm "
+            "dataset, say) counts as unrecorded, because a group key needs one value. "
+            "For a facet only a search document knows, use `group_by_other_terms`, "
+            "which is never checked."
+        )
+
+
+class UnrankableFacetError(ValueError):
+    """
+    Raised when nothing in a tie records a facet the requirement prefers on
+
+    Only for [Requirement.prefer][esmporium.requirements.Requirement.prefer].
+    `prefer_other_terms` is the escape hatch: a name there which nothing records
+    ranks every candidate equally, so it narrows nothing and the tie is reported as
+    [ExplanationStatusNotOk.AMBIGUOUS][(m).ExplanationStatusNotOk] instead.
+    """
+
+    def __init__(self, facets: Iterable[str], subject: str, candidates: int) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        facets
+            The facets no remaining candidate can answer for
+
+        subject
+            What was being filled, e.g. a role path
+
+        candidates
+            How many candidates were tied
+        """
+        self.facets = tuple(sorted(facets))
+        self.subject = subject
+        self.candidates = candidates
+        super().__init__(
+            f"Cannot rank the {candidates} candidates for {subject} "
+            f"on {readable_list(self.facets)}: none of them records "
+            f"{'it' if len(self.facets) == 1 else 'them'}, so the preference cannot "
+            "break the tie. "
+            "We can search these facets but store them only in the raw search "
+            "documents, so re-searching may populate them; otherwise prefer on a "
+            "facet the datasets do record, narrow the query, or use "
+            "`Cardinality.ALL` if every candidate is wanted. "
+            "For a facet only a search document knows, use `prefer_other_terms`, "
+            "which is never checked and ranks unanswerable candidates equally "
+            "rather than raising."
+        )
+
+
+# A note for developers: a `NotImplementedError` rather than a `ValueError`, because
+# the requirement is a fair thing to want and the answer is "not yet" rather than "no".
+# Grouping CMIP5 by `product` is right, and grouping CMIP5 *and* CMIP6 by it has an
+# answer we have not decided on: every CMIP6 dataset would land in one group keyed
+# `product=None`, which is either exactly what you meant or a silent accident, and we
+# are not guessing which.
+#
+# Only project-specific facets, and only when *some* candidates answer. The three cases
+# at the one site are worth seeing together:
+#
+#     none of the candidates records it  -> UngroupableFacetError
+#     some do, some do not               -> this
+#     all of them do                     -> proceed
+#
+# The last case is the one to be careful not to break: `sub_experiment_id` is
+# project-specific and both CMIP6 and CMIP6Plus declare it, so a catalogue holding both
+# can be grouped on it throughout. "Spans more than one project" would refuse that,
+# which is why the test is what the candidates can answer rather than what projects
+# they come from.
+#
+# Canonical facets with no column (`realm`, `activity`, `resolution`) are deliberately
+# left out: partial coverage there is ordinary -- two mirrors of one project return
+# different fields, and a multi-valued facet is recorded as nothing at all -- and the
+# one-`None`-group answer is the honest one. It is only a facet which belongs to some
+# projects and not others where the `None` group means "wrong project" rather than
+# "not recorded".
+class MixedProjectFacetError(NotImplementedError):
+    """
+    Raised when a project-specific facet is used across datasets of several projects
+
+    Naming `project` in
+    [group_by][esmporium.requirements.Requirement.group_by] is the way through: each
+    group then holds one project, so the question does not arise.
+    """
+
+    def __init__(
+        self, facets: Iterable[str], field_name: str, knowing: int, total: int
+    ) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        facets
+            The project-specific facets only some candidates can answer for
+
+        field_name
+            Field they were set on, e.g. `"group_by"`
+
+        knowing
+            How many candidates can answer for them
+
+        total
+            How many candidates there were
+        """
+        self.facets = tuple(sorted(facets))
+        self.field_name = field_name
+        self.knowing = knowing
+        self.total = total
+        super().__init__(
+            f"{field_name} names {readable_list(self.facets)}, which "
+            f"{'is' if len(self.facets) == 1 else 'are'} specific to some projects, "
+            f"but only {knowing} of the {total} datasets found "
+            f"{'records' if knowing == 1 else 'record'} "
+            f"{'it' if len(self.facets) == 1 else 'them'} -- so the datasets span "
+            "more than one project and the rest have no value for it. "
+            "We have not decided what that should mean, so this stops rather than "
+            "quietly putting every dataset of the other projects into one group. "
+            "Either restrict the requirement to one project "
+            "(`where=Query(project=...)`), or add `project` to `group_by` so that "
+            "each group holds a single project and the facet is answerable within it."
+        )
 
 
 @dataclass(frozen=True)
@@ -256,14 +427,14 @@ class Solution:
 
         ValueError
             `role` holds more than one dataset, i.e. the requirement was probably
-            solved with `cardinality="all"`
+            solved with `cardinality=Cardinality.ALL`
         """
         entries = self.roles[role]
         if len(entries) != 1:
             msg = (
                 f"{role!r} holds {len(entries)} datasets, so there is no single one to "
-                "return. Read `roles` directly (solving with `cardinality='one'` "
-                "may also fix this)."
+                "return. Read `roles` directly (solving with "
+                "`cardinality=Cardinality.ONE` may also fix this)."
             )
             raise ValueError(msg)
 
@@ -344,7 +515,7 @@ class SolveResult:
 
         title = (
             f"Requirement {self.requirement.name!r}, grouped by "
-            f"{readable_list(self.requirement.group_by)}:"
+            f"{readable_list(group_facets(self.requirement))}:"
         )
 
         return "\n\n".join(
@@ -368,8 +539,8 @@ class SolveResult:
             "No groups were discovered, so nothing was solved: no dataset in the "
             f"catalogue matched any leaf of requirement {self.requirement.name!r}. "
             "A group is discovered from the candidates the leaves find, grouped by "
-            f"{readable_list(self.requirement.group_by)}, so no candidates means no "
-            f"groups. The leaves asked for: {asked}."
+            f"{readable_list(group_facets(self.requirement))}, so no candidates means "
+            f"no groups. The leaves asked for: {asked}."
         )
 
 
@@ -464,14 +635,16 @@ def _differing_facets(candidates: Sequence[CatalogueEntry]) -> tuple[str, ...]:
     :
         The facets which take more than one value across `candidates`
     """
-    # Only `extra` keys every candidate carries: `facet` raises for a key an entry does
-    # not have, and a message about an ambiguity should not fail with an error of its
-    # own.
-    shared_extra = set.intersection(*(set(candidate.extra) for candidate in candidates))
+    # Only facets every candidate can answer for. A facet one of them does not know
+    # reads as `None`, so including it would report a difference between "gn" and
+    # "nothing recorded", which is not a difference the user can act on with `prefer`.
+    shared = frozenset.intersection(
+        *(candidate.known_facets() for candidate in candidates)
+    ) - frozenset(DATASET_FACET_COLUMNS)
 
     return tuple(
         facet
-        for facet in (*DATASET_FACET_COLUMNS, *sorted(shared_extra))
+        for facet in (*DATASET_FACET_COLUMNS, *sorted(shared))
         if len({candidate.facet(facet) for candidate in candidates}) > 1
     )
 
@@ -500,9 +673,10 @@ def _ambiguous_message(candidates: Sequence[CatalogueEntry], ctx: _Context) -> s
         # The issue tracker rather than advice, because a catalogue backed by our
         # database cannot get here: ingestion refuses two datasets which agree on
         # every column, `id_project_specific` included (see
-        # [`UnhandledDatasetClashError`][esmporium.db.UnhandledDatasetClashError]),
+        # [UnhandledDatasetClashError][esmporium.db.UnhandledDatasetClashError]),
         # so these two differ in a facet which exists but reached neither a column
-        # nor `extra`. That is ours to fix, not the user's to work around, and
+        # nor `project_facets` nor `other_terms`. That is ours to fix, not the
+        # user's to work around, and
         # "narrow the query" is not offered because there is nothing visible to
         # narrow on.
         return (
@@ -513,7 +687,8 @@ def _ambiguous_message(candidates: Sequence[CatalogueEntry], ctx: _Context) -> s
             "separately only when their project-specific IDs differ, so the facet "
             "which tells these apart exists but has not reached the solver. Please "
             "raise an issue at https://github.com/esmporium/esmporium/issues quoting "
-            "the message above. `cardinality='all'` keeps them all in the meantime."
+            "the message above. `cardinality=Cardinality.ALL` keeps them all in "
+            "the meantime."
         )
 
     listed = ", ".join(
@@ -525,18 +700,25 @@ def _ambiguous_message(candidates: Sequence[CatalogueEntry], ctx: _Context) -> s
         f"{len(candidates)} candidates, differing in {readable_list(differing)}: "
         f"{listed}"
     )
-    if not ctx.requirement.prefer:
+    # Both preference fields, because either could be the one that was tried and came
+    # up short, and a message which named only `prefer` would read as though
+    # `prefer_other_terms` had been ignored.
+    all_preferences = {
+        **ctx.requirement.prefer,
+        **ctx.requirement.prefer_other_terms,
+    }
+    if not all_preferences:
         example = differing[0]
 
         return (
             f"{lead}. Nothing was given to choose between them: set `prefer` on the "
             f"requirement (e.g. `prefer={{{example!r}: (...)}}`), narrow the query, or "
-            "use `cardinality='all'` to keep them all."
+            "use `cardinality=Cardinality.ALL` to keep them all."
         )
 
     preferences = "; ".join(
         f"{facet} in the order {readable_list(order)}"
-        for facet, order in ctx.requirement.prefer.items()
+        for facet, order in all_preferences.items()
     )
 
     return (
@@ -550,7 +732,7 @@ def _choose(
     candidates: Sequence[CatalogueEntry],
     ctx: _Context,
     subject: str,
-    cardinality: Literal["one", "all"],
+    cardinality: Cardinality,
 ) -> tuple[CatalogueEntry, ...] | NodeResultNotOk:
     """
     Narrow candidates to the datasets which fill a role
@@ -576,27 +758,62 @@ def _choose(
     """
     remaining = list(candidates)
 
+    # Nothing below is reached unless there is a choice, which is the whole reason
+    # `prefer` fails later than `group_by`: a preference which was never needed is not
+    # a mistake worth stopping for. One consequence to know about: this makes an
+    # unanswerable `prefer` facet depend on the data, so the same requirement can raise
+    # against one catalogue and not another.
+    #
+    # Only the modelled field is checked. `prefer_other_terms` is unchecked by
+    # construction, and an unanswerable facet there ranks every candidate equally (all
+    # `None`, so all unlisted), which narrows nothing and leaves the tie to be reported
+    # as ambiguous.
+    if len(remaining) > 1 and ctx.requirement.prefer:
+        unrankable = _unanswerable_facets(ctx.requirement.prefer, remaining)
+        if unrankable:
+            raise UnrankableFacetError(unrankable, subject, len(remaining))
+
+        # The mixed-project case matters more here than it does for grouping, and is
+        # the reason this check is not grouping's alone. An unlisted value ranks behind
+        # every listed one, so a project-specific facet whose value is `None` for the
+        # projects which do not have it ranks every one of their datasets last --
+        # `prefer={"product": ("output2",)}` quietly becomes "prefer CMIP5 over CMIP6".
+        # Grouping at least leaves a visible `product=None` in the key; this leaves
+        # nothing at all, just a different dataset chosen.
+        #
+        # No `project not in group_by` carve-out is needed: if `project` is a group
+        # facet then every candidate in a group shares a project, so either all of them
+        # know the facet or none do and this cannot fire.
+        _check_project_facets_are_shared(ctx.requirement.prefer, remaining, "prefer")
+
     # This way of doing preferences is tightly coupled to using a list of values.
     # If we ever open this up to allowing more custom injections,
     # this will need to be extracted out and re-written.
-    for facet in sorted(ctx.requirement.prefer):
-        order = ctx.requirement.prefer[facet]
-        ranks = [
-            order.index(value)
-            if (value := candidate.facet(facet)) in order
-            # Unlisted values rank behind every listed one, rather than being
-            # dropped: `prefer` says which is better, not which is allowed.
-            else len(order)
-            for candidate in remaining
-        ]
-        best = min(ranks)
-        remaining = [
-            candidate
-            for candidate, rank in zip(remaining, ranks, strict=True)
-            if rank == best
-        ]
+    #
+    # The modelled preferences are applied before the escape-hatch ones, so a facet we
+    # model always out-ranks one we do not rather than the two interleaving
+    # alphabetically. Within each, the order is alphabetical, which means facet
+    # priority is not the user's to choose -- a known limit, and the thing to fix if
+    # preferences ever become pluggable (see `Requirement.prefer`).
+    for preferences in (ctx.requirement.prefer, ctx.requirement.prefer_other_terms):
+        for facet in sorted(preferences):
+            order = preferences[facet]
+            ranks = [
+                order.index(value)
+                if (value := candidate.facet(facet)) in order
+                # Unlisted values rank behind every listed one, rather than being
+                # dropped: `prefer` says which is better, not which is allowed.
+                else len(order)
+                for candidate in remaining
+            ]
+            best = min(ranks)
+            remaining = [
+                candidate
+                for candidate, rank in zip(remaining, ranks, strict=True)
+                if rank == best
+            ]
 
-    if cardinality == "one" and len(remaining) > 1:
+    if cardinality is Cardinality.ONE and len(remaining) > 1:
         return NodeResultNotOk(
             ExplanationStatusNotOk.AMBIGUOUS,
             Explanation(
@@ -616,7 +833,7 @@ def _in_group(entry: CatalogueEntry, ctx: _Context) -> bool:
 def _eval_leaf(leaf: Leaf, ctx: _Context, role_prefix: str) -> NodeResult:
     path = f"{role_prefix}{leaf.role}"
     query = effective_query(leaf, ctx.requirement.where)
-    found = ctx.catalogue.find(query)
+    found = ctx.catalogue.find(query, versions=ctx.requirement.versions)
 
     candidates = [entry for entry in found if _in_group(entry, ctx)]
     if not candidates:
@@ -726,11 +943,107 @@ def _eval_tree(node: Node, ctx: _Context, role_prefix: str) -> NodeResult:
     raise NotANodeError(node)
 
 
+def group_facets(requirement: Requirement) -> tuple[str, ...]:
+    """
+    Get the facets a group is keyed on, in the order the key uses
+
+    The modelled facets first, then the escape-hatch ones, so that reading a group key
+    does not depend on how the two happen to sort against each other.
+
+    Parameters
+    ----------
+    requirement
+        Requirement being solved
+
+    Returns
+    -------
+    :
+        [Requirement.group_by][esmporium.requirements.Requirement.group_by] followed by
+        [group_by_other_terms][esmporium.requirements.Requirement.group_by_other_terms]
+    """
+    return (*requirement.group_by, *requirement.group_by_other_terms)
+
+
+def _unanswerable_facets(
+    facets: Iterable[str], candidates: Sequence[CatalogueEntry]
+) -> list[str]:
+    """
+    Get the modelled facets not one of the candidates can answer for
+
+    Parameters
+    ----------
+    facets
+        The facets to check, i.e. the modelled ones a requirement named
+
+    candidates
+        The datasets in hand, at least one
+
+    Returns
+    -------
+    :
+        Those of `facets` which no candidate knows, in the order given
+    """
+    answerable: set[str] = set()
+    for entry in candidates:
+        answerable |= entry.modelled_facets()
+
+    return [facet for facet in facets if facet not in answerable]
+
+
+def _check_project_facets_are_shared(
+    facets: Iterable[str], candidates: Sequence[CatalogueEntry], field_name: str
+) -> None:
+    """
+    Check that any project-specific facet is answerable by every candidate
+
+    Returns nothing: this is here to raise. Called after
+    [_unanswerable_facets][(m)._unanswerable_facets], so a facet no candidate knows has
+    already been reported as the clearer problem and what is left is the genuinely
+    mixed case.
+
+    Parameters
+    ----------
+    facets
+        The facets to check, i.e. the modelled ones a requirement named
+
+    candidates
+        The datasets in hand, at least one
+
+    field_name
+        Field the facets were set on, for the message, e.g. `"group_by"`
+
+    Raises
+    ------
+    MixedProjectFacetError
+        A project-specific facet is answerable by some candidates and not others
+    """
+    # Nothing to do for the overwhelmingly common case, and no pass over the candidates
+    # for it either: most requirements group and rank on canonical facets only.
+    named = [facet for facet in facets if facet in project_specific_facet_names()]
+    if not named:
+        return
+
+    for facet in named:
+        knowing = sum(1 for entry in candidates if facet in entry.modelled_facets())
+        if knowing != len(candidates):
+            raise MixedProjectFacetError([facet], field_name, knowing, len(candidates))
+
+
+# A note for developers: grouping never looks at `entry.project`,
+# and neither does [_in_group][(m)._in_group].
+# Mixing projects is instead caught by what the candidates can answer:
+# `group_by=("product",)` over CMIP5 and CMIP6 raises
+# [MixedProjectFacetError][(m).MixedProjectFacetError],
+# because only the CMIP5 candidates record `product`
+# (see the note above that class for why the test is
+# what the candidates answer rather than which projects they come from).
+# `group_by=("project", "product")` is the way through,
+# and costs nothing because `project` is a column.
 def _group_values(
     requirement: Requirement, catalogue: Catalogue
 ) -> list[tuple[str | None, ...]]:
     """
-    Discover the groups, as the `group_by` values every leaf's candidates take
+    Discover the groups, as the group facets' values every leaf's candidates take
 
     Parameters
     ----------
@@ -743,16 +1056,43 @@ def _group_values(
     Returns
     -------
     :
-        One tuple of `group_by` values per group, in a stable order
+        One tuple of group facet values per group, in a stable order
+
+        Empty when no leaf matched anything, in which case there is nothing to group
+        and [SolveResult.explain][(m).SolveResult.explain] says so rather than this
+        complaining about the facets.
+
+    Raises
+    ------
+    UngroupableFacetError
+        No candidate can answer for one of `requirement.group_by`
+
+    MixedProjectFacetError
+        Only some candidates can answer for a project-specific facet in
+        `requirement.group_by`
     """
-    values: set[tuple[str | None, ...]] = set()
+    facets = group_facets(requirement)
+
+    candidates: list[CatalogueEntry] = []
     for _, leaf in walk_leaves(requirement.tree):
         query = effective_query(leaf, requirement.where)
-        found = catalogue.find(query)
-        values.update(
-            tuple(entry.facet(facet) for facet in requirement.group_by)
-            for entry in found
-        )
+        candidates.extend(catalogue.find(query, versions=requirement.versions))
+
+    if not candidates:
+        return []
+
+    unanswerable = _unanswerable_facets(requirement.group_by, candidates)
+    if unanswerable:
+        raise UngroupableFacetError(unanswerable, len(candidates))
+
+    # Not raised when `project` is one of the group facets: each group then holds a
+    # single project, so a facet only that project has is answerable throughout it and
+    # the `None` group for the others is the group for those projects, which is
+    # legible rather than accidental.
+    if "project" not in requirement.group_by:
+        _check_project_facets_are_shared(requirement.group_by, candidates, "group_by")
+
+    values = {tuple(entry.facet(facet) for facet in facets) for entry in candidates}
 
     # Sorted so that the groups, and so the explanations, come out in the same order
     # every time.
@@ -781,13 +1121,19 @@ def solve(requirement: Requirement, catalogue: Catalogue) -> SolveResult:
 
     Raises
     ------
-    UnrecordedFacetError
-        `group_by`, `prefer` or a leaf's query names a facet no dataset can answer for.
+    UngroupableFacetError
+        `group_by` names a facet no dataset can answer for, so no group can be formed.
 
-        Raised rather than reported as an unsolved group, because it is a mistake in
-        the requirement rather than a fact about the data: no amount of new data would
-        make the facet answerable, and reporting it group by group would make one
-        mistake look like missing data everywhere.
+    MixedProjectFacetError
+        A project-specific facet in `group_by` or `prefer` is answerable by only some
+        of the datasets found, i.e. they span more than one project.
+
+        A `NotImplementedError`: see
+        [MixedProjectFacetError][(m).MixedProjectFacetError] for the way through.
+
+    UnrankableFacetError
+        `prefer` names a facet no tied candidate can answer for.
+
     """
     satisfied: dict[GroupKey, Solution] = {}
     unsatisfied: dict[ExplanationStatusNotOk, dict[GroupKey, UnsolvedGroup]] = {
@@ -795,8 +1141,9 @@ def solve(requirement: Requirement, catalogue: Catalogue) -> SolveResult:
         ExplanationStatusNotOk.AMBIGUOUS: {},
     }
 
+    facets = group_facets(requirement)
     for group_values in _group_values(requirement, catalogue):
-        group_dict = dict(zip(requirement.group_by, group_values, strict=True))
+        group_dict = dict(zip(facets, group_values, strict=True))
         key: GroupKey = tuple(group_dict.items())
         subject = _describe_group(group_dict)
         ctx = _Context(requirement=requirement, catalogue=catalogue, group=group_dict)

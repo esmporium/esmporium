@@ -28,7 +28,7 @@ def get_single_value_columns_from_doc(
     Read the single-valued facet columns of one document
 
     This is the shared workhorse of the result parsers:
-    every [`DatasetFacets`][esmporium.search.result_parsing.DatasetFacets]
+    every [DatasetFacets][esmporium.search.result_parsing.DatasetFacets]
     column except those in `exclude` is read as a scalar via
     [search_api.read_facet][esmporium.search.apis.SearchAPI.read_facet].
     Because `read_facet` raises on a multi-valued field,
@@ -58,7 +58,7 @@ def get_single_value_columns_from_doc(
     -------
     :
         The value of each read column, keyed by
-        [`DatasetFacets`][esmporium.search.result_parsing.DatasetFacets] column name.
+        [DatasetFacets][esmporium.search.result_parsing.DatasetFacets] column name.
 
         A column the project has no API name for (e.g. CMIP5 has no `grid_label`) is left
         out entirely, so the model's default applies rather than an explicit `None`.

@@ -1,7 +1,7 @@
 """
 Test the shared machinery for reporting a response we cannot read
 
-The point of [`read_response_path`][esmporium.search.apis.read_response_path] is the
+The point of [read_response_path][esmporium.search.apis.read_response_path] is the
 message it produces, not the lookup: a bare `KeyError` already does the lookup. So
 these pin the message, path by path, because that message is the whole feature.
 

@@ -18,6 +18,7 @@ from esmporium.query import (
 )
 from esmporium.requirements import (
     AllOf,
+    Cardinality,
     ConflictingFacetsError,
     DuplicateRoleError,
     EmptyLeafQueryError,
@@ -381,7 +382,7 @@ def a_requirement(**overrides) -> Requirement:
         "where": Query(reporting_interval="mon"),
         "group_by": ("model", "variant_label", "experiment"),
         "prefer": {"grid_label": ("gn", "gr")},
-        "cardinality": "one",
+        "cardinality": Cardinality.ONE,
         **overrides,
     }
 
@@ -405,7 +406,7 @@ def test_round_trip():
         pytest.param({"name": "another-analysis"}, id="name"),
         pytest.param({"group_by": ("model",)}, id="group_by"),
         pytest.param({"prefer": {"grid_label": ("gr",)}}, id="prefer"),
-        pytest.param({"cardinality": "all"}, id="cardinality"),
+        pytest.param({"cardinality": Cardinality.ALL}, id="cardinality"),
         pytest.param({"where": Query(reporting_interval="day")}, id="where"),
     ],
 )
