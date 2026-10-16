@@ -12,7 +12,7 @@ Until now there were two plans:
 - the requirements track, numbered `R0` … `R13`, which lived in
   [esmporium-processing/PLAN-REQUIREMENTS-TO-ESMPORIUM.md][plan-req]
 
-[plan-req]: https://github.com/esmporium/esmporium-processing/blob/main/PLAN-REQUIREMENTS-TO-ESMPORIUM.md
+[plan-req]: https://github.com/esmporium/esmporium-processing/blob/plan/PLAN-REQUIREMENTS-TO-ESMPORIUM.md
 
 The two tracks have now met. A `Requirement` is
 what you search for (`search(requirement)`), what you compile into a search plan
