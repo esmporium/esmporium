@@ -588,6 +588,14 @@ def matches(query: QueryProtocol, entry: CatalogueEntry) -> bool:
 # `test_a_group_whose_other_leaf_is_retracted_becomes_unsatisfied` in
 # `tests/integration/requirements/test_search_to_solve_recorded.py` are what pin the
 # current behaviour, and are the tests to re-read when this moves.
+#
+# When we do this, also consider whether not retracted
+# should just become something we express via preference,
+# rather than requiring its own special 'VersionFilter' concept
+# (thinking about it now, it is kind of special so having it as a filter,
+# or a constraint when we get them, is better than as a preference I think
+# (unlike versions, which are more naturally expressed as preferences,
+# but could also be constraints I guess))
 
 
 class VersionFilter(str, Enum):
@@ -695,6 +703,12 @@ class InMemoryCatalogue:
     [esmporium.db.DatabaseCatalogue][], because retraction is something stored versions
     have and written-down entries do not.
     """
+
+    # When we come back to handling VersionFilter more carefully,
+    # add the concept of version to this catalogue.
+    # We don't want to have to pull out an entire DatabaseCatalogue
+    # to be able to test whether our logic around picking latest versions,
+    # second-latest, non-retracted etc. works
 
     entries: tuple[CatalogueEntry, ...]
     """The datasets available"""

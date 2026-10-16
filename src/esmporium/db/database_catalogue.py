@@ -263,10 +263,11 @@ def _canonical_name_for(
 # the id is the dataset id alone) gives both index mirrors the *same* `esgf_doc_id`, so
 # the second is deduped away by `_get_or_create_raw_doc` and never stored -- whichever
 # mirror arrived first is the only description there will ever be, and re-searching
-# cannot repair it because the dedupe key matches. For ESGF-NG the east and west
-# fixtures in `tests/test-data/search/` differ by eleven property names, so this is
-# real rather than theoretical. Whether that dedupe is right is an open question, not
-# a settled decision.
+# cannot repair it because the dedupe key matches. For ESGF-NG CMIP6, the east and
+# west fixtures in `tests/test-data/search/` differ by eleven property names, so this
+# is real rather than theoretical. (As of 2026-10-15, this only applies to CMIP6:
+# the CMIP7 documents agree on their facets.) Whether that dedupe is right is an open
+# question, not a settled decision.
 #
 # There is no sensible way around the disagreement itself on our side. The APIs should
 # not disagree and we have no third source to arbitrate with; picking a winner by node,

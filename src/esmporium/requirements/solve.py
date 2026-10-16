@@ -212,7 +212,6 @@ class UnrankableFacetError(ValueError):
         )
 
 
-# @Claude is this note below still necessary?
 # A note for developers: a `NotImplementedError` rather than a `ValueError`, because
 # the requirement is a fair thing to want and the answer is "not yet" rather than "no".
 # Grouping CMIP5 by `product` is right, and grouping CMIP5 *and* CMIP6 by it has an
@@ -1030,28 +1029,16 @@ def _check_project_facets_are_shared(
             raise MixedProjectFacetError([facet], field_name, knowing, len(candidates))
 
 
-# A note for developers: grouping is project-blind. This walks the candidates of every
-# leaf and asks each for its `group_by` values; it never looks at `entry.project`, and
-# neither does [_in_group][(m)._in_group]. That is fine for a facet every project has
-# and surprising for one only some do, so it is worth spelling out.
-#
-#     group_by=("product",) over a catalogue holding CMIP5 and CMIP6
-#       -> real groups for the CMIP5 rows ("output1", "output2", ...)
-#          plus ONE group keyed `product=None` holding every CMIP6 row,
-#          because CMIP6 has no `product` and `facet` answers `None`
-#       -> and no error, because the rule below is "raise only if *nothing* records it"
-#          and the CMIP5 rows did
-#
-# That is the honest answer to the question as asked, and the fix needs nothing from
-# us: `project` is a column, so `group_by=("project", "product")` separates them
-# cleanly and costs nothing.
-#
-# Making grouping project-aware -- refusing a facet which only some of the projects in
-# play name -- would need the solver to know which projects are in play, which it has
-# no way to learn today. A requirement need not set `project` at all, and the
-# catalogue is not asked which projects it holds. Adding that is a change of its own:
-# it means either a new method on [Catalogue][esmporium.requirements.Catalogue] or
-# reading `project` off the leaves and falling back when they do not set it.
+# A note for developers: grouping never looks at `entry.project`,
+# and neither does [_in_group][(m)._in_group].
+# Mixing projects is instead caught by what the candidates can answer:
+# `group_by=("product",)` over CMIP5 and CMIP6 raises
+# [MixedProjectFacetError][(m).MixedProjectFacetError],
+# because only the CMIP5 candidates record `product`
+# (see the note above that class for why the test is
+# what the candidates answer rather than which projects they come from).
+# `group_by=("project", "product")` is the way through,
+# and costs nothing because `project` is a column.
 def _group_values(
     requirement: Requirement, catalogue: Catalogue
 ) -> list[tuple[str | None, ...]]:

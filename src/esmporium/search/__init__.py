@@ -2,19 +2,13 @@
 Searching ESGF
 
 [search][esmporium.search.search] takes a
-[Requirement][esmporium.requirements.Requirement] -- what an analysis needs -- and
-searches for every query it asks for. Each of those queries may be written in
-whichever query style suits the user (see [esmporium.query][]), and search results are
-(will be) automatically translated into the database (see [esmporium.db][]).
-
+[Requirement][esmporium.requirements.Requirement] and searches based on it.
 Working out which queries a requirement asks for is
-[to_search_plan][esmporium.search.to_search_plan], and splitting those across the
-projects they name is [plan_sub_searches][esmporium.search.plan_sub_searches]. Both
-live here rather than with the requirement, because deciding which query class a
-project uses is a choice made at search time.
-
-[search_single_project][esmporium.search.search_single_project] is the layer below:
-one query, one project, no requirement involved.
+[to_search_plan][esmporium.search.to_search_plan]'s job,
+and splitting those into various searches is
+[plan_sub_searches][esmporium.search.plan_sub_searches]'s job.
+If desired, search results can be automatically written into the database
+(see [esmporium.db][]).
 """
 
 from esmporium.search.apis import (
