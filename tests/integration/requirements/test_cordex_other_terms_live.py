@@ -1,20 +1,11 @@
 """
-The `other_terms` escape hatch, run end to end against the live ESGF APIs
+Testing CORDEX, an unmodelled project, run end to end against the live ESGF APIs
 
-`other_terms` is the one path where a facet travels from the user to the search API
-with no translation and no checking, and since the requirement and search packages
-were joined it is also a path through grouping (`group_by_other_terms`),
-tie-breaking (`prefer_other_terms`) and matching. Each hop is unit-tested on its own.
-Nothing else runs the whole length of it against live data, which is what this does.
-
-CORDEX is the test case because it is the honest one: `cordex-cmip6:domain_id` and
-`cordex-cmip6:driving_source_id` are real facets that no `Dataset` column holds and
-no query class names, which is exactly the situation `other_terms` exists for. Since
-esmporium registers no CORDEX query class, a CORDEX document models nothing
-(`CatalogueEntry.project_facets` is empty), so the facets grouped and ranked on below
+CORDEX is the test because it is a projext that doesn't match our `Dataset` columns
+and because there are facets that will go through `other_terms`, the escape hatch.
+Since esmporium registers no CORDEX query class, a CORDEX document models nothing
+(`CatalogueEntry.project_facets` is empty), so the facets grouped and ranked on
 cannot be answered by a modelled path and these tests cannot pass by accident.
-
-Two things to know before reading on.
 
 **The naming table below is a test-local claim, not esmporium's position on how CORDEX
 is modelled.** CORDEX is not a project esmporium supports: it is absent from
@@ -23,17 +14,7 @@ is modelled.** CORDEX is not a project esmporium supports: it is absent from
 project-to-query mapping, which is what a user would have to do today and what the
 docstring of `PROJECT_QUERY_MAP_DEFAULT` points at ("to search a project we do not
 know about yet"). So these tests also check, incidentally, that those injection seams
-work as advertised. Two lines of the table had to be decided rather than read off the
-documents, and are commented where they appear; if CORDEX ever becomes a project we
-support, that is where the decision belongs and this module should be reconciled with
-it rather than treated as precedent.
-
-**One test is here to keep the failure modes apart.**
-`test_our_cordex_naming_table_still_reads_a_live_document` asserts the stored row
-directly and comes first, so that a red run can be read: if it is the one which failed,
-our table disagrees with the archive; if it passed and a later one failed, the
-`other_terms` path is at fault. Its own docstring says which half of that it covers and
-which half the parser already announces for us.
+work as advertised.
 """
 
 from __future__ import annotations
@@ -95,10 +76,6 @@ is why `STACFacadeParameters` needs neither of its converters overridden here.
 HOST = "search.east.esgf.io"
 """
 The one ESGF-NG deployment with CORDEX-CMIP6 in quantity
-
-`search.west.esgf.io` carries some too, so adding it as a fallback is one more facade
-if we ever want it. NCI's Solr has none: it serves only the older, CMIP5-driven
-`CORDEX`, whose facet names carry no prefix.
 """
 
 
@@ -131,27 +108,15 @@ class ESGFNGCordexCMIP6ParametersQueryStyle(BaseModel):
     frequency: Annotated[FacetValues, QueryFacet("reporting_interval")] = ()
     """See [Dataset.reporting_interval][esmporium.db.schema.Dataset.reporting_interval]."""  # noqa: E501
 
-    # Decided, not read off the documents. CORDEX-CMIP6 has no CMOR table concept and
-    # `processing_id` is required and non-null, so something has to answer for it.
-    # `version_realization` is the nearest "which processing of this data is this"
-    # label: its sibling field `version_realization_info` reads e.g. "CanRCM5-SN with
-    # runtime bias correction".
-    #
-    # Note what this choice does *not* affect, because it is easy to assume otherwise:
-    # whether two rows are the same dataset. `DATASET_IDENTITY_INDEX` includes
-    # `id_project_specific`, which for a STAC document is `properties.title` and
-    # already carries the version realization, so a model's `v1-r1` and `v1-r2` stay
-    # two rows however this is mapped. The choice is therefore about whether the
-    # column means anything, not about identity.
+    # CORDEX-CMIP6 has no concept of CMOR table, and `processing_id` is required
+    # non-null, so something has to answer for it. `version_realization` is the
+    # nearest.
     version_realization: Annotated[FacetValues, QueryFacet("processing_id")] = ()
     """See [Dataset.processing_id][esmporium.db.schema.Dataset.processing_id]."""
 
-    # Also decided. No CORDEX-CMIP6 document carries a `grid_label`, but
+    # No CORDEX-CMIP6 document carries a `grid_label`, but
     # `DatasetFacets.grid_label` is required-with-no-default so that a parser has to
-    # *state* the absence rather than forget the facet. `ESGFNGResultParser` has no
-    # CMIP5-style `{"grid_label": None, ...}` base to state it in, so naming the facet
-    # here lets `read_facet` answer `None` for the missing field, which is the one
-    # column allowed to be null.
+    # *state* the absence rather than forget the facet.
     grid_label: Annotated[FacetValues, QueryFacet("grid_label")] = ()
     """See [Dataset.grid_label][esmporium.db.schema.Dataset.grid_label]."""
 
@@ -201,8 +166,7 @@ DRIVING_SOURCE_ID = "cordex-cmip6:driving_source_id"
 The driving global model, spelled as a stored search document spells it
 
 No `Dataset` column holds this and no query class names it, so it is reachable only
-through `other_terms`. The prefix is part of the name: nothing translates these, and
-the ESGF-NG deployments prefix their facets.
+through `other_terms`.
 """
 
 VERSION_REALIZATION = "cordex-cmip6:version_realization"
@@ -308,14 +272,6 @@ def searched(tmp_path_factory):
         pytest.skip("a node did not answer, so it is down or unwell")
 
     if not saved(engine):
-        # A failure rather than a skip, and the check above is why that is safe:
-        # reaching here means the node answered and answered *empty*. The likeliest
-        # reason is ours, and it is the thing this module exists to catch -- an
-        # `other_terms` key spelled wrongly, which is never checked and which an API
-        # reports as a well-formed empty result rather than an error. Dropping the
-        # prefix would do it. If it is not ours, then CORDEX-CMIP6 no longer
-        # publishes monthly `tas` over Europe driven by ERA5, which is also worth
-        # being told rather than passing over.
         pytest.fail(
             f"{HOST} answered and returned no CORDEX-CMIP6 dataset for "
             f"{describe(LEAF_QUERY)}. Either an `other_terms` key is wrong (they are "
@@ -350,16 +306,6 @@ def test_our_cordex_naming_table_still_reads_a_live_document(searched, catalogue
 
     This is here to keep two failure modes apart -- the naming table at the top of
     this module is ours, the archive is not -- and it comes first for that reason.
-
-    It covers the half of that which does not announce itself. A field the table names
-    and the documents have *dropped* needs no help from us: the parser raises a
-    `ValidationError` naming the column before anything is stored, so the whole module
-    errors out with the answer already in the message. What has no such alarm is a
-    field which still exists and no longer means what we assumed -- a `processing_id`
-    that stopped discriminating, a `grid_label` that appeared -- or a CORDEX query
-    class arriving in `src` and quietly moving facets out of `other_terms`. Those
-    would otherwise surface as a puzzling failure in a grouping assertion three tests
-    down.
     """
     engine, _ = searched
     rows = saved(engine)
@@ -390,8 +336,7 @@ def test_our_cordex_naming_table_still_reads_a_live_document(searched, catalogue
             assert getattr(row, column), (
                 f"{blame} {column!r} came back empty for {row.id_project_specific!r}."
             )
-        # The one column allowed to be null, and it has to be *stated* as null:
-        # see the comment on `grid_label` in the table above.
+        # The one column allowed to be null, and it has to be *stated* as null
         assert row.grid_label is None, (
             f"{blame} CORDEX-CMIP6 has no grid label, yet {row.grid_label!r} was "
             f"stored for {row.id_project_specific!r}."
@@ -424,12 +369,6 @@ def test_other_terms_constrain_a_live_search_and_reach_the_catalogue(
 ):
     """
     `other_terms` filter a live search, and come back keyed as the documents key them
-
-    The request half and the read half of the escape hatch, in one test. The request
-    half is proven by the search having been constrained at all: `domain_id` and
-    `driving_source_id` are the only thing narrowing this slice beyond monthly `tas`,
-    and the fixture fails loudly if they came back empty. The read half is that the
-    values are in `other_terms`, under the document's own prefixed spelling.
     """
     _, outcomes = searched
 
@@ -459,11 +398,6 @@ def test_other_terms_constrain_a_live_search_and_reach_the_catalogue(
 def test_an_other_terms_facet_reaches_the_solver_group_key(searched, catalogue):
     """
     A facet only a search document knows defines a group
-
-    The assertion this module was written for. `model` is a column, so grouping on it
-    proves nothing new; `cordex-cmip6:driving_source_id` is held by no column and
-    named by no query class, so for it to appear in a group key with a real value it
-    has to have been read back out of a stored search document.
     """
     req = a_requirement(
         group_by=("model",),
@@ -535,11 +469,6 @@ def test_prefer_other_terms_breaks_a_tie(catalogue):
     version realization. The proof is the difference: if `prefer_other_terms` were
     ignored -- the failure this exists to catch, since nothing checks these names --
     the ambiguous groups would be identical both times.
-
-    Grouped by regional model, which is what makes the ties real rather than
-    contrived: two of the regional models here publish the same ERA5-driven run as
-    both `v1-r1` and `v1-r2`, so their groups hold two candidates and nothing in
-    `group_by` can separate them.
     """
     preferred = "v1-r1"
     group_by_other_terms = (DRIVING_SOURCE_ID,)
