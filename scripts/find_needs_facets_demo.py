@@ -1,11 +1,5 @@
 """
-What `needs_facets` is worth: the same lookups, with and without the documents
-
-Sits beside `requirements_solve_demo.py`, which shows what the solver *is*. This shows
-what one part of it *costs*, because the answer is not obvious: a
-[CatalogueEntry][esmporium.requirements.CatalogueEntry] is built from a `Dataset` row
-and from that dataset's stored search documents, and the row is already in hand while
-the documents are a second query and a JSON parse each.
+What `needs_facets` is worth: the same lookups, with and without the search documents
 
 A requirement which names nothing a document holds -- the common shape, grouping on
 `model` and `variant_label` and preferring on `grid_label` -- needs none of that work,
@@ -85,11 +79,6 @@ GREGORY = requirement(
 )
 """
 The requirement being solved, named only in facets which are columns
-
-That is the point rather than a convenience: every facet it mentions is a column of
-`Dataset`, so nothing it does needs a document opened. A requirement which grouped on
-`cordex-cmip6:driving_source_id` would need every document read, and should: the
-saving is in not reading what nobody asked for, not in reading less than was asked for.
 """
 
 
