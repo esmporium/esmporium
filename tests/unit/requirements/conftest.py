@@ -21,17 +21,29 @@ def make_entry(get_dataset_kwargs):
     Adding a facet to the model therefore does not mean editing these tests.
 
     The factory takes the entry's `id` and, optionally, `project_facets`,
-    `other_terms` and any facet to override. `id` also seeds `id_project_specific`,
-    so distinct IDs give distinct datasets unless a test deliberately says otherwise.
+    `other_terms`, `facets_loaded` and any facet to override. `id` also seeds
+    `id_project_specific`, so distinct IDs give distinct datasets unless a test
+    deliberately says otherwise.
+
+    `facets_loaded` stands for an entry a lookup built for only some facets, and is
+    given exactly as the field holds it: `None`, the default, is an entry which loaded
+    everything.
     """
 
     def factory(
-        entry_id, *, project_facets=None, other_terms=None, label=None, **facets
+        entry_id,
+        *,
+        project_facets=None,
+        other_terms=None,
+        facets_loaded=None,
+        label=None,
+        **facets,
     ):
         return CatalogueEntry(
             id=entry_id,
             project_facets={} if project_facets is None else project_facets,
             other_terms={} if other_terms is None else other_terms,
+            facets_loaded=(None if facets_loaded is None else frozenset(facets_loaded)),
             **get_dataset_kwargs(
                 f"entry-{entry_id}" if label is None else label, **facets
             ),

@@ -162,7 +162,7 @@ Steps 1 and 2 come first because they are small and because step 1 covers a path
 (`other_terms`) that steps 3–5 will lean on.
 
 ## 1. CORDEX integration test: `other_terms` from search to solve
-
+DONE: See PR #57
 *New step.*
 
 `other_terms` is the one path where a facet travels from the user to the search API
@@ -193,6 +193,8 @@ constrained only through `other_terms` cannot become SQL, so it pulls every row 
 versions filter allows, and every stored document with it.
 
 ## 2. Make `find` ~6x cheaper (`needs_facets`)
+
+DONE: See PR #58
 
 *New step.* The note this comes from is in
 `src/esmporium/db/database_catalogue.py`, above `_documents_by_dataset`:

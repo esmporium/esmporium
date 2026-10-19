@@ -15,6 +15,7 @@ import json
 import pytest
 from sqlmodel import Session
 
+from esmporium.datasets import DATASET_FACET_COLUMNS
 from esmporium.db import (
     DatabaseCatalogue,
     UnknownVersionFilterError,
@@ -33,6 +34,7 @@ from esmporium.requirements import (
     Catalogue,
     CatalogueEntry,
     InMemoryCatalogue,
+    UnloadedFacetError,
     UnrecordedFacetError,
     VersionFilter,
     all_of,
@@ -675,6 +677,134 @@ def test_registering_only_one_of_the_two_mappings_still_refuses(
         catalogue.find(Query(variable="tas"))
 
     assert "verbatim_normalisers" in str(excinfo.value)
+
+
+# ------------------------------------------------------------------------- needs_facets
+
+
+def test_naming_only_columns_leaves_the_documents_unread(stored_in_our_own_format):
+    """
+    A lookup which wants nothing but columns does not open a stored document
+    """
+    catalogue = DatabaseCatalogue(stored_in_our_own_format)
+
+    (entry,) = catalogue.find(Query(variable="tas"), needs_facets=("model",))
+
+    assert entry.id_project_specific == "one_ps"
+    # The columns come whether or not they were named, because they are the row.
+    assert entry.facets_loaded == frozenset(DATASET_FACET_COLUMNS)
+
+
+def test_naming_a_facet_only_a_document_knows_reads_them(stored_in_our_own_format):
+    """The same store, asked for `realm`, has to go to the documents"""
+    with pytest.raises(UnknownRawDocFormatTagError, match=OUR_OWN_TAG):
+        DatabaseCatalogue(stored_in_our_own_format).find(
+            Query(variable="tas"), needs_facets=("model", "realm")
+        )
+
+
+def test_the_querys_own_facets_are_read_whatever_was_named(stored_in_our_own_format):
+    """
+    Matching comes first, so a facet the query names is read regardless
+    """
+    with pytest.raises(UnknownRawDocFormatTagError, match=OUR_OWN_TAG):
+        DatabaseCatalogue(stored_in_our_own_format).find(
+            Query(variable="tas", realm="atmos"), needs_facets=("model",)
+        )
+
+
+def test_a_lean_entry_refuses_a_facet_nobody_named(engine, store):
+    """
+    The two halves together: not read, and said so when asked
+
+    The same dataset, read twice. What the full entry answers for `realm` is what the
+    lean one refuses to guess at.
+    """
+    store("one", project="CMIP6", variable="tas", versions=live([{"realm": ["atmos"]}]))
+    catalogue = DatabaseCatalogue(engine)
+
+    (full,) = catalogue.find(Query(variable="tas"))
+    (lean,) = catalogue.find(Query(variable="tas"), needs_facets=("model",))
+
+    assert full.facet("realm") == "atmos"
+    assert full.facets_loaded is None
+    with pytest.raises(UnloadedFacetError, match="realm"):
+        lean.facet("realm")
+
+
+def test_skipping_the_documents_does_not_change_a_solve(
+    engine, store, reads_everything
+):
+    """
+    The same requirement gives the same answer whether or not the documents were read
+
+    This is the test that stops the optimisation changing answers. The requirement is
+    built to reach all three outcomes -- one group satisfied, one missing a dataset,
+    one ambiguous -- because each is produced by a different part of the solver and
+    each carries its own explanation.
+
+    The ambiguity here is between two candidates which differ in `grid_label`, a
+    column. Two which differ *only* in a facet no column holds are the one case where
+    the explanation legitimately differs, and
+    `test_an_ambiguity_among_lean_candidates_says_what_was_read` in
+    `tests/unit/requirements/test_solve.py` is where that is pinned.
+    """
+    rows = [
+        ("tas-a", {"model": "A", "variable": "tas", "grid_label": "gn"}),
+        ("rlut-a", {"model": "A", "variable": "rlut", "grid_label": "gn"}),
+        # B has both variables, but two grids for `tas` and nothing to choose between
+        # them, so the group is ambiguous rather than satisfied.
+        ("tas-b-gn", {"model": "B", "variable": "tas", "grid_label": "gn"}),
+        ("tas-b-gr", {"model": "B", "variable": "tas", "grid_label": "gr"}),
+        ("rlut-b", {"model": "B", "variable": "rlut", "grid_label": "gn"}),
+        # C has no `tas` at all, so it is missing a dataset. Unsatisfied beats
+        # ambiguous, which is why B needs its `rlut`.
+        ("rlut-c", {"model": "C", "variable": "rlut", "grid_label": "gn"}),
+    ]
+    for label, facets in rows:
+        store(label, project="CMIP6", versions=live([{"realm": ["atmos"]}]), **facets)
+
+    req = requirement(
+        name="needs-tas-and-rlut",
+        tree=all_of(
+            leaf(Query(variable="tas"), "tas"),
+            leaf(Query(variable="rlut"), "rlut"),
+        ),
+        group_by=("model",),
+        where=Query(project="CMIP6"),
+    )
+
+    lean = solve(req, DatabaseCatalogue(engine))
+    full = solve(req, reads_everything(DatabaseCatalogue(engine)))
+
+    # Every group reached, in the same bucket.
+    assert set(lean.satisfied) == set(full.satisfied)
+    assert set(lean.unsatisfied) == set(full.unsatisfied)
+    assert set(lean.ambiguous) == set(full.ambiguous)
+    # Not vacuous: all three buckets were exercised.
+    assert len(lean.satisfied) == 1
+    assert len(lean.unsatisfied) == 1
+    assert len(lean.ambiguous) == 1
+    # The same datasets chosen, named the way both solves agree on.
+    assert {
+        key: {
+            role: tuple(entry.id for entry in entries)
+            for role, entries in group.roles.items()
+        }
+        for key, group in lean.satisfied.items()
+    } == {
+        key: {
+            role: tuple(entry.id for entry in entries)
+            for role, entries in group.roles.items()
+        }
+        for key, group in full.satisfied.items()
+    }
+    # And the same explanation, word for word.
+    assert lean.explain() == full.explain()
+    # Not vacuous: the two solves really did read different amounts. Without this the
+    # test would still pass if `solve` stopped naming what it reads.
+    assert lean.satisfied[(("model", "A"),)].one("tas").facets_loaded is not None
+    assert full.satisfied[(("model", "A"),)].one("tas").facets_loaded is None
 
 
 # ------------------------------------------------------------- the protocol itself

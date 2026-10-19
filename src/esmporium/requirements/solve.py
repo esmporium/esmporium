@@ -37,6 +37,8 @@ from esmporium.query import QueryProtocol, project_specific_facet_names
 from esmporium.requirements.catalogue import (
     Catalogue,
     CatalogueEntry,
+    VersionFilter,
+    asked_facets,
     set_facets,
 )
 from esmporium.requirements.tree import (
@@ -549,7 +551,13 @@ class _Context:
     """What stays the same while one group is evaluated"""
 
     requirement: Requirement
-    catalogue: Catalogue
+    found: Mapping[str, tuple[CatalogueEntry, ...]]
+    """
+    Role path -> its leaf's candidates, before grouping
+
+    Built once by [_candidates_by_role][(m)._candidates_by_role], because a leaf's
+    candidates are the same in every group.
+    """
     group: dict[str, str | None]
 
 
@@ -669,6 +677,25 @@ def _ambiguous_message(candidates: Sequence[CatalogueEntry], ctx: _Context) -> s
     differing = _differing_facets(candidates)
     if not differing:
         listed = ", ".join(_describe_entry(candidate) for candidate in candidates)
+
+        # Whether anything was left unread decides which of these two is true, and
+        # they are not variations on one message. A solve which read everything has
+        # found a hole in our data model; a solve which was told to read only some
+        # facets has simply not looked, and pointing that at the issue tracker would
+        # send us bug reports about an optimisation working as intended.
+        if any(candidate.facets_loaded is not None for candidate in candidates):
+            named = readable_list(sorted(facets_read(ctx.requirement)))
+
+            return (
+                f"{len(candidates)} candidates which agree on every facet this solve "
+                f"read, so nothing in hand can choose between them: {listed}. "
+                f"This requirement names {named}, so nothing else was read: a facet "
+                "which tells these apart may exist and simply not have been looked "
+                "at. Name it in the requirement to have it read -- in "
+                "`group_by_other_terms` or `prefer_other_terms` for a facet only a "
+                "search document knows -- or use `cardinality=Cardinality.ALL` to "
+                "keep them all."
+            )
 
         # The issue tracker rather than advice, because a catalogue backed by our
         # database cannot get here: ingestion refuses two datasets which agree on
@@ -833,9 +860,10 @@ def _in_group(entry: CatalogueEntry, ctx: _Context) -> bool:
 def _eval_leaf(leaf: Leaf, ctx: _Context, role_prefix: str) -> NodeResult:
     path = f"{role_prefix}{leaf.role}"
     query = effective_query(leaf, ctx.requirement.where)
-    found = ctx.catalogue.find(query, versions=ctx.requirement.versions)
 
-    candidates = [entry for entry in found if _in_group(entry, ctx)]
+    # The candidates were found once, before any group was evaluated; a group is a
+    # filter applied to them here rather than part of the question asked for them.
+    candidates = [entry for entry in ctx.found[path] if _in_group(entry, ctx)]
     if not candidates:
         return NodeResultNotOk(
             ExplanationStatusNotOk.UNSATISFIED,
@@ -964,6 +992,137 @@ def group_facets(requirement: Requirement) -> tuple[str, ...]:
     return (*requirement.group_by, *requirement.group_by_other_terms)
 
 
+def facets_read(requirement: Requirement) -> frozenset[str]:
+    """
+    Get every facet a solve of this requirement will ask an entry about
+
+    What [needs_facets][esmporium.requirements.Catalogue.find] wants: name these and a
+    catalogue can leave everything else unread, which for
+    [esmporium.db.DatabaseCatalogue][] means not opening the stored search documents at
+    all.
+
+    Parameters
+    ----------
+    requirement
+        Requirement being solved
+
+    Returns
+    -------
+    :
+        The facet names, under the spelling the requirement used
+
+        Facets we model under their canonical names, and the escape-hatch ones exactly
+        as they were written, which is how a catalogue holds the two and so how it has
+        to be asked for them.
+
+    Examples
+    --------
+    >>> from esmporium.query import Query
+    >>> from esmporium.requirements import leaf, requirement
+    >>> req = requirement(
+    ...     name="one",
+    ...     tree=leaf(Query(variable="tas"), "tas"),
+    ...     group_by=("model",),
+    ...     prefer={"grid_label": ("gn",)},
+    ... )
+    >>> sorted(facets_read(req))
+    ['grid_label', 'model', 'variable']
+
+    The escape hatches come too, spelled as they were given:
+
+    >>> req = requirement(
+    ...     name="two",
+    ...     tree=leaf(Query(variable="tas"), "tas"),
+    ...     group_by=("model",),
+    ...     group_by_other_terms=("cordex-cmip6:driving_source_id",),
+    ... )
+    >>> sorted(facets_read(req))
+    ['cordex-cmip6:driving_source_id', 'model', 'variable']
+    """
+    named = {
+        *group_facets(requirement),
+        *requirement.prefer,
+        *requirement.prefer_other_terms,
+    }
+    # The leaves' own facets as well, although a lookup matches on those whatever it is
+    # told. Naming them costs nothing and means this is simply "every facet this
+    # requirement mentions", which is a great deal easier to check than a rule about
+    # which of them a catalogue works out for itself.
+    for _, each_leaf in walk_leaves(requirement.tree):
+        named |= set_facets(effective_query(each_leaf, requirement.where)).keys()
+
+    return frozenset(named)
+
+
+_LookupKey = tuple[
+    tuple[tuple[str, tuple[str, ...]], ...],
+    tuple[tuple[str, tuple[str, ...]], ...],
+    VersionFilter,
+]
+"""
+What decides a lookup's answer: the modelled facets asked, the literal ones, and
+`versions`
+
+The two groups of facets are kept apart rather than flattened because a facet we model
+and the same name in `other_terms` are different questions -- see the note above
+[Catalogue][esmporium.requirements.Catalogue] -- so two leaves asking them must not
+share an answer.
+"""
+
+
+def _candidates_by_role(
+    requirement: Requirement, catalogue: Catalogue
+) -> dict[str, tuple[CatalogueEntry, ...]]:
+    """
+    Ask the catalogue once per distinct question, and map each leaf to its answer
+
+    A leaf's candidates do not depend on the group: the group is a filter applied to
+    them afterwards, in [_in_group][(m)._in_group]. So the lookup a leaf needs is the
+    same in every group, and one requirement needs one lookup per distinct question
+    rather than one per leaf per group.
+
+    Parameters
+    ----------
+    requirement
+        Requirement being solved
+
+    catalogue
+        Datasets available
+
+    Returns
+    -------
+    :
+        Role path -> the datasets its leaf's query matches, before grouping
+
+        Two leaves asking the same question share one answer, and so one lookup.
+
+    Raises
+    ------
+    ClashingFacetsError
+        A leaf's effective query sets the same facet in more than one place
+    """
+    needs = facets_read(requirement)
+
+    found: dict[str, tuple[CatalogueEntry, ...]] = {}
+    answers: dict[_LookupKey, tuple[CatalogueEntry, ...]] = {}
+    for role_prefix, each_leaf in walk_leaves(requirement.tree):
+        query = effective_query(each_leaf, requirement.where)
+        asked = asked_facets(query)
+        key: _LookupKey = (
+            tuple(sorted(asked.modelled.items())),
+            tuple(sorted(asked.literal.items())),
+            requirement.versions,
+        )
+        if key not in answers:
+            answers[key] = catalogue.find(
+                query, versions=requirement.versions, needs_facets=needs
+            )
+
+        found[f"{role_prefix}{each_leaf.role}"] = answers[key]
+
+    return found
+
+
 def _unanswerable_facets(
     facets: Iterable[str], candidates: Sequence[CatalogueEntry]
 ) -> list[str]:
@@ -1040,7 +1199,7 @@ def _check_project_facets_are_shared(
 # `group_by=("project", "product")` is the way through,
 # and costs nothing because `project` is a column.
 def _group_values(
-    requirement: Requirement, catalogue: Catalogue
+    requirement: Requirement, found: Mapping[str, tuple[CatalogueEntry, ...]]
 ) -> list[tuple[str | None, ...]]:
     """
     Discover the groups, as the group facets' values every leaf's candidates take
@@ -1050,8 +1209,9 @@ def _group_values(
     requirement
         Requirement being solved
 
-    catalogue
-        Datasets available
+    found
+        Role path -> its leaf's candidates, as
+        [_candidates_by_role][(m)._candidates_by_role] built them
 
     Returns
     -------
@@ -1073,10 +1233,14 @@ def _group_values(
     """
     facets = group_facets(requirement)
 
+    # One leaf's candidates at a time, duplicates included: a dataset which matches two
+    # leaves is counted once per leaf. That is what the counts in
+    # [UngroupableFacetError][(m).UngroupableFacetError] and
+    # [_check_project_facets_are_shared][(m)._check_project_facets_are_shared] are
+    # counts of, so collapsing them here would change what those say.
     candidates: list[CatalogueEntry] = []
-    for _, leaf in walk_leaves(requirement.tree):
-        query = effective_query(leaf, requirement.where)
-        candidates.extend(catalogue.find(query, versions=requirement.versions))
+    for role_prefix, leaf in walk_leaves(requirement.tree):
+        candidates.extend(found[f"{role_prefix}{leaf.role}"])
 
     if not candidates:
         return []
@@ -1104,6 +1268,17 @@ def _group_values(
 def solve(requirement: Requirement, catalogue: Catalogue) -> SolveResult:
     """
     Solve a requirement against a catalogue, group by group
+
+    The catalogue is asked once per distinct question the requirement contains, before
+    the first group is evaluated, and told which facets will be read
+    ([facets_read][(m).facets_read]). Two things follow which a caller can see. One
+    solve answers about a single state of the catalogue, so a search saving datasets
+    while it runs is picked up by the next solve rather than part-way through this one.
+    And the entries it hands back answer for the facets this requirement named; asking
+    one about anything else raises
+    [UnloadedFacetError][esmporium.requirements.UnloadedFacetError] rather than
+    answering `None`, which would be indistinguishable from a dataset that records no
+    value.
 
     Parameters
     ----------
@@ -1141,12 +1316,14 @@ def solve(requirement: Requirement, catalogue: Catalogue) -> SolveResult:
         ExplanationStatusNotOk.AMBIGUOUS: {},
     }
 
+    found = _candidates_by_role(requirement, catalogue)
+
     facets = group_facets(requirement)
-    for group_values in _group_values(requirement, catalogue):
+    for group_values in _group_values(requirement, found):
         group_dict = dict(zip(facets, group_values, strict=True))
         key: GroupKey = tuple(group_dict.items())
         subject = _describe_group(group_dict)
-        ctx = _Context(requirement=requirement, catalogue=catalogue, group=group_dict)
+        ctx = _Context(requirement=requirement, found=found, group=group_dict)
 
         evaluated = _eval_tree(requirement.tree, ctx, role_prefix="")
         if isinstance(evaluated, NodeResultOk):

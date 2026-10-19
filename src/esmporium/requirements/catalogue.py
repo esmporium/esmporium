@@ -8,8 +8,8 @@ requirement and works out which datasets satisfy it, and which are missing.
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
+from collections.abc import Collection, Iterable, Mapping
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Protocol
 
@@ -44,6 +44,14 @@ from esmporium.query import (
 # What is left is the one case which really is a caller mistake:
 # [facet_filters][esmporium.db.facet_filters] builds SQL and is handed something which
 # is not a column, which means the column/non-column split one level up has gone wrong.
+#
+# There is a third in the family, [UnloadedFacetError][(m).UnloadedFacetError] below,
+# and the three divide cleanly by what they are about. `UnaskableFacetError` is about
+# *names*: no query style has a parameter for this one. This one is about *recorded
+# values*: no stored dataset records this facet, so there is nothing to select on.
+# `UnloadedFacetError` is about *what was read*: the facet may well be recorded, and
+# this entry was built without looking, because whoever asked said they would not need
+# it.
 class UnrecordedFacetError(ValueError):
     """Raised when an entry does not know a facet it was asked about."""
 
@@ -71,6 +79,43 @@ class UnrecordedFacetError(ValueError):
             "(e.g. `activity`, `realm` and `resolution`), "
             "the catalogue has to put it in each entry's `project_facets`; "
             "for a facet only a search document knows, in `other_terms`."
+        )
+
+
+class UnloadedFacetError(ValueError):
+    """Raised when an entry was built without reading the facet it is asked about."""
+
+    def __init__(
+        self, facets: Iterable[str], loaded: Iterable[str], entry_id: int
+    ) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        facets
+            The facets the entry was not built to answer for
+
+        loaded
+            The facets it was built for, i.e. its
+            [CatalogueEntry.facets_loaded][(m).CatalogueEntry.facets_loaded]
+
+        entry_id
+            ID of the entry which was asked
+        """
+        self.facets = tuple(sorted(facets))
+        self.loaded = tuple(sorted(loaded))
+        self.entry_id = entry_id
+        asked = ", ".join(self.facets)
+        super().__init__(
+            f"Entry {entry_id} was not built to answer for {asked}. "
+            f"The facets it was built for are {', '.join(self.loaded)}. "
+            "A lookup was told that only those would be read, so the stored search "
+            "documents, which are where a facet no column holds is recorded, were not "
+            f"read for this entry. Ask the catalogue again with `needs_facets` "
+            f"including {asked}; from a solve, name the facet in the requirement -- in "
+            "a leaf's query, `where`, `group_by`, `group_by_other_terms`, `prefer` or "
+            "`prefer_other_terms` -- and solving will load it."
         )
 
 
@@ -215,6 +260,42 @@ class CatalogueEntry:
     about recording.
     """
 
+    facets_loaded: frozenset[str] | None = None
+    """
+    Which facets this entry was built to answer for, when it was built for only some
+
+    `None` means everything this entry could know was loaded. That is what a lookup
+    which was not told what would be read gives back, and what an entry written down by
+    hand holds, so it is the default.
+
+    A frozenset is the record of a lookup which *was* told
+    ([needs_facets][(m).Catalogue.find]) and so did not read the stored search
+    documents.
+
+    It always contains
+    [DATASET_FACET_COLUMNS][esmporium.datasets.DATASET_FACET_COLUMNS], because those
+    are columns of the row and arrive with it whether or not anybody asked for them.
+    """
+
+    def _check_facet_was_loaded(self, name: str) -> None:
+        """
+        Check that this entry was built to answer for a facet
+
+        Returns nothing: this is here to raise.
+
+        Parameters
+        ----------
+        name
+            Facet to check
+
+        Raises
+        ------
+        UnloadedFacetError
+            This entry was built without reading `name`
+        """
+        if self.facets_loaded is not None and name not in self.facets_loaded:
+            raise UnloadedFacetError([name], self.facets_loaded, self.id)
+
     def facet(self, name: str) -> str | None:
         """
         Get the value of a facet
@@ -241,7 +322,15 @@ class CatalogueEntry:
             document which answered was not one of them -- which depends on which
             index node answered the search, not on the data. See
             [project_facets][(m).CatalogueEntry.project_facets] for both.
+
+        Raises
+        ------
+        UnloadedFacetError
+            This entry was built without reading `name`, i.e. `name` is not in its
+            [facets_loaded][(m).CatalogueEntry.facets_loaded]
         """
+        self._check_facet_was_loaded(name)
+
         modelled = self.modelled_facet(name)
 
         return self.other_terms.get(name) if modelled is None else modelled
@@ -270,7 +359,15 @@ class CatalogueEntry:
         :
             The facet's value, or `None` if this entry has no value for it or does not
             model it
+
+        Raises
+        ------
+        UnloadedFacetError
+            This entry was built without reading `name`, i.e. `name` is not in its
+            [facets_loaded][(m).CatalogueEntry.facets_loaded]
         """
+        self._check_facet_was_loaded(name)
+
         if name in DATASET_FACET_COLUMNS:
             value: str | None = getattr(self, name)
             return value
@@ -291,6 +388,12 @@ class CatalogueEntry:
         -------
         :
             The stored columns, plus whatever keys this entry's `project_facets` carry
+
+            For an entry built for only some facets (see
+            [facets_loaded][(m).CatalogueEntry.facets_loaded]) that is the names it
+            loaded, and asking is not an error: this is a question about names rather
+            than values, and the honest answer to "what can you answer for?" is the
+            short list.
         """
         return frozenset(DATASET_FACET_COLUMNS) | frozenset(self.project_facets)
 
@@ -303,6 +406,10 @@ class CatalogueEntry:
         :
             The stored columns, plus whatever keys this entry's `project_facets` and
             `other_terms` carry
+
+            As with [modelled_facets][(m).CatalogueEntry.modelled_facets], an entry
+            built for only some facets answers with the names it loaded rather than
+            raising.
         """
         return self.modelled_facets() | frozenset(self.other_terms)
 
@@ -651,13 +758,16 @@ class Catalogue(Protocol):
         query: QueryProtocol,
         *,
         versions: VersionFilter = VersionFilter.NOT_RETRACTED,
+        needs_facets: Collection[str] | None = None,
     ) -> tuple[CatalogueEntry, ...]:
         """
         Find every dataset which matches a query
 
-        The two arguments narrow a lookup along two different axes, and neither is a
-        property of the catalogue: `query` says which facet values are acceptable,
-        `versions` says which of a dataset's versions are.
+        The first two arguments narrow a lookup along two different axes, and neither
+        is a property of the catalogue: `query` says which facet values are acceptable,
+        `versions` says which of a dataset's versions are. The third narrows nothing --
+        it says what the answer will be *asked*, so a catalogue can leave unread what
+        nobody will read.
 
         Parameters
         ----------
@@ -673,12 +783,70 @@ class Catalogue(Protocol):
             this can report different values for a facet no column holds. They are
             therefore not subsets of one another.
 
+        needs_facets
+            The facets the caller will ask the entries about
+
+            `None`, the default, means every facet the catalogue can answer for, which
+            is the right answer for a caller who does not know yet what they will read.
+
+            Naming them lets a catalogue skip work. The database-backed one answers for
+            a facet no column holds by reading that dataset's stored search documents,
+            which is the bulk of a lookup, so it can skip reading them altogether when
+            nothing named here needs one. What comes back then records what it was
+            built for in
+            [CatalogueEntry.facets_loaded][(m).CatalogueEntry.facets_loaded], and
+            raises [UnloadedFacetError][(m).UnloadedFacetError] for anything else
+            rather than answering `None` and being mistaken for a dataset which records
+            no value.
+
         Returns
         -------
         :
             Matching datasets, in a stable order
         """
         ...
+
+
+def _narrowed(entry: CatalogueEntry, needs_facets: Collection[str]) -> CatalogueEntry:
+    """
+    Get an entry as a lookup told what would be read would have built it
+
+    Parameters
+    ----------
+    entry
+        Entry to narrow
+
+    needs_facets
+        The facets the caller said they would ask about, i.e. `needs_facets` as
+        [Catalogue.find][(m).Catalogue.find] takes it
+
+    Returns
+    -------
+    :
+        A copy holding only the named facets, and recording that in its
+        [facets_loaded][(m).CatalogueEntry.facets_loaded]
+
+        The columns come too, because they are the row rather than a document. An
+        entry which was already built for only some facets cannot answer for more
+        than it did, so the two sets are intersected rather than the new one replacing
+        the old.
+    """
+    loaded = frozenset(needs_facets) | frozenset(DATASET_FACET_COLUMNS)
+    if entry.facets_loaded is not None:
+        loaded &= entry.facets_loaded
+
+    return replace(
+        entry,
+        project_facets={
+            name: value
+            for name, value in entry.project_facets.items()
+            if name in loaded
+        },
+        other_terms={
+            name: value for name, value in entry.other_terms.items() if name in loaded
+        },
+        facets_loaded=loaded,
+    )
 
 
 @dataclass(frozen=True)
@@ -742,6 +910,7 @@ class InMemoryCatalogue:
         query: QueryProtocol,
         *,
         versions: VersionFilter = VersionFilter.NOT_RETRACTED,
+        needs_facets: Collection[str] | None = None,
     ) -> tuple[CatalogueEntry, ...]:
         """
         Find every dataset which matches a query
@@ -755,10 +924,23 @@ class InMemoryCatalogue:
             Accepted, and makes no difference, for the reason given on the class: these
             entries have no versions for it to choose between.
 
+        needs_facets
+            Honoured, although there is nothing here to skip: these entries are already
+            in memory, so narrowing them saves no work at all.
+
+            It is honoured anyway because this catalogue is what everything built on
+            [Catalogue][(m).Catalogue] is tested against.
+
+            Matching happens first, against the entries as they are held, so a query
+            naming a facet outside `needs_facets` still matches on it.
+
         Returns
         -------
         :
             Matching datasets, in the order they were given to the catalogue
+
+            Narrowed to `needs_facets` when one was given, as `_narrowed` in this
+            module describes.
 
         Raises
         ------
@@ -766,5 +948,9 @@ class InMemoryCatalogue:
             `query` sets the same facet in more than one place
         """
         asked = asked_facets(query)
+        found = tuple(entry for entry in self.entries if matches_facets(asked, entry))
 
-        return tuple(entry for entry in self.entries if matches_facets(asked, entry))
+        if needs_facets is None:
+            return found
+
+        return tuple(_narrowed(entry, needs_facets) for entry in found)

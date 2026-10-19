@@ -348,7 +348,12 @@ CATALOGUE_ENTRY_EXCEPTIONS = {"id": (int, int | None)}
 # puts facets we have no column for into. `project_facets` holds the ones we model,
 # under canonical names; `other_terms` holds the ones only a search document knows,
 # under the document's own spelling.
-CATALOGUE_ENTRY_ONLY_FIELDS = {"project_facets", "other_terms"}
+#
+# `facets_loaded` is a third, and differs from the two mappings in kind rather than in
+# where its values come from: it is not facets at all, it is the record of which facets
+# a lookup read. So it has no column behind it and never will, however many facets
+# `Dataset` grows.
+CATALOGUE_ENTRY_ONLY_FIELDS = {"project_facets", "other_terms", "facets_loaded"}
 
 
 def test_catalogue_entry_mirrors_dataset_columns():
