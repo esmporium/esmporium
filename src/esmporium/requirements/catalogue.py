@@ -939,8 +939,8 @@ class InMemoryCatalogue:
         :
             Matching datasets, in the order they were given to the catalogue
 
-            Narrowed to `needs_facets` when one was given, as
-            [_narrowed][(m)._narrowed] describes.
+            Narrowed to `needs_facets` when one was given, as `_narrowed` in this
+            module describes.
 
         Raises
         ------

@@ -194,6 +194,8 @@ versions filter allows, and every stored document with it.
 
 ## 2. Make `find` ~6x cheaper (`needs_facets`)
 
+DONE: See PR #58
+
 *New step.* The note this comes from is in
 `src/esmporium/db/database_catalogue.py`, above `_documents_by_dataset`:
 
