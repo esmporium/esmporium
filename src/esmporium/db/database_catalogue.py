@@ -39,7 +39,7 @@ from esmporium.search.result_normalisation import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Collection, Mapping
 
     from sqlalchemy import ColumnElement, Engine
 
@@ -277,10 +277,6 @@ def _canonical_name_for(
 # so **if this bites you, please raise an issue at
 # https://github.com/esmporium/esmporium/issues** quoting the dataset and the
 # disagreeing values: we cannot ask upstream for a fix without cases.
-#
-# Note: It is also the
-# one place a future "skip the documents when nothing needs them" filter has to
-# land, which is another reason to keep it a single function rather than two.
 def _facets_from_documents(
     project: str,
     documents: list[tuple[dict[str, Any], str]],
@@ -481,6 +477,7 @@ def to_catalogue_entry(
     dataset: Dataset,
     project_facets: Mapping[str, str | None] | None = None,
     other_terms: Mapping[str, str | None] | None = None,
+    facets_loaded: frozenset[str] | None = None,
 ) -> CatalogueEntry:
     """
     Read a stored dataset row as the solver's view of it
@@ -503,6 +500,13 @@ def to_catalogue_entry(
         The facets only a search document knows, as
         [CatalogueEntry.other_terms][esmporium.requirements.CatalogueEntry.other_terms]
         describes them. If `None`, the entry answers for none of them.
+
+    facets_loaded
+        Which facets this entry was built to answer for, as
+        [CatalogueEntry.facets_loaded][esmporium.requirements.CatalogueEntry.facets_loaded]
+        describes it. `None`, the default, is an entry built from everything there was
+        to read, so it answers `None` for a facet it has no value for rather than
+        refusing the question.
 
     Returns
     -------
@@ -531,6 +535,7 @@ def to_catalogue_entry(
         **{column: getattr(dataset, column) for column in DATASET_FACET_COLUMNS},
         project_facets={} if project_facets is None else dict(project_facets),
         other_terms={} if other_terms is None else dict(other_terms),
+        facets_loaded=facets_loaded,
     )
 
 
@@ -539,6 +544,7 @@ def find_datasets(  # noqa: PLR0913 - one argument per thing a find has to be to
     query: QueryProtocol,
     *,
     versions: VersionFilter = VersionFilter.NOT_RETRACTED,
+    needs_facets: Collection[str] | None = None,
     normalisers: Mapping[str, NormaliseFunc] = DEFAULT_NORMALISERS,
     verbatim_normalisers: Mapping[str, NormaliseFunc] = VERBATIM_NORMALISERS,
     project_query_map: Mapping[str, type[QueryProtocol]] = PROJECT_QUERY_MAP_DEFAULT,
@@ -561,6 +567,10 @@ def find_datasets(  # noqa: PLR0913 - one argument per thing a find has to be to
     versions
         Which of a dataset's versions count. See [VersionFilter][(m).VersionFilter].
 
+    needs_facets
+        The facets the caller will ask the entries about. See
+        [Catalogue.find][esmporium.requirements.Catalogue.find], which this implements.
+
     normalisers
         See [DEFAULT_NORMALISERS][esmporium.search.DEFAULT_NORMALISERS].
 
@@ -577,6 +587,10 @@ def find_datasets(  # noqa: PLR0913 - one argument per thing a find has to be to
     :
         Matching datasets, ordered by [Dataset.id][(m).Dataset], which is the order
         they were first saved in
+
+        Each entry answers for `needs_facets` and for its columns; see
+        [CatalogueEntry.facets_loaded][esmporium.requirements.CatalogueEntry.facets_loaded]
+        for what it does when asked about anything else.
 
     Raises
     ------
@@ -615,34 +629,41 @@ def find_datasets(  # noqa: PLR0913 - one argument per thing a find has to be to
     # the ordering costs nothing (it is the primary key).
     rows = list(session.exec(statement.order_by(col(Dataset.id))))
 
-    # Possible future TODO:
-    # The cost is one fetch plus one JSON parse per stored document per `find`, and it
-    # is the bulk of a `find`: measured over 20,000 datasets with one 57-key Solr
-    # document each, the fetch-and-parse is ~59% of the time and flattening ~25%, so
-    # skipping the documents entirely would be roughly a 6x saving. We cannot skip
-    # them from here, because `Catalogue.find` is given a query and not the
-    # `group_by`/`prefer` which decide what else will be read. Giving it that -- e.g.
-    # `find(query, *, needs_facets=...)` derived from the requirement -- is the
-    # optimisation to reach for, and it is a change to the protocol, so it is not done
-    # here. Note also that `solve` calls `find` once per leaf and then once per leaf
-    # per group, so the repetition matters more than the parse does.
-    documents = _documents_by_dataset(
-        session, [row.id for row in rows if row.id is not None], versions
+    # `None` means the caller did not say what they would read, so everything is read
+    # and the entry answers for everything it could know.
+    facets_loaded = (
+        None
+        if needs_facets is None
+        else frozenset(needs_facets) | frozenset(DATASET_FACET_COLUMNS)
     )
 
-    entries = [
-        to_catalogue_entry(
-            row,
-            *_facets_from_documents(
-                row.project,
-                documents.get(row.id, []) if row.id else [],
-                normalisers,
-                verbatim_normalisers,
-                project_query_map,
-            ),
+    documents_wanted = (
+        facets_loaded is None
+        or matched_on_entry
+        or bool(facets_loaded - frozenset(DATASET_FACET_COLUMNS))
+    )
+
+    if documents_wanted:
+        documents = _documents_by_dataset(
+            session, [row.id for row in rows if row.id is not None], versions
         )
-        for row in rows
-    ]
+
+        entries = [
+            to_catalogue_entry(
+                row,
+                *_facets_from_documents(
+                    row.project,
+                    documents.get(row.id, []) if row.id else [],
+                    normalisers,
+                    verbatim_normalisers,
+                    project_query_map,
+                ),
+            )
+            for row in rows
+        ]
+
+    else:
+        entries = [to_catalogue_entry(row, facets_loaded=facets_loaded) for row in rows]
 
     if not matched_on_entry:
         return tuple(entries)
@@ -722,6 +743,7 @@ class DatabaseCatalogue:
         query: QueryProtocol,
         *,
         versions: VersionFilter = VersionFilter.NOT_RETRACTED,
+        needs_facets: Collection[str] | None = None,
     ) -> tuple[CatalogueEntry, ...]:
         """
         Find every stored dataset which matches a query
@@ -732,10 +754,9 @@ class DatabaseCatalogue:
         question this exists to answer. Use [find_datasets][(m).find_datasets] if you
         do want one transaction across a whole solve.
 
-        [solve][esmporium.requirements.solve] calls this once to discover the groups
-        and once per leaf per group, so a large solve issues a good many identical
-        queries. That is fine on SQLite and is the thing to look at first if it is
-        ever not.
+        [solve][esmporium.requirements.solve] calls this once per distinct question a
+        requirement asks, so one solve reads this database once per leaf however many
+        groups it finds, and sees one state of it throughout.
 
         Parameters
         ----------
@@ -744,6 +765,13 @@ class DatabaseCatalogue:
 
         versions
             Which of a dataset's versions count.
+
+        needs_facets
+            The facets the caller will ask the entries about. See
+            [Catalogue.find][esmporium.requirements.Catalogue.find].
+
+            Naming nothing but columns is what makes a lookup cheap here: the stored
+            search documents are not opened at all.
 
         Returns
         -------
@@ -763,6 +791,7 @@ class DatabaseCatalogue:
                 session,
                 query,
                 versions=versions,
+                needs_facets=needs_facets,
                 normalisers=self.normalisers,
                 verbatim_normalisers=self.verbatim_normalisers,
                 project_query_map=self.project_query_map,

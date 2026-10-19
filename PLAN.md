@@ -162,7 +162,7 @@ Steps 1 and 2 come first because they are small and because step 1 covers a path
 (`other_terms`) that steps 3–5 will lean on.
 
 ## 1. CORDEX integration test: `other_terms` from search to solve
-
+DONE: See PR #57
 *New step.*
 
 `other_terms` is the one path where a facet travels from the user to the search API

@@ -12,6 +12,7 @@ import pytest
 
 from esmporium.datasets import DATASET_FACET_COLUMNS
 from esmporium.db import Dataset
+from esmporium.requirements import VersionFilter
 
 OPT_IN_MARKERS: dict[str, str] = {
     "network": "a third-party service over the network",
@@ -157,6 +158,38 @@ def get_dataset_kwargs():
         }
 
     return factory
+
+
+@pytest.fixture
+def reads_everything():
+    """
+    Get a wrapper which makes a catalogue ignore `needs_facets`
+
+    What "the same answer with every stored document read" is measured against, and
+    the stand-in for a catalogue which chooses not to implement the optimisation at
+    all -- which is allowed: `needs_facets` says what will be read, not what must be
+    skipped.
+
+    It takes `needs_facets` so that it still fits
+    [Catalogue][esmporium.requirements.Catalogue], and throws it away.
+
+    Lives here rather than beside either set of tests because both the solver tests
+    and the database ones need it, and two copies would be free to drift.
+    """
+
+    class ReadsEverything:
+        """A catalogue which forwards every lookup as though nothing had been named"""
+
+        def __init__(self, catalogue):
+            self.catalogue = catalogue
+
+        def find(
+            self, query, *, versions=VersionFilter.NOT_RETRACTED, needs_facets=None
+        ):
+            """Find every dataset which matches a query, reading every document"""
+            return self.catalogue.find(query, versions=versions)
+
+    return ReadsEverything
 
 
 @pytest.fixture(scope="session", autouse=True)
