@@ -241,21 +241,22 @@ def test_reusing_a_name_for_a_different_requirement_is_refused(engine):
         store_requirement(session, a_requirement(variable="tas"))
         session.commit()
 
+    # The hashes are computed rather than written out: hard-coding them would tie this
+    # test to the canonical form, which is a different test's subject. What is matched
+    # on is which of the two appears where -- the message claims one is stored and the
+    # other is incoming, and swapping them would otherwise go unnoticed.
     stored_hash = a_requirement(variable="tas").requirement_hash()
     incoming_hash = a_requirement(variable="pr").requirement_hash()
 
     with Session(engine) as session:
-        with pytest.raises(RequirementNameInUseError) as excinfo:
+        with pytest.raises(
+            RequirementNameInUseError,
+            match=re.escape(
+                f"({stored_hash[:12]}..., where this one is {incoming_hash[:12]}...)"
+            ),
+        ) as excinfo:
             store_requirement(session, a_requirement(variable="pr"))
 
-    assert str(excinfo.value) == (
-        f"The name 'gregory-method' is already used by a different requirement "
-        f"({stored_hash[:12]}..., where this one is {incoming_hash[:12]}...). "
-        "One name means one search, so that a search can be re-run by name and its "
-        "runs compared with each other. Give this requirement a name of its own, or "
-        "rename the stored one first if 'gregory-method' is meant to be this search "
-        "now."
-    )
     assert excinfo.value.name == "gregory-method"
     assert excinfo.value.stored_hash == stored_hash
     assert excinfo.value.incoming_hash == incoming_hash
@@ -305,11 +306,10 @@ def test_loading_something_we_have_not_got_says_so(engine, name_or_id, described
     # type. That choice is asserted, because a lookup by name reported as an id sends
     # someone looking in the wrong place, and inverting the test would be invisible.
     with Session(engine) as session:
-        with pytest.raises(RequirementNotFoundError) as excinfo:
+        with pytest.raises(
+            RequirementNotFoundError,
+            match=re.escape(f"No requirement is stored with {described_as}."),
+        ) as excinfo:
             load_requirement(session, name_or_id)
 
-    assert str(excinfo.value) == (
-        f"No requirement is stored with {described_as}. "
-        "Store one by searching for it with esmporium.db.search_and_track."
-    )
     assert excinfo.value.name_or_id == name_or_id

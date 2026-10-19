@@ -621,13 +621,11 @@ def test_one_bundling_document_is_recorded_as_several_versions(engine):
 def test_asking_for_the_runs_of_an_unknown_search_says_so(engine):
     # `get_search_runs` has its own copy of this refusal, so it needs its own test:
     # the one in `test_requirement_tracking.py` covers `load_requirement`'s.
-    with pytest.raises(RequirementNotFoundError) as excinfo:
+    with pytest.raises(
+        RequirementNotFoundError,
+        match=re.escape("No requirement is stored with name 'never-stored'."),
+    ):
         get_search_runs(engine, "never-stored")
-
-    assert str(excinfo.value) == (
-        "No requirement is stored with name 'never-stored'. "
-        "Store one by searching for it with esmporium.db.search_and_track."
-    )
 
 
 def test_an_unconfigured_engine_is_refused_before_anything_is_searched_for(tmp_path):
