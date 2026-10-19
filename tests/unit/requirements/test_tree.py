@@ -4,6 +4,7 @@ Tests of the requirement tree
 
 from __future__ import annotations
 
+import hashlib
 import re
 
 import pytest
@@ -403,7 +404,6 @@ def test_round_trip():
 @pytest.mark.parametrize(
     "change",
     [
-        pytest.param({"name": "another-analysis"}, id="name"),
         pytest.param({"group_by": ("model",)}, id="group_by"),
         pytest.param({"prefer": {"grid_label": ("gr",)}}, id="prefer"),
         pytest.param({"cardinality": Cardinality.ALL}, id="cardinality"),
@@ -414,6 +414,27 @@ def test_hash_changes_with_content(change):
     assert (
         a_requirement(**change).requirement_hash() != a_requirement().requirement_hash()
     )
+
+
+def test_hash_ignores_name():
+    # The counterpart to the test above, and the reason `name` is not in its
+    # parameters: a name is the label on a requirement, not part of what it asks for,
+    # so renaming one has to leave the fingerprint alone. The database relies on this
+    # to tell "the same question under a new name" from "a new question".
+    renamed = a_requirement(name="another-analysis")
+
+    assert renamed.requirement_hash() == a_requirement().requirement_hash()
+    assert renamed.identity_json() == a_requirement().identity_json()
+    # The name is still stored, and so still distinguishes the two.
+    assert renamed.canonical_json() != a_requirement().canonical_json()
+
+
+def test_hash_is_over_identity_json():
+    requirement = a_requirement()
+
+    expected = hashlib.sha256(requirement.identity_json().encode()).hexdigest()
+
+    assert requirement.requirement_hash() == expected
 
 
 def test_hash_ignores_query_style_but_not_home():

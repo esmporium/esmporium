@@ -6,11 +6,12 @@ Database schema
 # from __future__ import annotations
 
 import datetime
+from enum import Enum
 from typing import TYPE_CHECKING
 
 from sqlalchemy import Index, MetaData, UniqueConstraint, text
 from sqlalchemy.orm import registry
-from sqlmodel import Field, SQLModel
+from sqlmodel import AutoString, Field, SQLModel
 
 if TYPE_CHECKING:
     # Only needed for `SearchAPICallRecord.from_call`'s annotation, which is quoted
@@ -324,10 +325,6 @@ class Dataset(EsmporiumBase, table=True):
     # we won't add it here.
     # We'll use some wrapper instead as figuring out the region for e.g. CMIP6 data
     # could be super complicated as we'll have to actually look at the data to be sure.
-
-    # # TODO: bring these back in once we start doing searches
-    # first_seen_run_id: int | None = Field(default=None, foreign_key="searchrun.id")
-    # last_seen_run_id: int | None = Field(default=None, foreign_key="searchrun.id")
 
     # # TODO: bring this back in once we start doing versions
     # versions: list["DatasetVersion"] = Relationship(
@@ -643,3 +640,381 @@ class SearchAPICallRecord(EsmporiumBase, table=True):
             response_time_seconds=call.response_time_seconds,
             attempt_number=call.attempt_number,
         )
+
+
+class StoredRequirement(EsmporiumBase, table=True):
+    """
+    A requirement we are tracking, i.e. a search we can run again and compare over time
+
+    One row per *question*. The question is
+    [Requirement.identity_json][esmporium.requirements.Requirement.identity_json] and is
+    identified by its hash; `name` is the label a human put on it. Keeping the two apart
+    is what makes change tracking work: a requirement can be renamed and still be found,
+    and two searches which ask the same thing cannot quietly become two series.
+
+    This holds no results. What a run of it returned is
+    [SearchRun][esmporium.db.schema.SearchRun] and the tables which hang off it.
+    """
+
+    # See the note on `Dataset.model_config`: this catches a bad *value* at
+    # construction rather than at commit time.
+    model_config = {"validate_assignment": True}
+
+    id: int | None = Field(default=None, primary_key=True)
+    """
+    Surrogate key; assigned by the database
+
+    Deliberately meaningless, like [Dataset.id][esmporium.db.schema.Dataset.id]. It is
+    short enough to type, though, which is why re-running a search accepts it as well as
+    the name.
+    """
+
+    requirement_hash: str = Field(unique=True, index=True)
+    """
+    The requirement's fingerprint, i.e. its identity
+
+    See
+    [Requirement.requirement_hash][esmporium.requirements.Requirement.requirement_hash].
+    Unique: one row per question. Two requirements which differ only by name have the
+    same value here, which is what
+    [OnNameClash][esmporium.db.OnNameClash] exists to decide about.
+    """
+
+    name: str = Field(unique=True, index=True)
+    """
+    The label a human chose, from
+    [Requirement.name][esmporium.requirements.Requirement.name]
+
+    Unique, deliberately. A name is how a person asks for a search by hand, so one name
+    has to mean one search: if the same name pointed at two questions, re-running it
+    would be ambiguous and comparing runs over time would silently compare answers to
+    different questions. Reusing a name for a different question is therefore refused
+    here, by the database, rather than being a policy anyone can switch off.
+    """
+
+    identity_json: str
+    """
+    The question itself, as
+    [Requirement.identity_json][esmporium.requirements.Requirement.identity_json]
+
+    Stored rather than the whole
+    [canonical_json][esmporium.requirements.Requirement.canonical_json] because that
+    would hold the name a second time, leaving two places for it to disagree. The
+    requirement is rebuilt by putting `name` back (see
+    [esmporium.db.load_requirement][]).
+
+    This is also exactly what `requirement_hash` is the hash of, so the two can be
+    checked against each other.
+    """
+
+    created_at: datetime.datetime = Field(default_factory=_utcnow)
+    """When we first stored this requirement (UTC)"""
+
+
+class SearchRun(EsmporiumBase, table=True):
+    """
+    One execution of a tracked search
+
+    That is, one run of a
+    [StoredRequirement][esmporium.db.schema.StoredRequirement]. A requirement fans out
+    into one search per leaf per project, so a run is not one request:
+    [SearchRunLeaf][esmporium.db.schema.SearchRunLeaf] holds one row per sub-search.
+
+    What the run saw is
+    [SearchRunVersion][esmporium.db.schema.SearchRunVersion]; what changed since the run
+    before it is [DatasetChange][esmporium.db.schema.DatasetChange].
+    """
+
+    # See the note on `Dataset.model_config`.
+    model_config = {"validate_assignment": True}
+
+    id: int | None = Field(default=None, primary_key=True)
+    """Surrogate key; assigned by the database"""
+
+    stored_requirement_id: int = Field(foreign_key="storedrequirement.id", index=True)
+    """
+    The requirement which was run
+
+    Indexed, because "every run of this search, newest first" is the query every
+    comparison starts from.
+    """
+
+    started_at: datetime.datetime = Field(default_factory=_utcnow)
+    """When the run began (UTC)"""
+
+    finished_at: datetime.datetime | None = None
+    """
+    When the run finished (UTC), or `None` if it never did
+
+    `None` means the process died part-way, which is why this is nullable rather than
+    stamped up front.
+    """
+
+    complete: bool = False
+    """
+    Whether every sub-search answered in full
+
+    Defaults to `False` and is only set once the run has finished (see
+    [finish][esmporium.db.schema.SearchRun.finish]), so a run which crashed reads
+    incomplete, which is the safe way round.
+
+    This is load-bearing rather than informational: **only a complete run may be a
+    baseline for comparison**. A single sub-search which failed makes every dataset
+    behind that leaf look as though it vanished from ESGF, so diffing against such a run
+    would report a removal that never happened, and then an addition when the next run
+    succeeded. See
+    [run_is_complete][esmporium.db.search_tracking.run_is_complete] for how it is
+    worked out.
+    """
+
+    def finish(self, *, complete: bool) -> None:
+        """
+        Mark this run as over
+
+        Here rather than at the call site so that `finished_at` is stamped in the same
+        way as every other recorded-at column, which is the row's business and not its
+        caller's.
+
+        Parameters
+        ----------
+        complete
+            Whether every sub-search answered in full
+        """
+        self.complete = complete
+        self.finished_at = _utcnow()
+
+
+class SearchRunLeaf(EsmporiumBase, table=True):
+    """
+    One sub-search of a [SearchRun][esmporium.db.schema.SearchRun]
+
+    Mirrors
+    [LeafSearchOutcome][esmporium.search.LeafSearchOutcome]: one of the requirement's
+    leaves, rendered for one project. This is where "which part of my analysis came back
+    empty" is answered, and what
+    [SearchRun.complete][esmporium.db.schema.SearchRun.complete] is computed from.
+    """
+
+    # See the note on `Dataset.model_config`.
+    model_config = {"validate_assignment": True}
+
+    id: int | None = Field(default=None, primary_key=True)
+    """Surrogate key; assigned by the database"""
+
+    search_run_id: int = Field(foreign_key="searchrun.id", index=True)
+    """The run this sub-search belongs to"""
+
+    roles_json: str
+    """
+    The role paths which asked for this search, as a JSON array
+
+    Several when two leaves ask for the same dataset under different roles, which is
+    searched for once; see [LeafSearch.roles][esmporium.search.LeafSearch.roles].
+
+    JSON rather than a joined string because a role *path* already contains `.` (see
+    `ROLE_SEPARATOR` in [esmporium.requirements.tree][]), so there is no separator left
+    which is safe to split on.
+    """
+
+    project: str
+    """The project this sub-search was rendered for"""
+
+    answered: bool
+    """
+    Whether any endpoint answered this sub-search in full
+
+    `False` means every endpoint we were offered failed, so this leaf contributed
+    nothing to the run -- not that ESGF has nothing for it.
+    """
+
+    host: str | None = None
+    """
+    The host whose answer we kept, e.g. `search.east.esgf.io`
+
+    `None` when nothing answered. With the default `stop_at_first_result=True` there is
+    exactly one such host; with it set to `False` several endpoints can answer and this
+    records the first of them.
+
+    Provenance for reading a run afterwards. It takes no part in identity, and the
+    per-attempt detail (every endpoint tried, and why each failed) is in
+    [SearchAPICallRecord][esmporium.db.schema.SearchAPICallRecord].
+    """
+
+    n_matches: int | None = None
+    """
+    How many documents the host said matched, if it said
+
+    `None` when the host reported no total, which some do not.
+    """
+
+    n_documents: int = 0
+    """
+    How many documents we actually collected
+
+    Together with `n_matches` this is how truncation is spotted: a run stopped early by
+    `limit` or `max_results` collects fewer documents than matched, which produces a
+    partial answer that is indistinguishable from datasets having been removed.
+
+    Documents, not datasets, so that it is comparable with `n_matches`: one CMIP5
+    document can describe many datasets.
+    """
+
+    failure: str | None = None
+    """
+    Why this sub-search failed, if it did
+
+    The error, rendered as text. `None` when the sub-search answered.
+    """
+
+
+class SearchRunVersion(EsmporiumBase, table=True):
+    """
+    One dataset version a run returned, and what that run was told about it
+
+    This is the record of history, and the reason it exists is that
+    [DatasetVersion][esmporium.db.schema.DatasetVersion] cannot be one: `is_latest` and
+    `retracted` there are refreshed on every ingest, so what they used to say is gone.
+    Here, each run keeps its own answer, so "this version became retracted" is the
+    difference between two rows rather than something nobody wrote down.
+
+    Comparing two runs' rows is what produces
+    [DatasetChange][esmporium.db.schema.DatasetChange].
+    """
+
+    # See the note on `Dataset.model_config`.
+    model_config = {"validate_assignment": True}
+
+    __table_args__ = (UniqueConstraint("search_run_id", "dataset_version_id"),)
+
+    id: int | None = Field(default=None, primary_key=True)
+    """Surrogate key; assigned by the database"""
+
+    search_run_id: int = Field(foreign_key="searchrun.id", index=True)
+    """The run which saw this version"""
+
+    dataset_version_id: int = Field(foreign_key="datasetversion.id", index=True)
+    """The version which was seen"""
+
+    retracted: bool
+    """
+    Whether this run was told the version is retracted
+
+    See [DatasetVersion.retracted][esmporium.db.schema.DatasetVersion.retracted]. One
+    run can be told twice, by two documents, and they can disagree: replicas lag on
+    retraction. This is **last-write-wins** within a run, matching how the version row
+    itself is refreshed, because every document asserts a value and there is no "first"
+    to prefer.
+    """
+
+    is_latest: bool
+    """
+    Whether this run was told the version is the latest
+
+    See [DatasetVersion.is_latest][esmporium.db.schema.DatasetVersion.is_latest].
+    Last-write-wins within a run, for the same reason as `retracted`.
+    """
+
+    data_nodes_json: str
+    """
+    The data nodes this run saw serving the version, as a sorted JSON array
+
+    Unlike the two booleans above, this is **unioned** within a run rather than
+    overwritten: a document reports only the nodes it knows about, so the last one to
+    arrive is not the most complete and overwriting would throw nodes away.
+
+    Sorted so that two runs' values can be compared as strings.
+    """
+
+
+class DatasetChangeType(str, Enum):
+    """
+    What happened to a dataset version between two runs of one requirement
+
+    Subclasses `str`, like [Cardinality][esmporium.requirements.Cardinality], so the
+    values can be passed and compared as plain strings.
+    """
+
+    ADDED = "added"
+    """
+    This run returned the version and the run before it did not
+
+    Also what the first run of a requirement reports for everything it finds, so this
+    means "first seen in this series" rather than "newly published".
+    """
+
+    REMOVED = "removed"
+    """
+    The run before returned the version and this one did not
+
+    ESGF does not delete, so this is usually a dataset dropping out of what the search
+    asks for rather than data disappearing -- a version superseded, or a query which
+    excludes retracted results now excluding this one.
+    """
+
+    MODIFIED = "modified"
+    """
+    Both runs returned the version, and what they were told about it differs
+
+    i.e. `retracted`, `is_latest` or the set of data nodes changed. Which of them, and
+    from what to what, is in
+    [DatasetChange.detail_json][esmporium.db.schema.DatasetChange.detail_json].
+    """
+
+
+class DatasetChange(EsmporiumBase, table=True):
+    """
+    One difference between a run and the run it was compared against
+
+    Computed and written when a [SearchRun][esmporium.db.schema.SearchRun] finishes,
+    rather than worked out on demand, so that "what changed on Tuesday" stays answerable
+    after the version rows have moved on again.
+    """
+
+    # See the note on `Dataset.model_config`.
+    model_config = {"validate_assignment": True}
+
+    id: int | None = Field(default=None, primary_key=True)
+    """Surrogate key; assigned by the database"""
+
+    search_run_id: int = Field(foreign_key="searchrun.id", index=True)
+    """The run which detected the change"""
+
+    baseline_run_id: int | None = Field(
+        default=None, foreign_key="searchrun.id", index=True
+    )
+    """
+    The run this was compared against
+
+    Recorded because it is not simply "the previous run": incomplete runs are skipped as
+    baselines, so a change can legitimately be measured against a run from several days
+    earlier, and a log which did not say so would be misleading.
+
+    `None` on the first run of a requirement, where there was nothing to compare with
+    and everything found is reported as
+    [added][esmporium.db.schema.DatasetChangeType.ADDED].
+    """
+
+    dataset_version_id: int = Field(foreign_key="datasetversion.id", index=True)
+    """The version which changed"""
+
+    change_type: DatasetChangeType = Field(sa_type=AutoString)
+    """What happened. See [DatasetChangeType][esmporium.db.schema.DatasetChangeType]."""
+    # Stored as text rather than as a database enum: a database-level enum on SQLite is
+    # a CHECK constraint, which would have to be named by hand to satisfy
+    # `NAMING_CONVENTION`, and would then need a migration every time a value is added.
+    # The field's own type is still the enum, so a bad value is refused on assignment.
+
+    detail_json: str | None = None
+    """
+    What changed, as JSON, for a
+    [modified][esmporium.db.schema.DatasetChangeType.MODIFIED] change
+
+    Only the fields which actually moved, each with its old and new value, e.g.
+    `{"retracted": {"old": false, "new": true}}`.
+
+    `None` for an addition or a removal, where the change is the presence of the version
+    rather than anything about it.
+    """
+
+    created_at: datetime.datetime = Field(default_factory=_utcnow)
+    """When we computed this change (UTC)"""
