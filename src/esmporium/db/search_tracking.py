@@ -748,8 +748,12 @@ def _latest_complete_run(
     ).first()
 
 
-def _modified_detail(before: _VersionState, after: _VersionState) -> str | None:
-    """Describe what moved between two runs' answers, or `None` if nothing did."""
+def _changed_values(
+    before: _VersionState, after: _VersionState
+) -> dict[str, dict[str, object]]:
+    """
+    Say what moved between two runs' answers about one version
+    """
     changed: dict[str, dict[str, object]] = {}
 
     if before.retracted != after.retracted:
@@ -764,10 +768,7 @@ def _modified_detail(before: _VersionState, after: _VersionState) -> str | None:
             "new": list(_decode_data_nodes(after.data_nodes_json)),
         }
 
-    if not changed:
-        return None
-
-    return json.dumps(changed, sort_keys=True)
+    return changed
 
 
 @dataclass(frozen=True)
@@ -807,13 +808,9 @@ class RunChanges:
 
 def _compare(
     session: Session, search_run: SearchRun, stored_requirement_id: int
-) -> tuple[RunChanges, dict[int, _VersionState], dict[int, _VersionState]]:
+) -> tuple[RunChanges, dict[int, dict[str, dict[str, object]]]]:
     """
-    Compare a run with the last complete one, keeping both runs' records
-
-    The records come back alongside the answer because describing *how* a version
-    changed needs them, and reading them twice would double the rows a comparison
-    touches -- which matters on a watch over tens of thousands of datasets.
+    Compare a run with the last complete one, and say what moved in each version
     """
     run_id = flushed_id(search_run)
     baseline = _latest_complete_run(
@@ -823,22 +820,20 @@ def _compare(
     current = _run_state(session, run_id)
     previous = {} if baseline is None else _run_state(session, flushed_id(baseline))
 
-    modified = tuple(
-        sorted(
-            version_id
-            for version_id in set(current) & set(previous)
-            if current[version_id] != previous[version_id]
-        )
-    )
+    moved = {
+        version_id: changed
+        for version_id in set(current) & set(previous)
+        if (changed := _changed_values(previous[version_id], current[version_id]))
+    }
 
     changes = RunChanges(
         baseline_run_id=None if baseline is None else flushed_id(baseline),
         added=tuple(sorted(set(current) - set(previous))),
         removed=tuple(sorted(set(previous) - set(current))),
-        modified=modified,
+        modified=tuple(sorted(moved)),
     )
 
-    return changes, current, previous
+    return changes, moved
 
 
 def compute_changes(
@@ -867,7 +862,7 @@ def compute_changes(
     :
         What changed
     """
-    changes, _, _ = _compare(session, search_run, stored_requirement_id)
+    changes, _ = _compare(session, search_run, stored_requirement_id)
 
     return changes
 
@@ -902,7 +897,7 @@ def record_changes(
     if not search_run.complete:
         return RunChanges(baseline_run_id=None, added=(), removed=(), modified=())
 
-    changes, current, previous = _compare(session, search_run, stored_requirement_id)
+    changes, moved = _compare(session, search_run, stored_requirement_id)
     run_id = flushed_id(search_run)
 
     for version_id in changes.added:
@@ -932,7 +927,7 @@ def record_changes(
                 baseline_run_id=changes.baseline_run_id,
                 dataset_version_id=version_id,
                 change_type=DatasetChangeType.MODIFIED,
-                detail_json=_modified_detail(previous[version_id], current[version_id]),
+                detail_json=json.dumps(moved[version_id], sort_keys=True),
             )
         )
 

@@ -11,18 +11,22 @@ to check that the recording really does happen where the searching happens.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import httpx
 import pytest
-from sqlmodel import Session, select
+from sqlmodel import Session, create_engine, select
 from tenacity import Retrying, retry_if_exception, stop_after_attempt
 
 from esmporium.db import (
+    METADATA,
     DatasetChangeType,
+    RequirementNotFoundError,
     SearchRunLeaf,
     SearchRunVersion,
+    UnconfiguredSQLiteEngineError,
     compute_changes,
     get_changes,
     get_search_runs,
@@ -38,6 +42,7 @@ from esmporium.requirements import all_of, leaf, requirement
 from esmporium.search import (
     ESGF1_CMIP5_FACADE_PARAMETERS,
     ESGF1_CMIP6_FACADE_PARAMETERS,
+    AllSubQueriesFailedError,
     SearchAPIESGF1Solr,
     SearchAPIFacade,
     SolrSingleRowResultParser,
@@ -613,6 +618,40 @@ def test_one_bundling_document_is_recorded_as_several_versions(engine):
     assert len(result.changes.added) == 2
 
 
+def test_asking_for_the_runs_of_an_unknown_search_says_so(engine):
+    # `get_search_runs` has its own copy of this refusal, so it needs its own test:
+    # the one in `test_requirement_tracking.py` covers `load_requirement`'s.
+    with pytest.raises(RequirementNotFoundError) as excinfo:
+        get_search_runs(engine, "never-stored")
+
+    assert str(excinfo.value) == (
+        "No requirement is stored with name 'never-stored'. "
+        "Store one by searching for it with esmporium.db.search_and_track."
+    )
+
+
+def test_an_unconfigured_engine_is_refused_before_anything_is_searched_for(tmp_path):
+    # `search_and_track` promises this in its docstring, and the promise is about
+    # *ordering*: a search contacts ESGF before it writes anything, so an engine which
+    # cannot save has to be refused up front rather than after the network has been
+    # used. The client is the assertion -- it fails the test if it is ever reached.
+    def never_asked(request):
+        pytest.fail(f"searched {request.url} before checking the engine")
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'unconfigured.db'}")
+    METADATA.create_all(engine)
+
+    with httpx.Client(transport=httpx.MockTransport(never_asked)) as client:
+        with pytest.raises(UnconfiguredSQLiteEngineError):
+            search_and_track(
+                engine,
+                a_requirement(),
+                build_list_selector([facade("a.example.io")]),
+                client=client,
+                warn_on_pagination=False,
+            )
+
+
 def test_a_tracked_search_saves_the_results_as_well(engine):
     # Tracking is in addition to saving, not instead of it.
     track(engine, a_requirement(), [solr_doc("a"), solr_doc("b")])
@@ -698,8 +737,10 @@ def test_a_run_whose_search_raised_is_left_incomplete(engine):
         return httpx.Response(500)
 
     with httpx.Client(transport=httpx.MockTransport(refuse)) as client:
-        # Any failure will do: the point is what the run looks like afterwards.
-        with pytest.raises(Exception):
+        with pytest.raises(
+            AllSubQueriesFailedError,
+            match=re.escape("sub-queries failed to return anything we could use"),
+        ):
             rerun_search_esgf(
                 engine,
                 "gregory-method",

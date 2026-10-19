@@ -9,6 +9,7 @@ readable.
 from __future__ import annotations
 
 import hashlib
+import re
 
 import pytest
 from sqlmodel import Session
@@ -59,13 +60,19 @@ def test_the_same_name_is_not_a_clash():
 def test_a_clash_raises_by_default():
     # The default matters more than the mechanism: nobody should lose the name they
     # have been finding their search by because they typed a different one today.
-    with pytest.raises(RequirementNameClashError) as caught:
+    with pytest.raises(RequirementNameClashError) as excinfo:
         resolve_name_clash(stored_name="gregory-method", incoming_name="ecs-method")
 
-    # The message has to name both, because the point of raising is that the caller
-    # decides which one they meant.
-    assert "gregory-method" in str(caught.value)
-    assert "ecs-method" in str(caught.value)
+    assert str(excinfo.value) == (
+        "This requirement is already stored as 'gregory-method', so storing it as "
+        "'ecs-method' would give one search two names. Use the name "
+        "'gregory-method', or pass on_name_clash=OnNameClash.OVERWRITE_NAME to "
+        "rename it to 'ecs-method', or OnNameClash.KEEP_OLD_NAME to carry on under "
+        "the stored name."
+    )
+    # Carried as well as said, so a caller can branch on them rather than read prose.
+    assert excinfo.value.stored_name == "gregory-method"
+    assert excinfo.value.incoming_name == "ecs-method"
 
 
 @pytest.mark.parametrize(
@@ -177,7 +184,10 @@ def test_a_renamed_requirement_is_recognised_as_the_one_we_have(engine):
         session.commit()
 
     with Session(engine) as session:
-        with pytest.raises(RequirementNameClashError):
+        with pytest.raises(
+            RequirementNameClashError,
+            match=re.escape("already stored as 'gregory-method'"),
+        ):
             store_requirement(session, a_requirement(name="ecs-method"))
 
 
@@ -231,11 +241,24 @@ def test_reusing_a_name_for_a_different_requirement_is_refused(engine):
         store_requirement(session, a_requirement(variable="tas"))
         session.commit()
 
+    stored_hash = a_requirement(variable="tas").requirement_hash()
+    incoming_hash = a_requirement(variable="pr").requirement_hash()
+
     with Session(engine) as session:
-        with pytest.raises(RequirementNameInUseError) as caught:
+        with pytest.raises(RequirementNameInUseError) as excinfo:
             store_requirement(session, a_requirement(variable="pr"))
 
-    assert "gregory-method" in str(caught.value)
+    assert str(excinfo.value) == (
+        f"The name 'gregory-method' is already used by a different requirement "
+        f"({stored_hash[:12]}..., where this one is {incoming_hash[:12]}...). "
+        "One name means one search, so that a search can be re-run by name and its "
+        "runs compared with each other. Give this requirement a name of its own, or "
+        "rename the stored one first if 'gregory-method' is meant to be this search "
+        "now."
+    )
+    assert excinfo.value.name == "gregory-method"
+    assert excinfo.value.stored_hash == stored_hash
+    assert excinfo.value.incoming_hash == incoming_hash
 
 
 @pytest.mark.parametrize(
@@ -249,7 +272,10 @@ def test_reusing_a_name_is_refused_whatever_the_option(engine, on_clash):
         session.commit()
 
     with Session(engine) as session:
-        with pytest.raises(RequirementNameInUseError):
+        with pytest.raises(
+            RequirementNameInUseError,
+            match=re.escape("is already used by a different requirement"),
+        ):
             store_requirement(
                 session, a_requirement(variable="pr"), on_name_clash=on_clash
             )
@@ -268,9 +294,22 @@ def test_two_different_requirements_can_both_be_tracked(engine):
 
 
 @pytest.mark.parametrize(
-    "name_or_id", [pytest.param("nothing", id="name"), pytest.param(404, id="id")]
+    ("name_or_id", "described_as"),
+    [
+        pytest.param("nothing", "name 'nothing'", id="name"),
+        pytest.param(404, "id 404", id="id"),
+    ],
 )
-def test_loading_something_we_have_not_got_says_so(engine, name_or_id):
+def test_loading_something_we_have_not_got_says_so(engine, name_or_id, described_as):
+    # The message calls what you passed either a name or an id, worked out from its
+    # type. That choice is asserted, because a lookup by name reported as an id sends
+    # someone looking in the wrong place, and inverting the test would be invisible.
     with Session(engine) as session:
-        with pytest.raises(RequirementNotFoundError):
+        with pytest.raises(RequirementNotFoundError) as excinfo:
             load_requirement(session, name_or_id)
+
+    assert str(excinfo.value) == (
+        f"No requirement is stored with {described_as}. "
+        "Store one by searching for it with esmporium.db.search_and_track."
+    )
+    assert excinfo.value.name_or_id == name_or_id
