@@ -36,11 +36,12 @@ from esmporium.db.search_tracking import _upsert_run_version
 from esmporium.query import Query
 from esmporium.requirements import all_of, leaf, requirement
 from esmporium.search import (
+    ESGF1_CMIP5_FACADE_PARAMETERS,
     ESGF1_CMIP6_FACADE_PARAMETERS,
-    ESGF1_CMIP7_FACADE_PARAMETERS,
     SearchAPIESGF1Solr,
     SearchAPIFacade,
     SolrSingleRowResultParser,
+    SolrVariableBundleResultParser,
     build_list_selector,
     build_project_list_selector,
 )
@@ -234,9 +235,7 @@ def test_a_version_gaining_a_data_node_is_a_change(tracked, engine):
     }
 
 
-# @Claude what is "fact"? Not facet, right? I know you use it in src
-# but it is unclear to me.
-def test_several_facts_moving_at_once_are_one_change(tracked, engine):
+def test_several_changes_to_one_version_are_one_record(tracked, engine):
     first = tracked.new_run()
     tracked.saw(first, "a", retracted=False, is_latest=True)
     tracked.close(first)
@@ -420,25 +419,19 @@ def test_a_sub_search_which_matched_nothing_is_still_an_answer():
 # -- the whole thing, against a mock ESGF --------------------------------------------
 
 
-# @Claude including CMIP7 here is a bad example no? There is no live CMIP7
-# data via ESGF1 and Solr. Maybe change these and below to CMIP5?
-def solr_doc(doc_id, *, project="CMIP6", retracted=False, data_node="a.node"):
-    """A minimal Solr record which parses into one dataset row"""
+def solr_doc(doc_id, *, retracted=False, data_node="a.node"):
+    """A minimal CMIP6 Solr record, which parses into one dataset row"""
     return {
-        "master_id": [f"{project}.{doc_id}"],
+        "master_id": [f"CMIP6.{doc_id}"],
         "id": [doc_id],
-        "project": [project],
+        "project": ["CMIP6"],
         "source_id": ["ACCESS"],
         "institution_id": ["CSIRO"],
         "experiment_id": ["historical"],
         "variant_label": ["r1i1p1f1"],
         "variable_id": ["tas"],
         "frequency": ["mon"],
-        # CMIP6 reads `processing_id` from `table_id`, CMIP7 from
-        # `variable_branding_suffix`, so a document which both parsers can read carries
-        # each. Harmless: a parser reads the fields it names.
         "table_id": ["Amon"],
-        "variable_branding_suffix": ["tavg-h2m-hxy-u"],
         "grid_label": ["gn"],
         "version": ["20200101"],
         "latest": [True],
@@ -447,7 +440,35 @@ def solr_doc(doc_id, *, project="CMIP6", retracted=False, data_node="a.node"):
     }
 
 
-def facade(host, parameters=ESGF1_CMIP6_FACADE_PARAMETERS):
+def cmip5_solr_doc(doc_id, *, variables=("tas", "pr"), data_node="a.node"):
+    """
+    A minimal CMIP5 Solr record, which parses into one dataset row *per variable*
+
+    CMIP5 is the one project whose documents bundle several datasets together, so this
+    is the shape which makes one document become several
+    [SearchRunVersion][esmporium.db.schema.SearchRunVersion] rows. Its facets carry
+    CMIP5's own names (`institute`, `ensemble`, `time_frequency`, `cmor_table`), and
+    there is no `grid_label`, because CMIP5 has no grid concept.
+    """
+    return {
+        "master_id": [f"cmip5.{doc_id}"],
+        "id": [doc_id],
+        "project": ["CMIP5"],
+        "model": ["ACCESS1-0"],
+        "institute": ["CSIRO-BOM"],
+        "experiment": ["historical"],
+        "ensemble": ["r1i1p1"],
+        "variable": list(variables),
+        "time_frequency": ["mon"],
+        "cmor_table": ["Amon"],
+        "version": ["20200101"],
+        "latest": [True],
+        "retracted": [False],
+        "data_node": [data_node],
+    }
+
+
+def facade(host, parameters=ESGF1_CMIP6_FACADE_PARAMETERS, result_parser=None):
     return SearchAPIFacade(
         parameters=parameters,
         search_api=SearchAPIESGF1Solr(
@@ -458,7 +479,18 @@ def facade(host, parameters=ESGF1_CMIP6_FACADE_PARAMETERS):
                 reraise=True,
             ),
         ),
-        result_parser=SolrSingleRowResultParser(),
+        result_parser=(
+            SolrSingleRowResultParser() if result_parser is None else result_parser
+        ),
+    )
+
+
+def cmip5_facade(host):
+    """Build a CMIP5 facade, which is the bundling one -- see [cmip5_solr_doc][(m).]"""
+    return facade(
+        host,
+        parameters=ESGF1_CMIP5_FACADE_PARAMETERS,
+        result_parser=SolrVariableBundleResultParser(),
     )
 
 
@@ -517,16 +549,25 @@ def test_a_tracked_search_records_the_requirement_and_the_run(engine):
 def test_a_tracked_search_records_one_row_per_sub_search(engine):
     # A requirement fans out, so a run is not one request. This is what says which
     # part of the analysis came back with what.
-    with serving([solr_doc("a")]) as client:
+    def answer(request):
+        docs = (
+            [cmip5_solr_doc("a")]
+            if "cmip5" in str(request.url.host)
+            else [solr_doc("a")]
+        )
+
+        return httpx.Response(
+            200, json={"response": {"numFound": len(docs), "start": 0, "docs": docs}}
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(answer)) as client:
         result = search_and_track(
             engine,
-            a_requirement(projects=("CMIP6", "CMIP7")),
+            a_requirement(projects=("CMIP5", "CMIP6")),
             build_project_list_selector(
                 {
+                    "CMIP5": [cmip5_facade("cmip5.example.io")],
                     "CMIP6": [facade("cmip6.example.io")],
-                    "CMIP7": [
-                        facade("cmip7.example.io", ESGF1_CMIP7_FACADE_PARAMETERS)
-                    ],
                 }
             ),
             client=client,
@@ -540,9 +581,36 @@ def test_a_tracked_search_records_one_row_per_sub_search(engine):
             )
         ).all()
 
-    assert sorted(leaf.project for leaf in leaves) == ["CMIP6", "CMIP7"]
+    assert sorted(leaf.project for leaf in leaves) == ["CMIP5", "CMIP6"]
     assert all(leaf.roles_json == '["field"]' for leaf in leaves)
     assert all(leaf.host is not None for leaf in leaves)
+    # One document each. The CMIP5 one counts as one document even though it described
+    # two datasets, which is what keeps `n_documents` comparable with the host's own
+    # `n_matches`.
+    assert all(leaf.n_documents == 1 for leaf in leaves)
+
+
+def test_one_bundling_document_is_recorded_as_several_versions(engine):
+    # CMIP5's documents describe several datasets at once, so what a run saw is not one
+    # row per document. Nothing else here exercises that fan-out.
+    with serving([cmip5_solr_doc("a", variables=("tas", "pr"))]) as client:
+        result = search_and_track(
+            engine,
+            a_requirement(projects="CMIP5"),
+            build_list_selector([cmip5_facade("cmip5.example.io")]),
+            client=client,
+            warn_on_pagination=False,
+        )
+
+    with Session(engine) as session:
+        seen = session.exec(
+            select(SearchRunVersion).where(
+                SearchRunVersion.search_run_id == result.search_run_id
+            )
+        ).all()
+
+    assert len(seen) == 2
+    assert len(result.changes.added) == 2
 
 
 def test_a_tracked_search_saves_the_results_as_well(engine):

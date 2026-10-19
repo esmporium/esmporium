@@ -1009,7 +1009,8 @@ class DatasetChange(EsmporiumBase, table=True):
     What changed, as JSON, for a
     [modified][esmporium.db.schema.DatasetChangeType.MODIFIED] change
 
-    Only the fields which actually moved, each with its old and new value, e.g.
+    Keyed by whichever of `retracted`, `is_latest` and `data_nodes` moved -- only
+    those, not all three -- each with its old and new value, e.g.
     `{"retracted": {"old": false, "new": true}}`.
 
     `None` for an addition or a removal, where the change is the presence of the version

@@ -515,7 +515,7 @@ def _decode_data_nodes(encoded: str) -> tuple[str, ...]:
     return tuple(json.loads(encoded))
 
 
-def _upsert_run_version(  # noqa: PLR0913 - one argument per fact a run records
+def _upsert_run_version(  # noqa: PLR0913 - retracted, is_latest and the nodes
     session: Session,
     search_run_id: int,
     dataset_version_id: int,
@@ -528,9 +528,11 @@ def _upsert_run_version(  # noqa: PLR0913 - one argument per fact a run records
     Record that this run saw this version, or fold another document's word into the row
 
     One run can be told about a version more than once, because a version can be
-    described by several documents. The two kinds of fact are folded in differently, and
-    the difference is deliberate -- see
-    [SearchRunVersion][esmporium.db.schema.SearchRunVersion].
+    described by several documents. Three things are recorded -- `retracted`,
+    `is_latest` and the set of data nodes -- and they are not folded in the same way:
+    the first two take the last document's word, the set of nodes takes the union of
+    every document's. The difference is deliberate, and
+    [SearchRunVersion][esmporium.db.schema.SearchRunVersion] says why.
     """
     row = get_or_create(
         session,
@@ -1328,7 +1330,16 @@ class DatasetChangeInfo:
     What moved, for a
     [modified][esmporium.db.schema.DatasetChangeType.MODIFIED] change
 
-    Facet name -> `{"old": ..., "new": ...}`. `None` for an addition or a removal.
+    Keyed by whichever of `retracted`, `is_latest` and `data_nodes` moved, each with
+    its old and new value, e.g. `{"retracted": {"old": False, "new": True}}`.
+
+    Never a facet name: a dataset's facets (its variable, experiment and so on) cannot
+    change, because changing one makes it a different
+    [Dataset][esmporium.db.schema.Dataset] row under the identity index rather than a
+    modification of this one.
+
+    `None` for an addition or a removal, where the change is the presence of the
+    version rather than anything about it.
     """
 
 
