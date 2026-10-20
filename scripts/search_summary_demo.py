@@ -9,6 +9,8 @@ The scenes are:
    so the removals may not be real
 4. a week in one summary -- several runs folded down to their net effect, with churn
 5. a long list -- what `max_rows` does when a search returns more than you can read
+6. many variables and both frequencies -- why the columns are what they are, and
+   what `facets` does when you want different ones
 
 Every summary here is built by hand, so this needs no network and no database.
 [summarise_search][esmporium.db.summarise_search] is how you get a real one.
@@ -292,6 +294,40 @@ MANY = summary(
 )
 
 
+# ------------------------------------------------- 6. many variables, both frequencies
+MANY_VARIABLES_FOUND = tuple(
+    VersionRecord(
+        dataset_version_id=300 + index,
+        dataset_id=(300 + index) * 10,
+        id_project_specific=f"CMIP7.MIROC7.historical.{variable}.{interval}",
+        facets={
+            **FACET_DEFAULTS,
+            "model": "MIROC7",
+            "experiment": "historical",
+            "variant_label": "r1i1p1f1",
+            "variable": variable,
+            "reporting_interval": interval,
+            "processing_id": "Amon" if interval == "mon" else "day",
+        },
+        version="20261018",
+        is_latest=True,
+        retracted=False,
+        data_nodes=("esgf.nci.org.au",),
+        seen_in_run_id=7,
+    )
+    for index, (variable, interval) in enumerate(
+        (("tas", "mon"), ("tas", "day"), ("pr", "mon"), ("pr", "day"))
+    )
+)
+
+MANY_VARIABLES = summary(
+    changes=tuple(
+        change(DatasetChangeType.ADDED, found) for found in MANY_VARIABLES_FOUND
+    ),
+    current=MANY_VARIABLES_FOUND,
+)
+
+
 def main() -> None:
     """Run each scene in turn."""
     show("1. a quiet morning: the search ran and nothing changed", QUIET)
@@ -310,6 +346,17 @@ def main() -> None:
 
     # max_rows is what keeps a summary readable when a model publishes 12 members.
     show("5. more than you can read (max_rows=4)", MANY, max_rows=4)
+
+    # These four datasets differ only in variable and frequency. They are told apart
+    # by `variable` and `interval` being in the default columns -- and, whatever the
+    # columns, by `id`, because two datasets can agree on every facet we model.
+    show("6. many variables and both frequencies", MANY_VARIABLES)
+
+    # And when the defaults are not what you want, say what is.
+    print("=" * 78)
+    print("6b. the same summary, with the columns chosen by the caller")
+    print("=" * 78)
+    print(MANY_VARIABLES.render(facets=("variable", "reporting_interval")))
 
 
 if __name__ == "__main__":

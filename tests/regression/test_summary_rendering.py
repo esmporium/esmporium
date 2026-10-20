@@ -223,3 +223,55 @@ def test_a_search_which_returns_nothing(file_regression, summary_scenes):
     )
 
     file_regression.check(summary.render(), extension=".txt")
+
+
+def test_a_search_spanning_variables_and_frequencies(file_regression, summary_scenes):
+    """
+    What a search over many variables and both frequencies looks like
+
+    The shape of the searches queued in PLAN step 5. Worth pinning because the
+    default columns used to leave `variable` and `reporting_interval` out, which
+    rendered five different datasets as five identical rows.
+    """
+    members = tuple(
+        summary_scenes.version(
+            "MIROC7",
+            "historical",
+            "r1i1p1f1",
+            200 + index,
+            variable=variable,
+            reporting_interval=interval,
+            processing_id="Amon" if interval == "mon" else "day",
+        )
+        for index, (variable, interval) in enumerate(
+            (
+                ("tas", "mon"),
+                ("tas", "day"),
+                ("pr", "mon"),
+                ("pr", "day"),
+                ("rlut", "mon"),
+            )
+        )
+    )
+    summary = summary_scenes.summary(
+        changes=tuple(summary_scenes.change(ADDED, of=member) for member in members),
+        current=members,
+    )
+
+    file_regression.check(summary.render(), extension=".txt")
+
+
+def test_facets_chosen_by_the_caller(file_regression, summary_scenes, everything):
+    """
+    What it looks like when the caller says which facets they want
+
+    Narrowed right down to one facet. The `id` column is what keeps the rows
+    distinguishable, which is why narrowing is safe.
+    """
+    summary = summary_scenes.summary(
+        changes=(summary_scenes.change(ADDED),), current=everything
+    )
+
+    file_regression.check(
+        summary.render(facets=("model", "experiment")), extension=".txt"
+    )

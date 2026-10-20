@@ -10,9 +10,9 @@ RUN HEALTH
   209/209 documents collected (nothing truncated)
 
 CURRENT STATE (5 datasets)
-  model          experiment  variant_label  version   retracted  nodes
-  ACCESS-ESM1-6  historical  r1i1p1f1       20261018  no         2
-  ACCESS-ESM1-6  piControl   r1i1p1f1       20261018  no         1
-  CESM3          historical  r1i1p1f1       20261018  no         1
-  CESM3          piControl   r1i1p1f1       20261018  no         1
-  MIROC7         piControl   r1i1p1f1       20261018  yes        1
+  id   project  model          experiment  variant   variable  interval  version   retracted  nodes
+  101  CMIP7    ACCESS-ESM1-6  historical  r1i1p1f1  tas       mon       20261018  no         2
+  102  CMIP7    ACCESS-ESM1-6  piControl   r1i1p1f1  tas       mon       20261018  no         1
+  103  CMIP7    CESM3          historical  r1i1p1f1  tas       mon       20261018  no         1
+  104  CMIP7    CESM3          piControl   r1i1p1f1  tas       mon       20261018  no         1
+  105  CMIP7    MIROC7         piControl   r1i1p1f1  tas       mon       20261018  yes        1

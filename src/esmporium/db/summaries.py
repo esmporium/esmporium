@@ -476,7 +476,7 @@ class SearchSummary:
             columns=list(_CURRENT_FRAME_COLUMNS),
         )
 
-    def render(self, *, max_rows: int = 20) -> str:
+    def render(self, *, max_rows: int = 20, facets: Sequence[str] | None = None) -> str:
         """
         Render this summary as text
 
@@ -484,6 +484,10 @@ class SearchSummary:
         ----------
         max_rows
             How many rows of each table to show before summarising the rest
+
+        facets
+            Which dataset facets to put in the tables, or `None` for the default.
+            See [format_summary][esmporium.db.summary_formatting.format_summary].
 
         Returns
         -------
@@ -496,7 +500,7 @@ class SearchSummary:
             format_summary,
         )
 
-        return format_summary(self, max_rows=max_rows)
+        return format_summary(self, max_rows=max_rows, facets=facets)
 
 
 _CHANGE_FRAME_COLUMNS: tuple[str, ...] = (

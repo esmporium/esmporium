@@ -14,11 +14,17 @@ import datetime
 
 import pytest
 
+from esmporium.datasets import DATASET_FACET_COLUMNS
 from esmporium.db import (
+    DEFAULT_FACETS,
     ConflictingWindowError,
+    MisalignedRowError,
     SearchRunInfo,
+    UnknownFacetError,
+    check_facets,
     collapse_changes,
     describe_moved,
+    render_table,
     summarise_search,
 )
 from esmporium.db.schema import DatasetChangeType
@@ -454,3 +460,140 @@ def test_since_and_n_runs_together_is_refused():
 def test_n_runs_must_be_at_least_one():
     with pytest.raises(ValueError, match="n_runs must be at least one"):
         summarise_search("not-an-engine", "pattern-effect", n_runs=0)
+
+
+# ------------------------------------------------------------------- the columns shown
+def test_default_facets_are_dataset_facets():
+    # A default which named something no dataset records would be unrenderable.
+    assert set(DEFAULT_FACETS) <= set(DATASET_FACET_COLUMNS)
+
+
+def test_check_facets_defaults():
+    assert check_facets(None) == DEFAULT_FACETS
+
+
+def test_check_facets_can_narrow_and_widen():
+    assert check_facets(("model",)) == ("model",)
+    assert check_facets((*DEFAULT_FACETS, "grid_label")) == (
+        "project",
+        "model",
+        "experiment",
+        "variant_label",
+        "variable",
+        "reporting_interval",
+        "grid_label",
+    )
+
+
+def test_check_facets_sorts_into_dataset_facet_order():
+    # So that two tables of the same summary line up, whatever order they were asked
+    # for in.
+    assert check_facets(("variable", "model", "project")) == (
+        "project",
+        "model",
+        "variable",
+    )
+
+
+def test_check_facets_refuses_a_facet_no_dataset_records():
+    with pytest.raises(UnknownFacetError) as caught:
+        # A real facet, but a document-only one: CORDEX's driving model is not a
+        # Dataset column, so a summary cannot show it.
+        check_facets(("model", "cordex-cmip6:driving_source_id"))
+
+    message = str(caught.value)
+    assert "cordex-cmip6:driving_source_id" in message
+    assert "only a search document knows" in message
+
+
+def test_the_id_column_tells_rows_apart_whatever_facets_are_shown(summary_scenes):
+    # Two datasets can agree on every facet we model and still be different rows, so
+    # narrowing the facets must never make them indistinguishable.
+    same_facets = (
+        summary_scenes.version(dataset_version_id=101),
+        summary_scenes.version(dataset_version_id=102),
+    )
+    rendered = summary_scenes.summary(current=same_facets).render(facets=("model",))
+
+    body = [line for line in rendered.splitlines() if "ACCESS-ESM1-6" in line]
+    assert len(body) == 2
+    assert body[0] != body[1]
+    assert [line.split()[0] for line in body] == ["101", "102"]
+
+
+def test_what_moved_goes_under_its_row_not_in_a_column(summary_scenes):
+    # As a column it set the whole table's width on its own.
+    rendered = summary_scenes.summary(
+        changes=(summary_scenes.change(MODIFIED, detail=RETRACTED_MOVED),)
+    ).render()
+
+    lines = rendered.splitlines()
+    header = next(line for line in lines if line.strip().startswith("id"))
+    assert "what moved" not in header
+
+    # On its own line, not trailing the row it belongs to
+    moved = next(line for line in lines if "retracted: no -> yes" in line)
+    assert moved.strip() == "retracted: no -> yes"
+
+    # And the invariant that buys: however long the moved text is, it cannot widen
+    # the table, which is what it did as a column.
+    wordy = summary_scenes.summary(
+        changes=(
+            summary_scenes.change(
+                MODIFIED,
+                detail={
+                    "data_nodes": {
+                        "old": ["a.very.long.data.node.example.org"],
+                        "new": ["a.second.very.long.data.node.example.org"],
+                    }
+                },
+            ),
+        )
+    ).render()
+    wordy_header = next(
+        line for line in wordy.splitlines() if line.strip().startswith("id")
+    )
+    assert len(wordy_header) == len(header)
+
+
+def test_only_the_rows_with_something_moved_get_a_continuation_line(summary_scenes):
+    # collapse_changes never produces a modification with nothing moved, but a
+    # summary built by hand can, and it should render as a plain row rather than as
+    # a blank continuation line.
+    summary = summary_scenes.summary(
+        changes=(
+            summary_scenes.change(
+                MODIFIED,
+                of=summary_scenes.version(dataset_version_id=101),
+                detail=RETRACTED_MOVED,
+            ),
+            summary_scenes.change(
+                MODIFIED, of=summary_scenes.version(dataset_version_id=102), detail=None
+            ),
+        )
+    )
+
+    lines = [line for line in summary.render().splitlines() if line.strip()]
+    body = next(index for index, line in enumerate(lines) if " 101 " in f" {line} ")
+
+    assert lines[body + 1].strip() == "retracted: no -> yes"
+    # The row after that is the second version, with no continuation line of its own
+    assert " 102 " in f" {lines[body + 2]} "
+
+
+def test_render_table_refuses_a_row_which_does_not_match_its_headings():
+    # The failure this guards against is silent: headings and cells built from two
+    # separate lists can be ordered differently, putting a value under the wrong name.
+    with pytest.raises(MisalignedRowError, match="2 headings"):
+        render_table(["model", "version"], [["CESM3"]])
+
+
+def test_render_table_takes_a_table_which_does_match():
+    assert render_table(["a"], [["1"]]) == "  a\n  1"
+
+
+def test_the_scenes_fill_in_every_facet_column(summary_scenes):
+    # If a facet column is added and the scene builder is not, the tables render it
+    # as a gap and the regression files quietly lose a column.
+    assert set(summary_scenes.version().facets) == set(DATASET_FACET_COLUMNS)
+    assert "" not in summary_scenes.version().facets.values()

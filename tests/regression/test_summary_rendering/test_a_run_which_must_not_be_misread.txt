@@ -6,9 +6,9 @@ compared against run 7
 ADDED (0)
 
 REMOVED (2)
-  model          experiment  variant_label  version   retracted
-  CESM3          piControl   r1i1p1f1       20261018  no
-  ACCESS-ESM1-6  piControl   r1i1p1f1       20261018  no
+  id   project  model          experiment  variant   variable  interval  version   retracted
+  104  CMIP7    CESM3          piControl   r1i1p1f1  tas       mon       20261018  no
+  102  CMIP7    ACCESS-ESM1-6  piControl   r1i1p1f1  tas       mon       20261018  no
 
 MODIFIED (0)
 
@@ -21,5 +21,5 @@ RUN HEALTH
   the next run will compare itself against an earlier one
 
 CURRENT STATE (1 datasets)
-  model          experiment  variant_label  version   retracted  nodes
-  ACCESS-ESM1-6  historical  r1i1p1f1       20261018  no         2
+  id   project  model          experiment  variant   variable  interval  version   retracted  nodes
+  101  CMIP7    ACCESS-ESM1-6  historical  r1i1p1f1  tas       mon       20261018  no         2

@@ -202,6 +202,27 @@ def reads_everything():
     return ReadsEverything
 
 
+REALISTIC_FACETS: dict[str, str] = {
+    "project": "CMIP7",
+    "institution": "CSIRO",
+    "model": "ACCESS-ESM1-6",
+    "experiment": "historical",
+    "variant_label": "r1i1p1f1",
+    "variable": "tas",
+    "reporting_interval": "mon",
+    "grid_label": "gn",
+    "processing_id": "Amon",
+}
+"""
+A plausible set of dataset facets, for the scenes whose facets get rendered
+
+Spelled out rather than derived from the column names, so that a rendered table reads
+like a real one. Every key of
+[DATASET_FACET_COLUMNS][esmporium.datasets.DATASET_FACET_COLUMNS] is present, which
+`test_realistic_facets_covers_every_column` pins.
+"""
+
+
 @dataclass(frozen=True)
 class SummaryScenes:
     """The vocabulary the `summary_scenes` fixture hands a test"""
@@ -248,17 +269,26 @@ def summary_scenes():
         is_latest=True,
         data_nodes=("esgf.nci.org.au",),
         seen_in_run_id=7,
+        **facets,
     ):
-        """Build one dataset version, as a summary carries it."""
+        """
+        Build one dataset version, as a summary carries it
+
+        Real CMIP values rather than `get_facet_value` placeholders, because these
+        facets are rendered: a checked-in regression file full of
+        `reporting_interval-value` is one nobody can review by eye, which is the
+        whole point of having it. Pass any facet by name to vary it.
+        """
         return VersionRecord(
             dataset_version_id=dataset_version_id,
             dataset_id=dataset_version_id * 10,
             id_project_specific=f"CMIP7.{model}.{experiment}.{variant_label}",
             facets={
-                **{column: get_facet_value(column) for column in DATASET_FACET_COLUMNS},
+                **REALISTIC_FACETS,
                 "model": model,
                 "experiment": experiment,
                 "variant_label": variant_label,
+                **facets,
             },
             version=version_string,
             is_latest=is_latest,
