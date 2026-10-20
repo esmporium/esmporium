@@ -663,10 +663,6 @@ class StoredRequirement(EsmporiumBase, table=True):
     id: int | None = Field(default=None, primary_key=True)
     """
     Surrogate key; assigned by the database
-
-    Deliberately meaningless, like [Dataset.id][esmporium.db.schema.Dataset.id]. It is
-    short enough to type, though, which is why re-running a search accepts it as well as
-    the name.
     """
 
     requirement_hash: str = Field(unique=True, index=True)
@@ -696,12 +692,6 @@ class StoredRequirement(EsmporiumBase, table=True):
     """
     The question itself, as
     [Requirement.identity_json][esmporium.requirements.Requirement.identity_json]
-
-    Stored rather than the whole
-    [canonical_json][esmporium.requirements.Requirement.canonical_json] because that
-    would hold the name a second time, leaving two places for it to disagree. The
-    requirement is rebuilt by putting `name` back (see
-    [esmporium.db.load_requirement][]).
 
     This is also exactly what `requirement_hash` is the hash of, so the two can be
     checked against each other.
@@ -757,14 +747,6 @@ class SearchRun(EsmporiumBase, table=True):
     Defaults to `False` and is only set once the run has finished (see
     [finish][esmporium.db.schema.SearchRun.finish]), so a run which crashed reads
     incomplete, which is the safe way round.
-
-    This is load-bearing rather than informational: **only a complete run may be a
-    baseline for comparison**. A single sub-search which failed makes every dataset
-    behind that leaf look as though it vanished from ESGF, so diffing against such a run
-    would report a removal that never happened, and then an addition when the next run
-    succeeded. See
-    [run_is_complete][esmporium.db.search_tracking.run_is_complete] for how it is
-    worked out.
     """
 
     def finish(self, *, complete: bool) -> None:
@@ -810,10 +792,6 @@ class SearchRunLeaf(EsmporiumBase, table=True):
 
     Several when two leaves ask for the same dataset under different roles, which is
     searched for once; see [LeafSearch.roles][esmporium.search.LeafSearch.roles].
-
-    JSON rather than a joined string because a role *path* already contains `.` (see
-    `ROLE_SEPARATOR` in [esmporium.requirements.tree][]), so there is no separator left
-    which is safe to split on.
     """
 
     project: str
@@ -834,10 +812,6 @@ class SearchRunLeaf(EsmporiumBase, table=True):
     `None` when nothing answered. With the default `stop_at_first_result=True` there is
     exactly one such host; with it set to `False` several endpoints can answer and this
     records the first of them.
-
-    Provenance for reading a run afterwards. It takes no part in identity, and the
-    per-attempt detail (every endpoint tried, and why each failed) is in
-    [SearchAPICallRecord][esmporium.db.schema.SearchAPICallRecord].
     """
 
     n_matches: int | None = None
@@ -929,9 +903,6 @@ class SearchRunVersion(EsmporiumBase, table=True):
 class DatasetChangeType(str, Enum):
     """
     What happened to a dataset version between two runs of one requirement
-
-    Subclasses `str`, like [Cardinality][esmporium.requirements.Cardinality], so the
-    values can be passed and compared as plain strings.
     """
 
     ADDED = "added"
@@ -999,10 +970,6 @@ class DatasetChange(EsmporiumBase, table=True):
 
     change_type: DatasetChangeType = Field(sa_type=AutoString)
     """What happened. See [DatasetChangeType][esmporium.db.schema.DatasetChangeType]."""
-    # Stored as text rather than as a database enum: a database-level enum on SQLite is
-    # a CHECK constraint, which would have to be named by hand to satisfy
-    # `NAMING_CONVENTION`, and would then need a migration every time a value is added.
-    # The field's own type is still the enum, so a bad value is refused on assignment.
 
     detail_json: str | None = None
     """

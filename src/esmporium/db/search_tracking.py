@@ -1,19 +1,5 @@
 """
 Tracking searches over time
-
-[esmporium.search.search][] answers "what does ESGF have for this requirement, right
-now?". It does not remember having been asked, so nothing can say what changed between
-one answer and the next. This module is what remembers.
-
-The two halves of it are worth keeping apart in your head:
-
-- **Identity.** A requirement is stored once per *question*, keyed by
-  [requirement_hash][esmporium.requirements.Requirement.requirement_hash], with its
-  name as a label. [OnNameClash][(m).] decides what happens when the same question
-  arrives under a new name.
-- **History.** Each run of a stored requirement records what it saw, so that two runs
-  can be compared: [SearchRun][esmporium.db.schema.SearchRun] and the tables which hang
-  off it, written by [search_and_track][(m).].
 """
 
 from __future__ import annotations
@@ -76,20 +62,6 @@ class _VersionState:
 class OnNameClash(str, Enum):
     """
     What to do when a requirement arrives under a name we have not got it stored under
-
-    Only ever consulted for one situation: a requirement whose
-    [requirement_hash][esmporium.requirements.Requirement.requirement_hash] we already
-    hold, carrying a different
-    [name][esmporium.requirements.Requirement.name]. That is one question with two
-    labels.
-
-    The other way round -- one name, two questions -- is not a choice. `name` is unique
-    in [StoredRequirement][esmporium.db.schema.StoredRequirement], so reusing a name for
-    a different question is always refused, with
-    [RequirementNameInUseError][(m).]. The three options below would be meaningless or
-    dangerous there: there is no name to overwrite when the names are the same, and
-    keeping the old name would quietly run the old question under the label you had just
-    redefined.
     """
 
     RAISE = "raise"
@@ -558,11 +530,10 @@ def _upsert_run_version(  # noqa: PLR0913 - retracted, is_latest and the nodes
     # Unioned: a document reports only the nodes it knows about, so the last to arrive
     # is not the most complete and overwriting would throw nodes away.
     #
-    # This read-modify-write can lose a node when two workers fold into the same row at
-    # once (`max_workers > 1`). It is the same select-then-write race as every other
-    # get-or-create in the ingest chain, and is deferred with them -- see the note on
-    # concurrency in `PLAN.md`. The cost here is one node missing from one run's record,
-    # which reads as a node appearing in the next run.
+    # Reading before writing is safe because `BEGIN IMMEDIATE` takes SQLite's write
+    # lock before the read, so parallel workers take turns -- see
+    # [esmporium.db.configure_sqlite_for_concurrency][]. A backend with no single write
+    # lock would need this union computed in SQL.
     row.data_nodes_json = _encode_data_nodes(
         (*_decode_data_nodes(row.data_nodes_json), *data_nodes)
     )
@@ -683,17 +654,6 @@ def run_is_complete(leaves: Iterable[SearchRunLeaf]) -> bool:
     """
     Work out whether a run answered the whole requirement
 
-    Two ways a run can fall short of that, and both have to be caught, because both
-    leave a partial answer which is indistinguishable from datasets having gone away:
-
-    - a sub-search no endpoint answered, so one leaf of the requirement contributed
-      nothing
-    - a sub-search which answered, but collected fewer documents than the host said
-      matched, i.e. it was cut short by `limit` or `max_results`
-
-    A host which reported no total at all cannot be checked for the second, so it is
-    taken at its word.
-
     Parameters
     ----------
     leaves
@@ -731,11 +691,6 @@ def _latest_complete_run(
 ) -> SearchRun | None:
     """
     Get the run to compare against: the newest complete run of this requirement
-
-    Incomplete runs are passed over rather than being the most recent thing available.
-    That is the whole point of recording completeness: diffing against a run which only
-    half happened reports a removal that never took place, and then an addition when the
-    next run succeeds.
     """
     return session.exec(
         select(SearchRun)
@@ -842,10 +797,6 @@ def compute_changes(
     """
     Compare a run with the last complete run of the same requirement
 
-    Reads the two runs' own records of what they were told, rather than the dataset
-    tables, which is the only way this can work: the version rows have already been
-    refreshed by this very run.
-
     Parameters
     ----------
     session
@@ -872,11 +823,6 @@ def record_changes(
 ) -> RunChanges:
     """
     Compare a run with the last complete run of the same requirement, and write the log
-
-    An incomplete run is compared with nothing and writes nothing. Its own record of
-    what it saw is kept -- that is worth having for diagnosis -- but a partial answer
-    cannot be told apart from datasets having gone away, so calling it a change would be
-    inventing one.
 
     Parameters
     ----------
@@ -999,11 +945,6 @@ def search_and_track(  # noqa: PLR0913 - one argument per thing a search has to 
     and additionally remembers having done it: the requirement is stored, the run is
     recorded, what the run saw is written down, and the difference from the last
     complete run is computed and logged.
-
-    The order matters and is not an accident. The requirement and the run are written
-    *before* any endpoint is contacted, so that each sub-search can record against the
-    run as its results arrive, in the same transaction as the writes themselves. The
-    comparison happens at the end, once it is known whether the run answered in full.
 
     Parameters
     ----------
@@ -1327,11 +1268,6 @@ class DatasetChangeInfo:
 
     Keyed by whichever of `retracted`, `is_latest` and `data_nodes` moved, each with
     its old and new value, e.g. `{"retracted": {"old": False, "new": True}}`.
-
-    Never a facet name: a dataset's facets (its variable, experiment and so on) cannot
-    change, because changing one makes it a different
-    [Dataset][esmporium.db.schema.Dataset] row under the identity index rather than a
-    modification of this one.
 
     `None` for an addition or a removal, where the change is the presence of the
     version rather than anything about it.
