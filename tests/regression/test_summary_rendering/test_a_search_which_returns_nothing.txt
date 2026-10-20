@@ -1,0 +1,13 @@
+pattern-effect: no changes
+
+run 1, newest started 2026-10-20 06:02 UTC
+compared against nothing (this is the first run)
+
+NO CHANGES
+
+RUN HEALTH
+  1/1 sub-searches answered   host: search.east.esgf.io
+  0/0 documents collected (nothing truncated)
+
+CURRENT STATE
+  the newest run returned nothing

@@ -27,6 +27,7 @@ from esmporium.db.schema import (
     SearchRunVersion,
     StoredRequirement,
 )
+from esmporium.formatting import readable_list
 from esmporium.requirements import Requirement
 from esmporium.search import DEFAULT_SELECTOR, search
 from esmporium.search.result_normalisation import DEFAULT_NORMALISERS
@@ -1307,6 +1308,101 @@ def get_changes(engine: Engine, search_run_id: int) -> tuple[DatasetChangeInfo, 
                 detail=(
                     None if row.detail_json is None else json.loads(row.detail_json)
                 ),
+            )
+            for row in rows
+        )
+
+
+@dataclass(frozen=True)
+class SearchRunLeafInfo:
+    """
+    One sub-search of a run, read back out of the database
+
+    The counterpart of [SearchRunInfo][(m).] for the rows which say *how* a run went,
+    rather than when it went. Whether a run's answer can be believed is read from
+    these: see [run_is_complete][(m).], which is computed from the same fields.
+    """
+
+    roles: tuple[str, ...]
+    """The role paths which asked for this search"""
+
+    project: str
+    """The project this sub-search was rendered for"""
+
+    answered: bool
+    """Whether any endpoint answered this sub-search in full"""
+
+    host: str | None
+    """The host whose answer we kept, or `None` when nothing answered"""
+
+    n_matches: int | None
+    """How many documents the host said matched, or `None` if it did not say"""
+
+    n_documents: int
+    """How many documents we actually collected"""
+
+    failure: str | None
+    """Why this sub-search failed, or `None` when it answered"""
+
+    @property
+    def label(self) -> str:
+        """
+        A short name for this sub-search, for putting in front of a user
+
+        The roles it was asked for and the project it was rendered for, which together
+        are what distinguishes one sub-search of a run from another.
+        """
+        return f"{readable_list(self.roles)} ({self.project})"
+
+    @property
+    def truncated(self) -> bool:
+        """
+        Whether we collected fewer documents than the host said matched
+
+        A truncated answer looks exactly like datasets having been removed, so it is
+        worth saying out loud. `False` when the host reported no total, because then
+        there is nothing to compare against rather than nothing missing.
+        """
+        if self.n_matches is None:
+            return False
+
+        return self.n_documents < self.n_matches
+
+
+def get_run_leaves(engine: Engine, search_run_id: int) -> tuple[SearchRunLeafInfo, ...]:
+    """
+    Get how each of a run's sub-searches went
+
+    Parameters
+    ----------
+    engine
+        The database to read from
+
+    search_run_id
+        The run to read the sub-searches of
+
+    Returns
+    -------
+    :
+        The sub-searches, in the order they were recorded, which is the order they
+        were planned in
+    """
+    with Session(engine) as session:
+        rows = session.exec(
+            select(SearchRunLeaf)
+            .where(SearchRunLeaf.search_run_id == search_run_id)
+            .order_by(col(SearchRunLeaf.id))
+        ).all()
+
+        return tuple(
+            SearchRunLeafInfo(
+                roles=tuple(json.loads(row.roles_json)),
+                project=row.project,
+                answered=row.answered,
+                host=row.host,
+                n_matches=row.n_matches,
+                n_documents=row.n_documents,
+                failure=row.failure,
             )
             for row in rows
         )

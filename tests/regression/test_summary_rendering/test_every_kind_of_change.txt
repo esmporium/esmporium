@@ -1,0 +1,32 @@
+pattern-effect: 3 added, 1 removed, 2 modified
+
+run 7, newest started 2026-10-20 06:02 UTC
+compared against run 6
+
+ADDED (3)
+  model   experiment  variant_label  version   retracted
+  CESM3   historical  r1i1p1f1       20261018  no
+  CESM3   piControl   r1i1p1f1       20261018  no
+  MIROC7  piControl   r1i1p1f1       20261018  yes
+  1 of these arrived already retracted, so they are not data you can use
+
+REMOVED (1)
+  model   experiment  variant_label  version   retracted
+  UKESM2  historical  r1i1p1f1       20260801  no
+
+MODIFIED (2)
+  model          experiment  variant_label  version   retracted  what moved
+  ACCESS-ESM1-6  piControl   r1i1p1f1       20261018  yes        retracted: no -> yes
+  ACCESS-ESM1-6  historical  r1i1p1f1       20261018  no         data_nodes: +b.gov
+
+RUN HEALTH
+  1/1 sub-searches answered   host: search.east.esgf.io
+  209/209 documents collected (nothing truncated)
+
+CURRENT STATE (5 datasets)
+  model          experiment  variant_label  version   retracted  nodes
+  ACCESS-ESM1-6  historical  r1i1p1f1       20261018  no         2
+  ACCESS-ESM1-6  piControl   r1i1p1f1       20261018  no         1
+  CESM3          historical  r1i1p1f1       20261018  no         1
+  CESM3          piControl   r1i1p1f1       20261018  no         1
+  MIROC7         piControl   r1i1p1f1       20261018  yes        1

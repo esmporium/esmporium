@@ -1,0 +1,456 @@
+"""
+Tests of how a window of recorded changes is folded, and of what a summary says
+
+The folding is the piece worth testing hard: a window of several runs can say three
+things about the same dataset version, and what a reader wants is one line saying
+where it ended up. Everything here runs without a database, because
+[collapse_changes][esmporium.db.collapse_changes] is deliberately a function of
+recorded rows rather than of a session.
+"""
+
+from __future__ import annotations
+
+import datetime
+
+import pytest
+
+from esmporium.db import (
+    ConflictingWindowError,
+    SearchRunInfo,
+    collapse_changes,
+    describe_moved,
+    summarise_search,
+)
+from esmporium.db.schema import DatasetChangeType
+from esmporium.db.summaries import _window
+
+ADDED = DatasetChangeType.ADDED
+REMOVED = DatasetChangeType.REMOVED
+MODIFIED = DatasetChangeType.MODIFIED
+
+RETRACTED_MOVED = {"retracted": {"old": False, "new": True}}
+UNRETRACTED_MOVED = {"retracted": {"old": True, "new": False}}
+
+
+def test_a_single_addition_is_an_addition(summary_scenes):
+    net, churned = collapse_changes([(7, summary_scenes.recorded(ADDED))])
+
+    assert churned == 0
+    assert len(net) == 1
+    assert net[0].change_type is ADDED
+    assert net[0].detail is None
+
+
+def test_added_then_modified_is_still_an_addition(summary_scenes):
+    # The modification is folded into the arrival: the version's current state is
+    # reported in the row, so saying "added" and "modified" would be saying it twice.
+    net, churned = collapse_changes(
+        [
+            (3, summary_scenes.recorded(ADDED)),
+            (4, summary_scenes.recorded(MODIFIED, detail=RETRACTED_MOVED)),
+        ]
+    )
+
+    assert churned == 0
+    assert len(net) == 1
+    assert net[0].change_type is ADDED
+    assert net[0].detail is None
+    assert (net[0].first_run_id, net[0].last_run_id) == (3, 4)
+
+
+def test_added_then_removed_churned(summary_scenes):
+    net, churned = collapse_changes(
+        [(3, summary_scenes.recorded(ADDED)), (4, summary_scenes.recorded(REMOVED))]
+    )
+
+    assert net == ()
+    assert churned == 1
+
+
+def test_removed_then_added_churned(summary_scenes):
+    # It was there when the window opened and it is there now, so there is no news,
+    # even though two changes were recorded about it.
+    net, churned = collapse_changes(
+        [(3, summary_scenes.recorded(REMOVED)), (4, summary_scenes.recorded(ADDED))]
+    )
+
+    assert net == ()
+    assert churned == 1
+
+
+def test_removal_is_a_removal(summary_scenes):
+    net, churned = collapse_changes([(7, summary_scenes.recorded(REMOVED))])
+
+    assert churned == 0
+    assert net[0].change_type is REMOVED
+    assert net[0].detail is None
+
+
+def test_modified_twice_keeps_the_oldest_old_and_the_newest_new(summary_scenes):
+    net, churned = collapse_changes(
+        [
+            (
+                3,
+                summary_scenes.recorded(
+                    MODIFIED, detail={"is_latest": {"old": True, "new": False}}
+                ),
+            ),
+            (
+                4,
+                summary_scenes.recorded(
+                    MODIFIED, detail={"is_latest": {"old": False, "new": True}}
+                ),
+            ),
+        ]
+    )
+
+    # Straight back to where it started, so nothing is left moved.
+    assert net == ()
+    assert churned == 1
+
+
+def test_modified_twice_in_the_same_direction_reads_end_to_end(summary_scenes):
+    net, churned = collapse_changes(
+        [
+            (
+                3,
+                summary_scenes.recorded(
+                    MODIFIED,
+                    detail={"data_nodes": {"old": ["a"], "new": ["a", "b"]}},
+                ),
+            ),
+            (
+                4,
+                summary_scenes.recorded(
+                    MODIFIED,
+                    detail={"data_nodes": {"old": ["a", "b"], "new": ["a", "b", "c"]}},
+                ),
+            ),
+        ]
+    )
+
+    assert churned == 0
+    assert net[0].change_type is MODIFIED
+    assert net[0].detail == {"data_nodes": {"old": ["a"], "new": ["a", "b", "c"]}}
+
+
+def test_different_things_moving_in_different_runs_are_merged(summary_scenes):
+    net, churned = collapse_changes(
+        [
+            (3, summary_scenes.recorded(MODIFIED, detail=RETRACTED_MOVED)),
+            (
+                4,
+                summary_scenes.recorded(
+                    MODIFIED, detail={"is_latest": {"old": True, "new": False}}
+                ),
+            ),
+        ]
+    )
+
+    assert churned == 0
+    assert net[0].detail == {
+        "retracted": {"old": False, "new": True},
+        "is_latest": {"old": True, "new": False},
+    }
+
+
+def test_versions_are_folded_independently(summary_scenes):
+    net, churned = collapse_changes(
+        [
+            (3, summary_scenes.recorded(ADDED, dataset_version_id=1)),
+            (3, summary_scenes.recorded(REMOVED, dataset_version_id=2)),
+            (4, summary_scenes.recorded(REMOVED, dataset_version_id=1)),
+            (
+                4,
+                summary_scenes.recorded(
+                    MODIFIED, dataset_version_id=3, detail=RETRACTED_MOVED
+                ),
+            ),
+        ]
+    )
+
+    assert churned == 1
+    assert {change.dataset_version_id: change.change_type for change in net} == {
+        2: REMOVED,
+        3: MODIFIED,
+    }
+
+
+def test_nothing_recorded_is_no_changes():
+    assert collapse_changes([]) == ((), 0)
+
+
+# ------------------------------------------------------------------- what moved reads
+@pytest.mark.parametrize(
+    ("detail", "expected"),
+    (
+        pytest.param(None, "", id="nothing"),
+        pytest.param({}, "", id="empty"),
+        pytest.param(RETRACTED_MOVED, "retracted: no -> yes", id="retracted"),
+        pytest.param(UNRETRACTED_MOVED, "retracted: yes -> no", id="unretracted"),
+        pytest.param(
+            {"data_nodes": {"old": ["a"], "new": ["a", "b"]}},
+            "data_nodes: +b",
+            id="node-joined",
+        ),
+        pytest.param(
+            {"data_nodes": {"old": ["a", "b"], "new": ["a"]}},
+            "data_nodes: -b",
+            id="node-left",
+        ),
+        pytest.param(
+            {"data_nodes": {"old": ["a"], "new": ["b"]}},
+            "data_nodes: +b, -a",
+            id="node-swapped",
+        ),
+        pytest.param(
+            {
+                "retracted": {"old": False, "new": True},
+                "is_latest": {"old": True, "new": False},
+            },
+            "is_latest: yes -> no; retracted: no -> yes",
+            id="two-things",
+        ),
+        pytest.param(
+            # Only `retracted`, `is_latest` and `data_nodes` can move today. This is
+            # the fallback for whatever we start recording next, so that adding a
+            # tracked field does not silently render as nothing.
+            {"something_new": {"old": "before", "new": "after"}},
+            "something_new: before -> after",
+            id="fallback-for-a-field-we-do-not-track-yet",
+        ),
+    ),
+)
+def test_describe_moved(detail, expected):
+    assert describe_moved(detail) == expected
+
+
+# ----------------------------------------------------------------------- the headline
+def test_headline_says_nothing_when_nothing_changed(summary_scenes):
+    assert summary_scenes.summary().headline == "pattern-effect: no changes"
+
+
+def test_headline_counts_each_type_in_a_fixed_order(summary_scenes):
+    summary = summary_scenes.summary(
+        changes=(
+            summary_scenes.change(MODIFIED, detail=RETRACTED_MOVED),
+            summary_scenes.change(REMOVED),
+            summary_scenes.change(ADDED),
+            summary_scenes.change(ADDED),
+        )
+    )
+
+    assert summary.headline == "pattern-effect: 2 added, 1 removed, 1 modified"
+    assert summary.any_changes
+
+
+def test_headline_says_so_when_the_run_was_incomplete(summary_scenes):
+    summary = summary_scenes.summary(
+        health=summary_scenes.run(complete=False),
+        changes=(summary_scenes.change(REMOVED),),
+    )
+
+    assert summary.headline == "pattern-effect: 1 removed (run incomplete)"
+
+
+def test_headline_says_so_when_an_incomplete_run_changed_nothing(summary_scenes):
+    summary = summary_scenes.summary(health=summary_scenes.run(complete=False))
+
+    assert summary.headline == "pattern-effect: no changes (run incomplete)"
+
+
+# --------------------------------------------------------------------------- rendering
+def test_render_caps_each_table(summary_scenes):
+    changes = tuple(
+        summary_scenes.change(
+            ADDED, of=summary_scenes.version(variant_label=f"r{member}i1p1f1")
+        )
+        for member in range(1, 13)
+    )
+
+    rendered = summary_scenes.summary(changes=changes).render(max_rows=4)
+
+    assert "ADDED (12)" in rendered
+    assert "... (+8 more)" in rendered
+    assert "r4i1p1f1" in rendered
+    assert "r5i1p1f1" not in rendered
+
+
+def test_render_does_not_cap_what_fits(summary_scenes):
+    changes = (summary_scenes.change(ADDED), summary_scenes.change(REMOVED))
+
+    rendered = summary_scenes.summary(changes=changes).render(max_rows=20)
+
+    assert "more)" not in rendered
+
+
+def test_render_leaves_no_trailing_whitespace(summary_scenes):
+    # Our own pre-commit strips trailing whitespace, so a renderer which emits it
+    # would make every checked-in regression file fail the moment it was committed.
+    rendered = summary_scenes.summary(
+        changes=(summary_scenes.change(ADDED),),
+        current=(summary_scenes.version(),),
+    ).render()
+
+    assert rendered.endswith("\n")
+    assert not rendered.endswith("\n\n")
+    assert [line for line in rendered.splitlines() if line != line.rstrip()] == []
+
+
+def test_render_says_no_changes_once(summary_scenes):
+    rendered = summary_scenes.summary().render()
+
+    assert "NO CHANGES" in rendered
+    assert "ADDED (0)" not in rendered
+
+
+def test_render_names_the_zero_sections_when_something_changed(summary_scenes):
+    # A reader needs to know nothing was removed, not merely that removals were not
+    # mentioned.
+    rendered = summary_scenes.summary(changes=(summary_scenes.change(ADDED),)).render()
+
+    assert "REMOVED (0)" in rendered
+    assert "MODIFIED (0)" in rendered
+
+
+def test_render_says_so_when_a_run_recorded_no_sub_searches(summary_scenes):
+    # A run which died before writing its leaves has no health to report, and saying
+    # "0/0 answered" would read as a failure rather than as an absence.
+    rendered = summary_scenes.summary(health=summary_scenes.run(leaves=())).render()
+
+    assert "no sub-searches recorded for this run" in rendered
+
+
+def test_render_calls_out_truncation_the_whole_run_agrees_on(summary_scenes):
+    rendered = summary_scenes.summary(
+        health=summary_scenes.run(
+            leaves=(
+                summary_scenes.leaf("historical.tas", n_matches=209, n_documents=50),
+                summary_scenes.leaf("control.tas", n_matches=100, n_documents=100),
+            )
+        )
+    ).render()
+
+    assert "150/309 documents collected -- TRUNCATED" in rendered
+    assert "a removal here may not be real" in rendered
+
+
+def test_render_calls_out_an_arrival_which_is_already_retracted(summary_scenes):
+    rendered = summary_scenes.summary(
+        changes=(
+            summary_scenes.change(ADDED, of=summary_scenes.version(retracted=True)),
+        )
+    ).render()
+
+    assert "1 of these arrived already retracted" in rendered
+
+
+# --------------------------------------------------------------------------- the frames
+def test_changes_frame_has_its_columns_even_when_empty(summary_scenes):
+    frame = summary_scenes.summary().changes_frame()
+
+    assert frame.empty
+    assert "change" in frame.columns
+    assert "model" in frame.columns
+
+
+def test_changes_frame_has_one_row_per_change(summary_scenes):
+    summary = summary_scenes.summary(
+        changes=(
+            summary_scenes.change(ADDED, of=summary_scenes.version(model="CESM3")),
+            summary_scenes.change(MODIFIED, detail=RETRACTED_MOVED),
+        )
+    )
+
+    frame = summary.changes_frame()
+
+    assert list(frame["change"]) == ["added", "modified"]
+    assert list(frame["model"]) == ["CESM3", "ACCESS-ESM1-6"]
+    assert frame["moved"].tolist() == ["", "retracted: no -> yes"]
+
+
+def test_current_frame_has_one_row_per_version(summary_scenes):
+    summary = summary_scenes.summary(
+        current=(
+            summary_scenes.version(model="CESM3", dataset_version_id=1),
+            summary_scenes.version(
+                model="MIROC7", dataset_version_id=2, data_nodes=("a", "b")
+            ),
+        )
+    )
+
+    frame = summary.current_frame()
+
+    assert list(frame["model"]) == ["CESM3", "MIROC7"]
+    assert list(frame["data_nodes"]) == ["esgf.nci.org.au", "a, b"]
+
+
+# ---------------------------------------------------------------- the window arguments
+def run_info(run_id, *, day=20, complete=True):
+    """Get one stored run, as `get_search_runs` hands it back."""
+    return SearchRunInfo(
+        id=run_id,
+        stored_requirement_id=1,
+        started_at=datetime.datetime(2026, 10, day, tzinfo=datetime.timezone.utc),
+        finished_at=datetime.datetime(2026, 10, day, tzinfo=datetime.timezone.utc),
+        complete=complete,
+    )
+
+
+NEWEST_FIRST = (
+    run_info(7, day=20),
+    run_info(6, day=19),
+    run_info(5, day=18),
+    run_info(4, day=17),
+)
+
+
+def test_window_defaults_to_the_newest_run():
+    assert [run.id for run in _window(NEWEST_FIRST, None, None)] == [7]
+
+
+def test_window_counts_back_n_runs_oldest_first():
+    assert [run.id for run in _window(NEWEST_FIRST, None, 3)] == [5, 6, 7]
+
+
+def test_window_asking_for_more_runs_than_there_are_gives_them_all():
+    assert [run.id for run in _window(NEWEST_FIRST, None, 99)] == [4, 5, 6, 7]
+
+
+def test_window_since_a_run_id():
+    assert [run.id for run in _window(NEWEST_FIRST, 5, None)] == [5, 6, 7]
+
+
+def test_window_since_a_time():
+    since = datetime.datetime(2026, 10, 18, tzinfo=datetime.timezone.utc)
+
+    assert [run.id for run in _window(NEWEST_FIRST, since, None)] == [5, 6, 7]
+
+
+def test_window_since_a_naive_time_is_read_as_utc():
+    # SQLite gives recorded-at columns back without their offset, so both sides of
+    # the comparison have to be read the same way.
+    since = datetime.datetime(2026, 10, 18)
+
+    assert [run.id for run in _window(NEWEST_FIRST, since, None)] == [5, 6, 7]
+
+
+def test_window_can_select_nothing():
+    since = datetime.datetime(2030, 1, 1, tzinfo=datetime.timezone.utc)
+
+    assert _window(NEWEST_FIRST, since, None) == ()
+
+
+def test_since_and_n_runs_together_is_refused():
+    with pytest.raises(ConflictingWindowError) as caught:
+        summarise_search("not-an-engine", "pattern-effect", since=3, n_runs=2)
+
+    message = str(caught.value)
+    assert "since=3" in message
+    assert "n_runs=2" in message
+    assert "not both" in message
+
+
+def test_n_runs_must_be_at_least_one():
+    with pytest.raises(ValueError, match="n_runs must be at least one"):
+        summarise_search("not-an-engine", "pattern-effect", n_runs=0)

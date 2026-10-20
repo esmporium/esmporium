@@ -4,14 +4,24 @@ Re-useable fixtures etc. for tests
 See https://docs.pytest.org/en/7.1.x/reference/fixtures.html#conftest-py-sharing-fixtures-across-multiple-files
 """
 
+import datetime
 import types
 import typing
+from dataclasses import dataclass
 
 import pandas as pd
 import pytest
 
 from esmporium.datasets import DATASET_FACET_COLUMNS
-from esmporium.db import Dataset
+from esmporium.db import (
+    ChangeRecord,
+    Dataset,
+    DatasetChangeInfo,
+    RunHealth,
+    SearchRunLeafInfo,
+    SearchSummary,
+    VersionRecord,
+)
 from esmporium.requirements import VersionFilter
 
 OPT_IN_MARKERS: dict[str, str] = {
@@ -190,6 +200,156 @@ def reads_everything():
             return self.catalogue.find(query, versions=versions)
 
     return ReadsEverything
+
+
+@dataclass(frozen=True)
+class SummaryScenes:
+    """The vocabulary the `summary_scenes` fixture hands a test"""
+
+    version: typing.Callable[..., VersionRecord]
+    """Build one dataset version, as a summary carries it"""
+
+    change: typing.Callable[..., ChangeRecord]
+    """Build one change, as a summary carries it"""
+
+    leaf: typing.Callable[..., SearchRunLeafInfo]
+    """Build one sub-search's outcome, as a run's health carries it"""
+
+    run: typing.Callable[..., RunHealth]
+    """Build one run's health"""
+
+    summary: typing.Callable[..., SearchSummary]
+    """Build a whole summary, with the parts a test doesn't care about filled in"""
+
+    recorded: typing.Callable[..., DatasetChangeInfo]
+    """Build one *stored* change, i.e. what `collapse_changes` is given"""
+
+
+@pytest.fixture
+def summary_scenes():
+    """
+    Get builders for the pieces of a search summary
+
+    Lives here rather than beside either set of tests because the unit tests and the
+    rendering regression tests both need them, and two copies would be free to drift.
+
+    Every builder fills in the parts a test is not making a point about, so that a
+    test reads as the one thing it is checking.
+    """
+
+    def version(  # noqa: PLR0913 - one argument per thing a scene varies
+        model="ACCESS-ESM1-6",
+        experiment="historical",
+        variant_label="r1i1p1f1",
+        dataset_version_id=101,
+        *,
+        version_string="20261018",
+        retracted=False,
+        is_latest=True,
+        data_nodes=("esgf.nci.org.au",),
+        seen_in_run_id=7,
+    ):
+        """Build one dataset version, as a summary carries it."""
+        return VersionRecord(
+            dataset_version_id=dataset_version_id,
+            dataset_id=dataset_version_id * 10,
+            id_project_specific=f"CMIP7.{model}.{experiment}.{variant_label}",
+            facets={
+                **{column: get_facet_value(column) for column in DATASET_FACET_COLUMNS},
+                "model": model,
+                "experiment": experiment,
+                "variant_label": variant_label,
+            },
+            version=version_string,
+            is_latest=is_latest,
+            retracted=retracted,
+            data_nodes=data_nodes,
+            seen_in_run_id=seen_in_run_id,
+        )
+
+    def change(change_type, of=None, *, detail=None, first_run_id=7, last_run_id=7):
+        """Build one change, as a summary carries it."""
+        return ChangeRecord(
+            change_type=change_type,
+            version=of if of is not None else version(),
+            detail=detail,
+            first_run_id=first_run_id,
+            last_run_id=last_run_id,
+        )
+
+    def leaf(
+        role="historical.tas",
+        *,
+        answered=True,
+        n_matches=209,
+        n_documents=209,
+        failure=None,
+    ):
+        """Build one sub-search's outcome, as a run's health carries it."""
+        return SearchRunLeafInfo(
+            roles=(role,),
+            project="CMIP7",
+            answered=answered,
+            host="search.east.esgf.io" if answered else None,
+            n_matches=n_matches,
+            n_documents=n_documents,
+            failure=failure,
+        )
+
+    def run(run_id=7, *, complete=True, leaves=None):
+        """Build one run's health."""
+        return RunHealth(
+            run_id=run_id,
+            started_at=datetime.datetime(
+                2026, 10, 20, 6, 2, tzinfo=datetime.timezone.utc
+            ),
+            finished_at=datetime.datetime(
+                2026, 10, 20, 6, 4, tzinfo=datetime.timezone.utc
+            ),
+            complete=complete,
+            leaves=(leaf(),) if leaves is None else leaves,
+        )
+
+    def summary(  # noqa: PLR0913 - one argument per field a scene fills in
+        *,
+        health=None,
+        changes=(),
+        churned=0,
+        current=(),
+        window_runs=(7,),
+        baseline_run_id=6,
+    ):
+        """Build a whole summary, with the boring parts filled in."""
+        return SearchSummary(
+            requirement_name="pattern-effect",
+            stored_requirement_id=1,
+            run=health if health is not None else run(),
+            baseline_run_id=baseline_run_id,
+            window_runs=window_runs,
+            changes=changes,
+            churned=churned,
+            current=current,
+        )
+
+    def recorded(
+        change_type, dataset_version_id=417, *, detail=None, baseline_run_id=2
+    ):
+        """Build one stored change, i.e. what `collapse_changes` is given."""
+        return DatasetChangeInfo(
+            dataset_version_id=dataset_version_id,
+            change_type=change_type,
+            baseline_run_id=baseline_run_id,
+            detail=detail,
+        )
+
+    return SummaryScenes(
+        version=version,
+        change=change,
+        leaf=leaf,
+        run=run,
+        summary=summary,
+        recorded=recorded,
+    )
 
 
 @pytest.fixture(scope="session", autouse=True)

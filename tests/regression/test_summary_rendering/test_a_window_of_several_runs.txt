@@ -1,0 +1,28 @@
+pattern-effect: 1 added, 1 modified
+
+runs 1-7 (7 runs), newest started 2026-10-20 06:02 UTC
+compared against nothing (this is the first run)
+
+ADDED (1)
+  model  experiment  variant_label  version   retracted
+  CESM3  historical  r1i1p1f1       20261018  no
+
+REMOVED (0)
+
+MODIFIED (1)
+  model          experiment  variant_label  version   retracted  what moved
+  ACCESS-ESM1-6  historical  r1i1p1f1       20261018  no         data_nodes: -b.gov; is_latest: yes -> no
+
+2 versions moved inside the window and ended up back where they started
+
+RUN HEALTH
+  1/1 sub-searches answered   host: search.east.esgf.io
+  209/209 documents collected (nothing truncated)
+
+CURRENT STATE (5 datasets)
+  model          experiment  variant_label  version   retracted  nodes
+  ACCESS-ESM1-6  historical  r1i1p1f1       20261018  no         2
+  ACCESS-ESM1-6  piControl   r1i1p1f1       20261018  no         1
+  CESM3          historical  r1i1p1f1       20261018  no         1
+  CESM3          piControl   r1i1p1f1       20261018  no         1
+  MIROC7         piControl   r1i1p1f1       20261018  yes        1
