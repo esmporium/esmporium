@@ -1,12 +1,5 @@
 """
 Tests of recording search runs and of comparing one with the last
-
-Two halves, and the first is the one that matters most: the comparison is read off the
-runs' own records of what they were told, so it can be driven directly, without any
-searching, and every case a daily watch would hit can be written down cheaply.
-
-The second half drives the whole thing through `search_and_track` against a mock ESGF,
-to check that the recording really does happen where the searching happens.
 """
 
 from __future__ import annotations
@@ -451,9 +444,7 @@ def cmip5_solr_doc(doc_id, *, variables=("tas", "pr"), data_node="a.node"):
 
     CMIP5 is the one project whose documents bundle several datasets together, so this
     is the shape which makes one document become several
-    [SearchRunVersion][esmporium.db.schema.SearchRunVersion] rows. Its facets carry
-    CMIP5's own names (`institute`, `ensemble`, `time_frequency`, `cmor_table`), and
-    there is no `grid_label`, because CMIP5 has no grid concept.
+    [SearchRunVersion][esmporium.db.schema.SearchRunVersion] rows.
     """
     return {
         "master_id": [f"cmip5.{doc_id}"],
