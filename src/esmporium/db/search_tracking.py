@@ -1324,25 +1324,30 @@ class SearchRunLeafInfo:
     """
 
     roles: tuple[str, ...]
-    """The role paths which asked for this search"""
+    """
+    See [SearchRunLeaf.roles_json][esmporium.db.schema.SearchRunLeaf.roles_json],
+    decoded.
+    """
 
     project: str
-    """The project this sub-search was rendered for"""
+    """See [SearchRunLeaf.project][esmporium.db.schema.SearchRunLeaf.project]."""
 
     answered: bool
-    """Whether any endpoint answered this sub-search in full"""
+    """See [SearchRunLeaf.answered][esmporium.db.schema.SearchRunLeaf.answered]."""
 
     host: str | None
-    """The host whose answer we kept, or `None` when nothing answered"""
+    """See [SearchRunLeaf.host][esmporium.db.schema.SearchRunLeaf.host]."""
 
     n_matches: int | None
-    """How many documents the host said matched, or `None` if it did not say"""
+    """See [SearchRunLeaf.n_matches][esmporium.db.schema.SearchRunLeaf.n_matches]."""
 
     n_documents: int
-    """How many documents we actually collected"""
+    """
+    See [SearchRunLeaf.n_documents][esmporium.db.schema.SearchRunLeaf.n_documents].
+    """
 
     failure: str | None
-    """Why this sub-search failed, or `None` when it answered"""
+    """See [SearchRunLeaf.failure][esmporium.db.schema.SearchRunLeaf.failure]."""
 
     @property
     def label(self) -> str:

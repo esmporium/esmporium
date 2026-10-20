@@ -182,13 +182,17 @@ class VersionRecord:
     """
 
     version: str
-    """The version string, as ESGF reports it"""
+    """See [DatasetVersion.version][esmporium.db.schema.DatasetVersion.version]."""
 
     is_latest: bool
-    """Whether the run was told this is the latest version"""
+    """
+    See [SearchRunVersion.is_latest][esmporium.db.schema.SearchRunVersion.is_latest].
+    """
 
     retracted: bool
-    """Whether the run was told this version is retracted"""
+    """
+    See [SearchRunVersion.retracted][esmporium.db.schema.SearchRunVersion.retracted].
+    """
 
     data_nodes: tuple[str, ...]
     """The data nodes the run saw serving this version, sorted"""
@@ -240,19 +244,19 @@ class ChangeRecord:
     """One net change, and the version it happened to"""
 
     change_type: DatasetChangeType
-    """What happened, net of everything in between"""
+    """See [NetChange.change_type][esmporium.db.summaries.NetChange.change_type]."""
 
     version: VersionRecord
-    """The version it happened to"""
+    """The version it happened to, which is what [NetChange][(m).] does not carry"""
 
     detail: MovedValues | None
-    """What moved, for a modified change. `None` otherwise."""
+    """See [NetChange.detail][esmporium.db.summaries.NetChange.detail]."""
 
     first_run_id: int
-    """The first run in the window which reported a change to this version"""
+    """See [NetChange.first_run_id][esmporium.db.summaries.NetChange.first_run_id]."""
 
     last_run_id: int
-    """The last run in the window which reported a change to this version"""
+    """See [NetChange.last_run_id][esmporium.db.summaries.NetChange.last_run_id]."""
 
     @property
     def added_but_retracted(self) -> bool:
@@ -279,13 +283,13 @@ class RunHealth:
     """The run's id"""
 
     started_at: datetime.datetime
-    """When it began (UTC)"""
+    """See [SearchRun.started_at][esmporium.db.schema.SearchRun.started_at]."""
 
     finished_at: datetime.datetime | None
-    """When it finished (UTC), or `None` if it never did"""
+    """See [SearchRun.finished_at][esmporium.db.schema.SearchRun.finished_at]."""
 
     complete: bool
-    """Whether every sub-search answered in full"""
+    """See [SearchRun.complete][esmporium.db.schema.SearchRun.complete]."""
 
     leaves: tuple[SearchRunLeafInfo, ...]
     """How each of the run's sub-searches went, in the order they were planned"""
@@ -359,7 +363,9 @@ class SearchSummary:
 
     `None` when there was nothing to compare with, i.e. the window starts at the
     requirement's first run. Not simply "the run before": incomplete runs are skipped
-    as baselines, so this can be several days earlier than the window's start.
+    as baselines, so this can be several days earlier than the window's start. See
+    [DatasetChange.baseline_run_id][esmporium.db.schema.DatasetChange.baseline_run_id],
+    which is where this is read from.
     """
 
     window_runs: tuple[int, ...]
