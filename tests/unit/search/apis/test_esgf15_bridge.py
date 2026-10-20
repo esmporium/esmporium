@@ -98,3 +98,17 @@ def test_n_matches_reads_the_count_the_solr_way():
     raw = {"response": {"numFound": 25, "docs": []}}
 
     assert api().get_n_matches(raw) == 25
+
+
+def test_read_facet_list_reads_the_solr_way():
+    """The bridge is Solr-shaped, so its facet lists read like ESGF1's too
+
+    The shapes Solr writes are covered in detail against ESGF1; what matters here
+    is that the bridge reads them the same way rather than inventing its own.
+    """
+    assert api().read_facet_list({"variable_id": ["tas", "pr"]}, "variable_id") == (
+        "tas",
+        "pr",
+    )
+    assert api().read_facet_list({"variable_id": "tas"}, "variable_id") == ("tas",)
+    assert api().read_facet_list({}, "variable_id") == ()

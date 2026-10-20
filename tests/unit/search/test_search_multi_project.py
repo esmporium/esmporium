@@ -550,3 +550,14 @@ def test_every_leaf_search_failing_raises_an_aggregate_naming_the_roles(
     message = str(excinfo.value)
     for project in projects:
         assert f"'tas' ({project})" in message
+
+
+def test_search_builds_and_closes_its_own_client(monkeypatch):
+    """With no client given, search builds one for the run and closes it after"""
+    built = client_for(lambda request: solr_body([solr_doc("d")]))
+    monkeypatch.setattr(httpx, "Client", lambda **kwargs: built)
+
+    outcomes = search(for_variables("tas"), build_list_selector([make_facade()]))
+
+    assert len(outcomes) == 1
+    assert built.is_closed, "a client search built itself should be closed after"

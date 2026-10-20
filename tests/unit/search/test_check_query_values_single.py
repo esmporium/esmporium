@@ -514,6 +514,20 @@ def test_high_raises_with_every_failure_when_no_api_answers():
     )
 
 
+def test_high_builds_and_closes_its_own_client(monkeypatch):
+    """With no client given, the check builds one for the call and closes it after"""
+    built = client_for(facet_values_from(["historical"]))
+    monkeypatch.setattr(httpx, "Client", lambda **kwargs: built)
+
+    outcome = check_query_values_single_project(
+        QueryCMIP6(experiment_id="Historical"),
+        selector=selector_yielding(solr_api()),
+    )
+
+    assert outcome.reports, "the check should still have asked the API"
+    assert built.is_closed, "a client the check built itself should be closed after"
+
+
 def test_a_value_matching_the_pattern_passes_silently():
     """
     Test that a value of the right form is not flagged
