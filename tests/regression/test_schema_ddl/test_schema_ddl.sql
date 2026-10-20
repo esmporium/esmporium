@@ -56,6 +56,19 @@ CREATE INDEX ix_searchapicallrecord_created_at ON searchapicallrecord (created_a
 
 CREATE INDEX ix_searchapicallrecord_host ON searchapicallrecord (host);
 
+CREATE TABLE storedrequirement (
+	id INTEGER NOT NULL,
+	requirement_hash VARCHAR NOT NULL,
+	name VARCHAR NOT NULL,
+	identity_json VARCHAR NOT NULL,
+	created_at DATETIME NOT NULL,
+	CONSTRAINT pk_storedrequirement PRIMARY KEY (id)
+);
+
+CREATE UNIQUE INDEX ix_storedrequirement_name ON storedrequirement (name);
+
+CREATE UNIQUE INDEX ix_storedrequirement_requirement_hash ON storedrequirement (requirement_hash);
+
 CREATE TABLE datasetversion (
 	id INTEGER NOT NULL,
 	dataset_id INTEGER NOT NULL,
@@ -68,6 +81,38 @@ CREATE TABLE datasetversion (
 );
 
 CREATE INDEX ix_datasetversion_dataset_id ON datasetversion (dataset_id);
+
+CREATE TABLE searchrun (
+	id INTEGER NOT NULL,
+	stored_requirement_id INTEGER NOT NULL,
+	started_at DATETIME NOT NULL,
+	finished_at DATETIME,
+	complete BOOLEAN NOT NULL,
+	CONSTRAINT pk_searchrun PRIMARY KEY (id),
+	CONSTRAINT fk_searchrun_stored_requirement_id_storedrequirement FOREIGN KEY(stored_requirement_id) REFERENCES storedrequirement (id)
+);
+
+CREATE INDEX ix_searchrun_stored_requirement_id ON searchrun (stored_requirement_id);
+
+CREATE TABLE datasetchange (
+	id INTEGER NOT NULL,
+	search_run_id INTEGER NOT NULL,
+	baseline_run_id INTEGER,
+	dataset_version_id INTEGER NOT NULL,
+	change_type VARCHAR NOT NULL,
+	detail_json VARCHAR,
+	created_at DATETIME NOT NULL,
+	CONSTRAINT pk_datasetchange PRIMARY KEY (id),
+	CONSTRAINT fk_datasetchange_search_run_id_searchrun FOREIGN KEY(search_run_id) REFERENCES searchrun (id),
+	CONSTRAINT fk_datasetchange_baseline_run_id_searchrun FOREIGN KEY(baseline_run_id) REFERENCES searchrun (id),
+	CONSTRAINT fk_datasetchange_dataset_version_id_datasetversion FOREIGN KEY(dataset_version_id) REFERENCES datasetversion (id)
+);
+
+CREATE INDEX ix_datasetchange_baseline_run_id ON datasetchange (baseline_run_id);
+
+CREATE INDEX ix_datasetchange_dataset_version_id ON datasetchange (dataset_version_id);
+
+CREATE INDEX ix_datasetchange_search_run_id ON datasetchange (search_run_id);
 
 CREATE TABLE datasetversiondatanodelink (
 	id INTEGER NOT NULL,
@@ -96,3 +141,36 @@ CREATE TABLE rawdocversionlink (
 CREATE INDEX ix_rawdocversionlink_dataset_version_id ON rawdocversionlink (dataset_version_id);
 
 CREATE INDEX ix_rawdocversionlink_raw_doc_id ON rawdocversionlink (raw_doc_id);
+
+CREATE TABLE searchrunleaf (
+	id INTEGER NOT NULL,
+	search_run_id INTEGER NOT NULL,
+	roles_json VARCHAR NOT NULL,
+	project VARCHAR NOT NULL,
+	answered BOOLEAN NOT NULL,
+	host VARCHAR,
+	n_matches INTEGER,
+	n_documents INTEGER NOT NULL,
+	failure VARCHAR,
+	CONSTRAINT pk_searchrunleaf PRIMARY KEY (id),
+	CONSTRAINT fk_searchrunleaf_search_run_id_searchrun FOREIGN KEY(search_run_id) REFERENCES searchrun (id)
+);
+
+CREATE INDEX ix_searchrunleaf_search_run_id ON searchrunleaf (search_run_id);
+
+CREATE TABLE searchrunversion (
+	id INTEGER NOT NULL,
+	search_run_id INTEGER NOT NULL,
+	dataset_version_id INTEGER NOT NULL,
+	retracted BOOLEAN NOT NULL,
+	is_latest BOOLEAN NOT NULL,
+	data_nodes_json VARCHAR NOT NULL,
+	CONSTRAINT pk_searchrunversion PRIMARY KEY (id),
+	CONSTRAINT uq_searchrunversion_search_run_id_dataset_version_id UNIQUE (search_run_id, dataset_version_id),
+	CONSTRAINT fk_searchrunversion_search_run_id_searchrun FOREIGN KEY(search_run_id) REFERENCES searchrun (id),
+	CONSTRAINT fk_searchrunversion_dataset_version_id_datasetversion FOREIGN KEY(dataset_version_id) REFERENCES datasetversion (id)
+);
+
+CREATE INDEX ix_searchrunversion_dataset_version_id ON searchrunversion (dataset_version_id);
+
+CREATE INDEX ix_searchrunversion_search_run_id ON searchrunversion (search_run_id);

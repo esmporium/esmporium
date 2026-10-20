@@ -651,6 +651,10 @@ class Requirement(BaseModel):
     Yours to choose, and the counterpart to [Leaf.role][(m).Leaf.role]: this names the
     whole calculation ("pattern-scaling", "gregory-method"), a role names one dataset's
     job inside it. One `name` per requirement, many roles beneath it.
+
+    A label, not part of the question: this is the one field
+    [requirement_hash][(m).Requirement.requirement_hash] does not cover, so renaming a
+    requirement does not make it a different one.
     """
 
     tree: Node
@@ -826,8 +830,10 @@ class Requirement(BaseModel):
         order `prefer`'s mapping happens to be written in does not change the answer,
         and no insignificant whitespace. Together with queries being translated as they
         are stored, that is what lets two requirements which ask the same thing come out
-        byte for byte identical whatever style each was written in, which is the whole
-        basis of [requirement_hash][(m).Requirement.requirement_hash].
+        byte for byte identical whatever style each was written in.
+
+        This is the whole requirement, `name` included, so it is what to write down when
+        one has to be rebuilt later.
 
         Returns
         -------
@@ -837,6 +843,29 @@ class Requirement(BaseModel):
         return json.dumps(
             self.model_dump(mode="json"), sort_keys=True, separators=(",", ":")
         )
+
+    def identity_json(self) -> str:
+        """
+        Get a canonical JSON representation of the question alone, without the name
+
+        The same string as [canonical_json][(m).Requirement.canonical_json], with `name`
+        removed: a name is the label a human put on a requirement rather than part of
+        what it asks for. So two requirements which ask the same thing under different
+        names have one of these between them, and two `canonical_json`s.
+
+        This is what [requirement_hash][(m).Requirement.requirement_hash] is taken over,
+        and therefore what a stored hash commits to. Keeping it beside the hash lets the
+        two be checked against each other.
+
+        Returns
+        -------
+        :
+            The JSON, with no `name` in it
+        """
+        dumped = self.model_dump(mode="json")
+        del dumped["name"]
+
+        return json.dumps(dumped, sort_keys=True, separators=(",", ":"))
 
     def requirement_hash(self) -> str:
         """
@@ -858,9 +887,9 @@ class Requirement(BaseModel):
         Returns
         -------
         :
-            SHA-256 of [canonical_json][(m).Requirement.canonical_json]
+            SHA-256 of [identity_json][(m).Requirement.identity_json]
         """
-        return hashlib.sha256(self.canonical_json().encode()).hexdigest()
+        return hashlib.sha256(self.identity_json().encode()).hexdigest()
 
 
 def effective_query(node: Leaf, where: QueryCanonical | None) -> QueryCanonical:

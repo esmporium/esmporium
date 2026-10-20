@@ -27,7 +27,7 @@ from esmporium.db import (
     ingest_parsed_documents,
     save_dataset,
 )
-from esmporium.db.results_to_database import _get_or_create
+from esmporium.db.results_to_database import get_or_create
 from esmporium.search import (
     DEFAULT_NORMALISERS,
     ESGF1_CMIP5_FACADE_PARAMETERS,
@@ -549,7 +549,7 @@ def test_get_or_create_reuses_a_row_another_transaction_inserted_first(engine):
 
     unresolved: list[DataNode] = []
     with Session(engine) as session:
-        node = _get_or_create(
+        node = get_or_create(
             session,
             _misses_once(lambda: _find_node(session)),
             lambda: DataNode(data_node="node.example"),
@@ -580,7 +580,7 @@ def test_get_or_create_hands_an_unresolved_conflict_to_its_hook(engine):
         session.flush()
 
         with pytest.raises(IntegrityError):
-            _get_or_create(
+            get_or_create(
                 session,
                 lambda: None,
                 lambda: DataNode(data_node="node.example"),

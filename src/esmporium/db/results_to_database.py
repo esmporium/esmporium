@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
 from sqlalchemy import Engine, func
@@ -173,9 +174,9 @@ def save_dataset(
         `session` is bound to a SQLite engine that has not been configured with
         [esmporium.db.configure_sqlite_for_concurrency][].
     """
-    _check_engine_is_configured(session)
+    check_engine_is_configured(session)
 
-    return _get_or_create(
+    return get_or_create(
         session,
         # Nothing to reuse: saving a dataset that is already stored is the clash.
         lookup=lambda: None,
@@ -186,7 +187,7 @@ def save_dataset(
     )
 
 
-def _check_engine_is_configured(session: Session) -> None:
+def check_engine_is_configured(session: Session) -> None:
     """
     Raise if `session` writes to a SQLite engine without real transactions
 
@@ -303,11 +304,31 @@ def _get_clash_facet_differences(
     return facet_differences(normalised_info)
 
 
+@dataclass(frozen=True)
+class IngestedDocument:
+    """
+    One document which was written, and the version rows it turned into
+
+    A document describes one version of one dataset, except in CMIP5, where one document
+    bundles several datasets' versions together -- hence `versions` being a tuple.
+    """
+
+    parsed: ParsedDocument
+    """The document, as the facade parsed it"""
+
+    versions: tuple[DatasetVersion, ...]
+    """
+    The version rows it was written to, flushed, so each one's `id` is set
+
+    One per dataset the document described.
+    """
+
+
 def ingest_parsed_documents(
     session: Session,
     parsed_documents: Iterable[ParsedDocument],
     normalisers: Mapping[str, NormaliseFunc] = DEFAULT_NORMALISERS,
-) -> None:
+) -> tuple[IngestedDocument, ...]:
     """
     Write already-parsed documents into the database
 
@@ -333,15 +354,28 @@ def ingest_parsed_documents(
         pass a mapping that includes a normaliser for that tag
         (e.g. `{**DEFAULT_NORMALISERS, <your tag>: <your normaliser>}`).
 
+    Returns
+    -------
+    :
+        One [IngestedDocument][(m).] per document written, in the order they were given.
+
+        Saving does not need these; tracking a search over time does. See
+        [esmporium.db.search_tracking][], which records what one run saw and cannot work
+        that out from the tables afterwards: the version rows are refreshed by the next
+        run, and the node links accumulate over every run rather than saying which run
+        saw which node.
+
     Raises
     ------
     UnconfiguredSQLiteEngineError
         `session` is bound to a SQLite engine that has not been configured with
         [esmporium.db.configure_sqlite_for_concurrency][].
     """
-    _check_engine_is_configured(session)
-    for parsed in parsed_documents:
-        _ingest_document(session, parsed, normalisers)
+    check_engine_is_configured(session)
+
+    return tuple(
+        _ingest_document(session, parsed, normalisers) for parsed in parsed_documents
+    )
 
 
 def build_result_processor(
@@ -464,7 +498,7 @@ class _SurrogateKeyRow(Protocol):
     id: int | None
 
 
-def _flushed_id(row: _SurrogateKeyRow) -> int:
+def flushed_id(row: _SurrogateKeyRow) -> int:
     """
     Get the database-assigned id of a row we have already flushed
 
@@ -486,34 +520,36 @@ def _ingest_document(
     session: Session,
     parsed: ParsedDocument,
     normalisers: Mapping[str, NormaliseFunc],
-) -> None:
+) -> IngestedDocument:
     """Write one parsed document: its datasets, versions, nodes, raw doc and links."""
     datasets = [
         _get_or_create_dataset(session, facets, parsed, normalisers)
         for facets in parsed.datasets
     ]
     dataset_versions = [
-        _upsert_version(session, _flushed_id(dataset), parsed) for dataset in datasets
+        _upsert_version(session, flushed_id(dataset), parsed) for dataset in datasets
     ]
 
     nodes = [_get_or_create_node(session, node.data_node) for node in parsed.nodes]
     for version in dataset_versions:
         for node in nodes:
             _get_or_create_version_node_link(
-                session, _flushed_id(version), _flushed_id(node)
+                session, flushed_id(version), flushed_id(node)
             )
 
     raw_doc = _get_or_create_raw_doc(session, parsed)
     for version in dataset_versions:
         _get_or_create_raw_doc_dataset_version_link(
-            session, _flushed_id(raw_doc), _flushed_id(version)
+            session, flushed_id(raw_doc), flushed_id(version)
         )
+
+    return IngestedDocument(parsed=parsed, versions=tuple(dataset_versions))
 
 
 _Row = TypeVar("_Row")
 
 
-def _get_or_create(
+def get_or_create(
     session: Session,
     lookup: Callable[[], _Row | None],
     build: Callable[[], _Row],
@@ -596,7 +632,7 @@ def _get_or_create_dataset(
         getattr(Dataset, column) == value for column, value in facet_values.items()
     ]
 
-    return _get_or_create(
+    return get_or_create(
         session,
         # We match on every column,
         # so the identity index (see `Dataset.__table_args__`)
@@ -636,7 +672,7 @@ def _upsert_version(
     https://github.com/esmporium/esmporium/issues: the disagreement is ESGF's to
     fix, and we cannot ask upstream without cases.
     """
-    version = _get_or_create(
+    version = get_or_create(
         session,
         lambda: session.exec(
             select(DatasetVersion).where(
@@ -662,7 +698,7 @@ def _upsert_version(
 
 def _get_or_create_node(session: Session, data_node: str) -> DataNode:
     """Reuse the row for this data node if we have one, else create it."""
-    return _get_or_create(
+    return get_or_create(
         session,
         lambda: session.exec(
             select(DataNode).where(DataNode.data_node == data_node)
@@ -675,7 +711,7 @@ def _get_or_create_version_node_link(
     session: Session, dataset_version_id: int, data_node_id: int
 ) -> DatasetVersionDataNodeLink:
     """Link a version to a data node, once."""
-    return _get_or_create(
+    return get_or_create(
         session,
         lambda: session.exec(
             select(DatasetVersionDataNodeLink).where(
@@ -691,7 +727,7 @@ def _get_or_create_version_node_link(
 
 def _get_or_create_raw_doc(session: Session, parsed: ParsedDocument) -> DatasetRawDoc:
     """Store the raw JSON once, keyed by `esgf_doc_id`."""
-    return _get_or_create(
+    return get_or_create(
         session,
         lambda: session.exec(
             select(DatasetRawDoc).where(DatasetRawDoc.esgf_doc_id == parsed.esgf_doc_id)
@@ -713,7 +749,7 @@ def _get_or_create_raw_doc_dataset_version_link(
     session: Session, raw_doc_id: int, dataset_version_id: int
 ) -> RawDocVersionLink:
     """Link a raw document to a version, once."""
-    return _get_or_create(
+    return get_or_create(
         session,
         lambda: session.exec(
             select(RawDocVersionLink).where(
