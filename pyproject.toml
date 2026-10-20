@@ -149,8 +149,12 @@ exclude_also = [
     "if TYPE_CHECKING",
     # Type overloading lines
     "@overload",
-    "\\.\\.\\.",
-
+    # Placeholder bodies (e.g. a Protocol's method stubs) are a bare `...` on a line of
+    # their own and are never executed, so there is nothing to test.
+    # The anchors are deliberate: an unanchored `\\.\\.\\.` also matches the `...` in a
+    # signature's `tuple[X, ...]`, and a match on a `def` line excludes that whole
+    # function from the report without reporting that it has done so.
+    "^\\s*\\.\\.\\.\\s*$",
 ]
 
 [tool.mypy]

@@ -279,3 +279,16 @@ def test_every_sub_check_failing_raises_an_aggregate_naming_the_roles(
     message = str(excinfo.value)
     for project in projects:
         assert f"'historical' ({project})" in message
+
+
+def test_builds_and_closes_its_own_client(monkeypatch):
+    """With no client given, the check builds one for the run and closes it after"""
+    built = client_for(lambda r: facet_values(experiment_id=["historical", 5]))
+    monkeypatch.setattr(httpx, "Client", lambda **kwargs: built)
+
+    outcomes = check_query_values(
+        for_experiments("historical"), build_list_selector([make_facade()])
+    )
+
+    assert len(outcomes) == 1
+    assert built.is_closed, "a client the check built itself should be closed after"
