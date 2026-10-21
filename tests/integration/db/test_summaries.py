@@ -7,6 +7,8 @@ hand-built objects. One path through, the default one.
 
 from __future__ import annotations
 
+import datetime
+import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -19,6 +21,7 @@ from esmporium.db import (
     NoRunsInWindowError,
     RequirementNotFoundError,
     SearchRunLeaf,
+    get_run_leaves,
     record_changes,
     summarise_search,
 )
@@ -47,6 +50,14 @@ class Preloaded:
 
     close: Callable[..., None]
     """Finish a run and log what it changed, as a real run does when it ends"""
+
+    started: Callable[..., None]
+    """
+    Move when a run began
+
+    Runs made in one test are milliseconds apart, so a window boundary cannot be put
+    between them without saying when each one was.
+    """
 
 
 @pytest.fixture
@@ -124,12 +135,15 @@ def preloaded(engine, get_dataset_kwargs):
             )
             session.commit()
 
-    def leaf(run_id, role, *, answered=True, n_matches=2, n_documents=2):
+    def leaf(
+        run_id, roles="historical.tas", *, answered=True, n_matches=2, n_documents=2
+    ):
+        asked = (roles,) if isinstance(roles, str) else tuple(roles)
         with Session(engine) as session:
             session.add(
                 SearchRunLeaf(
                     search_run_id=run_id,
-                    roles_json=f'["{role}"]',
+                    roles_json=json.dumps(list(asked)),
                     project="CMIP7",
                     answered=answered,
                     host="search.east.esgf.io" if answered else None,
@@ -149,7 +163,14 @@ def preloaded(engine, get_dataset_kwargs):
             record_changes(session, run, stored_requirement_id=requirement_id)
             session.commit()
 
-    return Preloaded(new_run=new_run, saw=saw, leaf=leaf, close=close)
+    def started(run_id, when):
+        with Session(engine) as session:
+            run = session.get(SearchRun, run_id)
+            run.started_at = when
+            session.add(run)
+            session.commit()
+
+    return Preloaded(new_run=new_run, saw=saw, leaf=leaf, close=close, started=started)
 
 
 @pytest.fixture
@@ -355,3 +376,84 @@ def test_a_window_which_selects_nothing(engine, two_runs):
 def test_a_search_we_do_not_have(engine, preloaded):
     with pytest.raises(RequirementNotFoundError):
         summarise_search(engine, "not-a-search")
+
+
+# ------------------------------------------------- a window given as a point in time
+FIRST_RAN = datetime.datetime(2026, 10, 19, 6, 0, tzinfo=datetime.timezone.utc)
+SECOND_RAN = datetime.datetime(2026, 10, 20, 6, 0, tzinfo=datetime.timezone.utc)
+
+
+@pytest.fixture
+def two_runs_a_day_apart(preloaded, two_runs):
+    """Put a day between the two runs, so a window boundary can sit between them"""
+    first, second = two_runs
+    preloaded.started(first, FIRST_RAN)
+    preloaded.started(second, SECOND_RAN)
+
+    return first, second
+
+
+def test_a_window_since_a_moment_in_time(engine, two_runs_a_day_apart):
+    # The reason this is an integration test and not a unit test: SQLite has nowhere
+    # to keep a timezone offset, so it hands `started_at` back naive. Comparing that
+    # with the timezone-aware datetime a caller would naturally pass raises
+    # TypeError unless something reconciles them, and only a real database produces
+    # the naive value. A unit test built from aware datetimes cannot see this.
+    first, second = two_runs_a_day_apart
+
+    assert summarise_search(engine, REQUIREMENT_NAME, since=SECOND_RAN).window_runs == (
+        second,
+    )
+    assert summarise_search(engine, REQUIREMENT_NAME, since=FIRST_RAN).window_runs == (
+        first,
+        second,
+    )
+
+
+def test_a_naive_since_is_read_as_utc(engine, two_runs_a_day_apart):
+    # UTC is what is recorded, so a datetime which does not say gets taken at its
+    # word rather than refused.
+    _, second = two_runs_a_day_apart
+
+    aware = summarise_search(engine, REQUIREMENT_NAME, since=SECOND_RAN)
+    naive = summarise_search(
+        engine, REQUIREMENT_NAME, since=SECOND_RAN.replace(tzinfo=None)
+    )
+
+    assert naive.window_runs == aware.window_runs == (second,)
+
+
+# ----------------------------------------------------- reading a run's sub-searches
+def test_get_run_leaves_reads_back_what_each_sub_search_did(engine, preloaded):
+    run = preloaded.new_run()
+    preloaded.leaf(run, ("historical.tas", "chain.0.tas"), n_matches=9, n_documents=4)
+    preloaded.leaf(run, "control.tas", answered=False, n_matches=None, n_documents=0)
+    preloaded.close(run)
+
+    leaves = get_run_leaves(engine, run)
+
+    assert len(leaves) == 2
+    # In the order they were recorded, which is the order they were planned
+    first, second = leaves
+
+    # Decoded from JSON into a tuple, and keeping both roles: two leaves asking for
+    # the same dataset are searched for once.
+    assert first.roles == ("historical.tas", "chain.0.tas")
+    assert first.project == "CMIP7"
+    assert first.answered
+    assert first.host == "search.east.esgf.io"
+    assert (first.n_matches, first.n_documents) == (9, 4)
+    assert first.failure is None
+
+    assert second.roles == ("control.tas",)
+    assert not second.answered
+    assert second.host is None
+    assert second.n_matches is None
+    assert second.failure == "every endpoint refused"
+
+
+def test_get_run_leaves_of_a_run_with_none_is_empty(engine, preloaded):
+    run = preloaded.new_run()
+    preloaded.close(run)
+
+    assert get_run_leaves(engine, run) == ()

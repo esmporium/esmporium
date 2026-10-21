@@ -14,6 +14,7 @@ from esmporium.db import (
     ConflictingWindowError,
     MisalignedRowError,
     SearchRunInfo,
+    SearchRunLeafInfo,
     UnknownFacetError,
     check_facets,
     collapse_changes,
@@ -383,6 +384,48 @@ def test_current_frame_has_one_row_per_version(summary_scenes):
 
     assert list(frame["model"]) == ["CESM3", "MIROC7"]
     assert list(frame["data_nodes"]) == ["esgf.nci.org.au", "a, b"]
+
+
+# ------------------------------------------------- what a run's sub-searches report
+def leaf_info(roles=("historical.tas",), *, n_matches=209, n_documents=209):
+    """One sub-search's outcome, built directly so the dataclass is what is tested."""
+    return SearchRunLeafInfo(
+        roles=roles,
+        project="CMIP7",
+        answered=True,
+        host="search.east.esgf.io",
+        n_matches=n_matches,
+        n_documents=n_documents,
+        failure=None,
+    )
+
+
+def test_a_sub_search_is_truncated_when_it_collected_fewer_than_matched():
+    assert leaf_info(n_matches=209, n_documents=50).truncated
+
+
+def test_a_sub_search_which_collected_everything_is_not_truncated():
+    assert not leaf_info(n_matches=209, n_documents=209).truncated
+
+
+def test_a_host_which_reported_no_total_is_not_truncated():
+    # The decision this pins: "the host did not say how many matched" is not the same
+    # as "documents are missing". Calling it truncated would turn every host which
+    # reports no total into a permanent warning.
+    assert not leaf_info(n_matches=None, n_documents=50).truncated
+
+
+def test_a_sub_search_is_labelled_by_its_roles_and_project():
+    assert leaf_info().label == "'historical.tas' (CMIP7)"
+
+
+def test_a_sub_search_asked_for_under_several_roles_names_them_all():
+    # Two leaves asking for the same dataset are searched for once, so a failure has
+    # to say which roles it cost.
+    assert (
+        leaf_info(roles=("historical.tas", "chain.0.tas")).label
+        == "'historical.tas' and 'chain.0.tas' (CMIP7)"
+    )
 
 
 # ---------------------------------------------------------------- the window arguments
