@@ -1,13 +1,8 @@
 """
 Summaries of what a tracked search returned, and of what changed
 
-[esmporium.db.search_tracking][] records a search's answers run by run, and works out
-the difference between one run and the last complete run before it. What it records is
-keyed by database ids, though: a
-[DatasetChangeInfo][esmporium.db.DatasetChangeInfo] says that dataset version 417 was
-retracted, which is true and unreadable.
-
-This module joins that record back to the facets which name a dataset, folds a window
+This module joins the records from [esmporium.db.search_tracking][]
+back to the facets which name a dataset, folds a window
 of several runs down to its net effect, and hands the answer over as either a
 [pandas.DataFrame][] or, via [esmporium.db.summary_formatting][], as text. Nothing
 here writes to the database.
@@ -174,11 +169,6 @@ class VersionRecord:
     """
     The dataset's facets, keyed by
     [DATASET_FACET_COLUMNS][esmporium.datasets.DATASET_FACET_COLUMNS]
-
-    A mapping rather than one field per facet on purpose:
-    [Dataset][esmporium.db.schema.Dataset] and
-    [CatalogueEntry][esmporium.requirements.CatalogueEntry] already spell that list
-    out twice, and a third copy would be a third thing to keep in step.
     """
 
     version: str
@@ -210,7 +200,7 @@ class VersionRecord:
 @dataclass(frozen=True)
 class NetChange:
     """
-    What happened to one dataset version across a window of runs, net of churn
+    What happened to one dataset version across a window of runs, net of the rest
 
     The output of [collapse_changes][(m).], and so the thing to start from when
     checking how a window is folded: it names a version by its id only, and carries no
@@ -379,12 +369,15 @@ class SearchSummary:
     appears once, as an addition.
     """
 
-    churned: int
+    net_unchanged: int
     """
     How many versions moved inside the window and ended up back where they started
 
     Added and then removed again, or modified and then modified back. Counted rather
     than listed, because the net news about them is that there is no news.
+
+    Not the same as "versions which did not change": a version no run reported a
+    change to is not counted here at all.
     """
 
     current: tuple[VersionRecord, ...]
@@ -427,7 +420,7 @@ class SearchSummary:
         ...     baseline_run_id=6,
         ...     window_runs=(7,),
         ...     changes=(),
-        ...     churned=0,
+        ...     net_unchanged=0,
         ...     current=(),
         ... )
         >>> summary.headline
@@ -697,8 +690,9 @@ def collapse_changes(
     - absent, then present: an addition
     - present, then absent: a removal
     - present throughout, with something still moved: a modification
-    - present throughout with nothing left moved, or absent at both ends: churn, which
-      is counted and not reported, because the net news is that there is no news
+    - present throughout with nothing left moved, or absent at both ends: no net
+      change, which is counted and not reported, because the net news about it is
+      that there is no news
 
     Parameters
     ----------
@@ -709,7 +703,7 @@ def collapse_changes(
     Returns
     -------
     :
-        The net changes, and how many versions churned
+        The net changes, and how many versions ended up back where they started
 
     Examples
     --------
@@ -730,13 +724,13 @@ def collapse_changes(
     ...     baseline_run_id=3,
     ...     detail={"retracted": {"old": False, "new": True}},
     ... )
-    >>> net, churned = collapse_changes([(3, added), (4, retracted)])
+    >>> net, net_unchanged = collapse_changes([(3, added), (4, retracted)])
     >>> net[0].change_type.value, net[0].first_run_id, net[0].last_run_id
     ('added', 3, 4)
-    >>> churned
+    >>> net_unchanged
     0
 
-    A version which arrived and went again inside the window churned:
+    A version which arrived and went again inside the window is no net change:
 
     >>> removed = DatasetChangeInfo(
     ...     dataset_version_id=417,
@@ -744,8 +738,8 @@ def collapse_changes(
     ...     baseline_run_id=3,
     ...     detail=None,
     ... )
-    >>> net, churned = collapse_changes([(3, added), (4, removed)])
-    >>> net, churned
+    >>> net, net_unchanged = collapse_changes([(3, added), (4, removed)])
+    >>> net, net_unchanged
     ((), 1)
     """
     folds: dict[int, _Fold] = {}
@@ -770,7 +764,7 @@ def collapse_changes(
             fold.moved = _merge_moved(fold.moved, change.detail)
 
     net = []
-    churned = 0
+    net_unchanged = 0
     for dataset_version_id, fold in folds.items():
         if fold.absent_at_start and not fold.absent_now:
             change_type = DatasetChangeType.ADDED
@@ -781,7 +775,7 @@ def collapse_changes(
         else:
             settled = _settled(fold.moved)
             if fold.absent_at_start or not settled:
-                churned += 1
+                net_unchanged += 1
                 continue
 
             change_type = DatasetChangeType.MODIFIED
@@ -797,17 +791,12 @@ def collapse_changes(
             )
         )
 
-    return tuple(net), churned
+    return tuple(net), net_unchanged
 
 
 def _as_utc(value: datetime.datetime) -> datetime.datetime:
     """
     Read a datetime as UTC, whether or not it says so
-
-    Recorded-at columns are written timezone-aware (see `_utcnow` in
-    [esmporium.db.schema][]), but SQLite has nowhere to keep the offset and hands them
-    back naive. Both sides of a comparison have to agree, so a naive value is taken at
-    its word: UTC, because UTC is what was written.
     """
     if value.tzinfo is None:
         return value.replace(tzinfo=datetime.timezone.utc)
@@ -867,12 +856,6 @@ def _version_records(
 ) -> tuple[dict[int, VersionRecord], tuple[int, ...]]:
     """
     Read what each run was told about each version, and which the newest run returned
-
-    One query, joining a run's answers to the facets which name the dataset. The rows
-    come back oldest run first and later rows overwrite earlier ones, so each version
-    ends up holding the answer of the last run which saw it. For a version which was
-    removed that is the last run which still had it, which is the only answer anyone
-    ever wrote down about it.
 
     Returns
     -------
@@ -959,9 +942,7 @@ def summarise_search(
     Summarise what a tracked search returned, and what changed
 
     Reads what [search_and_track][esmporium.db.search_and_track] recorded. By default
-    that is the newest run and the baseline its own changes were measured against,
-    which is the question a watched search asks every morning: what is different
-    today?
+    that is the newest run and the baseline its own changes were measured against.
 
     Parameters
     ----------
@@ -1018,7 +999,7 @@ def summarise_search(
     recorded: list[tuple[int, DatasetChangeInfo]] = [
         (run.id, change) for run in window for change in get_changes(engine, run.id)
     ]
-    net_changes, churned = collapse_changes(recorded)
+    net_changes, net_unchanged = collapse_changes(recorded)
 
     # The window is measured against whatever the oldest run in it was measured
     # against, which is recorded on that run's own changes rather than being "the run
@@ -1085,6 +1066,6 @@ def summarise_search(
         baseline_run_id=baseline_run_id,
         window_runs=window_ids,
         changes=changes,
-        churned=churned,
+        net_unchanged=net_unchanged,
         current=current,
     )

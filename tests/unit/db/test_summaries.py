@@ -39,9 +39,9 @@ UNRETRACTED_MOVED = {"retracted": {"old": True, "new": False}}
 
 
 def test_a_single_addition_is_an_addition(summary_scenes):
-    net, churned = collapse_changes([(7, summary_scenes.recorded(ADDED))])
+    net, net_unchanged = collapse_changes([(7, summary_scenes.recorded(ADDED))])
 
-    assert churned == 0
+    assert net_unchanged == 0
     assert len(net) == 1
     assert net[0].change_type is ADDED
     assert net[0].detail is None
@@ -50,50 +50,50 @@ def test_a_single_addition_is_an_addition(summary_scenes):
 def test_added_then_modified_is_still_an_addition(summary_scenes):
     # The modification is folded into the arrival: the version's current state is
     # reported in the row, so saying "added" and "modified" would be saying it twice.
-    net, churned = collapse_changes(
+    net, net_unchanged = collapse_changes(
         [
             (3, summary_scenes.recorded(ADDED)),
             (4, summary_scenes.recorded(MODIFIED, detail=RETRACTED_MOVED)),
         ]
     )
 
-    assert churned == 0
+    assert net_unchanged == 0
     assert len(net) == 1
     assert net[0].change_type is ADDED
     assert net[0].detail is None
     assert (net[0].first_run_id, net[0].last_run_id) == (3, 4)
 
 
-def test_added_then_removed_churned(summary_scenes):
-    net, churned = collapse_changes(
+def test_added_then_removed_is_no_net_change(summary_scenes):
+    net, net_unchanged = collapse_changes(
         [(3, summary_scenes.recorded(ADDED)), (4, summary_scenes.recorded(REMOVED))]
     )
 
     assert net == ()
-    assert churned == 1
+    assert net_unchanged == 1
 
 
-def test_removed_then_added_churned(summary_scenes):
+def test_removed_then_added_is_no_net_change(summary_scenes):
     # It was there when the window opened and it is there now, so there is no news,
     # even though two changes were recorded about it.
-    net, churned = collapse_changes(
+    net, net_unchanged = collapse_changes(
         [(3, summary_scenes.recorded(REMOVED)), (4, summary_scenes.recorded(ADDED))]
     )
 
     assert net == ()
-    assert churned == 1
+    assert net_unchanged == 1
 
 
 def test_removal_is_a_removal(summary_scenes):
-    net, churned = collapse_changes([(7, summary_scenes.recorded(REMOVED))])
+    net, net_unchanged = collapse_changes([(7, summary_scenes.recorded(REMOVED))])
 
-    assert churned == 0
+    assert net_unchanged == 0
     assert net[0].change_type is REMOVED
     assert net[0].detail is None
 
 
 def test_modified_twice_keeps_the_oldest_old_and_the_newest_new(summary_scenes):
-    net, churned = collapse_changes(
+    net, net_unchanged = collapse_changes(
         [
             (
                 3,
@@ -112,11 +112,11 @@ def test_modified_twice_keeps_the_oldest_old_and_the_newest_new(summary_scenes):
 
     # Straight back to where it started, so nothing is left moved.
     assert net == ()
-    assert churned == 1
+    assert net_unchanged == 1
 
 
 def test_modified_twice_in_the_same_direction_reads_end_to_end(summary_scenes):
-    net, churned = collapse_changes(
+    net, net_unchanged = collapse_changes(
         [
             (
                 3,
@@ -135,13 +135,13 @@ def test_modified_twice_in_the_same_direction_reads_end_to_end(summary_scenes):
         ]
     )
 
-    assert churned == 0
+    assert net_unchanged == 0
     assert net[0].change_type is MODIFIED
     assert net[0].detail == {"data_nodes": {"old": ["a"], "new": ["a", "b", "c"]}}
 
 
 def test_different_things_moving_in_different_runs_are_merged(summary_scenes):
-    net, churned = collapse_changes(
+    net, net_unchanged = collapse_changes(
         [
             (3, summary_scenes.recorded(MODIFIED, detail=RETRACTED_MOVED)),
             (
@@ -153,7 +153,7 @@ def test_different_things_moving_in_different_runs_are_merged(summary_scenes):
         ]
     )
 
-    assert churned == 0
+    assert net_unchanged == 0
     assert net[0].detail == {
         "retracted": {"old": False, "new": True},
         "is_latest": {"old": True, "new": False},
@@ -161,7 +161,7 @@ def test_different_things_moving_in_different_runs_are_merged(summary_scenes):
 
 
 def test_versions_are_folded_independently(summary_scenes):
-    net, churned = collapse_changes(
+    net, net_unchanged = collapse_changes(
         [
             (3, summary_scenes.recorded(ADDED, dataset_version_id=1)),
             (3, summary_scenes.recorded(REMOVED, dataset_version_id=2)),
@@ -175,7 +175,7 @@ def test_versions_are_folded_independently(summary_scenes):
         ]
     )
 
-    assert churned == 1
+    assert net_unchanged == 1
     assert {change.dataset_version_id: change.change_type for change in net} == {
         2: REMOVED,
         3: MODIFIED,

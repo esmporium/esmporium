@@ -344,7 +344,7 @@ def summary_scenes():
         *,
         health=None,
         changes=(),
-        churned=0,
+        net_unchanged=0,
         current=(),
         window_runs=(7,),
         baseline_run_id=6,
@@ -357,7 +357,7 @@ def summary_scenes():
             baseline_run_id=baseline_run_id,
             window_runs=window_runs,
             changes=changes,
-            churned=churned,
+            net_unchanged=net_unchanged,
             current=current,
         )
 

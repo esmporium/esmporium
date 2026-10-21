@@ -196,7 +196,7 @@ def test_summarise_a_preloaded_database(engine, two_runs):
 
     assert summary.headline == f"{REQUIREMENT_NAME}: 1 added, 1 removed, 1 modified"
     assert summary.any_changes
-    assert summary.churned == 0
+    assert summary.net_unchanged == 0
 
     by_type = {change.change_type: change for change in summary.changes}
     assert by_type[DatasetChangeType.ADDED].version.facets["model"] == "CESM3"
@@ -287,7 +287,7 @@ def test_a_window_covering_both_runs(engine, two_runs):
     # UKESM2 was added by the first run and removed by the second, so over the window
     # as a whole it came and went: counted, not reported, because the net news about
     # it is that there is no news.
-    assert summary.churned == 1
+    assert summary.net_unchanged == 1
     assert "UKESM2" not in {
         change.version.facets["model"] for change in summary.changes
     }

@@ -7,7 +7,8 @@ The scenes are:
 2. the interesting morning -- new models, a retraction, data nodes moving
 3. the morning you must not misread -- a sub-search failed and another was truncated,
    so the removals may not be real
-4. a week in one summary -- several runs folded down to their net effect, with churn
+4. a week in one summary -- several runs folded down to their net effect, including
+   versions which came and went inside it
 5. a long list -- what `max_rows` does when a search returns more than you can read
 6. many variables and both frequencies -- why the columns are what they are, and
    what `facets` does when you want different ones
@@ -124,7 +125,7 @@ def summary(  # noqa: PLR0913 - one argument per field a scene fills in
     *,
     run: RunHealth | None = None,
     changes: tuple[ChangeRecord, ...] = (),
-    churned: int = 0,
+    net_unchanged: int = 0,
     current: tuple[VersionRecord, ...] = (),
     window_runs: tuple[int, ...] = (7,),
     baseline_run_id: int | None = 6,
@@ -137,7 +138,7 @@ def summary(  # noqa: PLR0913 - one argument per field a scene fills in
         baseline_run_id=baseline_run_id,
         window_runs=window_runs,
         changes=changes,
-        churned=churned,
+        net_unchanged=net_unchanged,
         current=current,
     )
 
@@ -271,7 +272,7 @@ A_WEEK = summary(
             last_run_id=7,
         ),
     ),
-    churned=2,
+    net_unchanged=2,
     current=EVERYTHING,
     window_runs=(1, 2, 3, 4, 5, 6, 7),
     baseline_run_id=None,

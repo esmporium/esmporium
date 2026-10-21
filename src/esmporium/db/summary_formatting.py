@@ -482,11 +482,11 @@ def format_summary(
     else:
         blocks.append(["NO CHANGES"])
 
-    if summary.churned:
+    if summary.net_unchanged:
         blocks.append(
             [
-                f"{summary.churned} versions moved inside the window and ended up "
-                "back where they started"
+                f"{summary.net_unchanged} versions moved inside the window "
+                "and ended up back where they started"
             ]
         )
 

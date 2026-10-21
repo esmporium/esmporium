@@ -179,7 +179,7 @@ def test_a_window_of_several_runs(file_regression, summary_scenes, everything):
                 last_run_id=7,
             ),
         ),
-        churned=2,
+        net_unchanged=2,
         current=everything,
         window_runs=(1, 2, 3, 4, 5, 6, 7),
         baseline_run_id=None,
