@@ -1,11 +1,5 @@
 """
 Tests of how a window of recorded changes is folded, and of what a summary says
-
-The folding is the piece worth testing hard: a window of several runs can say three
-things about the same dataset version, and what a reader wants is one line saying
-where it ended up. Everything here runs without a database, because
-[collapse_changes][esmporium.db.collapse_changes] is deliberately a function of
-recorded rows rather than of a session.
 """
 
 from __future__ import annotations
@@ -448,13 +442,19 @@ def test_window_can_select_nothing():
 
 
 def test_since_and_n_runs_together_is_refused():
-    with pytest.raises(ConflictingWindowError) as caught:
+    # The engine is never touched: the window is checked before anything is read,
+    # which is what makes this a test of parameter parsing rather than of reading.
+    with pytest.raises(ConflictingWindowError) as excinfo:
         summarise_search("not-an-engine", "pattern-effect", since=3, n_runs=2)
 
-    message = str(caught.value)
-    assert "since=3" in message
-    assert "n_runs=2" in message
-    assert "not both" in message
+    # Carried as well as said, so a caller can branch on them rather than read prose.
+    assert excinfo.value.since == 3
+    assert excinfo.value.n_runs == 2
+    assert str(excinfo.value) == (
+        "A summary covers one window, but both since=3 and n_runs=2 were given. "
+        "Pass since to count from a time or from a run id, or n_runs to count back "
+        "a number of runs, not both."
+    )
 
 
 def test_n_runs_must_be_at_least_one():
@@ -496,14 +496,24 @@ def test_check_facets_sorts_into_dataset_facet_order():
 
 
 def test_check_facets_refuses_a_facet_no_dataset_records():
-    with pytest.raises(UnknownFacetError) as caught:
+    with pytest.raises(UnknownFacetError) as excinfo:
         # A real facet, but a document-only one: CORDEX's driving model is not a
         # Dataset column, so a summary cannot show it.
         check_facets(("model", "cordex-cmip6:driving_source_id"))
 
-    message = str(caught.value)
-    assert "cordex-cmip6:driving_source_id" in message
+    assert excinfo.value.unknown == ("cordex-cmip6:driving_source_id",)
+    message = str(excinfo.value)
+    assert "Cannot show 'cordex-cmip6:driving_source_id'" in message
     assert "only a search document knows" in message
+
+
+def test_check_facets_names_every_facet_it_cannot_show():
+    # All of them at once, rather than one per attempt, so a caller fixing a list
+    # does not have to run it once per mistake.
+    with pytest.raises(UnknownFacetError) as excinfo:
+        check_facets(("model", "nonsense", "also-nonsense"))
+
+    assert excinfo.value.unknown == ("nonsense", "also-nonsense")
 
 
 def test_the_id_column_tells_rows_apart_whatever_facets_are_shown(summary_scenes):
@@ -584,8 +594,14 @@ def test_only_the_rows_with_something_moved_get_a_continuation_line(summary_scen
 def test_render_table_refuses_a_row_which_does_not_match_its_headings():
     # The failure this guards against is silent: headings and cells built from two
     # separate lists can be ordered differently, putting a value under the wrong name.
-    with pytest.raises(MisalignedRowError, match="2 headings"):
-        render_table(["model", "version"], [["CESM3"]])
+    with pytest.raises(MisalignedRowError) as excinfo:
+        render_table(["model", "version"], [["CESM3"], ["CESM3", "20261018", "extra"]])
+
+    assert excinfo.value.n_headers == 2
+    assert excinfo.value.row_lengths == (1, 3)
+    message = str(excinfo.value)
+    assert "A table with 2 headings was given 2 rows which do not match it" in message
+    assert "of lengths [1, 3]" in message
 
 
 def test_render_table_takes_a_table_which_does_match():

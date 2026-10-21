@@ -9,10 +9,6 @@ actually reads every morning.
 Every summary is built by hand, so none of this needs a database. What is being
 checked is the rendering, and the rendering is a function of a
 [SearchSummary][esmporium.db.SearchSummary] alone.
-
-When one of these fails, that is often correct and expected. Regenerate the files
-with the `--force-regen` flag (from pytest-regressions), then read the resulting
-diff and check it is a change you meant to make.
 """
 
 from __future__ import annotations
@@ -48,7 +44,7 @@ def test_nothing_changed(file_regression, summary_scenes, everything):
     """
     What a quiet morning looks like
 
-    The most common summary by a long way, so it is worth it being short.
+    The most common summary, so it is worth it being short.
     """
     summary = summary_scenes.summary(current=everything)
 
@@ -209,9 +205,6 @@ def test_more_rows_than_anyone_can_read(file_regression, summary_scenes):
 def test_a_search_which_returns_nothing(file_regression, summary_scenes):
     """
     What the first run of a search for data which does not exist yet looks like
-
-    Worth pinning: this is what a watch on CMIP7 data looks like before the data
-    arrives, so it is the first thing anyone setting one up will see.
     """
     summary = summary_scenes.summary(
         health=summary_scenes.run(
@@ -228,10 +221,6 @@ def test_a_search_which_returns_nothing(file_regression, summary_scenes):
 def test_a_search_spanning_variables_and_frequencies(file_regression, summary_scenes):
     """
     What a search over many variables and both frequencies looks like
-
-    The shape of the searches queued in PLAN step 5. Worth pinning because the
-    default columns used to leave `variable` and `reporting_interval` out, which
-    rendered five different datasets as five identical rows.
     """
     members = tuple(
         summary_scenes.version(

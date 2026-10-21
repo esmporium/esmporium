@@ -1,14 +1,8 @@
 """
 Test of the function we actually care about: given a database, get me the summary
 
-This is the shape of call a watched search makes on a server every morning, so it is
-tested end to end against a real, migrated database rather than against hand-built
-objects. One path through, the default one.
-
-The rendering options and the folding of a window are covered by the unit tests in
-`tests/unit/db/test_summaries.py` and the rendering regressions in
-`tests/regression/test_summary_rendering.py`, which need no database, so the
-expensive test here does not have to be run once per option.
+It is tested end to end against a real, migrated database rather than against
+hand-built objects. One path through, the default one.
 """
 
 from __future__ import annotations
@@ -335,13 +329,27 @@ def test_a_change_whose_history_has_gone_is_reported_rather_than_fatal(
 
 
 def test_a_search_which_has_never_run(engine, preloaded):
-    with pytest.raises(NoRunsInWindowError, match="has never been run"):
+    with pytest.raises(NoRunsInWindowError) as excinfo:
         summarise_search(engine, REQUIREMENT_NAME)
+
+    assert excinfo.value.name_or_id == REQUIREMENT_NAME
+    assert excinfo.value.n_stored_runs == 0
+    message = str(excinfo.value)
+    assert "has never been run" in message
+    # The message says what to do about it, not just what went wrong.
+    assert "search_and_track or rerun_search_esgf" in message
 
 
 def test_a_window_which_selects_nothing(engine, two_runs):
-    with pytest.raises(NoRunsInWindowError, match="falls in the window asked for"):
+    with pytest.raises(NoRunsInWindowError) as excinfo:
         summarise_search(engine, REQUIREMENT_NAME, since=10_000)
+
+    # Two runs are stored, so this is a window which selects none of them rather
+    # than a search which has never run, and the message has to say which.
+    assert excinfo.value.n_stored_runs == 2
+    message = str(excinfo.value)
+    assert "falls in the window asked for" in message
+    assert "although 2 runs are stored" in message
 
 
 def test_a_search_we_do_not_have(engine, preloaded):
