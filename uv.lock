@@ -829,6 +829,7 @@ all-dev = [
     { name = "mkdocstrings-python" },
     { name = "mkdocstrings-python-xref" },
     { name = "mypy" },
+    { name = "pandas-stubs" },
     { name = "pip" },
     { name = "pre-commit" },
     { name = "properdocs" },
@@ -847,6 +848,7 @@ all-dev = [
 dev = [
     { name = "liccheck" },
     { name = "mypy" },
+    { name = "pandas-stubs" },
     { name = "pip" },
     { name = "pre-commit" },
     { name = "setuptools" },
@@ -915,6 +917,7 @@ all-dev = [
     { name = "mkdocstrings-python", specifier = "==2.0.3" },
     { name = "mkdocstrings-python-xref", specifier = "==2.1.1" },
     { name = "mypy", specifier = "==1.14.0" },
+    { name = "pandas-stubs", specifier = "==2.2.3.241126" },
     { name = "pip", specifier = "==24.3.1" },
     { name = "pre-commit", specifier = "==4.0.1" },
     { name = "properdocs", specifier = "==1.6.7" },
@@ -933,6 +936,7 @@ all-dev = [
 dev = [
     { name = "liccheck", specifier = "==0.9.2" },
     { name = "mypy", specifier = "==1.14.0" },
+    { name = "pandas-stubs", specifier = "==2.2.3.241126" },
     { name = "pip", specifier = "==24.3.1" },
     { name = "pre-commit", specifier = "==4.0.1" },
     { name = "setuptools", specifier = "==75.6.0" },
@@ -2842,6 +2846,21 @@ wheels = [
 ]
 
 [[package]]
+name = "pandas-stubs"
+version = "2.2.3.241126"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
+    { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "types-pytz" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/90/86/93c545d149c3e1fe1c4c55478cc3a69859d0ea3467e1d9892e9eb28cb1e7/pandas_stubs-2.2.3.241126.tar.gz", hash = "sha256:cf819383c6d9ae7d4dabf34cd47e1e45525bb2f312e6ad2939c2c204cb708acd", size = 104204, upload-time = "2024-11-26T15:06:00.807Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6f/ab/ed42acf15bab2e86e5c49fad4aa038315233c4c2d22f41b49faa4d837516/pandas_stubs-2.2.3.241126-py3-none-any.whl", hash = "sha256:74aa79c167af374fe97068acc90776c0ebec5266a6e5c69fe11e9c2cf51f2267", size = 158280, upload-time = "2024-11-26T15:05:59.428Z" },
+]
+
+[[package]]
 name = "pandocfilters"
 version = "1.5.1"
 source = { registry = "https://pypi.org/simple" }
@@ -4222,6 +4241,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/ae/40/4a3db7990d1f62a53182aa96eaef57aeb2886a27f90a195bc66713565d31/typer-0.27.1.tar.gz", hash = "sha256:a79bef8469a79c45498e7b814ecf8d603cc7644e9acbd9e19cac0334240b18df", size = 203994, upload-time = "2026-08-03T14:41:03.438Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/43/89/9518bc0c3929bee36b3a4a8e3daddd6e03f92f9961c66d4983b837160543/typer-0.27.1-py3-none-any.whl", hash = "sha256:53150287edd11baeb4e4722c8e394fcdf8181c0ae89485cba8d25c778d5edd56", size = 122874, upload-time = "2026-08-03T14:41:04.391Z" },
+]
+
+[[package]]
+name = "types-pytz"
+version = "2026.5.0.20261006"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ba/47/b493f47f2dd0971db06459439ebdeb114cf95029188268099b331bbc4727/types_pytz-2026.5.0.20261006.tar.gz", hash = "sha256:1a522c2ec03aad8d4baaf97105958019ad51704b1e471c882d1c6ccea3e5e64b", size = 11073, upload-time = "2026-10-06T08:15:12.87Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/77/38/e375026fb4ff74fed6bdb84d7d336571d0603b6b9675751579cec84cfc9b/types_pytz-2026.5.0.20261006-py3-none-any.whl", hash = "sha256:9e4a893b362a8eed4e10a348c80603ade65bdb3819419e589364afafe2ea08b1", size = 10168, upload-time = "2026-10-06T08:15:11.985Z" },
 ]
 
 [[package]]

@@ -67,6 +67,9 @@ dev = [
     # ----------------
     "liccheck==0.9.2",
     "mypy==1.14.0",
+    # pandas is a runtime dependency and `disallow_any_unimported` is on,
+    # so mypy needs its stubs to type the frames we hand back.
+    "pandas-stubs==2.2.3.241126",
     # Required for liccheck, see https://github.com/dhatim/python-license-check/pull/113
     "pip==24.3.1",
     "pre-commit==4.0.1",

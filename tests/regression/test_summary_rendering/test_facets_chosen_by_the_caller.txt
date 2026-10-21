@@ -1,0 +1,24 @@
+pattern-effect: 1 added
+
+run 7, newest started 2026-10-20 06:02 UTC
+compared against run 6
+
+ADDED (1)
+  id   model          experiment  version   retracted
+  101  ACCESS-ESM1-6  historical  20261018  no
+
+REMOVED (0)
+
+MODIFIED (0)
+
+RUN HEALTH
+  1/1 sub-searches answered   host: search.east.esgf.io
+  209/209 documents collected (nothing truncated)
+
+CURRENT STATE (5 datasets)
+  id   model          experiment  version   retracted  nodes
+  101  ACCESS-ESM1-6  historical  20261018  no         2
+  102  ACCESS-ESM1-6  piControl   20261018  no         1
+  103  CESM3          historical  20261018  no         1
+  104  CESM3          piControl   20261018  no         1
+  105  MIROC7         piControl   20261018  yes        1

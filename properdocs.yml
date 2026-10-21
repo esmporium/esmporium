@@ -69,27 +69,22 @@ plugins:
         python_xref:
           paths: [src]
           inventories:
-            # Cross-ref helpers (lots included here, remove what you don't want)
-            - https://www.attrs.org/en/stable/objects.inv
-            - https://unidata.github.io/cftime/objects.inv
-            - https://ipython.readthedocs.io/en/stable/objects.inv
-            - https://loguru.readthedocs.io/en/latest/objects.inv
-            - https://matplotlib.org/stable/objects.inv
-            - https://ncdata.readthedocs.io/en/stable/objects.inv
-            - https://numpy.org/doc/stable/objects.inv
-            - https://openscm-units.readthedocs.io/en/stable/objects.inv
-            - https://pandas.pydata.org/docs/objects.inv
-            - https://pint.readthedocs.io/en/stable/objects.inv
-            - https://www.fatiando.org/pooch/latest/objects.inv
+            # Only the libraries we actually cross-reference.
+            #
+            # Every entry here is fetched over the network on every docs build, and
+            # a single slow host fails the build: CI went red on
+            # `Couldn't load inventory https://docs.scipy.org/doc/scipy/objects.inv
+            # ... urlopen error timed out` while nothing in the package mentions
+            # scipy. The template ships sixteen of these ("remove what you don't
+            # want"), of which we were using two, so the other fourteen were
+            # fourteen chances a day to fail for no benefit.
+            #
+            # Add one back when, and only when, a docstring cross-references that
+            # library -- `make docs-strict` fails on an unresolved reference, so a
+            # missing inventory shows up as a build error rather than as a silently
+            # unlinked name.
             - https://docs.python.org/3/objects.inv
-            - https://docs.scipy.org/doc/scipy/objects.inv
-            - https://scitools-iris.readthedocs.io/en/stable/objects.inv
-            - https://scmdata.readthedocs.io/en/stable/objects.inv
-            # # Not available for tqdm
-            # # https://github.com/tqdm/tqdm/issues/705
-            # - https://tqdm.github.io/objects.inv
-            - https://validators.readthedocs.io/en/stable/objects.inv
-            - https://docs.xarray.dev/en/stable/objects.inv
+            - https://pandas.pydata.org/docs/objects.inv
           options:
             # It turns out that xref does this check without considering config.
             # As a result, every docstring is parsed as a google-style docstring.

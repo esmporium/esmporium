@@ -1,0 +1,28 @@
+pattern-effect: 12 added
+
+run 7, newest started 2026-10-20 06:02 UTC
+compared against run 6
+
+ADDED (12)
+  id   project  model  experiment  variant   variable  interval  version   retracted
+  201  CMIP7    CESM3  historical  r1i1p1f1  tas       mon       20261018  no
+  202  CMIP7    CESM3  historical  r2i1p1f1  tas       mon       20261018  no
+  203  CMIP7    CESM3  historical  r3i1p1f1  tas       mon       20261018  no
+  204  CMIP7    CESM3  historical  r4i1p1f1  tas       mon       20261018  no
+  ... (+8 more)
+
+REMOVED (0)
+
+MODIFIED (0)
+
+RUN HEALTH
+  1/1 sub-searches answered   host: search.east.esgf.io
+  209/209 documents collected (nothing truncated)
+
+CURRENT STATE (12 datasets)
+  id   project  model  experiment  variant   variable  interval  version   retracted  nodes
+  201  CMIP7    CESM3  historical  r1i1p1f1  tas       mon       20261018  no         1
+  202  CMIP7    CESM3  historical  r2i1p1f1  tas       mon       20261018  no         1
+  203  CMIP7    CESM3  historical  r3i1p1f1  tas       mon       20261018  no         1
+  204  CMIP7    CESM3  historical  r4i1p1f1  tas       mon       20261018  no         1
+  ... (+8 more)
