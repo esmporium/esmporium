@@ -4,6 +4,7 @@ ESGF-NG search API class
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -12,6 +13,7 @@ from urllib.parse import urlsplit
 
 from tenacity import Retrying
 
+from esmporium.datasets.data_access import AccessService, ContainerFormat
 from esmporium.search.apis.protocol import (
     LimitOutOfRangeError,
     NoFacetValuesReturnedError,
@@ -24,8 +26,14 @@ from esmporium.search.apis.protocol import (
     single_facet_value_or_none,
 )
 from esmporium.search.apis.request import Request
+from esmporium.search.checksums import decode_multihash_checksum
 from esmporium.search.result_normalisation import STAC_FORMAT_TAG
-from esmporium.search.result_parsing import DataNodeInfo
+from esmporium.search.result_parsing import (
+    DataAccessInfo,
+    DataAccessPayload,
+    DataNodeInfo,
+    FileInfo,
+)
 
 
 # In future, `aggregations` could be used to return value counts per facet value.
@@ -466,8 +474,8 @@ def stac_nodes(
         # identity, matching Solr's `data_node` (e.g. `ceda.ac.uk`).
         # Deliberately do NOT read `href` here:
         # `href` is the file-download URL (e.g. `dap.ceda.ac.uk`),
-        # a different concept from the data node,
-        # reserved for a future file-access step.
+        # a different concept from the data node.
+        # `href` is read by `stac_data_access` below, which is the file-access step.
         # Read from the asset, not down a path from the feature
         # because asset names are filenames,
         # so they contain dots and cannot be spelled as a path segment here.
@@ -487,6 +495,312 @@ def stac_nodes(
             hosts.append(host)
 
     return tuple(DataNodeInfo(host) for host in hosts)
+
+
+STAC_PROTOCOL_TO_SERVICE: Mapping[str, AccessService] = {
+    "https": AccessService.HTTPS,
+    "http": AccessService.HTTPS,
+    "opendap": AccessService.OPENDAP,
+    "globus": AccessService.GLOBUS,
+    "gridftp": AccessService.GRIDFTP,
+    # A kerchunk sidecar is *fetched over HTTPS* -- its `href` is an https URL.
+    # STAC writes the format in `protocol`, which is exactly why `service` and
+    # `container_format` are two separate columns and not one.
+    "kerchunk": AccessService.HTTPS,
+}
+"""How a STAC asset's `protocol` maps onto [AccessService][esmporium.datasets.AccessService]"""  # noqa: E501
+
+STAC_TYPE_TO_CONTAINER_FORMAT: Mapping[str, ContainerFormat] = {
+    "application/netcdf": ContainerFormat.NETCDF,
+    "application/x-netcdf": ContainerFormat.NETCDF,
+    "application/kerchunk": ContainerFormat.KERCHUNK,
+    "application/vnd+zarr": ContainerFormat.ZARR,
+    "text/html": ContainerFormat.HTML,
+}
+"""How a STAC asset's `type` maps onto [ContainerFormat][esmporium.datasets.ContainerFormat]"""  # noqa: E501
+
+DATA_ROLE = "data"
+"""The asset role that means "this asset is the data", rather than a thumbnail or similar"""  # noqa: E501
+
+
+class UnknownAccessServiceError(ValueError):
+    """
+    Raised when a STAC asset names a protocol we cannot classify
+
+    i.e. one with no [AccessService][esmporium.datasets.AccessService].
+    """
+
+    def __init__(self, protocol: str, asset_name: str, feature_id: str) -> None:
+        self.protocol = protocol
+        """The protocol the asset named"""
+
+        self.asset_name = asset_name
+        """The asset that named it"""
+
+        super().__init__(
+            f"The {asset_name!r} asset of {feature_id!r} names the protocol "
+            f"{protocol!r}, which we have no AccessService for. "
+            f"The protocols we know are: {sorted(STAC_PROTOCOL_TO_SERVICE)}. "
+            "We raise rather than skipping the asset, "
+            "because a route we silently dropped is a way of getting this data "
+            "that we would never know we had been offered."
+        )
+
+
+class UnknownContainerFormatError(ValueError):
+    """
+    Raised when a STAC asset is of a type we cannot classify
+
+    i.e. one with no [ContainerFormat][esmporium.datasets.ContainerFormat].
+    """
+
+    def __init__(self, asset_type: str, asset_name: str, feature_id: str) -> None:
+        self.asset_type = asset_type
+        """The type the asset named"""
+
+        self.asset_name = asset_name
+        """The asset that named it"""
+
+        super().__init__(
+            f"The {asset_name!r} asset of {feature_id!r} is of type "
+            f"{asset_type!r}, which we have no ContainerFormat for. "
+            f"The types we know are: {sorted(STAC_TYPE_TO_CONTAINER_FORMAT)}. "
+            "We raise rather than skipping the asset, "
+            "because a route we silently dropped is a way of getting this data "
+            "that we would never know we had been offered."
+        )
+
+
+def stac_asset_roles(asset: Mapping[str, Any]) -> tuple[str, ...]:
+    """
+    Get the roles a STAC asset claims
+
+    Reads `roles`, falling back to `role`. The fallback is not politeness about the
+    spec: ESGF-NG west publishes its kerchunk asset with `"roles": null` and a
+    misspelled `"role": ["data", "virtual"]`, so reading only `roles` would see
+    nothing and treat the whole virtual-access route as role-less.
+
+    Parameters
+    ----------
+    asset
+        The asset to read
+
+    Returns
+    -------
+    :
+        The roles claimed, or empty if the asset claims none
+    """
+    for key in ("roles", "role"):
+        roles = asset.get(key)
+        if roles:
+            return tuple(roles)
+
+    return ()
+
+
+def stac_asset_is_one_file(name: str, asset: Mapping[str, Any]) -> bool:
+    """
+    Work out whether a STAC asset is one file, or a route to the whole version
+
+    Decided structurally: an asset is one file if its name is the last segment of its
+    `file:local_path`. STAC keys a data asset by its filename, and publishes that same
+    filename at the end of the path, so the two agreeing is what "this asset is a
+    file" looks like in the data.
+
+    Deliberately not a hard-coded list of the non-file asset names we have seen
+    (`globus` and `reference_file`). Those are west-only today and the set will grow,
+    so a list would quietly start mis-classifying the next one to appear. Checking
+    the shape instead means a new whole-version asset is classified correctly on the
+    day it turns up:
+
+    - a `.nc` asset is named `tas_Amon_....nc` and its path ends `/tas_Amon_....nc`,
+      so it is one file
+    - the `globus` asset's path is a *directory*, ending `/v20181126`, which is not
+      `globus`, so it is not one file
+    - the `reference_file` asset has no `file:local_path` at all, so it is not one
+      file
+
+    Parameters
+    ----------
+    name
+        The asset's name, i.e. its key in the feature's `assets`
+
+    asset
+        The asset itself
+
+    Returns
+    -------
+    :
+        Whether this asset is one file of the dataset version
+    """
+    local_path = asset.get("file:local_path")
+    if not local_path:
+        return False
+
+    return str(local_path).rsplit("/", maxsplit=1)[-1] == name
+
+
+def stac_data_access(
+    feature: dict[str, Any], api: SearchAPI | None = None
+) -> DataAccessPayload:
+    """
+    Read the files and the routes to them out of a STAC feature's assets
+
+    ESGF-NG needs no second request for this: a STAC item is one dataset version and
+    its `assets` are that version's files, plus any whole-version routes the node
+    offers.
+
+    Only assets claiming the `data` role are read. That is both the filter that keeps
+    a future thumbnail or metadata asset out of the route table, and the reason
+    [stac_asset_roles][(m).stac_asset_roles] has to cope with the misspelled `role`
+    key.
+
+    `properties.access` is deliberately **never** read. It claims to list the
+    services a dataset is available over, but it lies: items advertise
+    `["HTTPServer", "OPENDAP", "GridFTP", "Globus"]` while carrying only https,
+    globus and kerchunk assets, and east CMIP6 omits it entirely. Only an asset that
+    is really there becomes a route.
+
+    Parameters
+    ----------
+    feature
+        Feature (i.e. document) to read
+
+    api
+        The search API the feature came from
+
+        Only used to say who answered if an asset cannot be read.
+
+    Returns
+    -------
+    :
+        The files and routes the feature described
+
+        A feature with no assets describes neither, which is not an error.
+
+    Raises
+    ------
+    UnreadableResponseError
+        `feature` does not carry an id, or one of its assets does not say which node
+        hosts it or carries no `href`.
+
+    UnknownAccessServiceError
+        An asset names a protocol we have no
+        [AccessService][esmporium.datasets.AccessService] for.
+
+    UnknownContainerFormatError
+        An asset is of a type we have no
+        [ContainerFormat][esmporium.datasets.ContainerFormat] for.
+    """
+    context = describe_search_api(api) if api is not None else None
+    feature_id = read_response_path(
+        feature, "id", what="this record's id", context=context
+    )
+
+    files: list[FileInfo] = []
+    accesses: list[DataAccessInfo] = []
+    # No assets at all is fine: this record offers no way of getting the data, which
+    # is a thing worth recording faithfully rather than an error.
+    for name, asset in feature.get("assets", {}).items():
+        if DATA_ROLE not in stac_asset_roles(asset):
+            continue
+
+        # Read from the asset, not down a path from the feature, because asset names
+        # are filenames, so they contain dots and cannot be spelled as a path
+        # segment -- the same reason `stac_nodes` reads this way.
+        lead = (
+            f"In the following, `response` refers to the ['assets'][{name!r}] "
+            f"path in the API response's {feature_id!r} feature."
+        )
+        data_node = read_response_path(
+            asset, "alternate:name", what="the data node", context=context, lead=lead
+        )
+        url = read_response_path(
+            asset, "href", what="the route's URL", context=context, lead=lead
+        )
+
+        is_one_file = stac_asset_is_one_file(name, asset)
+        if is_one_file:
+            files.append(_stac_file(name, asset))
+
+        accesses.append(
+            DataAccessInfo(
+                filename=name if is_one_file else None,
+                data_node=data_node,
+                service=_stac_service(asset, asset_name=name, feature_id=feature_id),
+                container_format=_stac_container_format(
+                    asset, asset_name=name, feature_id=feature_id
+                ),
+                url=url,
+                raw_json=json.dumps(asset, sort_keys=True),
+            )
+        )
+
+    return DataAccessPayload(files=tuple(files), accesses=tuple(accesses))
+
+
+def _stac_service(
+    asset: Mapping[str, Any], *, asset_name: str, feature_id: str
+) -> AccessService:
+    """Read an asset's `protocol` as an [AccessService][esmporium.datasets.AccessService]"""  # noqa: E501
+    protocol = str(asset.get("protocol"))
+    service = STAC_PROTOCOL_TO_SERVICE.get(protocol)
+    if service is None:
+        raise UnknownAccessServiceError(protocol, asset_name, feature_id)
+
+    return service
+
+
+def _stac_container_format(
+    asset: Mapping[str, Any], *, asset_name: str, feature_id: str
+) -> ContainerFormat:
+    """Read an asset's `type` as a [ContainerFormat][esmporium.datasets.ContainerFormat]"""  # noqa: E501
+    asset_type = str(asset.get("type"))
+    container_format = STAC_TYPE_TO_CONTAINER_FORMAT.get(asset_type)
+    if container_format is None:
+        raise UnknownContainerFormatError(asset_type, asset_name, feature_id)
+
+    return container_format
+
+
+def _stac_file(name: str, asset: Mapping[str, Any]) -> FileInfo:
+    """
+    Read a file-level STAC asset as a [FileInfo][esmporium.search.FileInfo]
+
+    `tracking_id` is matched by suffix rather than by name because STAC prefixes it
+    with the project: `cmip6:tracking_id`, `cmip7:tracking_id`,
+    `cmip6plus:tracking_id`, `cordex-cmip6:tracking_id`. Matching the suffix means a
+    project we have not met yet works without a code change.
+    """
+    published_checksum = asset.get("file:checksum")
+    checksum = (
+        decode_multihash_checksum(published_checksum)
+        if published_checksum is not None
+        else None
+    )
+
+    return FileInfo(
+        filename=name,
+        size=asset.get("file:size"),
+        checksum=checksum.value if checksum is not None else None,
+        checksum_type=checksum.checksum_type if checksum is not None else None,
+        tracking_id=_suffixed_value(asset, ":tracking_id"),
+        local_path=asset.get("file:local_path"),
+    )
+
+
+def _suffixed_value(asset: Mapping[str, Any], suffix: str) -> Any:
+    """
+    Read the one key of `asset` ending in `suffix`, or `None` if there is none
+
+    For project-prefixed STAC fields, where the prefix is the project in lower case
+    and so varies with the collection.
+    """
+    for key, value in asset.items():
+        if key.endswith(suffix):
+            return value
+
+    return None
 
 
 @dataclass(frozen=True)

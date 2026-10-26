@@ -11,14 +11,20 @@ from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, create_engine, select
 
-from esmporium.datasets import DATASET_FACET_COLUMNS
+from esmporium.datasets import (
+    DATASET_FACET_COLUMNS,
+    AccessService,
+    ContainerFormat,
+)
 from esmporium.db import (
     METADATA,
+    DataAccess,
     DataNode,
     Dataset,
     DatasetRawDoc,
     DatasetVersion,
     DatasetVersionDataNodeLink,
+    File,
     RawDocVersionLink,
     UnhandledDatasetClashError,
     configure_sqlite_for_concurrency,
@@ -591,3 +597,136 @@ def test_one_document_can_describe_many_versions(engine):
         session.commit()
 
         assert len(session.exec(select(RawDocVersionLink)).all()) == 2
+
+
+def _file(dataset_version_id: int, filename: str) -> File:
+    """A file row with only its identity filled in."""
+    return File(dataset_version_id=dataset_version_id, filename=filename)
+
+
+def _access(
+    dataset_version_id: int,
+    url: str,
+    *,
+    file_id: int | None = None,
+    service: AccessService = AccessService.HTTPS,
+    container_format: ContainerFormat = ContainerFormat.NETCDF,
+) -> DataAccess:
+    """A route row, defaulting to the commonest kind (an HTTPS netCDF file)."""
+    return DataAccess(
+        dataset_version_id=dataset_version_id,
+        file_id=file_id,
+        data_node_id=1,
+        service=service,
+        container_format=container_format,
+        url=url,
+        raw_json="{}",
+    )
+
+
+def test_file_is_unique_per_version_and_filename(engine):
+    """One file per `(dataset_version_id, filename)`; the same pair twice is refused."""
+    with Session(engine) as session:
+        session.add(_file(1, "tas_Amon_185001-194912.nc"))
+        session.commit()
+
+        session.add(_file(1, "tas_Amon_185001-194912.nc"))
+        with pytest.raises(IntegrityError):
+            session.commit()
+
+
+def test_same_filename_under_two_versions_is_allowed(engine):
+    """`filename` is unique only *within* a version.
+
+    Two versions of one dataset republish the same filenames, and both must be
+    storable -- the bytes differ even though the name does not.
+    """
+    with Session(engine) as session:
+        session.add(_file(1, "tas_Amon_185001-194912.nc"))
+        session.add(_file(2, "tas_Amon_185001-194912.nc"))
+        session.commit()  # no clash: the pairs differ on dataset_version_id
+
+        assert len(session.exec(select(File)).all()) == 2
+
+
+def test_file_size_accepts_a_value_above_a_32_bit_integer(engine):
+    """`size` is a BigInteger, because CMIP daily files routinely pass 2 GB.
+
+    A plain `Integer` is 32-bit on PostgreSQL, so this would overflow there. SQLite
+    would store it either way, which is exactly how such a thing goes unnoticed.
+    """
+    too_big_for_32_bits = 3_000_000_000
+    with Session(engine) as session:
+        stored = _file(1, "tas_day_185001-194912.nc")
+        stored.size = too_big_for_32_bits
+        session.add(stored)
+        session.commit()
+
+        assert session.exec(select(File)).one().size == too_big_for_32_bits
+
+
+def test_data_access_route_is_unique(engine):
+    """A route is identified by `(version, service, container_format, url)`."""
+    with Session(engine) as session:
+        session.add(_access(1, "https://example.invalid/tas.nc"))
+        session.commit()
+
+        session.add(_access(1, "https://example.invalid/tas.nc"))
+        with pytest.raises(IntegrityError):
+            session.commit()
+
+
+def test_two_dataset_level_routes_differing_only_by_url_are_both_stored(engine):
+    """`file_id` is left out of the identity on purpose, and this is why.
+
+    Both of these are whole-version routes, so both have a NULL `file_id`. SQLite
+    treats NULLs as distinct in a UNIQUE, so including `file_id` in the identity
+    would have let the *same* route re-insert on every ingest. Identifying a route by
+    the route instead means these two are distinct because their URLs are, and a
+    repeat of either is caught.
+    """
+    with Session(engine) as session:
+        session.add(
+            _access(
+                1,
+                "https://example.invalid/tas.kerchunk.parq",
+                container_format=ContainerFormat.KERCHUNK,
+            )
+        )
+        session.add(
+            _access(
+                1,
+                "https://example.invalid/other.kerchunk.parq",
+                container_format=ContainerFormat.KERCHUNK,
+            )
+        )
+        session.commit()
+
+        stored = session.exec(select(DataAccess)).all()
+        assert len(stored) == 2
+        assert all(route.file_id is None for route in stored)
+
+
+def test_data_access_file_id_is_nullable(engine):
+    """`file_id IS NULL` is the discriminator for a whole-dataset-version route.
+
+    A kerchunk sidecar or a Globus directory link serves the whole version, so there
+    is no one file for it to point at. That is the normal case, not an error.
+    """
+    with Session(engine) as session:
+        session.add(_file(1, "tas_Amon_185001-194912.nc"))
+        session.commit()
+
+        session.add(_access(1, "https://example.invalid/tas.nc", file_id=1))
+        session.add(
+            _access(
+                1,
+                "https://example.invalid/tas.kerchunk.parq",
+                container_format=ContainerFormat.KERCHUNK,
+            )
+        )
+        session.commit()
+
+        by_url = {route.url: route for route in session.exec(select(DataAccess)).all()}
+        assert by_url["https://example.invalid/tas.nc"].file_id == 1
+        assert by_url["https://example.invalid/tas.kerchunk.parq"].file_id is None

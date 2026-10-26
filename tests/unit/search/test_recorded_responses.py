@@ -20,6 +20,7 @@ from pathlib import Path
 
 import pytest
 
+from esmporium.datasets import AccessService, ContainerFormat
 from esmporium.query import facet_spec
 from esmporium.search import (
     ESGF1_CMIP5_FACADE_PARAMETERS,
@@ -37,6 +38,7 @@ from esmporium.search import (
     build_transient_retrying,
     get_mapping_to_query_style_facet_names,
 )
+from esmporium.search.apis.esgf1 import solr_file_access
 
 RECORDED_DIR = Path(__file__).parents[2] / "test-data" / "search"
 """Where the recorded responses live"""
@@ -482,3 +484,224 @@ def test_summary_facet_keys_have_not_drifted_in_case(name, facade):
         "A deployment changed the case of a facet key; update the prefix or "
         "name mapping to match, or the facet's values disappear without an error."
     )
+
+
+@pytest.mark.parametrize("name, facade", STAC_RECORDED_CASES)
+def test_recorded_stac_search_carries_one_file_per_netcdf_asset(name, facade):
+    """
+    ESGF-NG needs no second request for file access: the item's assets are the files
+
+    This is the whole asymmetry with Solr, pinned against real answers from all four
+    live STAC deployments.
+    """
+    raw = load(f"{name}-search")
+
+    documents = facade.parse_search_results(raw)
+
+    assert documents
+    for document, feature in zip(documents, raw["features"], strict=True):
+        netcdf_assets = {
+            name
+            for name, asset in feature["assets"].items()
+            if asset.get("type") == "application/netcdf"
+        }
+        assert {found.filename for found in document.files} == netcdf_assets
+        # Every file also has at least one way of being got.
+        assert netcdf_assets <= {
+            route.filename for route in document.accesses if route.filename
+        }
+
+
+@pytest.mark.parametrize("name, facade", STAC_RECORDED_CASES)
+def test_recorded_stac_checksums_all_decode(name, facade):
+    """
+    Every real netCDF asset publishes a checksum we can name the algorithm of
+
+    If a deployment ever starts publishing a multihash code we do not know, this is
+    where it surfaces -- the value would still be stored, but unnamed, and silently
+    uncomparable with the Solr answer for the same file.
+    """
+    raw = load(f"{name}-search")
+
+    documents = facade.parse_search_results(raw)
+
+    checksums = [found for doc in documents for found in doc.files]
+    assert checksums
+    assert all(found.checksum_type == "SHA256" for found in checksums)
+    assert all(found.size and found.size > 0 for found in checksums)
+
+
+def test_the_recorded_west_cmip6_item_offers_virtual_and_globus_access():
+    """
+    West CMIP6 is the one recorded deployment publishing whole-version routes
+
+    It is the evidence that the non-file branch of the model is needed now rather
+    than someday: a kerchunk reference set covering the whole dataset version, and a
+    Globus web-app link to the directory, in the same `assets` dict as the files.
+
+    East CMIP6 publishes neither, which is why this is not parametrised over the STAC
+    cases -- the asymmetry between the two mirrors is the finding.
+    """
+    facade_for_west = next(
+        case.values[1]
+        for case in STAC_RECORDED_CASES
+        if case.id == "esgf-ng-stac-cmip6-west"
+    )
+
+    documents = facade_for_west.parse_search_results(
+        load("esgf-ng-stac-cmip6-west-search")
+    )
+
+    whole_version = [
+        route
+        for document in documents
+        for route in document.accesses
+        if route.filename is None
+    ]
+    assert whole_version
+    by_format = {route.container_format: route for route in whole_version}
+
+    kerchunk = by_format[ContainerFormat.KERCHUNK]
+    # Fetched over HTTPS, opened as kerchunk: the reason these are two columns.
+    assert kerchunk.service is AccessService.HTTPS
+    # Parquet, not the JSON kerchunk is more usually written as.
+    assert kerchunk.url.endswith(".kerchunk.parq")
+
+    assert by_format[ContainerFormat.HTML].service is AccessService.GLOBUS
+
+
+def test_the_recorded_west_cmip6_item_advertises_access_it_does_not_offer():
+    """
+    `properties.access` lies on real data, which is why we never read it
+
+    This recorded item advertises `OPENDAP` and `GridFTP` in `properties.access` and
+    carries no asset for either. Believing the advertisement would invent two routes
+    that do not exist; reading only the assets records the three that do.
+    """
+    raw = load("esgf-ng-stac-cmip6-west-search")
+    facade_for_west = next(
+        case.values[1]
+        for case in STAC_RECORDED_CASES
+        if case.id == "esgf-ng-stac-cmip6-west"
+    )
+
+    feature = raw["features"][0]
+    advertised = set(feature["properties"]["access"])
+    assert {"OPENDAP", "GridFTP"} <= advertised, (
+        "this test is only meaningful while the recording still over-advertises; "
+        "if ESGF has fixed `properties.access`, re-record and retire this test"
+    )
+
+    document = facade_for_west.parse_search_results(raw)[0]
+
+    recorded = {route.service for route in document.accesses}
+    assert AccessService.OPENDAP not in recorded
+    assert AccessService.GRIDFTP not in recorded
+    assert recorded == {AccessService.HTTPS, AccessService.GLOBUS}
+
+
+@pytest.mark.parametrize("name, facade", STAC_RECORDED_CASES)
+def test_recorded_stac_records_one_route_per_data_asset(name, facade):
+    """
+    Every data asset becomes exactly one route, and nothing else does
+
+    The count is the check: an asset silently dropped, or a route invented from
+    somewhere other than an asset, both show up here.
+    """
+    raw = load(f"{name}-search")
+
+    documents = facade.parse_search_results(raw)
+
+    assert documents
+    for document, feature in zip(documents, raw["features"], strict=True):
+        data_assets = [
+            asset
+            for asset in feature["assets"].values()
+            if "data" in (asset.get("roles") or asset.get("role") or [])
+        ]
+        assert len(document.accesses) == len(data_assets)
+        assert {route.url for route in document.accesses} == {
+            asset["href"] for asset in data_assets
+        }
+
+
+SOLR_FILE_RECORDED_CASES = tuple(
+    case for case in SOLR_RECORDED_CASES if "bridge" not in str(case.id)
+)
+"""
+The Solr cases with a `-files` recording beside their `-search` one
+
+The ESGF-1.5 bridge has none: its `type=File` answers take minutes, which is too
+slow to put in the way of a refresh. See `FILE_CASES` in
+`scripts/record_search_responses.py`.
+"""
+
+
+@pytest.mark.parametrize("name, facade", SOLR_FILE_RECORDED_CASES)
+def test_a_recorded_solr_file_response_parses(name, facade):
+    """
+    Test that we can read a `type=File` answer an API really sent
+
+    This is the request ESGF-NG does not need: a Solr dataset document publishes no
+    per-file URLs, so these documents are the only place they come from.
+    """
+    docs = facade.search_api.extract_result_documents(load(f"{name}-files"))
+
+    assert docs
+    for doc in docs:
+        payload = solr_file_access(doc)
+
+        assert len(payload.files) == 1
+        assert payload.files[0].filename
+        assert payload.accesses
+        # ESGF-1 has no way of expressing a whole-version route, so every route
+        # a File document describes names the file it is about.
+        assert all(
+            route.filename == payload.files[0].filename for route in payload.accesses
+        )
+
+
+@pytest.mark.parametrize("name, facade", SOLR_FILE_RECORDED_CASES)
+def test_a_recorded_file_documents_dataset_id_is_a_recorded_dataset_documents_id(
+    name, facade
+):
+    """
+    The join the whole Solr file step rests on, pinned against real answers
+
+    `record_solr_file_access` places each answer by looking its `dataset_id` up in
+    the batch it asked for, which only works because a File document's `dataset_id`
+    is character-for-character the `id` the dataset document published --
+    `<instance_id>|<data_node>`, node suffix and all. If ESGF ever changed either
+    spelling, every file would land nowhere and this is where it would be caught.
+    """
+    dataset_ids = {
+        doc["id"]
+        for doc in facade.search_api.extract_result_documents(load(f"{name}-search"))
+    }
+    file_docs = facade.search_api.extract_result_documents(load(f"{name}-files"))
+
+    assert file_docs
+    assert {doc["dataset_id"] for doc in file_docs} <= dataset_ids
+
+
+@pytest.mark.parametrize("name, facade", SOLR_FILE_RECORDED_CASES)
+def test_a_recorded_dataset_response_says_nothing_about_files(name, facade):
+    """
+    The asymmetry this PR works around, pinned on real data
+
+    A Solr dataset document has `access`, `size` and `number_of_files` -- enough to
+    know a dataset *can* be had and how big it is -- and no URL you can fetch. The
+    day ESGF-1 starts publishing per-file URLs at dataset level, the second request
+    becomes unnecessary, and this test is how we would find out.
+    """
+    docs = facade.search_api.extract_result_documents(load(f"{name}-search"))
+
+    assert docs
+    for doc in docs:
+        assert "url" not in doc
+        assert doc["access"]
+        assert doc["number_of_files"]
+
+    # Whereas the File documents are nothing but.
+    file_docs = facade.search_api.extract_result_documents(load(f"{name}-files"))
+    assert all(doc["url"] for doc in file_docs)

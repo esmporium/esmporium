@@ -18,11 +18,13 @@ from esmporium.db.dataset_uniqueness import facet_differences
 from esmporium.db.engine import is_sqlite_configured_for_concurrency
 from esmporium.db.schema import (
     DATASET_IDENTITY_INDEX,
+    DataAccess,
     DataNode,
     Dataset,
     DatasetRawDoc,
     DatasetVersion,
     DatasetVersionDataNodeLink,
+    File,
     RawDocVersionLink,
 )
 from esmporium.search.result_normalisation import (
@@ -32,7 +34,10 @@ from esmporium.search.result_normalisation import (
     normalise_stored_document,
 )
 from esmporium.search.result_parsing import (
+    DataAccessInfo,
+    DataAccessPayload,
     DatasetFacets,
+    FileInfo,
     ParsedDocument,
     ResultProcessor,
 )
@@ -320,7 +325,31 @@ class IngestedDocument:
     """
     The version rows it was written to, flushed, so each one's `id` is set
 
-    One per dataset the document described.
+    One per dataset the document described, **index-aligned with
+    `parsed.datasets`**: `versions[i]` is the version of `parsed.datasets[i]`.
+
+    That alignment was always true and is now relied on, so it is written down:
+    [plan_solr_file_batches][esmporium.db.plan_solr_file_batches] uses it to work out
+    which variable each of a CMIP5 bundle's versions is for, without a lookup.
+    """
+
+    files: tuple[File, ...] = ()
+    """
+    The file rows written for this document, flushed, so each one's `id` is set
+
+    Empty for a document that described no files, which is every Solr *dataset*
+    document -- those get their files from
+    [record_solr_file_access][esmporium.db.record_solr_file_access] instead.
+
+    Returned because the next step needs them: dataset ancestry reads a file's header
+    and has to be able to say which file a fact came from.
+    """
+
+    accesses: tuple[DataAccess, ...] = ()
+    """
+    The route rows written for this document, flushed
+
+    Empty for the same documents as `files`.
     """
 
 
@@ -543,7 +572,252 @@ def _ingest_document(
             session, flushed_id(raw_doc), flushed_id(version)
         )
 
-    return IngestedDocument(parsed=parsed, versions=tuple(dataset_versions))
+    # Files and routes come last, because a route is the most derived thing here: it
+    # needs its version, its file and its node to exist first.
+    check_access_payload_is_attributable(parsed)
+    saved = (
+        save_data_access_payload(
+            session,
+            flushed_id(dataset_versions[0]),
+            DataAccessPayload(files=parsed.files, accesses=parsed.accesses),
+        )
+        if parsed.files or parsed.accesses
+        else SavedDataAccess()
+    )
+
+    return IngestedDocument(
+        parsed=parsed,
+        versions=tuple(dataset_versions),
+        files=saved.files,
+        accesses=saved.accesses,
+    )
+
+
+class AmbiguousDataAccessError(ValueError):
+    """
+    Raised when a document described files but maps to more than one dataset version
+    """
+
+    def __init__(self, parsed: ParsedDocument) -> None:
+        self.parsed = parsed
+        """The document we refused"""
+
+        super().__init__(
+            f"The document {parsed.esgf_doc_id!r} described "
+            f"{len(parsed.files)} file(s) and {len(parsed.accesses)} route(s), "
+            f"but maps to {len(parsed.datasets)} dataset rows "
+            f"({sorted(row.variable for row in parsed.datasets)}). "
+            "A file belongs to one dataset version, and a document which bundles "
+            "many variables carries nothing that says which of them a file is part "
+            "of, so attributing its files to any one of them would be a guess. "
+            "Fill these in with `esmporium.db.record_solr_file_access` instead, "
+            "which asks one variable at a time and so knows the answer."
+        )
+
+
+class UnknownRouteFileError(ValueError):
+    """Raised when a route names a file neither its payload nor the database has"""
+
+    def __init__(self, info: DataAccessInfo, dataset_version_id: int) -> None:
+        self.info = info
+        """The route we could not place"""
+
+        super().__init__(
+            f"A route to {info.url!r} says it serves the file "
+            f"{info.filename!r} of dataset version {dataset_version_id}, "
+            "but that version has no such file, either in the payload alongside "
+            "this route or already stored. "
+            "A route and the file it serves are parsed together, so either the two "
+            "have been taken apart somewhere between parsing and here, or the "
+            "route has been attributed to the wrong version "
+            "(the same filename under another version is a different file)."
+        )
+
+
+def check_access_payload_is_attributable(parsed: ParsedDocument) -> None:
+    """
+    Check that a document's files and routes can be attributed to one version
+
+    Parameters
+    ----------
+    parsed
+        The document to check
+
+    Raises
+    ------
+    AmbiguousDataAccessError
+        It carries files or routes, and maps to more than one dataset version
+    """
+    carries_access = bool(parsed.files or parsed.accesses)
+    if carries_access and len(parsed.datasets) > 1:
+        raise AmbiguousDataAccessError(parsed)
+
+
+@dataclass(frozen=True)
+class SavedDataAccess:
+    """The rows one payload turned into, flushed, so every `id` is set"""
+
+    files: tuple[File, ...] = ()
+    """The file rows written"""
+
+    accesses: tuple[DataAccess, ...] = ()
+    """The route rows written"""
+
+
+def save_data_access_payload(
+    session: Session, dataset_version_id: int, payload: DataAccessPayload
+) -> SavedDataAccess:
+    """
+    Write one dataset version's files and routes, reusing anything already stored
+
+    Public, unlike the `_get_or_create_*` helpers it is built from, because the Solr
+    file step ([record_solr_file_access][esmporium.db.record_solr_file_access])
+    writes through exactly this path. The two sources of file information must not
+    grow two ways of storing it.
+
+    Idempotent, the way the rest of ingestion is: re-recording the same file or the
+    same route reuses the row rather than duplicating it. A file is matched on
+    `(dataset_version_id, filename)` and a route on
+    `(dataset_version_id, service, container_format, url)` -- see the identity notes
+    on [File][esmporium.db.schema.File] and
+    [DataAccess][esmporium.db.schema.DataAccess]. Scalars on a file we already hold
+    (`size`, `checksum`, `checksum_type`, `tracking_id`, `local_path`) are refreshed
+    last-write-wins, the way
+    [DatasetVersion][esmporium.db.schema.DatasetVersion]'s snapshot flags are,
+    because every document which mentions a file asserts them afresh.
+
+    Does not commit: the caller owns the transaction boundary.
+
+    Parameters
+    ----------
+    session
+        Session to write with
+
+    dataset_version_id
+        The version these files and routes belong to
+
+    payload
+        The files and routes to write
+
+    Returns
+    -------
+    :
+        The rows written or reused, flushed
+
+    Raises
+    ------
+    UnknownRouteFileError
+        A route named a file which is neither in `payload` nor already stored for
+        this version
+    """
+    files = [
+        _get_or_create_file(session, dataset_version_id, info) for info in payload.files
+    ]
+    by_filename = {stored.filename: stored for stored in files}
+
+    accesses = []
+    for info in payload.accesses:
+        file_id = None
+        if info.filename is not None:
+            # Both lookups are scoped to this version -- `by_filename` holds the
+            # files just written against it, and `_find_file` filters on it -- so a
+            # route can only ever be given the id of a file belonging to the version
+            # the route is for. That is the invariant on `DataAccess.file_id`, held
+            # by construction rather than by a runtime check.
+            #
+            # Scoping is also required, not merely convenient: the same filename
+            # legitimately exists under two versions, so an unfiltered lookup by
+            # name would find two rows and raise.
+            stored_file = by_filename.get(info.filename) or _find_file(
+                session, dataset_version_id, info.filename
+            )
+            if stored_file is None:
+                raise UnknownRouteFileError(info, dataset_version_id)
+
+            file_id = flushed_id(stored_file)
+
+        node = _get_or_create_node(session, info.data_node)
+        accesses.append(
+            _get_or_create_data_access(
+                session,
+                dataset_version_id,
+                file_id,
+                flushed_id(node),
+                info,
+            )
+        )
+
+    return SavedDataAccess(files=tuple(files), accesses=tuple(accesses))
+
+
+def _find_file(session: Session, dataset_version_id: int, filename: str) -> File | None:
+    """Find a file we already hold for this version, by name."""
+    return session.exec(
+        select(File).where(
+            File.dataset_version_id == dataset_version_id,
+            File.filename == filename,
+        )
+    ).one_or_none()
+
+
+def _get_or_create_file(
+    session: Session, dataset_version_id: int, info: FileInfo
+) -> File:
+    """Reuse the row for this version's file if we have one, else create it."""
+    stored = get_or_create(
+        session,
+        lambda: _find_file(session, dataset_version_id, info.filename),
+        lambda: File(
+            dataset_version_id=dataset_version_id,
+            filename=info.filename,
+            size=info.size,
+            checksum=info.checksum,
+            checksum_type=info.checksum_type,
+            tracking_id=info.tracking_id,
+            local_path=info.local_path,
+        ),
+    )
+
+    # Last-write-wins on the scalars, as documented on `save_data_access_payload`.
+    stored.size = info.size
+    stored.checksum = info.checksum
+    stored.checksum_type = info.checksum_type
+    stored.tracking_id = info.tracking_id
+    stored.local_path = info.local_path
+    session.add(stored)
+    session.flush()
+
+    return stored
+
+
+def _get_or_create_data_access(
+    session: Session,
+    dataset_version_id: int,
+    file_id: int | None,
+    data_node_id: int,
+    info: DataAccessInfo,
+) -> DataAccess:
+    """Reuse the row for this route if we have one, else create it."""
+    return get_or_create(
+        session,
+        lambda: session.exec(
+            select(DataAccess).where(
+                DataAccess.dataset_version_id == dataset_version_id,
+                DataAccess.service == info.service,
+                DataAccess.container_format == info.container_format,
+                DataAccess.url == info.url,
+            )
+        ).one_or_none(),
+        lambda: DataAccess(
+            dataset_version_id=dataset_version_id,
+            file_id=file_id,
+            data_node_id=data_node_id,
+            service=info.service,
+            container_format=info.container_format,
+            url=info.url,
+            raw_json=info.raw_json,
+        ),
+    )
 
 
 _Row = TypeVar("_Row")

@@ -27,6 +27,25 @@ from esmporium.search.apis import (
     describe_search_api,
     read_response_path,
 )
+from esmporium.search.apis.esgf1 import (
+    DATASET_DOCUMENTS,
+    FILE_DOCUMENTS,
+    SOLR_SERVICE_TO_CONTAINER_FORMAT,
+    SOLR_SERVICE_TO_SERVICE,
+    UnreadableURLTripleError,
+    solr_file_access,
+    solr_file_search_params,
+    solr_url_triple,
+)
+from esmporium.search.apis.esgfng import (
+    STAC_PROTOCOL_TO_SERVICE,
+    STAC_TYPE_TO_CONTAINER_FORMAT,
+    UnknownAccessServiceError,
+    UnknownContainerFormatError,
+    stac_asset_is_one_file,
+    stac_asset_roles,
+    stac_data_access,
+)
 from esmporium.search.check_query_values import (
     AllowedValues,
     CouldNotGetAllowedValuesError,
@@ -47,6 +66,11 @@ from esmporium.search.check_query_values import (
     facets_the_user_set,
     values_set_for,
 )
+from esmporium.search.checksums import (
+    MULTIHASH_ALGORITHMS,
+    Checksum,
+    decode_multihash_checksum,
+)
 from esmporium.search.health import (
     SearchAPICall,
     SearchAPICallObserver,
@@ -62,8 +86,11 @@ from esmporium.search.result_normalisation import (
     normalise_stored_document,
 )
 from esmporium.search.result_parsing import (
+    DataAccessInfo,
+    DataAccessPayload,
     DataNodeInfo,
     DatasetFacets,
+    FileInfo,
     ParsedDocument,
     ResultProcessor,
 )
@@ -139,6 +166,7 @@ from esmporium.search.search_api_facade import (
 )
 
 __all__ = [
+    "DATASET_DOCUMENTS",
     "DEFAULT_NORMALISERS",
     "DEFAULT_SEARCH_API_FACADES_BY_PROJECT",
     "DEFAULT_SELECTOR",
@@ -147,12 +175,19 @@ __all__ = [
     "ESGF1_CMIP7_FACADE_PARAMETERS",
     "ESGFNG_CMIP6_FACADE_PARAMETERS",
     "ESGFNG_CMIP7_FACADE_PARAMETERS",
+    "FILE_DOCUMENTS",
     "INBUILT_SEARCH_API_FACADE_STORE",
+    "MULTIHASH_ALGORITHMS",
     "SOLR_FORMAT_TAG",
+    "SOLR_SERVICE_TO_CONTAINER_FORMAT",
+    "SOLR_SERVICE_TO_SERVICE",
     "STAC_FORMAT_TAG",
+    "STAC_PROTOCOL_TO_SERVICE",
+    "STAC_TYPE_TO_CONTAINER_FORMAT",
     "VERBATIM_NORMALISERS",
     "AllSubQueriesFailedError",
     "AllowedValues",
+    "Checksum",
     "ClashingFacetsError",
     "CouldNotGetAllowedValuesError",
     "CouldNotGetAllowedValuesResponseError",
@@ -160,6 +195,8 @@ __all__ = [
     "CouldNotSearchError",
     "CouldNotUseAllowedValuesError",
     "CouldNotUseSearchResultsError",
+    "DataAccessInfo",
+    "DataAccessPayload",
     "DataNodeInfo",
     "DatasetFacets",
     "DirectMappingFacadeParameters",
@@ -172,6 +209,7 @@ __all__ = [
     "FacadeDefinition",
     "FacadePages",
     "FacetFinding",
+    "FileInfo",
     "FindingKind",
     "LeafSearch",
     "LeafSearchOutcome",
@@ -215,8 +253,11 @@ __all__ = [
     "SubSearch",
     "UnaskableFacetError",
     "UncompilableFacetPatternError",
+    "UnknownAccessServiceError",
+    "UnknownContainerFormatError",
     "UnknownRawDocFormatTagError",
     "UnreadableResponseError",
+    "UnreadableURLTripleError",
     "ValueCheckOutcome",
     "ValueReport",
     "allowed_values_from_api",
@@ -233,6 +274,7 @@ __all__ = [
     "collect_all_pages",
     "compare_values",
     "curl_equivalent",
+    "decode_multihash_checksum",
     "describe_search_api",
     "facets_the_user_set",
     "fan_out",
@@ -249,6 +291,12 @@ __all__ = [
     "read_response_path",
     "search",
     "search_single_project",
+    "solr_file_access",
+    "solr_file_search_params",
+    "solr_url_triple",
+    "stac_asset_is_one_file",
+    "stac_asset_roles",
+    "stac_data_access",
     "to_search_plan",
     "values_set_for",
 ]

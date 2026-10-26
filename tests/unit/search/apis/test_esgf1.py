@@ -382,3 +382,69 @@ def test_n_matches_with_no_count_raises(raw, exp):
     """A response we cannot read a count out of is one we have not understood"""
     with exp:
         api().get_n_matches(raw)
+
+
+def test_build_search_request_asks_for_dataset_documents():
+    """
+    The dataset search says `type=Dataset` rather than leaving it to the default
+
+    `Dataset` is the server default, so this changes nothing today. It is stated
+    because the failure mode if a node's default ever changed is silent corruption
+    rather than an error: a File document carries `master_id`, `version` and
+    `data_node`, i.e. every field the dataset parser reads, and its `master_id` is
+    the dataset's with the filename appended -- so we would quietly store dataset
+    rows whose project specific id ended in `.nc`.
+    """
+    request = api().build_search_request({"variable_id": ("tas",)}, limit=25)
+
+    assert request.params["type"] == "Dataset"
+
+
+def test_build_file_search_request_asks_for_file_documents():
+    """Only File documents carry per-file URLs: hence the second request"""
+    request = api().build_file_search_request(["a|node"], limit=25)
+
+    assert request.params["type"] == "File"
+    assert request.path == "/esg-search/search"
+    assert request.params["limit"] == 25
+
+
+def test_build_file_search_request_ors_the_dataset_ids_as_repeated_parameters():
+    """
+    Classic Solr ORs on a repeated parameter, as every other query here does
+
+    The ids are the node-specific `<instance_id>|<data_node>` the dataset documents
+    published, which is exactly what a File document names as its `dataset_id`.
+    """
+    request = api().build_file_search_request(
+        ["CMIP6.a.v1|esgf.ceda.ac.uk", "CMIP6.b.v1|esgf.nci.org.au"], limit=25
+    )
+
+    assert request.params["dataset_id"] == [
+        "CMIP6.a.v1|esgf.ceda.ac.uk",
+        "CMIP6.b.v1|esgf.nci.org.au",
+    ]
+
+
+def test_build_file_search_request_narrows_by_the_facets_it_is_given():
+    """
+    Narrowing by variable is load-bearing for CMIP5, whose dataset ids are table-grained
+
+    Without it, asking about one CMIP5 dataset returns every variable in its table.
+    The facet is passed in rather than hard-coded because CMIP5 spells it `variable`
+    and CMIP6/CMIP7 spell it `variable_id`.
+    """
+    request = api().build_file_search_request(
+        ["cmip5.a.v1|esgf.ceda.ac.uk"], limit=25, facet_values={"variable": ("tas",)}
+    )
+
+    assert request.params["variable"] == ["tas"]
+
+
+def test_build_file_search_request_passes_on_distrib():
+    """The file search searches the federation exactly as the dataset search does"""
+    assert (
+        SearchAPIESGF1Solr(
+            "h.example", build_transient_retrying(1), distrib=False
+        ).build_file_search_request(["a|node"], limit=1)
+    ).params["distrib"] == "false"

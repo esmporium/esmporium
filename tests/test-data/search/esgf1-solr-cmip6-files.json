@@ -1,0 +1,172 @@
+{
+  "facet_counts": {
+    "facet_fields": {},
+    "facet_heatmaps": {},
+    "facet_intervals": {},
+    "facet_queries": {},
+    "facet_ranges": {}
+  },
+  "response": {
+    "docs": [
+      {
+        "_timestamp": "2020-07-26T20:06:10.158Z",
+        "_version_": 1803414143288475648,
+        "activity_drs": [
+          "CMIP"
+        ],
+        "activity_id": [
+          "CMIP"
+        ],
+        "cf_standard_name": [
+          "air_temperature"
+        ],
+        "checksum": [
+          "00ca5277ccf5f651c8a12fde276fddacb1b3f9161b0d401a8a394ead7719c77f"
+        ],
+        "checksum_type": [
+          "SHA256"
+        ],
+        "citation_url": [
+          "http://cera-www.dkrz.de/WDCC/meta/CMIP6/CMIP6.CMIP.AS-RCEC.TaiESM1.historical.r1i1p1f1.Amon.tas.gn.v20200623.json"
+        ],
+        "data_node": "esgf.ceda.ac.uk",
+        "data_specs_version": [
+          "01.00.31"
+        ],
+        "dataset_id": "CMIP6.CMIP.AS-RCEC.TaiESM1.historical.r1i1p1f1.Amon.tas.gn.v20200623|esgf.ceda.ac.uk",
+        "dataset_id_template_": [
+          "%(mip_era)s.%(activity_drs)s.%(institution_id)s.%(source_id)s.%(experiment_id)s.%(member_id)s.%(table_id)s.%(variable_id)s.%(grid_label)s"
+        ],
+        "directory_format_template_": [
+          "%(root)s/%(mip_era)s/%(activity_drs)s/%(institution_id)s/%(source_id)s/%(experiment_id)s/%(member_id)s/%(table_id)s/%(variable_id)s/%(grid_label)s/%(version)s"
+        ],
+        "experiment_id": [
+          "historical"
+        ],
+        "experiment_title": [
+          "all-forcing simulation of the recent past"
+        ],
+        "frequency": [
+          "mon"
+        ],
+        "further_info_url": [
+          "https://furtherinfo.es-doc.org/CMIP6.AS-RCEC.TaiESM1.historical.none.r1i1p1f1"
+        ],
+        "grid": [
+          "finite-volume grid with 0.9x1.25 degree lat/lon resolution"
+        ],
+        "grid_label": [
+          "gn"
+        ],
+        "id": "CMIP6.CMIP.AS-RCEC.TaiESM1.historical.r1i1p1f1.Amon.tas.gn.v20200623.tas_Amon_TaiESM1_historical_r1i1p1f1_gn_185001-201412.nc_0|esgf.ceda.ac.uk",
+        "index_node": "esgf.ceda.ac.uk",
+        "instance_id": "CMIP6.CMIP.AS-RCEC.TaiESM1.historical.r1i1p1f1.Amon.tas.gn.v20200623.tas_Amon_TaiESM1_historical_r1i1p1f1_gn_185001-201412.nc_0",
+        "institution_id": [
+          "AS-RCEC"
+        ],
+        "latest": true,
+        "master_id": "CMIP6.CMIP.AS-RCEC.TaiESM1.historical.r1i1p1f1.Amon.tas.gn.tas_Amon_TaiESM1_historical_r1i1p1f1_gn_185001-201412.nc_0",
+        "member_id": [
+          "r1i1p1f1"
+        ],
+        "mip_era": [
+          "CMIP6"
+        ],
+        "model_cohort": [
+          "Registered"
+        ],
+        "nominal_resolution": [
+          "100 km"
+        ],
+        "pid": [
+          "hdl:21.14100/3ad422a9-f2ea-3341-a5d0-75495c051003"
+        ],
+        "product": [
+          "model-output"
+        ],
+        "project": [
+          "CMIP6"
+        ],
+        "realm": [
+          "atmos"
+        ],
+        "replica": true,
+        "retracted": false,
+        "score": 1.0,
+        "size": 243056081,
+        "source_id": [
+          "TaiESM1"
+        ],
+        "source_type": [
+          "AOGCM",
+          "AER",
+          "BGC"
+        ],
+        "sub_experiment_id": [
+          "none"
+        ],
+        "table_id": [
+          "Amon"
+        ],
+        "timestamp": "2020-07-23T06:58:43Z",
+        "title": "tas_Amon_TaiESM1_historical_r1i1p1f1_gn_185001-201412.nc",
+        "tracking_id": [
+          "hdl:21.14100/997cf563-6411-4a78-a9c4-7369ae27d698"
+        ],
+        "type": "File",
+        "url": [
+          "https://esgf.ceda.ac.uk/thredds/fileServer/esg_cmip6/CMIP6/CMIP/AS-RCEC/TaiESM1/historical/r1i1p1f1/Amon/tas/gn/v20200623/tas_Amon_TaiESM1_historical_r1i1p1f1_gn_185001-201412.nc|application/netcdf|HTTPServer",
+          "https://esgf.ceda.ac.uk/thredds/dodsC/esg_cmip6/CMIP6/CMIP/AS-RCEC/TaiESM1/historical/r1i1p1f1/Amon/tas/gn/v20200623/tas_Amon_TaiESM1_historical_r1i1p1f1_gn_185001-201412.nc.html|application/opendap-html|OPENDAP"
+        ],
+        "variable": [
+          "tas"
+        ],
+        "variable_id": [
+          "tas"
+        ],
+        "variable_long_name": [
+          "Near-Surface Air Temperature"
+        ],
+        "variable_units": [
+          "K"
+        ],
+        "variant_label": [
+          "r1i1p1f1"
+        ],
+        "version": "1"
+      }
+    ],
+    "maxScore": 1.0,
+    "numFound": 1,
+    "start": 0
+  },
+  "responseHeader": {
+    "QTime": 5,
+    "params": {
+      "df": "text",
+      "echoParams": "all",
+      "facet": "true",
+      "facet.limit": "-1",
+      "facet.method": "enum",
+      "facet.mincount": "1",
+      "facet.sort": "lex",
+      "fl": "*,score",
+      "fq": [
+        "type:File",
+        "dataset_id:\"CMIP6.CMIP.AS-RCEC.TaiESM1.historical.r1i1p1f1.Amon.tas.gn.v20200218|esgf.ceda.ac.uk\" || dataset_id:\"CMIP6.CMIP.AS-RCEC.TaiESM1.historical.r1i1p1f1.Amon.tas.gn.v20200623|esgf.ceda.ac.uk\"",
+        "variable_id:\"tas\""
+      ],
+      "indent": "true",
+      "q": "*:*",
+      "q.alt": "*:*",
+      "qf": "text",
+      "rows": "2",
+      "shards": "solr-slave:8983/solr/files,solr-replica-ceda:8983/solr/files,solr-replica-dkrz:8983/solr/files,solr-replica-ipsl:8983/solr/files,solr-replica-liu:8983/solr/files,solr-replica-noaa:8983/solr/files",
+      "sort": "id asc",
+      "start": "0",
+      "tie": "0.01",
+      "wt": "json"
+    },
+    "status": 0
+  }
+}

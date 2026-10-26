@@ -152,6 +152,7 @@ for name in sys.modules:
 
     assert outside == {
         "esmporium.datasets",
+        "esmporium.datasets.data_access",
         "esmporium.datasets.facets",
         "esmporium.formatting",
         "esmporium.query",

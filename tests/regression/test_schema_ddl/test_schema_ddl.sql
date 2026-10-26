@@ -128,6 +128,22 @@ CREATE INDEX ix_datasetversiondatanodelink_data_node_id ON datasetversiondatanod
 
 CREATE INDEX ix_datasetversiondatanodelink_dataset_version_id ON datasetversiondatanodelink (dataset_version_id);
 
+CREATE TABLE file (
+	id INTEGER NOT NULL,
+	dataset_version_id INTEGER NOT NULL,
+	filename VARCHAR NOT NULL,
+	size BIGINT,
+	checksum VARCHAR,
+	checksum_type VARCHAR,
+	tracking_id VARCHAR,
+	local_path VARCHAR,
+	CONSTRAINT pk_file PRIMARY KEY (id),
+	CONSTRAINT uq_file_dataset_version_id_filename UNIQUE (dataset_version_id, filename),
+	CONSTRAINT fk_file_dataset_version_id_datasetversion FOREIGN KEY(dataset_version_id) REFERENCES datasetversion (id)
+);
+
+CREATE INDEX ix_file_dataset_version_id ON file (dataset_version_id);
+
 CREATE TABLE rawdocversionlink (
 	id INTEGER NOT NULL,
 	raw_doc_id INTEGER NOT NULL,
@@ -174,3 +190,25 @@ CREATE TABLE searchrunversion (
 CREATE INDEX ix_searchrunversion_dataset_version_id ON searchrunversion (dataset_version_id);
 
 CREATE INDEX ix_searchrunversion_search_run_id ON searchrunversion (search_run_id);
+
+CREATE TABLE dataaccess (
+	id INTEGER NOT NULL,
+	dataset_version_id INTEGER NOT NULL,
+	file_id INTEGER,
+	data_node_id INTEGER NOT NULL,
+	service VARCHAR NOT NULL,
+	container_format VARCHAR NOT NULL,
+	url VARCHAR NOT NULL,
+	raw_json VARCHAR NOT NULL,
+	CONSTRAINT pk_dataaccess PRIMARY KEY (id),
+	CONSTRAINT uq_dataaccess_dataset_version_id_service_container_format_url UNIQUE (dataset_version_id, service, container_format, url),
+	CONSTRAINT fk_dataaccess_dataset_version_id_datasetversion FOREIGN KEY(dataset_version_id) REFERENCES datasetversion (id),
+	CONSTRAINT fk_dataaccess_file_id_file FOREIGN KEY(file_id) REFERENCES file (id),
+	CONSTRAINT fk_dataaccess_data_node_id_datanode FOREIGN KEY(data_node_id) REFERENCES datanode (id)
+);
+
+CREATE INDEX ix_dataaccess_data_node_id ON dataaccess (data_node_id);
+
+CREATE INDEX ix_dataaccess_dataset_version_id ON dataaccess (dataset_version_id);
+
+CREATE INDEX ix_dataaccess_file_id ON dataaccess (file_id);

@@ -1,0 +1,233 @@
+{
+  "facet_counts": {
+    "facet_fields": {},
+    "facet_heatmaps": {},
+    "facet_intervals": {},
+    "facet_queries": {},
+    "facet_ranges": {}
+  },
+  "response": {
+    "docs": [
+      {
+        "_timestamp": "2015-11-02T16:37:45.900Z",
+        "_version_": 1803481969888067585,
+        "cf_standard_name": [
+          "air_temperature"
+        ],
+        "checksum": [
+          "bbc592c35fdbe1d5db1257a52114a057e870a4bd38f104a403e7da700d350ee1"
+        ],
+        "checksum_type": [
+          "SHA256"
+        ],
+        "cmor_table": [
+          "Amon"
+        ],
+        "data_node": "esgf.ceda.ac.uk",
+        "dataset_id": "cmip5.output1.MIROC.MIROC-ESM.historical.mon.atmos.Amon.r1i1p1.v20120710|esgf.ceda.ac.uk",
+        "dataset_id_template_": [
+          "cmip5.%(product)s.%(institute)s.%(model)s.%(experiment)s.%(time_frequency)s.%(realm)s.%(cmor_table)s.%(ensemble)s"
+        ],
+        "description": [
+          "MIROC-ESM model output prepared for CMIP5 historical"
+        ],
+        "drs_id": [
+          "cmip5.output1.MIROC.MIROC-ESM.historical.mon.atmos.Amon.r1i1p1"
+        ],
+        "ensemble": [
+          "r1i1p1"
+        ],
+        "experiment": [
+          "historical"
+        ],
+        "experiment_family": [
+          "All",
+          "Historical"
+        ],
+        "forcing": [
+          "GHG, SA, Oz, LU, Sl, Vl, MD, BC, OC"
+        ],
+        "format": [
+          "netCDF, CF-1.4"
+        ],
+        "id": "cmip5.output1.MIROC.MIROC-ESM.historical.mon.atmos.Amon.r1i1p1.v20120710.tas_Amon_MIROC-ESM_historical_r1i1p1_185001-200512.nc|esgf.ceda.ac.uk",
+        "index_node": "esgf.ceda.ac.uk",
+        "instance_id": "cmip5.output1.MIROC.MIROC-ESM.historical.mon.atmos.Amon.r1i1p1.v20120710.tas_Amon_MIROC-ESM_historical_r1i1p1_185001-200512.nc",
+        "institute": [
+          "MIROC"
+        ],
+        "latest": true,
+        "master_gateway": [
+          "DEFAULT"
+        ],
+        "master_id": "cmip5.output1.MIROC.MIROC-ESM.historical.mon.atmos.Amon.r1i1p1.tas_Amon_MIROC-ESM_historical_r1i1p1_185001-200512.nc",
+        "metadata_format": "THREDDS",
+        "model": [
+          "MIROC-ESM"
+        ],
+        "product": [
+          "output1"
+        ],
+        "project": [
+          "CMIP5"
+        ],
+        "realm": [
+          "atmos"
+        ],
+        "replica": true,
+        "retracted": false,
+        "score": 1.0,
+        "size": 61399452,
+        "time_frequency": [
+          "mon"
+        ],
+        "timestamp": "2011-09-13T04:40:12Z",
+        "title": "tas_Amon_MIROC-ESM_historical_r1i1p1_185001-200512.nc",
+        "tracking_id": [
+          "da555bed-a51e-4293-ad31-8c07ca1d64e9"
+        ],
+        "type": "File",
+        "url": [
+          "https://esgf.ceda.ac.uk/thredds/fileServer/esg_dataroot/cmip5/output1/MIROC/MIROC-ESM/historical/mon/atmos/Amon/r1i1p1/v20120710/tas/tas_Amon_MIROC-ESM_historical_r1i1p1_185001-200512.nc|application/netcdf|HTTPServer",
+          "https://esgf.ceda.ac.uk/thredds/dodsC/esg_dataroot/cmip5/output1/MIROC/MIROC-ESM/historical/mon/atmos/Amon/r1i1p1/v20120710/tas/tas_Amon_MIROC-ESM_historical_r1i1p1_185001-200512.nc.html|application/opendap-html|OPENDAP"
+        ],
+        "variable": [
+          "tas"
+        ],
+        "variable_long_name": [
+          "Near-Surface Air Temperature"
+        ],
+        "variable_units": [
+          "K"
+        ],
+        "version": "1"
+      },
+      {
+        "_timestamp": "2015-11-02T16:37:52.952Z",
+        "_version_": 1803481969939447808,
+        "cf_standard_name": [
+          "air_temperature"
+        ],
+        "checksum": [
+          "d2e5e336158f190125fbe3fc98dd007f9a1027c5d9d4c214bb1d2255e8ec204a"
+        ],
+        "checksum_type": [
+          "SHA256"
+        ],
+        "cmor_table": [
+          "Amon"
+        ],
+        "data_node": "esgf.ceda.ac.uk",
+        "dataset_id": "cmip5.output1.MIROC.MIROC-ESM.historical.mon.atmos.Amon.r2i1p1.v20120710|esgf.ceda.ac.uk",
+        "dataset_id_template_": [
+          "cmip5.%(product)s.%(institute)s.%(model)s.%(experiment)s.%(time_frequency)s.%(realm)s.%(cmor_table)s.%(ensemble)s"
+        ],
+        "description": [
+          "MIROC-ESM model output prepared for CMIP5 historical"
+        ],
+        "drs_id": [
+          "cmip5.output1.MIROC.MIROC-ESM.historical.mon.atmos.Amon.r2i1p1"
+        ],
+        "ensemble": [
+          "r2i1p1"
+        ],
+        "experiment": [
+          "historical"
+        ],
+        "experiment_family": [
+          "All",
+          "Historical"
+        ],
+        "forcing": [
+          "GHG, SA, Oz, LU, Sl, Vl, MD, BC, OC"
+        ],
+        "format": [
+          "netCDF, CF-1.4"
+        ],
+        "id": "cmip5.output1.MIROC.MIROC-ESM.historical.mon.atmos.Amon.r2i1p1.v20120710.tas_Amon_MIROC-ESM_historical_r2i1p1_185001-200512.nc|esgf.ceda.ac.uk",
+        "index_node": "esgf.ceda.ac.uk",
+        "instance_id": "cmip5.output1.MIROC.MIROC-ESM.historical.mon.atmos.Amon.r2i1p1.v20120710.tas_Amon_MIROC-ESM_historical_r2i1p1_185001-200512.nc",
+        "institute": [
+          "MIROC"
+        ],
+        "latest": true,
+        "master_gateway": [
+          "DEFAULT"
+        ],
+        "master_id": "cmip5.output1.MIROC.MIROC-ESM.historical.mon.atmos.Amon.r2i1p1.tas_Amon_MIROC-ESM_historical_r2i1p1_185001-200512.nc",
+        "metadata_format": "THREDDS",
+        "model": [
+          "MIROC-ESM"
+        ],
+        "product": [
+          "output1"
+        ],
+        "project": [
+          "CMIP5"
+        ],
+        "realm": [
+          "atmos"
+        ],
+        "replica": true,
+        "retracted": false,
+        "score": 1.0,
+        "size": 61399452,
+        "time_frequency": [
+          "mon"
+        ],
+        "timestamp": "2011-09-30T22:17:11Z",
+        "title": "tas_Amon_MIROC-ESM_historical_r2i1p1_185001-200512.nc",
+        "tracking_id": [
+          "31f998f9-4674-4145-a313-2d922056ce00"
+        ],
+        "type": "File",
+        "url": [
+          "https://esgf.ceda.ac.uk/thredds/fileServer/esg_dataroot/cmip5/output1/MIROC/MIROC-ESM/historical/mon/atmos/Amon/r2i1p1/v20120710/tas/tas_Amon_MIROC-ESM_historical_r2i1p1_185001-200512.nc|application/netcdf|HTTPServer",
+          "https://esgf.ceda.ac.uk/thredds/dodsC/esg_dataroot/cmip5/output1/MIROC/MIROC-ESM/historical/mon/atmos/Amon/r2i1p1/v20120710/tas/tas_Amon_MIROC-ESM_historical_r2i1p1_185001-200512.nc.html|application/opendap-html|OPENDAP"
+        ],
+        "variable": [
+          "tas"
+        ],
+        "variable_long_name": [
+          "Near-Surface Air Temperature"
+        ],
+        "variable_units": [
+          "K"
+        ],
+        "version": "1"
+      }
+    ],
+    "maxScore": 1.0,
+    "numFound": 2,
+    "start": 0
+  },
+  "responseHeader": {
+    "QTime": 5,
+    "params": {
+      "df": "text",
+      "echoParams": "all",
+      "facet": "true",
+      "facet.limit": "-1",
+      "facet.method": "enum",
+      "facet.mincount": "1",
+      "facet.sort": "lex",
+      "fl": "*,score",
+      "fq": [
+        "type:File",
+        "dataset_id:\"cmip5.output1.MIROC.MIROC-ESM.historical.mon.atmos.Amon.r1i1p1.v20120710|esgf.ceda.ac.uk\" || dataset_id:\"cmip5.output1.MIROC.MIROC-ESM.historical.mon.atmos.Amon.r2i1p1.v20120710|esgf.ceda.ac.uk\"",
+        "variable:\"tas\""
+      ],
+      "indent": "true",
+      "q": "*:*",
+      "q.alt": "*:*",
+      "qf": "text",
+      "rows": "2",
+      "shards": "solr-slave:8983/solr/files,solr-replica-ceda:8983/solr/files,solr-replica-dkrz:8983/solr/files,solr-replica-ipsl:8983/solr/files,solr-replica-liu:8983/solr/files,solr-replica-noaa:8983/solr/files",
+      "sort": "id asc",
+      "start": "0",
+      "tie": "0.01",
+      "wt": "json"
+    },
+    "status": 0
+  }
+}

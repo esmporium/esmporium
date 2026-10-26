@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from esmporium.search.apis.esgf1 import extract_one_element_list
-from esmporium.search.apis.esgfng import stac_nodes
+from esmporium.search.apis.esgfng import stac_data_access, stac_nodes
 from esmporium.search.apis.protocol import (
     describe_search_api,
     read_response_path,
@@ -435,6 +435,11 @@ def stac_parsed_document(
             feature, path, what=what, context=describe_search_api(api)
         )
 
+    # A STAC item is one dataset version and its `assets` are that version's files,
+    # so file access comes with the dataset search and needs no second request.
+    # (Solr's equivalent does: see `esmporium.db.record_solr_file_access`.)
+    found = stac_data_access(feature, api=api)
+
     return ParsedDocument(
         id_project_specific=id_project_specific,
         datasets=datasets,
@@ -445,6 +450,8 @@ def stac_parsed_document(
         esgf_doc_id=read("id", "this record's id"),
         raw_json=json.dumps(feature),
         raw_docs_format_tag=api.raw_docs_format_tag,
+        files=found.files,
+        accesses=found.accesses,
     )
 
 

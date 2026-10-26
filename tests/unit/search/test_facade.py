@@ -42,6 +42,9 @@ from esmporium.search import (
     build_transient_retrying,
     identity_string,
 )
+from esmporium.search.search_api_facade.store import (
+    get_default_facade_definition,
+)
 
 # This file is where at least some of the tests in PR2.2 should be added.
 
@@ -622,3 +625,32 @@ def test_inbuilt_store_gives_every_api_its_own_retry_policy():
     retryings = [id(f.search_api.retrying) for f in facades]
 
     assert len(set(retryings)) == len(retryings)
+
+
+def test_there_is_no_cmip5_stac_facade():
+    """
+    The missing cell in the data-access matrix, recorded as a fact not an omission
+
+    ESGF-NG serves no CMIP5 -- `/collections/CMIP5` is a 404 -- so there is no
+    CMIP5 x STAC pair, and nothing guesses at the shape of a CMIP5 STAC document.
+    Asserting it keeps the gap visible, and this test is what fails if ESGF-NG ever
+    fills it.
+
+    Both of the ways of asking refuse, for the same reason in different words: the
+    inbuilt store has no such pairing to hand out, and the default-definition
+    builder will not invent one.
+
+    See `tests/integration/search/test_data_access_live.py` for the cells that do
+    exist.
+    """
+    with pytest.raises(
+        ValueError, match=re.escape("No API from host='search.east.esgf.io'")
+    ):
+        INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
+            "CMIP5", "search.east.esgf.io"
+        )
+
+    with pytest.raises(
+        NotImplementedError, match=re.escape("CMIP5 search.east.esgf.io")
+    ):
+        get_default_facade_definition("CMIP5", "search.east.esgf.io")

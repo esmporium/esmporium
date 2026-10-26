@@ -1,0 +1,364 @@
+"""
+Test data access tracking end to end against the live ESGF search APIs
+
+The unit tests already pin the parsing and the writing, so if those pass and these
+fail, the thing that changed is on the other end of the wire.
+
+The matrix is four cells, not six, because the two APIs barely overlap:
+
+|              | CMIP5                 | CMIP6          | CMIP7              |
+|--------------|-----------------------|----------------|--------------------|
+| ESGF-1 Solr  | yes -- the only route | yes            | no -- holds none   |
+| ESGF-NG STAC | no -- no collection   | yes, east+west | yes -- only route  |
+
+STAC serves no CMIP5 at all (pinned by
+`tests/unit/search/test_facade.py::test_there_is_no_cmip5_stac_facade`, which needs
+no network so lives with the unit tests), and
+ESGF-1 holds no CMIP7: `type=File&project=CMIP7` answers `numFound=0` on CEDA,
+DKRZ, NSC and NCI, with `distrib=true` as well as `false`. CMIP6 is the one project
+both serve, which makes it the only place the two routes can be compared head to
+head -- which `test_the_two_apis_agree_about_one_cmip6_dataset` does.
+"""
+
+from __future__ import annotations
+
+import pytest
+from sqlmodel import Session, select
+
+from esmporium.datasets import AccessService, ContainerFormat
+from esmporium.db import (
+    DataAccess,
+    Dataset,
+    DatasetVersion,
+    File,
+    ingest_parsed_documents,
+    record_solr_file_access,
+)
+from esmporium.db.migrate import upgrade_to_head
+from esmporium.query import QueryCMIP5, QueryCMIP6, QueryCMIP7
+from esmporium.search import (
+    INBUILT_SEARCH_API_FACADE_STORE,
+    SOLR_FORMAT_TAG,
+    NoFacadeAnsweredError,
+    SearchAPIRequestError,
+    build_list_selector,
+    search_single_project,
+)
+
+pytestmark = pytest.mark.hits_esgf_search_api
+
+LIMIT = 100
+"""
+Page size for the dataset searches
+
+Note this is a *page size*, not a cap on results: a search matching more than this
+pages until it has them all. The queries below are therefore narrowed to a single
+model and ensemble member, so each cell is a handful of datasets in one page. Asking
+for a page of 2 against an unnarrowed query is what made the first version of this
+file take half an hour.
+"""
+
+MAX_RESULTS = 200
+"""
+Refuse rather than page forever
+
+A belt-and-braces guard on the narrowing above: if a query stops being narrow --
+because a model gains ensemble members, say -- this fails loudly instead of quietly
+turning into hundreds of requests.
+"""
+
+
+def _facade(project: str, host: str):
+    """The inbuilt facade for one project on one host."""
+    return INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
+        project, host
+    )
+
+
+CMIP5_QUERY = QueryCMIP5(
+    experiment="historical",
+    variable="tas",
+    time_frequency="mon",
+    model="MIROC-ESM",
+    ensemble="r1i1p1",
+)
+"""A CMIP5 query narrow enough to be a handful of datasets"""
+
+CMIP6_QUERY = QueryCMIP6(
+    experiment_id="historical",
+    variable_id="tas",
+    frequency="mon",
+    source_id="BCC-CSM2-MR",
+    variant_label="r1i1p1f1",
+)
+"""
+A CMIP6 query narrow enough to be a handful of datasets, on *both* APIs
+
+The model matters. ESGF-NG's CMIP6 collection is a partial mirror of ESGF-1's: asking
+either STAC deployment for `ACCESS-ESM1-5`, `MPI-ESM1-2-LR` or `TaiESM1` returns
+nothing, while Solr has all three. Worse, STAC's own facet summaries advertise all of
+them, because those summaries describe the collection rather than answering the
+query -- so "it is in the facet list" is not evidence a search will find it.
+`BCC-CSM2-MR` is one of the models all three endpoints really hold.
+"""
+
+CMIP7_QUERY = QueryCMIP7(
+    variable_id="tas",
+    frequency="mon",
+    source_id="CanESM5-1",
+    variant_label="r1i1p2f1",
+    experiment_id="1pctCO2",
+)
+"""
+A CMIP7 query narrow enough to be a handful of datasets
+
+Needs the experiment as well as the member: CMIP7 publishes many experiments per
+member, so model and member alone is still dozens of datasets.
+"""
+
+LIVE_CASES = (
+    pytest.param(
+        _facade("CMIP5", "esgf.ceda.ac.uk"),
+        CMIP5_QUERY,
+        id="solr-cmip5-ceda",
+    ),
+    pytest.param(
+        _facade("CMIP6", "esgf.nci.org.au"),
+        CMIP6_QUERY,
+        id="solr-cmip6-nci",
+    ),
+    pytest.param(
+        _facade("CMIP6", "search.east.esgf.io"),
+        CMIP6_QUERY,
+        id="stac-cmip6-east",
+    ),
+    pytest.param(
+        _facade("CMIP6", "search.west.esgf.io"),
+        CMIP6_QUERY,
+        id="stac-cmip6-west",
+    ),
+    pytest.param(
+        _facade("CMIP7", "search.east.esgf.io"),
+        CMIP7_QUERY,
+        id="stac-cmip7-east",
+    ),
+)
+"""
+Every live (API, project) pair there is, plus both STAC mirrors for CMIP6
+
+West is listed separately from east because it is the only deployment publishing
+whole-version routes -- a kerchunk reference set and a Globus link -- so leaving it
+out would mean never exercising that branch of the model against a live answer.
+"""
+
+
+def _record(session, facade, query):
+    """Search, ingest, and fill in Solr's file information if this is Solr."""
+    outcome = search_single_project(
+        query,
+        build_list_selector([facade]),
+        limit=LIMIT,
+        max_results=MAX_RESULTS,
+    )
+    documents = [document for pile in outcome.parsed_docs.values() for document in pile]
+    if not documents:
+        pytest.fail(
+            f"{facade.search_api.host} answered about no datasets for {query}, "
+            "so there is nothing to record file access for. These APIs report a "
+            "mis-spelled facet name or value as a successful empty result, so this "
+            "is a finding rather than an outage."
+        )
+
+    ingested = ingest_parsed_documents(session, documents)
+    if facade.search_api.raw_docs_format_tag == SOLR_FORMAT_TAG:
+        record_solr_file_access(session, facade, ingested, limit=100)
+
+    session.commit()
+
+
+@pytest.mark.parametrize("facade, query", LIVE_CASES)
+def test_a_live_search_records_files_and_routes(engine, skip_or_fail, facade, query):
+    """
+    Searching for real datasets leaves files and routes to them in the database
+
+    The key test of this step: every assertion here is about what a live API really
+    published, not about what we think it publishes.
+    """
+    upgrade_to_head(engine)
+
+    try:
+        with Session(engine) as session:
+            _record(session, facade, query)
+    except NoFacadeAnsweredError as error:
+        skip_or_fail(
+            error.failures,
+            skippable=SearchAPIRequestError,
+            reason=f"{facade.search_api.host} did not answer",
+        )
+
+    with Session(engine) as session:
+        files = session.exec(select(File)).all()
+        routes = session.exec(select(DataAccess)).all()
+
+        assert files, "a live search recorded no files"
+        assert routes, "a live search recorded no routes to bytes"
+
+        for stored in files:
+            assert stored.filename
+            assert stored.size and stored.size > 0, (
+                f"{stored.filename} was published with no usable size"
+            )
+
+        # Somewhere in there is the ordinary way of getting a netCDF file.
+        #
+        # Note `==` rather than `is` throughout: a value read back out of the
+        # database is a plain `str`, not an enum member (see
+        # `DataAccess.service`), and it compares equal to the member but is not it.
+        assert any(
+            route.service == AccessService.HTTPS
+            and route.container_format == ContainerFormat.NETCDF
+            and route.file_id is not None
+            for route in routes
+        )
+
+        # The invariant on `DataAccess.file_id`, checked against live data: a route
+        # which serves one file serves a file of its own dataset version.
+        version_of_file = {stored.id: stored.dataset_version_id for stored in files}
+        for route in routes:
+            if route.file_id is not None:
+                assert version_of_file[route.file_id] == route.dataset_version_id
+
+
+@pytest.mark.parametrize("facade, query", LIVE_CASES)
+def test_a_live_search_records_a_checksum_we_can_name(
+    engine, skip_or_fail, facade, query
+):
+    """
+    Whatever the API publishes, we end up with a digest and the algorithm it is of
+
+    The two APIs say this very differently -- Solr names the algorithm in its own
+    field, STAC encodes it as a multihash prefix -- so this passing for both is what
+    makes a checksum from either comparable with the other.
+    """
+    upgrade_to_head(engine)
+
+    try:
+        with Session(engine) as session:
+            _record(session, facade, query)
+    except NoFacadeAnsweredError as error:
+        skip_or_fail(
+            error.failures,
+            skippable=SearchAPIRequestError,
+            reason=f"{facade.search_api.host} did not answer",
+        )
+
+    with Session(engine) as session:
+        files = session.exec(select(File)).all()
+
+        named = [stored for stored in files if stored.checksum_type is not None]
+        assert named, (
+            "no file came back with a checksum we could name the algorithm of; "
+            "if a publisher has started using a multihash code we do not know, "
+            "the digest is still stored but is no longer comparable across APIs"
+        )
+        for stored in named:
+            assert stored.checksum
+            assert stored.checksum_type == "SHA256"
+
+
+def test_the_west_cmip6_mirror_offers_whole_version_routes(engine, skip_or_fail):
+    """
+    West CMIP6 really does publish a virtual store and a Globus link, right now
+
+    This is the live evidence that the non-file branch of the model is needed today
+    rather than someday: a kerchunk reference set covering a whole dataset version,
+    fetched over plain HTTPS and opened as zarr, in the same `assets` dict as the
+    files. East publishes neither, which is why this is one named test rather than a
+    matrix row.
+
+    If ESGF stops publishing these, this test fails and the right response is to ask
+    what replaced them -- not to delete the whole-version branch, which is also where
+    a real zarr or icechunk store would land.
+    """
+    upgrade_to_head(engine)
+    facade = _facade("CMIP6", "search.west.esgf.io")
+
+    try:
+        with Session(engine) as session:
+            _record(session, facade, CMIP6_QUERY)
+    except NoFacadeAnsweredError as error:
+        skip_or_fail(
+            error.failures,
+            skippable=SearchAPIRequestError,
+            reason="search.west.esgf.io did not answer",
+        )
+
+    with Session(engine) as session:
+        whole_version = session.exec(
+            select(DataAccess).where(DataAccess.file_id.is_(None))
+        ).all()
+
+        assert whole_version, "west published no whole-version routes"
+        formats = {route.container_format for route in whole_version}
+        assert ContainerFormat.KERCHUNK in formats
+        assert ContainerFormat.HTML in formats
+
+        kerchunk = next(
+            route
+            for route in whole_version
+            if route.container_format == ContainerFormat.KERCHUNK
+        )
+        # Fetched over HTTPS, opened as kerchunk: the reason these are two columns.
+        assert kerchunk.service == AccessService.HTTPS
+        assert kerchunk.url.endswith(".kerchunk.parq")
+
+
+def test_a_live_cmip5_file_is_recorded_against_its_own_variables_dataset(
+    engine, skip_or_fail
+):
+    """
+    Every CMIP5 file lands against the dataset version for *its* variable
+
+    One CMIP5 Solr document describes every variable in its table -- 56 of them here
+    -- so searching for `tas` legitimately teaches us about 56 datasets and records
+    files for all of them. That is existing, correct behaviour, not over-fetching.
+
+    What could go wrong is *attribution*: a CMIP5 `dataset_id` is table-grained, so
+    the file request has to narrow by variable, and the answers have to be placed
+    against the version for that variable rather than whichever one came first. This
+    checks that, which is the thing the per-variable batching in
+    `plan_solr_file_batches` exists for.
+    """
+    upgrade_to_head(engine)
+    facade = _facade("CMIP5", "esgf.ceda.ac.uk")
+
+    try:
+        with Session(engine) as session:
+            _record(session, facade, CMIP5_QUERY)
+    except NoFacadeAnsweredError as error:
+        skip_or_fail(
+            error.failures,
+            skippable=SearchAPIRequestError,
+            reason="esgf.ceda.ac.uk did not answer",
+        )
+
+    with Session(engine) as session:
+        rows = session.exec(
+            select(File, Dataset)
+            .join(DatasetVersion, File.dataset_version_id == DatasetVersion.id)
+            .join(Dataset, DatasetVersion.dataset_id == Dataset.id)
+        ).all()
+
+        assert rows
+        # A CMIP5 filename starts with its variable, so the filename is the
+        # independent check on where we filed it.
+        misfiled = [
+            (stored.filename, dataset.variable)
+            for stored, dataset in rows
+            if not stored.filename.startswith(f"{dataset.variable}_")
+        ]
+        assert not misfiled, misfiled
+
+        # And the point of all that: more than one variable really was recorded, so
+        # the check above is not vacuously true of a single-variable result.
+        assert len({dataset.variable for _, dataset in rows}) > 1

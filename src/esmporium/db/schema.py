@@ -9,9 +9,11 @@ import datetime
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Index, MetaData, UniqueConstraint, text
+from sqlalchemy import BigInteger, Index, MetaData, UniqueConstraint, text
 from sqlalchemy.orm import registry
 from sqlmodel import AutoString, Field, SQLModel
+
+from esmporium.datasets.data_access import AccessService, ContainerFormat
 
 if TYPE_CHECKING:
     # Only needed for `SearchAPICallRecord.from_call`'s annotation, which is quoted
@@ -522,6 +524,261 @@ class RawDocVersionLink(EsmporiumBase, table=True):
     """
 
     __table_args__ = (UniqueConstraint("raw_doc_id", "dataset_version_id"),)
+
+
+class File(EsmporiumBase, table=True):
+    """
+    One named, individually checksummable piece of a dataset version
+
+    The *unit* of data: a dataset version is published as some number of these.
+    Deliberately node-independent -- `filename`, `checksum` and `tracking_id`
+    describe the bytes, not where they are, so they are the same on every replica.
+    Where the bytes can be fetched from is
+    [DataAccess][esmporium.db.schema.DataAccess], one row per route per node.
+
+    This holds no URL and no local copy. Nothing in esmporium opens, fetches or
+    downloads any of this yet.
+    """
+
+    # See the note on `Dataset.model_config`.
+    model_config = {"validate_assignment": True}
+
+    # Identity is `(dataset_version_id, filename)`: one version never publishes the
+    # same filename twice, and the same filename under two versions is two files.
+    # Both columns are NOT NULL, so a plain UniqueConstraint is enough -- unlike
+    # `Dataset`, this needs no `coalesce` expression index.
+    __table_args__ = (UniqueConstraint("dataset_version_id", "filename"),)
+
+    id: int | None = Field(default=None, primary_key=True)
+    """Surrogate key; assigned by the database"""
+
+    dataset_version_id: int = Field(foreign_key="datasetversion.id", index=True)
+    """
+    The version this file is one piece of
+
+    See [DatasetVersion][esmporium.db.schema.DatasetVersion].
+    """
+
+    filename: str
+    """
+    The file's name
+
+    For example `tas_Amon_UKESM1-0-LL_historical_r15i1p1f2_gn_185001-194912.nc`.
+
+    This is the file's identity within its version, and it is what both APIs key on:
+    ESGF-NG STAC keys a data asset by exactly this, and ESGF-1 Solr publishes it as a
+    File document's `title`.
+    """
+
+    size: int | None = Field(default=None, sa_type=BigInteger)
+    """
+    The file's size in bytes, if the API said
+
+    `BigInteger` rather than the default `Integer` deliberately: CMIP daily files
+    routinely pass 2 GB, which overflows a 32-bit integer on PostgreSQL. SQLite would
+    not have noticed, which is how this sort of thing gets missed.
+
+    Recorded, never checked -- nothing here fetches bytes to compare against.
+    """
+
+    checksum: str | None = None
+    """
+    The file's checksum as a bare hex digest, if the API published one
+
+    Normalised across the two APIs, which disagree about how to say this. Solr
+    publishes a bare digest alongside a separate `checksum_type`; ESGF-NG STAC
+    publishes a *multihash* (`file:checksum`) in which the algorithm and digest
+    length are encoded as a hex prefix, and has no `checksum_type` field at all.
+    [decode_multihash_checksum][esmporium.search.decode_multihash_checksum] strips
+    that prefix, so a value here means the same thing whichever API it came from.
+
+    A value we could not decode is stored **exactly as published**, with
+    `checksum_type` left `None`. That really happens: a live CMIP6Plus asset carried
+    72 hex characters where a sha2-256 multihash is 68, i.e. the `1220` prefix twice.
+    We record what upstream published rather than repairing it.
+    """
+
+    checksum_type: str | None = None
+    """
+    Which algorithm `checksum` is of, e.g. `SHA256`, or `None` if we cannot tell
+
+    Upper-case algorithm names, the way Solr spells its own `checksum_type`, so a
+    decoded STAC value and a Solr value agree. `None` means either the API published
+    no checksum, or published one we could not decode (see `checksum`).
+    """
+
+    tracking_id: str | None = None
+    """
+    The file's own persistent identifier, e.g. `hdl:21.14100/0fd04828-...`
+
+    Written into the file's header at publication, so it is a property of the bytes
+    and the same on every replica. ESGF-NG STAC carries it under a project prefix
+    (`cmip6:tracking_id`, `cmip7:tracking_id`, ...); Solr carries it as `tracking_id`.
+    """
+
+    local_path: str | None = None
+    """
+    The publisher's DRS-relative path for this file, if it published one
+
+    From ESGF-NG STAC's `file:local_path`, e.g.
+    `CMIP6/CMIP/NIMS-KMA/UKESM1-0-LL/.../tas_Amon_....nc`. Solr publishes no
+    equivalent, so this is `None` for anything learned from Solr.
+
+    Kept on the file rather than on the route because every node we have looked at
+    publishes the same DRS-relative path. That is an observation rather than a
+    guarantee: a node publishing an absolute path would leave that one node's answer
+    here.
+    """
+
+
+class DataAccess(EsmporiumBase, table=True):
+    """
+    One route to bytes: a way of getting some of a dataset version from some node
+
+    Where [File][esmporium.db.schema.File] is the unit, this is the *route*. One row
+    per (version, file-or-whole-version, node, service, container, URL), so a file
+    served over both HTTPS and OPeNDAP from two replicas is four rows against one
+    `File`.
+
+    **`file_id IS NULL` means this route serves the whole dataset version.** That
+    nullable foreign key is the discriminator: there is deliberately no `type` column
+    and no separate `FileAccess` table. A kerchunk sidecar, a Globus directory link
+    and (one day) a zarr or icechunk store are all one route to the whole version,
+    and a row-type column to say so would mean every reader learning a type
+    vocabulary before they could ask the only question that matters: file, or version?
+
+    **`service` and `container_format` are two orthogonal columns on purpose.** How
+    the bytes move is not what the bytes are: a kerchunk sidecar is fetched over
+    `https` and opened as `kerchunk`, and an OPeNDAP route hands you `html`.
+    Collapsing them would make the commonest non-file route in ESGF-NG
+    unrepresentable. It is also the split ESGF-NG itself made, in putting both
+    `protocol` and `type` on a STAC asset, which ESGF-1's single
+    `url|mime|service` triple has no room for.
+
+    `url` is stored **exactly as the API gave it**. There is no derived "openable"
+    URL column: turning a route into something a reader can open is the reader's job,
+    and needs libraries this package deliberately does not depend on.
+
+    This table is record-only. Nothing in esmporium opens, fetches or downloads any
+    of these routes yet.
+
+    !!! note "Two search mirrors describing the same version"
+        ESGF-NG east and west give the same STAC item the same `id`, which is what
+        [DatasetRawDoc.esgf_doc_id][esmporium.db.schema.DatasetRawDoc.esgf_doc_id] is
+        unique on, so only the first mirror's raw JSON is kept. With
+        [search_single_project][esmporium.search.search_single_project]'s default
+        `stop_at_first_result=True` the second mirror is never asked at all, so
+        whatever routes only it knew about are never seen. With
+        `stop_at_first_result=False` both mirrors' routes *are* recorded here, and
+        only the second's raw JSON is dropped. A known, accepted limitation rather
+        than an oversight.
+    """
+
+    # See the note on `Dataset.model_config`.
+    model_config = {"validate_assignment": True}
+
+    # Identity is the route itself. `file_id` is deliberately NOT part of it: it is
+    # nullable, SQLite treats NULLs as distinct in a UNIQUE, and a dataset-level
+    # route would therefore be re-inserted on every ingest -- the same trap
+    # `Dataset`'s identity index solves with `coalesce`. Here we do not need that
+    # trick, because a URL identifies a route on its own: OPeNDAP ends `.nc.html`
+    # where HTTPServer ends `.nc`, and Globus and GridFTP have schemes of their own.
+    # Leaving `file_id` out therefore costs nothing and keeps this a plain UNIQUE
+    # that alembic can autogenerate and compare -- an expression index would work
+    # too, but SQLite cannot reflect one, so alembic silently stops comparing it
+    # (see `tests/integration/test_migrations.py`).
+    __table_args__ = (
+        UniqueConstraint("dataset_version_id", "service", "container_format", "url"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    """Surrogate key; assigned by the database"""
+
+    dataset_version_id: int = Field(foreign_key="datasetversion.id", index=True)
+    """
+    The version this route serves part or all of
+
+    **Always set**, including for a file-level route, so that "every way of getting
+    this version" is one indexed lookup rather than a join through
+    [File][esmporium.db.schema.File].
+    """
+
+    file_id: int | None = Field(default=None, foreign_key="file.id", index=True)
+    """
+    The one file this route serves, or `None` for the whole dataset version
+
+    See the note on this class: this is the discriminator.
+
+    **Invariant:** when this is set, that file's `dataset_version_id` equals this
+    row's. The database as we configure it cannot enforce that -- a CHECK cannot hold
+    a subquery on SQLite, and we do not set `PRAGMA foreign_keys=ON`, so no foreign
+    key here is enforced either. Instead it holds by construction at the only place
+    these rows are written: `save_data_access_payload` in
+    [esmporium.db.results_to_database][] resolves a route's file only among the files
+    of the version the route is for, so there is no path by which it could be given
+    another version's file.
+    """
+
+    data_node_id: int = Field(foreign_key="datanode.id", index=True)
+    """
+    The node serving this route
+
+    See [DataNode][esmporium.db.schema.DataNode]. Read from ESGF-NG STAC's
+    `alternate:name` (the field
+    [stac_nodes][esmporium.search.apis.esgfng.stac_nodes] already reads) or Solr's
+    `data_node`, never from the route's own host: the two differ, e.g. `ceda.ac.uk`
+    serves over `dap.ceda.ac.uk`.
+    """
+
+    service: AccessService = Field(sa_type=AutoString)
+    """
+    How the bytes move, e.g. `https`
+
+    See [AccessService][esmporium.datasets.AccessService]. Stored as its value, so a
+    row read back out of the database carries a plain `str` rather than the enum
+    member -- it compares equal to the member but is not it, so compare with `==`
+    and not `is`. That is why these are `str`-valued enums, and it matches
+    [DatasetChange.change_type][esmporium.db.schema.DatasetChange.change_type].
+
+    Derived only from routes
+    an API really published, never from a dataset's advertised capability list:
+    ESGF-NG items advertise a `properties.access` of
+    `["HTTPServer", "OPENDAP", "GridFTP", "Globus"]` while carrying only https,
+    globus and kerchunk assets, and east CMIP6 omits `properties.access` entirely.
+    """
+
+    container_format: ContainerFormat = Field(sa_type=AutoString)
+    """
+    What the bytes are, e.g. `netcdf`
+
+    See [ContainerFormat][esmporium.datasets.ContainerFormat]. Orthogonal to
+    `service`; see the note on this class.
+    """
+
+    url: str
+    """
+    The route's URL, exactly as the API published it
+
+    Not normalised and not made openable. For example an OPeNDAP route's URL ends
+    `.nc.html` (a landing page, not the DAP endpoint) and a Globus route's URL is an
+    `https://app.globus.org/file-manager?...` web-app page, not a transfer endpoint.
+    Deriving something fetchable from either is a later step's problem, and guessing
+    at it here would be guessing on behalf of a reader who knows better.
+    """
+
+    raw_json: str
+    """
+    The API's own description of this route, JSON-encoded
+
+    For ESGF-NG STAC this is the asset object. ESGF-1 Solr describes a route only as
+    a `"<url>|<mime>|<service>"` triple inside a document that describes the *file*,
+    so for Solr this is that triple -- JSON-encoded, hence a quoted string rather
+    than an object.
+
+    Kept so that nothing a record carried is lost to our column choices, the same
+    reason [DatasetRawDoc.raw_json][esmporium.db.schema.DatasetRawDoc.raw_json]
+    exists.
+    """
 
 
 class SearchAPICallRecord(EsmporiumBase, table=True):
