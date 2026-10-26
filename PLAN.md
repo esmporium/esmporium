@@ -243,6 +243,7 @@ Not a test:
       description, not in an assertion
 
 ## 3. Track changes in search results
+DONE: See PR #59
 
 *Was PR4.*
 
