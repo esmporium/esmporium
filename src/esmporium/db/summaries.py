@@ -3,9 +3,10 @@ Summaries of what a tracked search returned, and of what changed
 
 This module joins the records from [esmporium.db.search_tracking][]
 back to the facets which name a dataset, folds a window
-of several runs down to its net effect, and hands the answer over as either a
-[pandas.DataFrame][] or, via [esmporium.db.summary_formatting][], as text. Nothing
-here writes to the database.
+of several runs down to its net effect, and hands the answer over as a
+[pandas.DataFrame][]. Laying a summary out as text is a caller's business: write a
+function of a [SearchSummary][(m).], or of the frames it hands back, and this module
+need never know what the result looks like. Nothing here writes to the database.
 """
 
 from __future__ import annotations
@@ -468,32 +469,6 @@ class SearchSummary:
             [_version_row(version) for version in self.current],
             columns=list(_CURRENT_FRAME_COLUMNS),
         )
-
-    def render(self, *, max_rows: int = 20, facets: Sequence[str] | None = None) -> str:
-        """
-        Render this summary as text
-
-        Parameters
-        ----------
-        max_rows
-            How many rows of each table to show before summarising the rest
-
-        facets
-            Which dataset facets to put in the tables, or `None` for the default.
-            See [format_summary][esmporium.db.summary_formatting.format_summary].
-
-        Returns
-        -------
-        :
-            The summary, as lines of text with no trailing whitespace
-        """
-        # Deferred: summary_formatting imports our types, so importing it up here
-        # would be a cycle. The renderer is the leaf of the pair, not us.
-        from esmporium.db.summary_formatting import (  # noqa: PLC0415
-            format_summary,
-        )
-
-        return format_summary(self, max_rows=max_rows, facets=facets)
 
 
 _CHANGE_FRAME_COLUMNS: tuple[str, ...] = (

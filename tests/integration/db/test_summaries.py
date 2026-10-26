@@ -259,7 +259,7 @@ def test_current_state_is_what_the_newest_run_returned(engine, two_runs):
     assert "UKESM2" not in {version.facets["model"] for version in summary.current}
 
 
-def test_the_frames_describe_the_same_thing_as_the_text(engine, two_runs):
+def test_the_frames_describe_the_same_thing_as_the_records(engine, two_runs):
     summary = summarise_search(engine, REQUIREMENT_NAME)
 
     changes = summary.changes_frame()
@@ -273,12 +273,20 @@ def test_the_frames_describe_the_same_thing_as_the_text(engine, two_runs):
     ]
 
 
-def test_the_rendered_summary_names_what_changed(engine, two_runs):
-    rendered = summarise_search(engine, REQUIREMENT_NAME).render()
+def test_the_summary_names_what_changed(engine, two_runs):
+    # The whole way through: two recorded runs in, and every piece a caller needs to
+    # say what happened out, read back off the database rather than off the result
+    # of the search.
+    summary = summarise_search(engine, REQUIREMENT_NAME)
 
-    assert rendered.startswith(f"{REQUIREMENT_NAME}: 1 added, 1 removed, 1 modified")
-    for expected in ("CESM3", "UKESM2", "retracted: no -> yes", "RUN HEALTH"):
-        assert expected in rendered, expected
+    assert summary.headline == f"{REQUIREMENT_NAME}: 1 added, 1 removed, 1 modified"
+
+    changed = summary.changes_frame()
+    assert set(changed["model"]) == {"CESM3", "UKESM2", "ACCESS-ESM1-6"}
+    assert changed.loc[changed["change"] == "modified", "moved"].tolist() == [
+        "retracted: no -> yes"
+    ]
+    assert summary.run.complete
 
 
 def test_a_window_covering_both_runs(engine, two_runs):

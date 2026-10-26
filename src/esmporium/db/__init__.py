@@ -93,17 +93,8 @@ from esmporium.db.summaries import (
     describe_moved,
     summarise_search,
 )
-from esmporium.db.summary_formatting import (
-    DEFAULT_FACETS,
-    MisalignedRowError,
-    UnknownFacetError,
-    check_facets,
-    format_summary,
-    render_table,
-)
 
 __all__ = [
-    "DEFAULT_FACETS",
     "METADATA",
     "MISSING",
     "ChangeRecord",
@@ -120,7 +111,6 @@ __all__ = [
     "HostHealth",
     "HostRanker",
     "IngestedDocument",
-    "MisalignedRowError",
     "NetChange",
     "NoRunsInWindowError",
     "OnNameClash",
@@ -142,7 +132,6 @@ __all__ = [
     "TrackedSearchResult",
     "UnconfiguredSQLiteEngineError",
     "UnhandledDatasetClashError",
-    "UnknownFacetError",
     "UnknownVersionFilterError",
     "VersionRecord",
     "aggregate_host_health",
@@ -151,7 +140,6 @@ __all__ = [
     "build_result_processor",
     "build_result_processor_factory",
     "build_tracking_result_processor_factory",
-    "check_facets",
     "collapse_changes",
     "compute_changes",
     "configure_sqlite_for_concurrency",
@@ -160,7 +148,6 @@ __all__ = [
     "facet_filters",
     "find_datasets",
     "find_requirement",
-    "format_summary",
     "get_changes",
     "get_median_response_time_for_ranking",
     "get_run_leaves",
@@ -171,7 +158,6 @@ __all__ = [
     "record_changes",
     "record_run_versions",
     "record_search_api_calls",
-    "render_table",
     "rerun_search_esgf",
     "resolve_name_clash",
     "run_is_complete",

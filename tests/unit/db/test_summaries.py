@@ -10,16 +10,11 @@ import pytest
 
 from esmporium.datasets import DATASET_FACET_COLUMNS
 from esmporium.db import (
-    DEFAULT_FACETS,
     ConflictingWindowError,
-    MisalignedRowError,
     SearchRunInfo,
     SearchRunLeafInfo,
-    UnknownFacetError,
-    check_facets,
     collapse_changes,
     describe_moved,
-    render_table,
     summarise_search,
 )
 from esmporium.db.schema import DatasetChangeType
@@ -260,90 +255,78 @@ def test_headline_says_so_when_an_incomplete_run_changed_nothing(summary_scenes)
     assert summary.headline == "pattern-effect: no changes (run incomplete)"
 
 
-# --------------------------------------------------------------------------- rendering
-def test_render_caps_each_table(summary_scenes):
-    changes = tuple(
-        summary_scenes.change(
-            ADDED, of=summary_scenes.version(variant_label=f"r{member}i1p1f1")
+# ------------------------------------------------------------------ what a run reports
+def test_a_run_totals_its_sub_searches(summary_scenes):
+    health = summary_scenes.run(
+        leaves=(
+            summary_scenes.leaf("historical.tas", n_matches=209, n_documents=50),
+            summary_scenes.leaf("control.tas", n_matches=100, n_documents=100),
         )
-        for member in range(1, 13)
     )
 
-    rendered = summary_scenes.summary(changes=changes).render(max_rows=4)
-
-    assert "ADDED (12)" in rendered
-    assert "... (+8 more)" in rendered
-    assert "r4i1p1f1" in rendered
-    assert "r5i1p1f1" not in rendered
-
-
-def test_render_does_not_cap_what_fits(summary_scenes):
-    changes = (summary_scenes.change(ADDED), summary_scenes.change(REMOVED))
-
-    rendered = summary_scenes.summary(changes=changes).render(max_rows=20)
-
-    assert "more)" not in rendered
+    assert health.n_leaves == 2
+    assert health.n_answered == 2
+    assert (health.n_documents, health.n_matches) == (150, 309)
+    # Which of them fell short is carried, not just that one did: a caller reporting
+    # this has to be able to name the sub-search whose answer is incomplete.
+    assert [leaf.label for leaf in health.truncated] == ["'historical.tas' (CMIP7)"]
 
 
-def test_render_leaves_no_trailing_whitespace(summary_scenes):
-    # Our own pre-commit strips trailing whitespace, so a renderer which emits it
-    # would make every checked-in regression file fail the moment it was committed.
-    rendered = summary_scenes.summary(
-        changes=(summary_scenes.change(ADDED),),
-        current=(summary_scenes.version(),),
-    ).render()
-
-    assert rendered.endswith("\n")
-    assert not rendered.endswith("\n\n")
-    assert [line for line in rendered.splitlines() if line != line.rstrip()] == []
-
-
-def test_render_says_no_changes_once(summary_scenes):
-    rendered = summary_scenes.summary().render()
-
-    assert "NO CHANGES" in rendered
-    assert "ADDED (0)" not in rendered
-
-
-def test_render_names_the_zero_sections_when_something_changed(summary_scenes):
-    # A reader needs to know nothing was removed, not merely that removals were not
-    # mentioned.
-    rendered = summary_scenes.summary(changes=(summary_scenes.change(ADDED),)).render()
-
-    assert "REMOVED (0)" in rendered
-    assert "MODIFIED (0)" in rendered
-
-
-def test_render_says_so_when_a_run_recorded_no_sub_searches(summary_scenes):
-    # A run which died before writing its leaves has no health to report, and saying
-    # "0/0 answered" would read as a failure rather than as an absence.
-    rendered = summary_scenes.summary(health=summary_scenes.run(leaves=())).render()
-
-    assert "no sub-searches recorded for this run" in rendered
-
-
-def test_render_calls_out_truncation_the_whole_run_agrees_on(summary_scenes):
-    rendered = summary_scenes.summary(
-        health=summary_scenes.run(
-            leaves=(
-                summary_scenes.leaf("historical.tas", n_matches=209, n_documents=50),
-                summary_scenes.leaf("control.tas", n_matches=100, n_documents=100),
-            )
+def test_a_run_whose_host_reported_no_total_has_no_total(summary_scenes):
+    # Not "short by the missing part": one silent host makes the run's total unknown.
+    health = summary_scenes.run(
+        leaves=(
+            summary_scenes.leaf("historical.tas", n_matches=None, n_documents=50),
+            summary_scenes.leaf("control.tas", n_matches=100, n_documents=100),
         )
-    ).render()
+    )
 
-    assert "150/309 documents collected -- TRUNCATED" in rendered
-    assert "a removal here may not be real" in rendered
+    assert health.n_matches is None
+    assert health.n_documents == 150
 
 
-def test_render_calls_out_an_arrival_which_is_already_retracted(summary_scenes):
-    rendered = summary_scenes.summary(
-        changes=(
-            summary_scenes.change(ADDED, of=summary_scenes.version(retracted=True)),
+def test_a_run_carries_which_sub_searches_failed(summary_scenes):
+    health = summary_scenes.run(
+        leaves=(
+            summary_scenes.leaf("historical.tas"),
+            summary_scenes.leaf("control.tas", answered=False, failure="timed out"),
         )
-    ).render()
+    )
 
-    assert "1 of these arrived already retracted" in rendered
+    assert health.n_answered == 1
+    assert [leaf.label for leaf in health.failures] == ["'control.tas' (CMIP7)"]
+    # Only the hosts whose answers were kept, so a failed leaf contributes none.
+    assert health.hosts == ("search.east.esgf.io",)
+
+
+def test_a_run_which_recorded_no_sub_searches_reports_nothing_rather_than_zero(
+    summary_scenes,
+):
+    # A run which died before writing its leaves has no health to report. The
+    # distinction a caller needs is "no sub-searches recorded" rather than "none
+    # answered", which is why `n_leaves` is worth asking separately.
+    health = summary_scenes.run(leaves=())
+
+    assert health.n_leaves == 0
+    assert health.n_answered == 0
+    assert health.failures == ()
+    assert health.truncated == ()
+
+
+def test_an_arrival_which_is_already_retracted_says_so(summary_scenes):
+    # "There is new data" and "there is new data you must not use" are different
+    # pieces of news, so this is carried rather than left to be worked out.
+    arrived = summary_scenes.change(ADDED, of=summary_scenes.version(retracted=True))
+
+    assert arrived.added_but_retracted
+
+
+def test_only_an_arrival_can_be_added_but_retracted(summary_scenes):
+    retracted_later = summary_scenes.change(
+        MODIFIED, of=summary_scenes.version(retracted=True), detail=RETRACTED_MOVED
+    )
+
+    assert not retracted_later.added_but_retracted
 
 
 # --------------------------------------------------------------------------- the frames
@@ -505,154 +488,26 @@ def test_n_runs_must_be_at_least_one():
         summarise_search("not-an-engine", "pattern-effect", n_runs=0)
 
 
-# ------------------------------------------------------------------- the columns shown
-def test_default_facets_are_dataset_facets():
-    # A default which named something no dataset records would be unrenderable.
-    assert set(DEFAULT_FACETS) <= set(DATASET_FACET_COLUMNS)
-
-
-def test_check_facets_defaults():
-    assert check_facets(None) == DEFAULT_FACETS
-
-
-def test_check_facets_can_narrow_and_widen():
-    assert check_facets(("model",)) == ("model",)
-    assert check_facets((*DEFAULT_FACETS, "grid_label")) == (
-        "project",
-        "model",
-        "experiment",
-        "variant_label",
-        "variable",
-        "reporting_interval",
-        "grid_label",
-    )
-
-
-def test_check_facets_sorts_into_dataset_facet_order():
-    # So that two tables of the same summary line up, whatever order they were asked
-    # for in.
-    assert check_facets(("variable", "model", "project")) == (
-        "project",
-        "model",
-        "variable",
-    )
-
-
-def test_check_facets_refuses_a_facet_no_dataset_records():
-    with pytest.raises(UnknownFacetError) as excinfo:
-        # A real facet, but a document-only one: CORDEX's driving model is not a
-        # Dataset column, so a summary cannot show it.
-        check_facets(("model", "cordex-cmip6:driving_source_id"))
-
-    assert excinfo.value.unknown == ("cordex-cmip6:driving_source_id",)
-    message = str(excinfo.value)
-    assert "Cannot show 'cordex-cmip6:driving_source_id'" in message
-    assert "only a search document knows" in message
-
-
-def test_check_facets_names_every_facet_it_cannot_show():
-    # All of them at once, rather than one per attempt, so a caller fixing a list
-    # does not have to run it once per mistake.
-    with pytest.raises(UnknownFacetError) as excinfo:
-        check_facets(("model", "nonsense", "also-nonsense"))
-
-    assert excinfo.value.unknown == ("nonsense", "also-nonsense")
-
-
+# ------------------------------------------------------------- telling rows apart
 def test_the_id_column_tells_rows_apart_whatever_facets_are_shown(summary_scenes):
     # Two datasets can agree on every facet we model and still be different rows, so
-    # narrowing the facets must never make them indistinguishable.
-    same_facets = (
-        summary_scenes.version(dataset_version_id=101),
-        summary_scenes.version(dataset_version_id=102),
-    )
-    rendered = summary_scenes.summary(current=same_facets).render(facets=("model",))
-
-    body = [line for line in rendered.splitlines() if "ACCESS-ESM1-6" in line]
-    assert len(body) == 2
-    assert body[0] != body[1]
-    assert [line.split()[0] for line in body] == ["101", "102"]
-
-
-def test_what_moved_goes_under_its_row_not_in_a_column(summary_scenes):
-    # As a column it set the whole table's width on its own.
-    rendered = summary_scenes.summary(
-        changes=(summary_scenes.change(MODIFIED, detail=RETRACTED_MOVED),)
-    ).render()
-
-    lines = rendered.splitlines()
-    header = next(line for line in lines if line.strip().startswith("id"))
-    assert "what moved" not in header
-
-    # On its own line, not trailing the row it belongs to
-    moved = next(line for line in lines if "retracted: no -> yes" in line)
-    assert moved.strip() == "retracted: no -> yes"
-
-    # And the invariant that buys: however long the moved text is, it cannot widen
-    # the table, which is what it did as a column.
-    wordy = summary_scenes.summary(
-        changes=(
-            summary_scenes.change(
-                MODIFIED,
-                detail={
-                    "data_nodes": {
-                        "old": ["a.very.long.data.node.example.org"],
-                        "new": ["a.second.very.long.data.node.example.org"],
-                    }
-                },
-            ),
-        )
-    ).render()
-    wordy_header = next(
-        line for line in wordy.splitlines() if line.strip().startswith("id")
-    )
-    assert len(wordy_header) == len(header)
-
-
-def test_only_the_rows_with_something_moved_get_a_continuation_line(summary_scenes):
-    # collapse_changes never produces a modification with nothing moved, but a
-    # summary built by hand can, and it should render as a plain row rather than as
-    # a blank continuation line.
+    # a caller which narrows the columns it shows must still have something which
+    # distinguishes them. That is `dataset_version_id`, which every frame carries.
     summary = summary_scenes.summary(
-        changes=(
-            summary_scenes.change(
-                MODIFIED,
-                of=summary_scenes.version(dataset_version_id=101),
-                detail=RETRACTED_MOVED,
-            ),
-            summary_scenes.change(
-                MODIFIED, of=summary_scenes.version(dataset_version_id=102), detail=None
-            ),
+        current=(
+            summary_scenes.version(dataset_version_id=101),
+            summary_scenes.version(dataset_version_id=102),
         )
     )
 
-    lines = [line for line in summary.render().splitlines() if line.strip()]
-    body = next(index for index, line in enumerate(lines) if " 101 " in f" {line} ")
+    frame = summary.current_frame()
 
-    assert lines[body + 1].strip() == "retracted: no -> yes"
-    # The row after that is the second version, with no continuation line of its own
-    assert " 102 " in f" {lines[body + 2]} "
-
-
-def test_render_table_refuses_a_row_which_does_not_match_its_headings():
-    # The failure this guards against is silent: headings and cells built from two
-    # separate lists can be ordered differently, putting a value under the wrong name.
-    with pytest.raises(MisalignedRowError) as excinfo:
-        render_table(["model", "version"], [["CESM3"], ["CESM3", "20261018", "extra"]])
-
-    assert excinfo.value.n_headers == 2
-    assert excinfo.value.row_lengths == (1, 3)
-    message = str(excinfo.value)
-    assert "A table with 2 headings was given 2 rows which do not match it" in message
-    assert "of lengths [1, 3]" in message
-
-
-def test_render_table_takes_a_table_which_does_match():
-    assert render_table(["a"], [["1"]]) == "  a\n  1"
+    assert frame["dataset_version_id"].tolist() == [101, 102]
+    assert frame["model"].tolist() == ["ACCESS-ESM1-6", "ACCESS-ESM1-6"]
 
 
 def test_the_scenes_fill_in_every_facet_column(summary_scenes):
-    # If a facet column is added and the scene builder is not, the tables render it
-    # as a gap and the regression files quietly lose a column.
+    # If a facet column is added and the scene builder is not, every test below reads
+    # a blank where a facet should be and nothing says so.
     assert set(summary_scenes.version().facets) == set(DATASET_FACET_COLUMNS)
     assert "" not in summary_scenes.version().facets.values()

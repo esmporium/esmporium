@@ -219,7 +219,7 @@ A plausible set of dataset facets, for the scenes whose facets get rendered
 Spelled out rather than derived from the column names, so that a rendered table reads
 like a real one. Every key of
 [DATASET_FACET_COLUMNS][esmporium.datasets.DATASET_FACET_COLUMNS] is present, which
-`test_realistic_facets_covers_every_column` pins.
+`test_the_scenes_fill_in_every_facet_column` pins.
 """
 
 
@@ -251,8 +251,9 @@ def summary_scenes():
     """
     Get builders for the pieces of a search summary
 
-    Lives here rather than beside either set of tests because the unit tests and the
-    rendering regression tests both need them, and two copies would be free to drift.
+    Lives here rather than beside the tests which use them so that a scene is built
+    the same way wherever it is built, and so that adding a field to a summary type
+    is one edit rather than one per test module.
 
     Every builder fills in the parts a test is not making a point about, so that a
     test reads as the one thing it is checking.
