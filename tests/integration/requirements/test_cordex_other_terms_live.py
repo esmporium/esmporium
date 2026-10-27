@@ -13,7 +13,7 @@ is modelled.** CORDEX is not a project esmporium supports: it is absent from
 `DEFAULT_SELECTOR`. Searching it at all means injecting a facade, a selector and a
 project-to-query mapping, which is what a user would have to do today and what the
 docstring of `PROJECT_QUERY_MAP_DEFAULT` points at ("to search a project we do not
-know about yet"). So these tests also check, incidentally, that those injection seams
+know about yet"). So these tests also check, deliberately, that those injection seams
 work as advertised.
 """
 
@@ -101,6 +101,7 @@ class ESGFNGCordexCMIP6ParametersQueryStyle(BaseModel):
 
     driving_variant_label: Annotated[FacetValues, QueryFacet("variant_label")] = ()
     """See [Dataset.variant_label][esmporium.db.schema.Dataset.variant_label]."""
+    # This is an example of a mapping that might not be correct if you tried to use this in practice.
 
     variable_id: Annotated[FacetValues, QueryFacet("variable")] = ()
     """See [Dataset.variable][esmporium.db.schema.Dataset.variable]."""
@@ -110,7 +111,8 @@ class ESGFNGCordexCMIP6ParametersQueryStyle(BaseModel):
 
     # CORDEX-CMIP6 has no concept of CMOR table, and `processing_id` is required
     # non-null, so something has to answer for it. `version_realization` is the
-    # nearest.
+    # nearest (another example of an imprecise mapping that you'd want to think through more
+    # if you were using this for real).
     version_realization: Annotated[FacetValues, QueryFacet("processing_id")] = ()
     """See [Dataset.processing_id][esmporium.db.schema.Dataset.processing_id]."""
 
@@ -139,17 +141,11 @@ CORDEX_FACADE = SearchAPIFacade(
 )
 """
 The facade this module searches through
-
-Built by hand rather than from `get_default_facade_definition`, which raises
-`NotImplementedError` for any project but CMIP5, CMIP6 and CMIP7.
 """
 
 SELECTOR = build_project_list_selector({PROJECT: (CORDEX_FACADE,)})
 """
 Facade selection for CORDEX
-
-`DEFAULT_SELECTOR` raises `KeyError` for a project it has no facade list for, so a
-selector is the second of the three things a caller has to inject.
 """
 
 PROJECT_QUERY_MAP = {PROJECT: Query}
@@ -189,7 +185,7 @@ LEAF_QUERY = Query(
     },
 )
 """
-The one slice every test here works from
+The one query every test here works from
 
 Narrow on purpose, and narrow in a way that earns its keep: the ERA5-driven European
 runs include two regional models published as both `v1-r1` and `v1-r2`, which is the
@@ -201,7 +197,7 @@ EXPECTED_ROWS = 6
 """
 How many datasets the slice held when this test was written
 
-Asserted as a floor rather than an equality: the archive grows, and a test which
+Should be used as a floor rather than an equality: the archive grows, and a test which
 fails because more CORDEX data was published would be telling us nothing.
 """
 
@@ -519,6 +515,7 @@ def test_prefer_other_terms_breaks_a_tie(catalogue):
     )
 
     for key in resolved:
+        # Note: use of `one` ensures there is only one match
         chosen = with_prefer.satisfied[key].one("tas")
         # Read back under the document's own key, which is how it was asked for.
         # That the same value also happens to fill the `processing_id` column under

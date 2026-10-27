@@ -12,20 +12,17 @@ questions which are easy to run together:
   build needs a naming table of its own.
 
 CORDEX answers no to both. CMIP6Plus answers no to the first and **yes** to the second,
-because a CMIP6Plus document is a CMIP6 document: same DRS, same facet names, so
-`ESGF1_CMIP6_FACADE_PARAMETERS` reads one unchanged. Hence:
+because a CMIP6Plus document is the same shape as a CMIP6 document. Hence:
 
                             CORDEX-CMIP6                 CMIP6Plus
     query class mapping     inject it                    already registered
     facade                  build it                     build it
     selector                build it                     build it
     naming table            write a new one              reuse CMIP6's, unchanged
-    invented column values  processing_id, grid_label     none
+    not applicable column values  processing_id, grid_label     none
     `other_terms` needed    for domain and driving model  none at all
 
-So this module is the control for that one: everything the CORDEX module had to work
-around is absent here, and what is left is the irreducible cost of a project not being
-registered.
+Put another way, this module shows the irreducible cost of a project not being registered.
 
 **Two of these tests need no network**, and carry no marker, so they run in the normal
 suite: they pin the registration gap itself, which is ours and not the archive's, and
@@ -91,9 +88,9 @@ why the STAC table cannot be borrowed the way this one can.
 """
 
 CMIP6PLUS_FACADE = SearchAPIFacade(
-    # The whole point of this module. Not a table written for CMIP6Plus -- *the* CMIP6
-    # table, the object `esmporium.search` exports, reused as it is. If CMIP6Plus ever
-    # needs one of its own, this line is where that shows up.
+    # The whole point of this module. 
+    # Nothing specific to CMIP6Plus, we just use CMIP6 pieces as they are.
+    # If CMIP6Plus ever needs pieces of its own, this line is where that shows up.
     parameters=ESGF1_CMIP6_FACADE_PARAMETERS,
     search_api=SearchAPIESGF1Solr(host=HOST, retrying=build_default_retrying()),
     result_parser=SolrSingleRowResultParser(),
@@ -113,25 +110,26 @@ SELECTOR = build_project_list_selector({PROJECT: (CMIP6PLUS_FACADE,)})
 LEAF_QUERY = Query(
     project=PROJECT,
     # Every facet modelled, and `other_terms` empty. There is nothing CMIP6Plus
-    # records that esmporium does not already have a canonical name for, so the escape
-    # hatch has no work to do here. That absence is the comparison.
+    # records that esmporium does not already have a canonical name for, so the `other_terms` escape
+    # hatch cannot be tested here. We test it with the CORDEX integration tests instead,
+    # see [add cross-ref].
     variable="tas",
     reporting_interval="mon",
     experiment="esm-hist",
 )
 """
-The slice every search here works from
+The query every search here works from
 
-Tiny on purpose: four datasets, one model, four variant labels, so grouping by model
-and variant gives one dataset per group. `esm-hist` because CMIP6Plus runs its own
-experiments and has no `historical`.
+Tiny on purpose: this query gave four datasets when we searched: one model, four variant labels, so grouping by model
+and variant gives one dataset per group.
+`esm-hist` because CMIP6Plus runs its own experiments and has no `historical`.
 """
 
 EXPECTED_ROWS = 4
 """
-How many datasets the slice held when this was written
+How many datasets the query matched when this was written
 
-A floor, not an equality: the archive grows, and a test which failed because more
+Should be used as a floor, not an equality: the archive grows, and a test which failed because more
 CMIP6Plus data was published would be telling us nothing.
 """
 
@@ -145,7 +143,7 @@ def saved(engine) -> list[Dataset]:
 @pytest.fixture(scope="module")
 def searched(tmp_path_factory):
     """
-    Search the slice once, live, and hand back the database
+    Search the query once, live, and hand back the database
 
     Module-scoped for the same reason as the CORDEX module's: every test reads the
     same rows, none writes, and one request is enough.
@@ -195,7 +193,7 @@ def searched(tmp_path_factory):
 
 # --------------------------------------------------------------------------------
 # The registration gap. No network: this is about our own wiring, so it runs in the
-# normal suite rather than weekly.
+# normal suite.
 # --------------------------------------------------------------------------------
 
 
