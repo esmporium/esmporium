@@ -32,13 +32,19 @@ normal suite: they pin the registration gap itself, which is ours and not the
 archive's, and they are the tripwire for someone registering CMIP6Plus properly. The
 three which do search are marked, and say so.
 
-One thing this turned up and which the gap below is worth reading against: CMIP6Plus is
-not short of data. NCI's Solr index held 177,090 CMIP6Plus datasets when this was
-written, and the ESGF-NG mirrors 24,834, so this is a project esmporium cannot reach
-rather than one with nothing to reach for. The two do not hold the *same* data: this
-module's query answered by NCI and by ESGF-NG east returns four datasets each and they
-have nothing in common (`EC-Earth3-ESM-1` against `IPSL-CM6-ESMCO2`). That is mirror
-coverage, upstream of us, which is why nothing here asserts the two agree.
+One thing this turned up and which the gap above is worth reading against: CMIP6Plus
+is not short of data. The ESGF-NG deployments mirror tens of thousands of CMIP6Plus
+datasets, so this is a project esmporium cannot reach rather than one with nothing to
+reach for.
+
+What the nodes hold, though, moves under you, and this module has watched it happen.
+NCI's Solr index held 177,090 CMIP6Plus datasets when these tests were written and
+677 a few weeks later, with `esm-hist` gone from it entirely -- the four datasets the
+Solr half searches now answer from DKRZ and LIU instead. The deployments also hold
+*different* data: this module's query answered by an ESGF1 node and by ESGF-NG east
+returns four datasets each with nothing in common (`EC-Earth3-ESM-1` against
+`IPSL-CM6-ESMCO2`). All of that is upstream of us, which is why nothing here asserts
+the nodes agree, and why the Solr half asks two of them -- see `HOSTS`.
 """
 
 from __future__ import annotations
@@ -109,9 +115,9 @@ cheaply: CMIP6Plus documents are CMIP6 documents, so CMIP6's query class names e
 facet one of them records and nothing project-specific has to be written.
 """
 
-HOST = "esgf.nci.org.au"
+HOSTS = ("esgf.nci.org.au", "esgf-data.dkrz.de")
 """
-An ESGF1 Solr node which indexes CMIP6Plus
+ESGF1 Solr nodes which index CMIP6Plus, asked in this order
 
 Solr rather than STAC for the main chain below, because a Solr facade needs no prefix
 and so reuses CMIP6's pieces with nothing changed at all.
@@ -120,24 +126,25 @@ and so reuses CMIP6's pieces with nothing changed at all.
 more, and that line is a prefix.
 """
 
-CMIP6PLUS_FACADE = INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host(
-    "CMIP6", HOST
+CMIP6PLUS_FACADES = tuple(
+    INBUILT_SEARCH_API_FACADE_STORE.get_api_facade_for_project_from_host("CMIP6", host)
+    for host in HOSTS
 )
 """
-The facade this module searches through: CMIP6's own, asked for by name
+The facades this module searches through: CMIP6's own, asked for by name
 
 The second injection, and the whole point of this module in one line. There is nothing
 to build, because a facade is a query style plus an API plus a result parser and
 CMIP6's three serve CMIP6Plus unchanged -- so the store is asked for CMIP6's facade on
-this host and a CMIP6Plus query is pointed at it. If CMIP6Plus ever needs pieces of its
+each host and a CMIP6Plus query is pointed at it. If CMIP6Plus ever needs pieces of its
 own, this line is where that shows up.
 
 Asking the store rather than assembling the pieces also couples this to the store's
-host list on purpose: drop `esgf.nci.org.au` from CMIP6's hosts and this raises,
-rather than quietly searching somewhere else.
+host list on purpose: drop one of `HOSTS` from CMIP6's hosts and this raises, rather
+than quietly searching somewhere else.
 """
 
-SELECTOR = build_project_list_selector({PROJECT: (CMIP6PLUS_FACADE,)})
+SELECTOR = build_project_list_selector({PROJECT: CMIP6PLUS_FACADES})
 """The third injection: facade selection, which `DEFAULT_SELECTOR` has none of"""
 
 LEAF_QUERY = Query(
@@ -224,14 +231,15 @@ def migrated(database_path) -> object:
     return engine
 
 
-def search_live(facade, engine):
+def search_live(facades, engine):
     """
-    Search `REQUIREMENT` once through `facade`, or skip if no node answered
+    Search `REQUIREMENT` through every facade, or skip if none answered
 
     Parameters
     ----------
-    facade
-        Facade to search through, which is what the two live routes vary
+    facades
+        Facades to search through, which is what the two live routes vary.
+        Every one of them is asked -- see `HOSTS` for why.
 
     engine
         Database to save into, already migrated
@@ -245,9 +253,10 @@ def search_live(facade, engine):
         try:
             outcomes = search(
                 REQUIREMENT,
-                build_project_list_selector({PROJECT: (facade,)}),
+                build_project_list_selector({PROJECT: tuple(facades)}),
                 limit=LIMIT,
                 client=client,
+                stop_at_first_result=False,
                 api_call_observer=record_search_api_calls(engine),
                 processor_factory=build_result_processor_factory(engine),
                 # The first injection, in use. CMIP6Plus is not in
@@ -309,17 +318,22 @@ def searched(tmp_path_factory):
     """
     engine = migrated(tmp_path_factory.mktemp("cmip6plus") / "esmporium.db")
 
-    outcomes = search_live(CMIP6PLUS_FACADE, engine)
+    outcomes = search_live(CMIP6PLUS_FACADES, engine)
 
     if not saved(engine):
-        # A failure, not a skip: the node answered and answered empty, and the facets
-        # above are all modelled ones, so the likeliest cause is that CMIP6Plus has
-        # moved its experiment names. Worth being told either way.
+        # A failure, not a skip, and now a well-earned one: *every* node answered and
+        # every one of them answered empty. One node going quiet is archive churn and
+        # is why there are two; all of them going quiet for a query of
+        # entirely modelled facets points at us.
+        hosts = ", ".join(HOSTS)
         pytest.fail(
-            f"{HOST} answered and returned no {PROJECT} dataset for monthly `tas` of "
-            "`esm-hist`. Either the archive no longer holds matching datasets "
-            "(CMIP6Plus runs its own experiments and they change) or the reused "
-            "CMIP6 facade parameters no longer build the request we think they do.",
+            f"All of {hosts} answered and none returned a {PROJECT} dataset for "
+            "monthly `tas` of `esm-hist`. Every facet in this query is a modelled "
+            "one, so the likeliest cause is that the reused CMIP6 facade parameters "
+            "no longer build the request we think they do. Failing rather than "
+            "skipping because these APIs report a facet name or value they do not "
+            "recognise as a successful empty result. If instead CMIP6Plus has moved "
+            "its experiment names on every node at once, that is worth knowing too.",
             pytrace=False,
         )
 
@@ -437,7 +451,10 @@ def test_cmip6plus_needs_no_query_style_of_its_own(searched):
     engine, _ = searched
     rows = saved(engine)
 
-    assert CMIP6PLUS_FACADE.parameters is ESGF1_CMIP6_FACADE_PARAMETERS, (
+    assert all(
+        facade.parameters is ESGF1_CMIP6_FACADE_PARAMETERS
+        for facade in CMIP6PLUS_FACADES
+    ), (
         "this test only means something while the facade parameters are CMIP6's "
         "own, reused"
     )
@@ -466,7 +483,7 @@ def test_the_stac_route_finds_cmip6plus_data_live(tmp_path):
     """
     engine = migrated(tmp_path / "esmporium.db")
 
-    search_live(stac_facade(), engine)
+    search_live((stac_facade(),), engine)
     rows = saved(engine)
 
     if not rows:
