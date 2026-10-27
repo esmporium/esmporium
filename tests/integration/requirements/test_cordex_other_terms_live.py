@@ -2,19 +2,35 @@
 Testing CORDEX, an unmodelled project, run end to end against the live ESGF APIs
 
 CORDEX is the test because it is a project that doesn't match our `Dataset` columns
-and because there are facets that will go through `other_terms`, the escape hatch.
-Since esmporium registers no CORDEX query class, a CORDEX document models nothing
-(`CatalogueEntry.project_facets` is empty), so the facets grouped and ranked on
-cannot be answered by a modelled path and these tests cannot pass by accident.
+and because it has facets no query class of ours names. There are **two ways to reach
+such a facet**, and this module runs the same live data through both:
 
-**The query style below is a test-local claim, not esmporium's position on how CORDEX
-is modelled.** CORDEX is not a project esmporium supports: it is absent from
+- `other_terms`, the escape hatch: nothing is translated or checked, and the facet is
+  spelled exactly as a search document spells it (`cordex-cmip6:driving_source_id`).
+  Nothing is registered for CORDEX, so a document models nothing
+  (`CatalogueEntry.project_facets` is empty) and this is the only path available.
+- a **query class of your own**, `QueryCORDEX` below: the facet is declared, so it is
+  named without a prefix (`driving_source_id`), it is checked, and it arrives through
+  `project_facets` like any facet we model.
+
+The second is more convenient and more work, and which is right depends on whether a
+project is worth writing a class for. The comparison is the point of this module, and
+`test_both_routes_build_the_same_search_request` is the headline: the two differ only
+in how the facet is *named*, going in and coming back out. The archive is asked
+exactly the same question either way.
+
+**Everything below is a test-local claim, not esmporium's position on how CORDEX is
+modelled.** CORDEX is not a project esmporium supports: it is absent from
 `PROJECT_QUERY_MAP_DEFAULT`, from `get_default_facade_definition` and from
 `DEFAULT_SELECTOR`. Searching it at all means injecting a facade, a selector and a
 project-to-query mapping, which is what a user would have to do today and what the
 docstring of `PROJECT_QUERY_MAP_DEFAULT` points at ("to search a project we do not
 know about yet"). So these tests also check, deliberately, that those injection seams
-work as advertised.
+work as advertised -- and one of them does not reach far enough, which
+`test_group_by_refuses_a_facet_only_our_own_query_class_models` pins.
+
+The companion module is `test_cmip6plus_registration.py`, where a project needs no
+query style of its own at all.
 """
 
 from __future__ import annotations
@@ -40,8 +56,16 @@ from esmporium.query import (
     Query,
     QueryFacet,
     SourceQuery,
+    facet_spec,
+    modelled_facet_names,
+    to_canonical,
 )
-from esmporium.requirements import leaf, requirement, solve
+from esmporium.requirements import (
+    UnmodelledFacetError,
+    leaf,
+    requirement,
+    solve,
+)
 from esmporium.search import (
     AllSubQueriesFailedError,
     ESGFNGResultParser,
@@ -52,8 +76,6 @@ from esmporium.search import (
     build_project_list_selector,
     search,
 )
-
-pytestmark = pytest.mark.hits_esgf_search_api
 
 TIMEOUT = 60.0
 """How long to wait for a node, in seconds"""
@@ -73,6 +95,14 @@ Also the STAC collection name, and `str.lower` of it is the facet name prefix, w
 is why `STACFacadeParameters` needs neither of its converters overridden here.
 """
 
+PREFIX = PROJECT.lower()
+"""
+The prefix CORDEX-CMIP6 facets carry on the ESGF-NG APIs
+
+Named rather than written twice, because the whole difference between this module's
+two routes is which side of it a facet is spelled on.
+"""
+
 HOST = "search.east.esgf.io"
 """
 The one ESGF-NG deployment with CORDEX-CMIP6 in quantity
@@ -84,12 +114,19 @@ class ESGFNGCordexCMIP6ParametersQueryStyle(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    # One declaration per `DatasetFacets` column and nothing else, because that is
-    # all a row needs: a column with no parameter name here is left unset and then
-    # fails `DatasetFacets` validation, while a facet which is not a column
-    # (`activity`, say) is never read by the parser at all. `project` is absent
-    # for the same reason it is absent from the CMIP6 and CMIP7 STAC styles: a
-    # STAC parser reads the project from the feature's `collection`.
+    # One declaration per `DatasetFacets` column, because that is what a row needs:
+    # a column with no parameter name here is left unset and then fails
+    # `DatasetFacets` validation, while a facet which is not a column (`activity`,
+    # say) is never read by the parser at all. `project` is absent for the same
+    # reason it is absent from the CMIP6 and CMIP7 STAC styles: a STAC parser reads
+    # the project from the feature's `collection`.
+    #
+    # Plus the two facets which are no column at all, declared at the end so the
+    # query-class route can express them. Declaring them costs the `other_terms`
+    # route nothing: a `Query` cannot set them, so they stay empty and are dropped
+    # before `merge_other_terms` adds them back under the document's own spelling.
+    # That is why one query style serves both routes -- and why both routes build the
+    # same request.
     source_id: Annotated[FacetValues, QueryFacet("model")] = ()
     """The regional model. See [Dataset.model][esmporium.db.schema.Dataset.model]."""
 
@@ -123,6 +160,77 @@ class ESGFNGCordexCMIP6ParametersQueryStyle(BaseModel):
     grid_label: Annotated[FacetValues, QueryFacet("grid_label")] = ()
     """See [Dataset.grid_label][esmporium.db.schema.Dataset.grid_label]."""
 
+    domain_id: Annotated[FacetValues, QueryFacet(None)] = ()
+    """The CORDEX region. No `Dataset` column holds it, so it has no canonical name."""
+
+    driving_source_id: Annotated[FacetValues, QueryFacet(None)] = ()
+    """The driving global model, likewise no column and so no canonical name."""
+
+    other_terms: FacetValuesByName = {}
+    """See [Query.other_terms][esmporium.query.known_queries.Query.other_terms]."""
+
+    source_query: SourceQuery = None
+    """See [Query.source_query][esmporium.query.known_queries.Query.source_query]."""
+
+
+class QueryCORDEX(BaseModel):
+    """
+    A query under CORDEX-CMIP6's own parameter names
+
+    The alternative to `other_terms`, and the second half of this module. A facet
+    declared here is a facet we model: it is named without the API's prefix, a typo in
+    it is refused rather than silently matching nothing, and it comes back through
+    [CatalogueEntry.project_facets][esmporium.requirements.CatalogueEntry.project_facets]
+    rather than through the escape hatch.
+
+    Deliberately a sibling of
+    [QueryCMIP6][esmporium.query.QueryCMIP6] in shape rather than of the query style
+    above: a query class is what a *user* writes queries in, and a query style is what
+    a facade renders them with. The two happen to agree on every name here because
+    CORDEX's own names are what its API uses, which is not true in general.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    project: Annotated[FacetValues, QueryFacet("project")] = (PROJECT,)
+    """See [Dataset.project][esmporium.db.schema.Dataset.project]."""
+
+    source_id: Annotated[FacetValues, QueryFacet("model")] = ()
+    """The regional model. See [Dataset.model][esmporium.db.schema.Dataset.model]."""
+
+    institution_id: Annotated[FacetValues, QueryFacet("institution")] = ()
+    """See [Dataset.institution][esmporium.db.schema.Dataset.institution]."""
+
+    driving_experiment_id: Annotated[FacetValues, QueryFacet("experiment")] = ()
+    """See [Dataset.experiment][esmporium.db.schema.Dataset.experiment]."""
+
+    driving_variant_label: Annotated[FacetValues, QueryFacet("variant_label")] = ()
+    """See [Dataset.variant_label][esmporium.db.schema.Dataset.variant_label]."""
+
+    variable_id: Annotated[FacetValues, QueryFacet("variable")] = ()
+    """See [Dataset.variable][esmporium.db.schema.Dataset.variable]."""
+
+    frequency: Annotated[FacetValues, QueryFacet("reporting_interval")] = ()
+    """See [Dataset.reporting_interval][esmporium.db.schema.Dataset.reporting_interval]."""  # noqa: E501
+
+    version_realization: Annotated[FacetValues, QueryFacet("processing_id")] = ()
+    """See [Dataset.processing_id][esmporium.db.schema.Dataset.processing_id]."""
+
+    grid_label: Annotated[FacetValues, QueryFacet("grid_label")] = ()
+    """See [Dataset.grid_label][esmporium.db.schema.Dataset.grid_label]."""
+
+    domain_id: Annotated[FacetValues, QueryFacet(None)] = ()
+    """
+    The CORDEX region
+
+    Project-specific, i.e. no canonical name, which is what makes it the interesting
+    one: through `other_terms` this is reachable only as
+    `cordex-cmip6:domain_id`, and declaring it here is what buys the plain spelling.
+    """
+
+    driving_source_id: Annotated[FacetValues, QueryFacet(None)] = ()
+    """The driving global model, project-specific for the same reason"""
+
     other_terms: FacetValuesByName = {}
     """See [Query.other_terms][esmporium.query.known_queries.Query.other_terms]."""
 
@@ -135,7 +243,7 @@ CORDEX_FACADE = SearchAPIFacade(
         base_query_style=ESGFNGCordexCMIP6ParametersQueryStyle,
         # `STACFacadeParameters` checks this against the query's project for us, via
         # its default `project_to_prefix_converter` of `str.lower`.
-        prefix=PROJECT.lower(),
+        prefix=PREFIX,
     ),
     search_api=SearchAPIESGFNGSTAC(host=HOST, retrying=build_default_retrying()),
     result_parser=ESGFNGResultParser(),
@@ -151,11 +259,20 @@ Facade selection for CORDEX
 
 PROJECT_QUERY_MAP = {PROJECT: Query}
 """
-The query class CORDEX facets are expressed in: the canonical one
+The query class CORDEX facets are expressed in for the `other_terms` route
 
 The third injected seam. `Query` does the job because the leaf below names only
-canonical facets and `other_terms`, so there is nothing a CORDEX-specific query class
-would have to express.
+canonical facets and `other_terms`, so on this route there is nothing a
+CORDEX-specific query class would have to express.
+"""
+
+PROJECT_QUERY_MAP_CORDEX = {PROJECT: QueryCORDEX}
+"""
+The same seam for the query-class route
+
+The one difference between the two routes, and the whole of it: the same facade and
+the same selector serve both, because what changes is only which class names the
+facets.
 """
 
 DRIVING_SOURCE_ID = "cordex-cmip6:driving_source_id"
@@ -171,6 +288,19 @@ VERSION_REALIZATION = "cordex-cmip6:version_realization"
 
 DOMAIN_ID = "cordex-cmip6:domain_id"
 """The CORDEX region, again as a document spells it"""
+
+DOMAIN_ID_DECLARED = "domain_id"
+"""
+The same facet as `DOMAIN_ID`, spelled as `QueryCORDEX` declares it
+
+`DOMAIN_ID` without the `cordex-cmip6:` prefix, and the two are the two routes in
+miniature: the escape hatch has to use the API's spelling because nothing translates
+it, while a declared facet is named without the API's prefix and the facade puts it
+back on.
+"""
+
+DRIVING_SOURCE_ID_DECLARED = "driving_source_id"
+"""The same facet as `DRIVING_SOURCE_ID`, spelled as `QueryCORDEX` declares it"""
 
 LEAF_QUERY = Query(
     project=PROJECT,
@@ -194,6 +324,24 @@ genuine tie `test_prefer_other_terms_breaks_a_tie` needs. Asking for ERA5 and th
 grouping by driving model is also what a real analysis looks like.
 """
 
+LEAF_QUERY_CORDEX = QueryCORDEX(
+    # The same constraint as `LEAF_QUERY`, in CORDEX's own names. Every facet is
+    # declared, so `other_terms` is empty: nothing here needs the escape hatch, which
+    # is exactly what writing a query class buys.
+    variable_id=("tas",),
+    frequency=("mon",),
+    domain_id=("EUR-12",),
+    driving_source_id=("ERA5",),
+)
+"""
+The same query as `LEAF_QUERY`, written in CORDEX's own parameter names
+
+Note the prefixes are gone: `domain_id`, not `cordex-cmip6:domain_id`. The prefix is
+the API's, and a query class is not where the API's names belong --
+`test_both_routes_build_the_same_search_request` is what shows the prefix is still
+put back on before the request goes out.
+"""
+
 EXPECTED_ROWS = 6
 """
 How many datasets the query matched when this test was written
@@ -204,10 +352,15 @@ fails because more CORDEX data was published would be telling us nothing.
 
 
 def a_requirement(**kwargs):
-    """Build a requirement around `LEAF_QUERY` above, overriding whatever is passed"""
+    """
+    Build a requirement around `LEAF_QUERY` above, overriding whatever is passed
+
+    `query` overrides the leaf, which is how the query-class route reuses this: the
+    two leaves say the same thing in different names, so everything else can stay.
+    """
     return requirement(
         name=kwargs.pop("name", "cordex-tas-monthly-live"),
-        tree=leaf(LEAF_QUERY, "tas"),
+        tree=leaf(kwargs.pop("query", LEAF_QUERY), "tas"),
         group_by=kwargs.pop("group_by", ("model",)),
         **kwargs,
     )
@@ -297,6 +450,22 @@ def catalogue(searched):
     return DatabaseCatalogue(engine)
 
 
+@pytest.fixture(scope="module")
+def catalogue_cordex(searched):
+    """
+    The same rows, read through `QueryCORDEX` instead
+
+    The one difference from `catalogue` above, and the whole of the query-class route
+    on the read side: told which class names CORDEX's facets, the catalogue models
+    them, so they arrive in `project_facets` under their own unprefixed names instead
+    of being reachable only through `other_terms`.
+    """
+    engine, _ = searched
+
+    return DatabaseCatalogue(engine, project_query_map=PROJECT_QUERY_MAP_CORDEX)
+
+
+@pytest.mark.hits_esgf_search_api
 def test_our_cordex_query_style_still_reads_a_live_document(searched, catalogue):
     """
     Every column a stored CORDEX row needs was read from a live document
@@ -361,6 +530,7 @@ def test_our_cordex_query_style_still_reads_a_live_document(searched, catalogue)
     )
 
 
+@pytest.mark.hits_esgf_search_api
 def test_other_terms_constrain_a_live_search_and_reach_the_catalogue(
     searched, catalogue
 ):
@@ -392,6 +562,7 @@ def test_other_terms_constrain_a_live_search_and_reach_the_catalogue(
     assert all(entry.facet(DRIVING_SOURCE_ID) == "ERA5" for entry in entries)
 
 
+@pytest.mark.hits_esgf_search_api
 def test_an_other_terms_facet_reaches_the_solver_group_key(searched, catalogue):
     """
     A facet only a search document knows defines a group
@@ -429,6 +600,7 @@ def test_an_other_terms_facet_reaches_the_solver_group_key(searched, catalogue):
     assert result.explain()
 
 
+@pytest.mark.hits_esgf_search_api
 def test_an_other_terms_facet_nothing_records_groups_as_none(catalogue):
     """
     A `group_by_other_terms` name nothing records is one group, not an error
@@ -458,6 +630,7 @@ def test_an_other_terms_facet_nothing_records_groups_as_none(catalogue):
     )
 
 
+@pytest.mark.hits_esgf_search_api
 def test_prefer_other_terms_breaks_a_tie(catalogue):
     """
     A tie between candidates is broken on a facet only a search document knows
@@ -527,3 +700,148 @@ def test_prefer_other_terms_breaks_a_tie(catalogue):
             f"group {key} was resolved by preferring {preferred!r}, but the chosen "
             f"dataset records {chosen.facet(VERSION_REALIZATION)!r}"
         )
+
+
+# --------------------------------------------------------------------------------
+# The query-class route: the same facets, declared instead of escaped.
+#
+# The first two need no network -- they are about our own naming and our own checks --
+# so they carry no marker and run in the normal suite.
+# --------------------------------------------------------------------------------
+
+
+def test_both_routes_build_the_same_search_request():
+    """
+    Naming a facet in a query class, or escaping it, asks the archive the same question
+
+    The headline of this module, and the reason the two halves are worth having side
+    by side: a facet declared in `QueryCORDEX` and the same facet written into
+    `other_terms` arrive at the API as the same parameter, with the same prefix and
+    the same value. The choice between the routes is about what *we* have to write and
+    what we can check, not about what gets searched.
+
+    No network: this is the request we would send, which is the part we decide.
+    """
+    via_other_terms = CORDEX_FACADE.parameters.get_search_request_facet_values(
+        to_canonical(LEAF_QUERY)
+    )
+    via_query_class = CORDEX_FACADE.parameters.get_search_request_facet_values(
+        to_canonical(LEAF_QUERY_CORDEX)
+    )
+
+    assert via_other_terms == via_query_class
+
+    # Spelled out, because "they are equal" would also pass if both were empty or if
+    # both had quietly dropped the two facets this module is about.
+    assert via_query_class == {
+        "collection": (PROJECT,),
+        f"{PREFIX}:variable_id": ("tas",),
+        f"{PREFIX}:frequency": ("mon",),
+        f"{PREFIX}:domain_id": ("EUR-12",),
+        f"{PREFIX}:driving_source_id": ("ERA5",),
+    }
+
+
+def test_group_by_refuses_a_facet_only_our_own_query_class_models():
+    """
+    A query class of your own does not reach `group_by`, so grouping still escapes
+
+    The limit of the query-class route, pinned rather than worked around, because it
+    is the one place injecting a query class is not enough. `requirement` checks
+    `group_by` and `prefer` against
+    [modelled_facet_names][esmporium.query.modelled_facet_names] called with **no
+    argument**, i.e. against `PROJECT_QUERY_MAP_DEFAULT` -- so a facet `QueryCORDEX`
+    declares is unknown to it however thoroughly the mapping is injected everywhere
+    else (`search` and `DatabaseCatalogue` both take one).
+
+    The consequence is a split worth knowing about: on this route you query with
+    `domain_id` and still group with `group_by_other_terms`. What declaring the facet
+    does buy is the *spelling* -- `driving_source_id` rather than
+    `cordex-cmip6:driving_source_id` -- which
+    `test_a_query_class_facet_groups_under_its_unprefixed_name` is what shows.
+
+    This is a tripwire. If it stops raising, `requirement` has learned to take a
+    project-to-query mapping, and then `group_by=("model", "driving_source_id")` is
+    what this module should be doing instead.
+    """
+    assert "driving_source_id" in facet_spec(QueryCORDEX).query_specific_facets
+    assert "driving_source_id" not in modelled_facet_names()
+    assert "driving_source_id" in modelled_facet_names(PROJECT_QUERY_MAP_CORDEX)
+
+    with pytest.raises(UnmodelledFacetError, match="driving_source_id"):
+        a_requirement(
+            query=LEAF_QUERY_CORDEX,
+            group_by=("model", DRIVING_SOURCE_ID_DECLARED),
+        )
+
+
+@pytest.mark.hits_esgf_search_api
+def test_a_cordex_query_class_models_what_other_terms_had_to_carry(catalogue_cordex):
+    """
+    The same live rows, with the two facets modelled instead of escaped
+
+    The inverse of the assertion in
+    `test_our_cordex_query_style_still_reads_a_live_document`, which pins
+    `project_facets == {}` for the route where nothing is declared. Told about
+    `QueryCORDEX`, the catalogue models both facets and they arrive under their own
+    names.
+    """
+    entries = catalogue_cordex.find(LEAF_QUERY_CORDEX)
+    assert entries, "the rows are saved but the query-class route cannot find them"
+
+    for entry in entries:
+        # Modelled, which is the claim. `modelled_facet` deliberately does not fall
+        # through to `other_terms`, so an answer here cannot have come from the
+        # escape hatch -- that is what makes this the inverse assertion and not just
+        # a second way of reading the same value.
+        assert entry.modelled_facet(DOMAIN_ID_DECLARED) == "EUR-12"
+        assert entry.modelled_facet(DRIVING_SOURCE_ID_DECLARED) == "ERA5"
+
+        # And both spellings still read, because `other_terms` is filled verbatim from
+        # the document whatever the query class says. Worth pinning: it means moving
+        # to a query class does not break anything already written against the
+        # prefixed names.
+        assert entry.facet(DRIVING_SOURCE_ID) == "ERA5"
+
+    # Nothing on this route went through the escape hatch on the way in.
+    assert not LEAF_QUERY_CORDEX.other_terms
+
+
+@pytest.mark.hits_esgf_search_api
+def test_a_query_class_facet_groups_under_its_unprefixed_name(catalogue_cordex):
+    """
+    What the query-class route buys at the solver: the prefix is gone
+
+    The pair of `test_an_other_terms_facet_reaches_the_solver_group_key`, which groups
+    the same live rows on the same facet under `cordex-cmip6:driving_source_id`. Here
+    the name is `driving_source_id`, and it resolves because the facet is modelled --
+    not because `group_by_other_terms` is unchecked and happened to match.
+
+    Still `group_by_other_terms` rather than `group_by`, which is not a choice:
+    `test_group_by_refuses_a_facet_only_our_own_query_class_models` is why.
+    """
+    req = a_requirement(
+        name="cordex-tas-monthly-query-class-live",
+        query=LEAF_QUERY_CORDEX,
+        group_by=("model",),
+        group_by_other_terms=(DRIVING_SOURCE_ID_DECLARED,),
+    )
+
+    result = solve(req, catalogue_cordex)
+
+    discovered = set(result.satisfied) | set(result.unsatisfied) | set(result.ambiguous)
+    assert discovered, "rows were saved but the solver discovered no groups"
+
+    for key in discovered:
+        assert [name for name, _ in key] == ["model", DRIVING_SOURCE_ID_DECLARED]
+        driving_model = dict(key)[DRIVING_SOURCE_ID_DECLARED]
+        # `None` is what an unanswered name looks like, and on this route it would
+        # mean the catalogue did not model the facet after all -- the failure this
+        # test exists to catch.
+        assert driving_model == "ERA5", (
+            f"{DRIVING_SOURCE_ID_DECLARED!r} reached the group key as "
+            f"{driving_model!r}. `None` means the facet was not modelled, so the "
+            "query class is not doing what this test says it does."
+        )
+
+    assert result.explain()

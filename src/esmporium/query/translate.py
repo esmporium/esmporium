@@ -163,7 +163,6 @@ def from_canonical(
 PROJECT_QUERY_MAP_DEFAULT: Mapping[str, type[QueryProtocol]] = {
     "CMIP5": QueryCMIP5,
     "CMIP6": QueryCMIP6,
-    "CMIP6Plus": QueryCMIP6,
     "CMIP7": QueryCMIP7,
 }
 """

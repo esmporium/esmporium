@@ -1097,6 +1097,12 @@ def check_roles_are_distinct(node: Node) -> None:
     role_paths(node)
 
 
+# TODO future: this calls `modelled_facet_names` with no mapping, so the check is
+# always against `PROJECT_QUERY_MAP_DEFAULT`. A caller who injects a query class of
+# their own (`search` and `DatabaseCatalogue` both take one) cannot `group_by` a facet
+# only that class declares, and has to use `group_by_other_terms` for a name which is
+# not "other" at all. The fix is a mapping argument here and on `requirement`;
+# `test_group_by_refuses_a_facet_only_our_own_query_class_models` pins today's answer.
 def check_grouping_facets_are_modelled(
     group_by: Iterable[str], prefer: Iterable[str]
 ) -> None:
