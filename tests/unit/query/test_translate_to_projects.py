@@ -148,17 +148,23 @@ def test_multi_project_fails_if_any_arm_fails():
 
 
 def test_unknown_project_raises():
-    """A project we have no query class for raises, listing the ones we do have."""
+    """
+    A project we have no query class for raises, listing the ones we do have.
+
+    CMIP3 because it is a real project we do not support, which is the case worth
+    covering: a user can genuinely ask for it and be refused. This used to ask for
+    CMIP4, which has never existed -- the phases skip from 3 to 5 -- so it tested a
+    refusal nobody would ever hit. ESGF says as much itself: the `cmip6:mip_era`
+    values in `tests/test-data/search/esgf-ng-stac-cmip6-west-facets.json` are
+    `CMIP1, CMIP2, CMIP3, CMIP5, CMIP6`.
+    """
     query = Query(model="ACCESS-CM2")
 
     with pytest.raises(
         UnknownProjectError,
-        match=(
-            "We don't support 'CMIP4'; "
-            "supported projects: CMIP5, CMIP6, CMIP6Plus, CMIP7"
-        ),
+        match="We don't support 'CMIP3'; supported projects: CMIP5, CMIP6, CMIP7",
     ):
-        translate_to_projects(query, projects=["CMIP4"])
+        translate_to_projects(query, projects=["CMIP3"])
 
 
 def test_project_query_map_can_be_injected():

@@ -27,7 +27,7 @@ from esmporium.query import (
     translate_to_type,
 )
 
-PROJECTS = ("CMIP5", "CMIP6", "CMIP6Plus", "CMIP7")
+PROJECTS = ("CMIP5", "CMIP6", "CMIP7")
 
 # Create a tiny alphabet of values we can use.
 # Values are opaque to translation, so variety buys nothing.
@@ -47,7 +47,6 @@ OTHER_TERMS = st.dictionaries(
 PROJECT_QUERIES = {
     "CMIP5": QueryCMIP5,
     "CMIP6": QueryCMIP6,
-    "CMIP6Plus": QueryCMIP6,
     "CMIP7": QueryCMIP7,
 }
 

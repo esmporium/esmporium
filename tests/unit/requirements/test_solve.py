@@ -749,9 +749,11 @@ def test_a_project_specific_facet_every_candidate_knows_is_allowed(dataset):
     Two projects which both declare the facet group fine
 
     The case a "do the datasets span more than one project?" test would wrongly refuse:
-    CMIP6 and CMIP6Plus both declare `sub_experiment_id`, so every candidate can
-    answer for it and there is nothing undecided. What matters is what the candidates
-    know, not where they came from.
+    two projects can share a query class, and then they declare the same
+    project-specific facets. CMIP6 and a CMIP6Plus mapped to `QueryCMIP6` -- which is
+    what searching CMIP6Plus takes -- both answer for `sub_experiment_id`, so there is
+    nothing undecided. What matters is what the candidates know, not where they came
+    from.
     """
     both = InMemoryCatalogue(
         entries=(
