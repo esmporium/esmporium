@@ -18,7 +18,9 @@ from esmporium.requirements import (
     UngroupableFacetError,
     UnmodelledFacetError,
     UnrankableFacetError,
+    VersionFilter,
     all_of,
+    asked_facets,
     leaf,
     requirement,
     solve,
@@ -85,9 +87,7 @@ def variables_together(variables=VARIABLES_TOGETHER, **overrides) -> Requirement
     return requirement(**settings)
 
 
-A_CONTEXT = _Context(
-    requirement=tas_requirement(), catalogue=InMemoryCatalogue(entries=()), group={}
-)
+A_CONTEXT = _Context(requirement=tas_requirement(), found={}, group={})
 """A context for calling the dispatch functions directly, when it does not matter"""
 
 
@@ -365,16 +365,21 @@ def test_ambiguous_despite_prefer_says_what_was_preferred(dataset):
     )
 
 
-def test_candidates_which_agree_on_every_facet(dataset):
+def test_candidates_which_agree_on_every_facet(dataset, reads_everything):
     # Two rows our dataset model cannot tell apart on any facet. No `prefer` and no
     # query could choose between them, so the message says so instead of advising
     # something which cannot be done. Built by hand here: ingestion refuses this
     # pair, so a database-backed catalogue cannot produce it.
+    #
+    # Solved against a catalogue which reads everything, because that is the premise
+    # this message rests on: nothing was left unread, so the facet which tells these
+    # apart really is missing rather than merely unlooked-at. The other case is
+    # `test_an_ambiguity_among_lean_candidates_says_what_was_read`.
     catalogue = InMemoryCatalogue(
         entries=(dataset(1, label="one"), dataset(2, label="two"))
     )
 
-    result = solve(tas_requirement(), catalogue)
+    result = solve(tas_requirement(), reads_everything(catalogue))
 
     # Where this message is pinned in full. It points at the issue tracker rather
     # than at the user, because the facet which tells these apart exists and did not
@@ -431,11 +436,17 @@ def test_prefer_applies_every_facet_it_names(dataset):
     assert result.satisfied[ONLY_GROUP].one("tas").id == 2
 
 
-def test_differing_facets_only_names_what_every_candidate_knows(dataset):
+def test_differing_facets_only_names_what_every_candidate_knows(
+    dataset, reads_everything
+):
     # `realm` is in one candidate's `project_facets` and not the other's, so the two
     # would read as differing on it when really one of them just does not record it.
     # Only the facets every candidate knows are compared, so that the message names
     # something `prefer` could actually act on.
+    #
+    # Against a catalogue which reads everything, because this is about which of the
+    # facets in hand get named, and `tas_requirement` names neither of these two -- a
+    # solve which was told what to read would have neither in hand to choose between.
     catalogue = InMemoryCatalogue(
         entries=(
             dataset(1, project_facets={"product": "output1", "realm": "atmos"}),
@@ -443,7 +454,7 @@ def test_differing_facets_only_names_what_every_candidate_knows(dataset):
         )
     )
 
-    rendered = solve(tas_requirement(), catalogue).explain()
+    rendered = solve(tas_requirement(), reads_everything(catalogue)).explain()
 
     assert "differing in 'product'" in rendered
     assert "realm" not in rendered
@@ -846,6 +857,224 @@ def test_project_specific_facets_come_from_the_catalogue(dataset):
     result = solve(cmip5, InMemoryCatalogue(entries=(wanted, other)))
 
     assert list(result.satisfied) == [(("model", "ModelA"), ("product", "output1"))]
-    assert result.satisfied[(("model", "ModelA"), ("product", "output1"))].one(
-        "tas"
-    ) == (wanted)
+    chosen = result.satisfied[(("model", "ModelA"), ("product", "output1"))].one("tas")
+    assert chosen.id == wanted.id
+    # And the facet itself came through, which is the half that matters here: the
+    # requirement names `product`, so a solve loads it.
+    assert chosen.facet("product") == "output1"
+
+
+# ---------------------------------------------- asking the catalogue, and what it reads
+
+
+class SpyCatalogue:
+    """
+    A catalogue which records every lookup and then answers like any other
+
+    The only call-recording double in these tests, and it exists because what is
+    worth asserting here is not the answer but how often it was asked for.
+    """
+
+    def __init__(self, catalogue):
+        self.catalogue = catalogue
+        self.calls = []
+
+    def find(self, query, *, versions=VersionFilter.NOT_RETRACTED, needs_facets=None):
+        """Find every dataset which matches a query, recording what was asked"""
+        asked = asked_facets(query)
+        self.calls.append(
+            (
+                tuple(sorted(asked.modelled.items())),
+                tuple(sorted(asked.literal.items())),
+                versions,
+                None if needs_facets is None else frozenset(needs_facets),
+            )
+        )
+
+        return self.catalogue.find(query, versions=versions, needs_facets=needs_facets)
+
+
+def test_each_leaf_is_looked_up_once_however_many_groups_there_are(dataset):
+    """
+    A solve asks one lookup per leaf, not one per leaf per group
+
+    A leaf's candidates do not depend on the group, so the lookups which used to be
+    repeated once per group were the same question every time. Four models here, so
+    the old shape would have been two leaves times five.
+    """
+    spy = SpyCatalogue(
+        InMemoryCatalogue(
+            entries=tuple(
+                dataset(
+                    index + 1,
+                    model=model,
+                    variable=variable,
+                    label=f"{model}-{variable}",
+                )
+                for index, (model, variable) in enumerate(
+                    (model, variable)
+                    for model in ("A", "B", "C", "D")
+                    for variable in ("tas", "rlut")
+                )
+            )
+        )
+    )
+    req = requirement(
+        name="pair",
+        tree=all_of(
+            leaf(Query(variable="tas"), "tas"), leaf(Query(variable="rlut"), "rlut")
+        ),
+        group_by=("model",),
+    )
+
+    result = solve(req, spy)
+
+    assert len(result.satisfied) == 4
+    assert len(spy.calls) == 2
+
+
+def test_two_leaves_asking_the_same_question_share_one_lookup(dataset):
+    """One question, one lookup, however many roles it fills"""
+    spy = SpyCatalogue(InMemoryCatalogue(entries=(dataset(1),)))
+    req = requirement(
+        name="twice",
+        tree=all_of(
+            leaf(Query(variable="tas"), "first"), leaf(Query(variable="tas"), "second")
+        ),
+        group_by=GROUP_BY,
+    )
+
+    solve(req, spy)
+
+    assert len(spy.calls) == 1
+
+
+def test_the_same_facet_in_other_terms_is_a_different_question(dataset):
+    """
+    A facet we model and the same name in `other_terms` do not share a lookup
+
+    They are different questions -- one is matched against the facets we model, the
+    other against a document's own spelling -- so sharing an answer would be wrong
+    rather than merely surprising.
+    """
+    spy = SpyCatalogue(InMemoryCatalogue(entries=(dataset(1),)))
+    req = requirement(
+        name="both-spellings",
+        tree=all_of(
+            leaf(Query(variable="tas"), "modelled"),
+            leaf(Query(other_terms={"variable": ("tas",)}), "literal"),
+        ),
+        group_by=GROUP_BY,
+    )
+
+    solve(req, spy)
+
+    assert len(spy.calls) == 2
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected"),
+    [
+        pytest.param({}, set(), id="nothing-extra"),
+        # Added to the usual grouping rather than replacing it, so that one baseline
+        # holds for every case here.
+        pytest.param(
+            {"group_by": (*GROUP_BY, "experiment")}, {"experiment"}, id="group_by"
+        ),
+        pytest.param(
+            {"group_by_other_terms": ("cordex-cmip6:driving_source_id",)},
+            {"cordex-cmip6:driving_source_id"},
+            id="group_by_other_terms",
+        ),
+        pytest.param({"prefer": {"grid_label": ("gn",)}}, {"grid_label"}, id="prefer"),
+        pytest.param(
+            {"prefer_other_terms": {"mip_era": ("CMIP6",)}},
+            {"mip_era"},
+            id="prefer_other_terms",
+        ),
+        pytest.param(
+            {"versions": VersionFilter.ANY}, set(), id="versions-names-no-facet"
+        ),
+    ],
+)
+def test_a_solve_asks_for_every_facet_the_requirement_names(
+    dataset, overrides, expected
+):
+    """
+    Each place a requirement can name a facet reaches the lookup
+
+    The baseline is what `tas_requirement` already names -- its leaf's `variable` and
+    its `group_by` -- and each case adds one facet in one place. `versions` adds
+    nothing, which is the one entry here that is an assertion about something *not*
+    happening.
+    """
+    spy = SpyCatalogue(InMemoryCatalogue(entries=(dataset(1),)))
+    baseline = {"variable", *GROUP_BY}
+
+    solve(tas_requirement(**overrides), spy)
+
+    (call,) = spy.calls
+    assert call[-1] == frozenset(baseline | expected)
+
+
+def test_a_solve_gives_the_same_answer_with_the_documents_read(
+    dataset, reads_everything
+):
+    """
+    Naming what will be read does not change what a solve decides
+
+    The in-memory twin of
+    `test_skipping_the_documents_does_not_change_a_solve` in
+    `tests/unit/db/test_database_catalogue.py`, and the cheaper of the two: the
+    in-memory catalogue honours `needs_facets`, so the two shapes can be compared with
+    no database at all.
+    """
+    catalogue = InMemoryCatalogue(
+        entries=(
+            dataset(1, grid_label="gn", project_facets={"realm": "atmos"}),
+            dataset(2, grid_label="gr", project_facets={"realm": "ocean"}),
+        )
+    )
+    req = tas_requirement(prefer={"grid_label": ("gn", "gr")})
+
+    narrowed = solve(req, catalogue)
+    everything = solve(req, reads_everything(catalogue))
+
+    assert set(narrowed.satisfied) == set(everything.satisfied)
+    assert narrowed.satisfied[ONLY_GROUP].one("tas").id == (
+        everything.satisfied[ONLY_GROUP].one("tas").id
+    )
+    assert narrowed.explain() == everything.explain()
+    # Not vacuous: the two solves really did read different amounts.
+    assert narrowed.satisfied[ONLY_GROUP].one("tas").facets_loaded is not None
+    assert everything.satisfied[ONLY_GROUP].one("tas").facets_loaded is None
+
+
+def test_an_ambiguity_among_lean_candidates_says_what_was_read(dataset):
+    """
+    A tie nothing in hand can break says what was read rather than blaming us
+
+    The candidates differ only in a facet no column holds and the requirement names
+    none, so it was never loaded. The honest report is that nothing was looked at
+    which could tell them apart, not the "this should not happen" of
+    `test_candidates_which_agree_on_every_facet`, which rests on everything having
+    been read.
+    """
+    catalogue = InMemoryCatalogue(
+        entries=(
+            dataset(1, label="one", project_facets={"realm": "atmos"}),
+            dataset(2, label="two", project_facets={"realm": "ocean"}),
+        )
+    )
+
+    result = solve(tas_requirement(), catalogue)
+
+    (explanation,) = result.ambiguous[ONLY_GROUP].explanation.parts
+    assert "agree on every facet this solve read" in explanation.message
+    assert "may exist and simply not have been looked at" in explanation.message
+    assert "`cardinality=Cardinality.ALL`" in explanation.message
+    # The facets it did read are named, so the reader can see what to add to.
+    assert "'variant_label'" in explanation.message
+    # And it does not send them to the issue tracker for an optimisation working.
+    assert "should not happen" not in explanation.message
+    assert "raise an issue" not in explanation.message

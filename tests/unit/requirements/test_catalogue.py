@@ -30,6 +30,7 @@ from esmporium.requirements import (
     Catalogue,
     DuplicateEntryIDError,
     InMemoryCatalogue,
+    UnloadedFacetError,
     asked_facets,
     matches,
     matches_facets,
@@ -103,6 +104,93 @@ def test_known_facets_covers_the_columns_and_both_mappings(make_entry):
     assert "grid_label" in known
     assert "realm" in known
     assert "nonsense" not in known
+
+
+# --------------------------------------------------------- CatalogueEntry.facets_loaded
+
+
+def test_an_entry_which_loaded_everything_answers_for_everything(make_entry):
+    """`facets_loaded=None`, the default, is unchanged behaviour"""
+    entry = make_entry(
+        1,
+        model="ACCESS-CM2",
+        project_facets={"realm": "atmos"},
+        other_terms={"mip_era": "CMIP6"},
+    )
+
+    assert entry.facets_loaded is None
+    assert entry.facet("model") == "ACCESS-CM2"
+    assert entry.facet("realm") == "atmos"
+    assert entry.facet("mip_era") == "CMIP6"
+    # Still `None` rather than an error for a facet nothing recorded, which is the
+    # answer this field exists to stay distinguishable from.
+    assert entry.facet("activity") is None
+
+
+def test_a_lean_entry_answers_for_the_facets_it_loaded(make_entry):
+    """A facet a lookup was told about is answered as usual, column or not"""
+    entry = make_entry(
+        1,
+        model="ACCESS-CM2",
+        project_facets={"realm": "atmos"},
+        facets_loaded={*DATASET_FACET_COLUMNS, "realm"},
+    )
+
+    assert entry.facet("model") == "ACCESS-CM2"
+    assert entry.facet("realm") == "atmos"
+    assert entry.modelled_facet("realm") == "atmos"
+
+
+def test_a_lean_entry_refuses_a_facet_it_did_not_load(make_entry):
+    """
+    Asking for an unloaded facet raises rather than answering `None`
+    """
+    entry = make_entry(142, facets_loaded=DATASET_FACET_COLUMNS)
+
+    with pytest.raises(UnloadedFacetError) as excinfo:
+        entry.facet("realm")
+
+    assert excinfo.value.facets == ("realm",)
+    assert excinfo.value.entry_id == 142
+    assert excinfo.value.loaded == tuple(sorted(DATASET_FACET_COLUMNS))
+    message = str(excinfo.value)
+    assert "Entry 142 was not built to answer for realm" in message
+    assert "`needs_facets` including realm" in message
+
+
+def test_modelled_facet_refuses_an_unloaded_facet_too(make_entry):
+    """
+    Both accessors check, not just `facet`
+
+    `modelled_facet` is what `matches_facets` reads, so a lean entry handed to
+    `matches` says it cannot answer rather than quietly failing to match.
+    """
+    entry = make_entry(1, facets_loaded=DATASET_FACET_COLUMNS)
+
+    with pytest.raises(UnloadedFacetError):
+        entry.modelled_facet("realm")
+
+
+def test_a_lean_entry_still_answers_about_names(make_entry):
+    """
+    The name-set methods report what was loaded rather than raising
+
+    They answer "what can you answer for?", and for a lean entry the short list is
+    the true answer. The solver's `group_by` and `prefer` checks run against these,
+    which is why they must not raise.
+    """
+    entry = make_entry(
+        1,
+        project_facets={"realm": "atmos"},
+        other_terms={"mip_era": "CMIP6"},
+        facets_loaded={*DATASET_FACET_COLUMNS, "realm"},
+    )
+
+    assert entry.modelled_facets() == frozenset(DATASET_FACET_COLUMNS) | {"realm"}
+    assert entry.known_facets() == frozenset(DATASET_FACET_COLUMNS) | {
+        "realm",
+        "mip_era",
+    }
 
 
 # -------------------------------------------------------------------------- set_facets
