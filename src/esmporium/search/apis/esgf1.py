@@ -18,6 +18,7 @@ from esmporium.search.apis.protocol import (
     NoFacetValuesReturnedError,
     NoSearchResultDocumentsError,
     NoSearchResultNumberOfMatchesReturnedError,
+    SearchAPI,
     single_facet_value_or_none,
 )
 from esmporium.search.apis.request import Request
@@ -26,6 +27,7 @@ from esmporium.search.result_parsing import (
     DataAccessInfo,
     DataAccessPayload,
     FileInfo,
+    ParsedFileDocument,
 )
 
 
@@ -384,10 +386,13 @@ That slot is not reliable: a live CEDA CMIP5 file publishes
 `...evspsbl_Amon_EC-EARTH_historical_r13i1p1_195001-195912.nc4|text/html|HTTPServer`
 -- `text/html` for a netCDF file on an HTTPServer route.
 
-Reading the service instead is also the more honest model of ESGF-1, which has no
-container-format axis at all: its whole `access` vocabulary is `HTTPServer` and
-`OPENDAP`, and it has no way of describing a virtual or remote store. So the format
-of an ESGF-1 route is a function of its service, and nothing is lost by saying so --
+Reading the service instead is also the more honest model of Solr, which has no
+container-format axis at all. Its `access` vocabulary is a list of services and
+nothing else -- live `esgf.nci.org.au` publishes
+`['HTTPServer', 'GridFTP', 'OPENDAP', 'Globus']` -- and every one of those moves
+whole files, so none of them says what the bytes are and there is no way to describe
+a virtual or remote store. The format of a Solr route is therefore a function of its
+service, and nothing is lost by saying so --
 the mime type is still kept verbatim in
 [DataAccess.raw_json][esmporium.db.schema.DataAccess.raw_json] along with the rest of
 the triple.
@@ -452,10 +457,14 @@ def solr_file_access(doc: dict[str, Any]) -> DataAccessPayload:
     Read the one file, and every route to it, out of a Solr `type=File` document
 
     A Solr File document is always about exactly one file, so this never produces a
-    whole-dataset-version route: every route it returns names its file. (ESGF-1 has
-    no way of expressing a whole-version route at all -- its `url` triple has a
-    service slot but no container-format slot, and its whole `access` vocabulary is
-    `HTTPServer` and `OPENDAP`. Virtual and remote access is an ESGF-NG capability.)
+    whole-dataset-version route: every route it returns names its file. (Solr has no
+    way of expressing a whole-version route at all -- its `url` triple has a service
+    slot but no container-format slot, and every service it names moves whole files;
+    see [SOLR_SERVICE_TO_CONTAINER_FORMAT][(m).SOLR_SERVICE_TO_CONTAINER_FORMAT].
+    Virtual and remote access is an ESGF-NG capability.)
+
+    Reads the same way for classic ESGF-1 and for the 1.5 bridge, which publish File
+    documents of the same shape.
 
     Parameters
     ----------
@@ -503,6 +512,56 @@ def solr_file_access(doc: dict[str, Any]) -> DataAccessPayload:
         )
 
     return DataAccessPayload(files=(found,), accesses=tuple(accesses))
+
+
+def solr_parsed_file_documents(
+    raw: dict[str, Any], api: SearchAPI
+) -> tuple[ParsedFileDocument, ...]:
+    """
+    Read a `type=File` response into the file documents it carries
+
+    The file-level counterpart of a result parser's `parse_search_results`, and
+    deliberately not one of those: a File document is a File document whatever
+    project it is from, so there is nothing here for a per-project parser to do.
+    What *is* project-specific -- which facets the request had to narrow by for these
+    answers to be placeable -- is settled before the request goes out, by
+    [ResultParserProtocol.file_attribution_facets][esmporium.search.ResultParserProtocol.file_attribution_facets].
+
+    Parameters
+    ----------
+    raw
+        The response to read
+
+        Usually the answer to a request built with
+        [SearchAPIESGF1Solr.build_file_search_request][(m).SearchAPIESGF1Solr.build_file_search_request].
+
+    api
+        The API the response came from, used to split it into documents
+
+    Returns
+    -------
+    :
+        One [ParsedFileDocument][esmporium.search.ParsedFileDocument] per document
+
+    Raises
+    ------
+    KeyError
+        A document does not name the dataset it belongs to
+
+        Trusted the same way `solr_file_access` trusts `title`: a File document
+        which does not say which dataset its file is part of is one we could not
+        place anywhere, so it is better to hear about it than to drop it.
+
+    UnreadableURLTripleError
+        One of a document's `url` entries is not a three-part triple
+    """
+    return tuple(
+        ParsedFileDocument(
+            dataset_id=str(extract_one_element_list(doc["dataset_id"])),
+            payload=solr_file_access(doc),
+        )
+        for doc in api.extract_result_documents(raw)
+    )
 
 
 def solr_file_search_params(limit: int) -> dict[str, Any]:

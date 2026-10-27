@@ -28,6 +28,7 @@ from esmporium.search import (
     ESGFNGCMIP6ParametersQueryStyle,
     ESGFNGResultParser,
     LimitOutOfRangeError,
+    NotASolrFacadeError,
     OneProjectRequiredError,
     ProjectPrefixMismatchError,
     SearchAPIESGF1Solr,
@@ -654,3 +655,158 @@ def test_there_is_no_cmip5_stac_facade():
         NotImplementedError, match=re.escape("CMIP5 search.east.esgf.io")
     ):
         get_default_facade_definition("CMIP5", "search.east.esgf.io")
+
+
+# --- file-level requests ------------------------------------------------------
+
+
+def api_facade_cmip5_esgf1(host="node.example") -> SearchAPIFacade:
+    """A CMIP5/ESGF1 facade, i.e. the one whose documents bundle variables"""
+    return SearchAPIFacade(
+        parameters=ESGF1_CMIP5_FACADE_PARAMETERS,
+        search_api=SearchAPIESGF1Solr(host, build_transient_retrying(1)),
+        result_parser=SolrVariableBundleResultParser(),
+    )
+
+
+@pytest.mark.parametrize(
+    ("facade", "expected", "why"),
+    [
+        pytest.param(
+            api_facade_cmip5_esgf1(),
+            ("variable",),
+            "one CMIP5 document becomes one dataset row per variable, so the "
+            "variable is the only thing which says which row a file belongs to",
+            id="cmip5-bundles-variables",
+        ),
+        pytest.param(
+            api_facade_cmip6_esgf1(),
+            (),
+            "a CMIP6 dataset_id already names exactly one dataset row",
+            id="cmip6-one-row-per-document",
+        ),
+        pytest.param(
+            api_facade_cmip6_esgfng(),
+            (),
+            "STAC carries its files in the search response, so there is no "
+            "file-level request to narrow",
+            id="esgfng-files-in-band",
+        ),
+    ],
+)
+def test_which_facets_a_file_request_must_narrow_by_comes_from_the_parser(
+    facade, expected, why
+):
+    """
+    The facade hands on what its result parser says, because the parser is what knows
+
+    Whether one document becomes one dataset row or several is the parser's whole
+    subject, and it is the same fact that decides this. Keeping it there is what lets
+    the step that sends the request stay project-agnostic.
+    """
+    assert facade.file_attribution_facets == expected, why
+
+
+def test_a_file_request_is_narrowed_under_the_name_this_project_uses():
+    """
+    `variable` goes out as `variable` for CMIP5 and `variable_id` for CMIP6
+
+    The same translation [build_search_request][] does, for the same reason: the
+    caller names facets canonically and the facade knows how this pairing spells
+    them, so neither spelling is hard-coded anywhere else.
+    """
+    cmip5 = api_facade_cmip5_esgf1().build_file_search_request(
+        ["cmip5.a|node.example"], 10, {"variable": ("tas",)}
+    )
+    cmip6 = api_facade_cmip6_esgf1().build_file_search_request(
+        ["CMIP6.a|node.example"], 10, {"variable": ("tas",)}
+    )
+
+    assert cmip5.params["variable"] == ["tas"]
+    assert "variable_id" not in cmip5.params
+    assert cmip6.params["variable_id"] == ["tas"]
+    assert "variable" not in cmip6.params
+
+
+def test_a_file_request_can_be_built_without_narrowing_at_all():
+    """Which is the CMIP6/CMIP7 case, and lets one request carry a whole batch"""
+    request = api_facade_cmip6_esgf1().build_file_search_request(
+        ["CMIP6.a|node.example", "CMIP6.b|node.example"], 10
+    )
+
+    assert request.params["type"] == "File"
+    assert request.params["dataset_id"] == [
+        "CMIP6.a|node.example",
+        "CMIP6.b|node.example",
+    ]
+
+
+def test_narrowing_this_facade_cannot_express_is_refused():
+    """
+    Narrowing we were asked for and cannot do is not narrowing we may quietly skip
+
+    Sending the request without it would answer about more datasets than the caller
+    can place, so this fails the same way an unexpressible facet fails when a
+    dataset search is built.
+    """
+    with pytest.raises(FacetNotExpressibleError, match="not_a_facet"):
+        api_facade_cmip6_esgf1().build_file_search_request(
+            ["CMIP6.a|node.example"], 10, {"not_a_facet": ("x",)}
+        )
+
+
+@pytest.mark.parametrize(
+    "ask",
+    [
+        pytest.param(
+            lambda facade: facade.build_file_search_request(["a|b"], 10),
+            id="building-the-request",
+        ),
+        pytest.param(
+            lambda facade: facade.parse_file_search_results({}),
+            id="reading-an-answer",
+        ),
+        pytest.param(lambda facade: facade.file_search_api(), id="asking-for-the-api"),
+    ],
+)
+def test_a_stac_facade_has_no_file_request_to_make(ask):
+    """
+    Asking ESGF-NG for file documents is a mistake rather than a no-op, so it is loud
+
+    Its files are in the search response already. A caller which thinks it is filling
+    in file access this way is not, and saying nothing would hide that.
+    """
+    with pytest.raises(NotASolrFacadeError, match="per-file information"):
+        ask(api_facade_cmip6_esgfng())
+
+
+def test_a_file_answer_is_read_into_the_dataset_it_belongs_to():
+    """
+    A file document names its dataset as `dataset_id`, which is what places it
+
+    That is the dataset document's own `id`, so no database lookup is needed to say
+    which version a file belongs to.
+    """
+    raw = {
+        "response": {
+            "numFound": 1,
+            "docs": [
+                {
+                    "type": "File",
+                    "title": "tas_Amon_185001-194912.nc",
+                    "data_node": ["node.example"],
+                    "dataset_id": "CMIP6.a.v1|node.example",
+                    "url": [
+                        "https://node.example/x/tas_Amon_185001-194912.nc"
+                        "|application/netcdf|HTTPServer"
+                    ],
+                }
+            ],
+        }
+    }
+
+    parsed = api_facade_cmip6_esgf1().parse_file_search_results(raw)
+
+    assert len(parsed) == 1
+    assert parsed[0].dataset_id == "CMIP6.a.v1|node.example"
+    assert parsed[0].payload.files[0].filename == "tas_Amon_185001-194912.nc"

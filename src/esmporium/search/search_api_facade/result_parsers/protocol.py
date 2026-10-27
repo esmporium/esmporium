@@ -83,6 +83,43 @@ class ResultParserProtocol(Protocol):
     A parser of one project's search results from one search API
     """
 
+    @property
+    def file_attribution_facets(self) -> tuple[str, ...]:
+        """
+        The facets a file-level request must narrow by for its answers to be placeable
+
+        A file names the dataset it belongs to by `dataset_id`, so for a project
+        whose documents are one dataset row each, that is already the whole answer
+        and this is empty. Where one document maps to *several* of our dataset rows,
+        `dataset_id` is shared between them and says nothing about which row a file
+        belongs to, so the request has to narrow by whatever does -- and those facets
+        are named here.
+
+        Named canonically, i.e. as
+        [DatasetFacets][esmporium.search.result_parsing.DatasetFacets] names them. The
+        facade translates them into the API's own spelling, which differs by project
+        (`variable` for CMIP5, `variable_id` for CMIP6 and CMIP7), so nothing outside
+        the facade needs to know either name.
+
+        This belongs to the parser rather than to the step that sends the request
+        because it is the same fact the parser already acts on: the parser is what
+        knows whether one document becomes one dataset row or many.
+
+        Returns
+        -------
+        :
+            The facets to narrow a file-level request by, possibly none
+
+        Notes
+        -----
+        Consulted by
+        [plan_solr_file_batches][esmporium.db.plan_solr_file_batches], which groups
+        the datasets it asks about by these facets' values. So an empty result is not
+        merely tidier: it is what lets a batch carry as many datasets as the URL
+        budget allows, instead of one request per distinct value.
+        """
+        ...
+
     def parse_search_results(
         self,
         raw: dict[str, Any],

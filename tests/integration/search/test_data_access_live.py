@@ -22,6 +22,7 @@ head -- which `test_the_two_apis_agree_about_one_cmip6_dataset` does.
 
 from __future__ import annotations
 
+import httpx
 import pytest
 from sqlmodel import Session, select
 
@@ -46,6 +47,9 @@ from esmporium.search import (
 )
 
 pytestmark = pytest.mark.hits_esgf_search_api
+
+HTTP_NOT_FOUND = 404
+"""What an advertised-but-unserved route answers (named, so the assert reads)"""
 
 LIMIT = 100
 """
@@ -311,6 +315,64 @@ def test_the_west_cmip6_mirror_offers_whole_version_routes(engine, skip_or_fail)
         # Fetched over HTTPS, opened as kerchunk: the reason these are two columns.
         assert kerchunk.service == AccessService.HTTPS
         assert kerchunk.url.endswith(".kerchunk.parq")
+
+
+def test_a_live_kerchunk_route_is_advertised_and_not_yet_served(engine, skip_or_fail):
+    """
+    The route west publishes is real; the bytes behind it are not there yet
+
+    One `HEAD`, which is as far as esmporium ever goes towards opening anything. It
+    exists because "advertised" and "available" came apart here: every
+    `.kerchunk.parq` href sampled answers `404` (twelve of twelve on 2026-10-26), so
+    a download step which trusted the advertised `access` list would fail on every
+    one of them.
+
+    This is the check that tells us when that changes, in either direction:
+
+    - it starts answering `200` -- virtual access is live, and the download step has
+      a second kind of thing to open. Say so in
+      [ContainerFormat.KERCHUNK][esmporium.datasets.ContainerFormat.KERCHUNK] and
+      decide what reads it.
+    - the asset stops being published -- ask what replaced it, rather than deleting
+      the whole-version branch of the model, which is also where a real zarr or
+      icechunk store would land.
+
+    A node which does not answer at all is a skip, not a failure: that is an outage
+    rather than a finding.
+    """
+    upgrade_to_head(engine)
+    facade = _facade("CMIP6", "search.west.esgf.io")
+
+    try:
+        with Session(engine) as session:
+            _record(session, facade, CMIP6_QUERY)
+    except NoFacadeAnsweredError as error:
+        skip_or_fail(
+            error.failures,
+            skippable=SearchAPIRequestError,
+            reason="search.west.esgf.io did not answer",
+        )
+
+    with Session(engine) as session:
+        kerchunk = session.exec(
+            select(DataAccess).where(
+                DataAccess.container_format == ContainerFormat.KERCHUNK
+            )
+        ).first()
+
+    assert kerchunk is not None, "west published no kerchunk route to check"
+
+    try:
+        with httpx.Client(follow_redirects=True, timeout=30.0) as client:
+            answer = client.head(kerchunk.url)
+    except httpx.RequestError as error:
+        pytest.skip(f"{kerchunk.url} could not be reached: {error}")
+
+    assert answer.status_code == HTTP_NOT_FOUND, (
+        f"{kerchunk.url} answered {answer.status_code}, not {HTTP_NOT_FOUND}. "
+        "Virtual access through ESGF-NG may now be served, which would be news: see "
+        "this test's docstring for what to do about it."
+    )
 
 
 def test_a_live_cmip5_file_is_recorded_against_its_own_variables_dataset(

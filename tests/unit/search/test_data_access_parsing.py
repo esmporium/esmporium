@@ -273,6 +273,53 @@ def test_an_unknown_type_raises_rather_than_being_dropped():
         stac_data_access(feature(odd={**NETCDF_ASSET, "type": "application/mystery"}))
 
 
+@pytest.mark.parametrize(
+    "media_type",
+    [
+        pytest.param("application/vnd.zarr", id="bare"),
+        pytest.param("application/vnd.zarr; version=3", id="versioned"),
+        pytest.param(
+            "application/vnd.zarr; version=3; profile=multiscales", id="pyramided"
+        ),
+        pytest.param("APPLICATION/VND.ZARR", id="upper-case"),
+    ],
+)
+def test_a_zarr_asset_is_classified_whatever_its_media_type_parameters(media_type):
+    """
+    Nothing publishes a zarr store to us yet, so this is the first thing that will
+
+    STAC's zarr best practices qualify the media type (`; version=3`, and
+    `; profile=multiscales` for a pyramided store), so an exact-string match would
+    classify none of the real ones -- and because an unclassifiable type raises, it
+    would fail the parse of the whole item rather than degrade.
+    """
+    store = {
+        **NETCDF_ASSET,
+        "type": media_type,
+        "file:local_path": f"{DRS_DIRECTORY}/{NETCDF_ASSET_NAME}",
+    }
+
+    payload = stac_data_access(feature(**{NETCDF_ASSET_NAME: store}))
+
+    assert payload.accesses[0].container_format == ContainerFormat.ZARR
+
+
+def test_an_icechunk_asset_is_refused_until_there_is_a_media_type_to_match():
+    """
+    Icechunk has no registered media type, so there is nothing to key it by
+
+    [ContainerFormat.ICECHUNK][esmporium.datasets.ContainerFormat.ICECHUNK] exists so
+    that the day one is published it is a new row rather than a schema change, but
+    classifying an asset needs a name the publisher actually writes. Raising is the
+    right answer meanwhile: it is how we find out, rather than dropping a route we
+    were offered.
+    """
+    with pytest.raises(UnknownContainerFormatError, match="icechunk"):
+        stac_data_access(
+            feature(odd={**NETCDF_ASSET, "type": "application/vnd.icechunk"})
+        )
+
+
 def test_a_cmip7_tracking_id_is_found_under_its_own_prefix():
     """
     STAC prefixes `tracking_id` with the project, so it is matched by suffix
@@ -364,20 +411,34 @@ SOLR_FILE_DOC = {
             id="opendap",
         ),
         pytest.param(
-            "gsiftp://x.invalid/t.nc|application/gridftp|GridFTP",
-            ("gsiftp://x.invalid/t.nc", "application/gridftp", "GridFTP"),
+            # A port and a doubled slash, as live `esgf.nci.org.au` publishes it.
+            "gsiftp://esgfdtn.nci.org.au:2811//replica/CMIP6/t.nc"
+            "|application/gridftp|GridFTP",
+            (
+                "gsiftp://esgfdtn.nci.org.au:2811//replica/CMIP6/t.nc",
+                "application/gridftp",
+                "GridFTP",
+            ),
             id="gridftp",
         ),
         pytest.param(
-            "globus://node/uuid/path/t.nc|Globus|Globus",
-            ("globus://node/uuid/path/t.nc", "Globus", "Globus"),
+            # One colon and no authority, which is how Solr really writes a Globus
+            # route -- live `esgf.nci.org.au` and the 1.5 bridge both do this. It is
+            # not `globus://<node>/...` and it is not a URL anything will parse.
+            "globus:2058c7d6-a79f-11e6-9ad6-22000a1e3b52/replica/CMIP6/t.nc"
+            "|Globus|Globus",
+            (
+                "globus:2058c7d6-a79f-11e6-9ad6-22000a1e3b52/replica/CMIP6/t.nc",
+                "Globus",
+                "Globus",
+            ),
             id="globus",
         ),
     ],
 )
 def test_a_solr_url_triple_splits_into_url_mime_and_service(triple, expected):
     """
-    All four shapes ESGF-1 really publishes, including the two that are not mime types
+    All four shapes Solr really publishes, including the two that are not mime types
 
     Solr writes the service name in the mime slot for GridFTP and Globus, which is
     why the mime lookup has to know `"Globus"` as well as real mime types.
@@ -395,9 +456,10 @@ def test_a_solr_file_document_becomes_one_file_and_every_route_to_it():
     """
     Solr's unit is the file, so every route it describes names that file
 
-    ESGF-1 cannot express a whole-version route at all: its triple has a service slot
-    but no container-format slot, and its entire `access` vocabulary is `HTTPServer`
-    and `OPENDAP`. Virtual and remote access is an ESGF-NG capability, so every route
+    Solr cannot express a whole-version route at all: its triple has a service slot
+    but no container-format slot, and every service its `access` list names
+    (`HTTPServer`, `GridFTP`, `OPENDAP`, `Globus`) moves whole files. Virtual and
+    remote access is an ESGF-NG capability, so every route
     from here has a filename.
     """
     payload = solr_file_access(SOLR_FILE_DOC)

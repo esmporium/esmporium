@@ -82,24 +82,12 @@ dev = [
     # -------------------------------
     "ty==0.0.33",
     "typer>=0.27.1",
-    # Only for `scripts/verify_data_access_routes.py`, which opens a recorded data
-    # access route to prove it leads to data we can read. Deliberately dev-only and
-    # deliberately temporary: esmporium itself records where the bytes are and does
-    # not open them, so these go when that script does (see PR "Downloads").
-    # aiohttp is fsspec's HTTP backend and h5netcdf is xarray's netCDF-over-a-file-
-    # object engine; without them the script can reach a route but not open it.
-    "aiohttp>=3.9.0",
-    # cftime decodes CMIP calendars (365_day and friends), which xarray cannot.
-    "cftime>=1.6.0",
-    "fsspec>=2024.6.0",
-    "h5netcdf>=1.3.0",
-    "h5py>=3.10.0",
-    # scipy reads *classic* netCDF; h5netcdf only reads netCDF-4/HDF5, and ESGF
-    # serves both.
-    "scipy>=1.11.0",
-    "kerchunk>=0.2.7",
-    "xarray>=2024.6.0",
-    "zarr>=2.18.0",
+    # Note for the download step: nothing here reads data files, so the engines for
+    # that (xarray, fsspec, h5netcdf, scipy, kerchunk, zarr and friends) are not
+    # dependencies of this package, dev or otherwise. They were here briefly, for a
+    # one-off probe which opened the routes we had recorded; what it found is written
+    # up on `esmporium.datasets.ContainerFormat` and in PLAN.md's download step, so
+    # the dependencies went when the probe did.
 ]
 docs = [
     # Key dependencies

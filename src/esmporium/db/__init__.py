@@ -7,17 +7,6 @@ This should be the only layer which touches the local databases directly.
 
 from __future__ import annotations
 
-from esmporium.db.data_access import (
-    DEFAULT_BATCH_SIZE,
-    DEFAULT_LIMIT,
-    NotASolrFacadeError,
-    SolrFileBatch,
-    SolrSearchAPI,
-    check_facade_is_solr,
-    plan_solr_file_batches,
-    record_solr_file_access,
-    solr_api,
-)
 from esmporium.db.database_catalogue import (
     DatabaseCatalogue,
     UnknownVersionFilterError,
@@ -31,6 +20,18 @@ from esmporium.db.dataset_uniqueness import (
     facet_differences,
 )
 from esmporium.db.engine import configure_sqlite_for_concurrency
+from esmporium.db.file_access_to_database import (
+    DEFAULT_BATCH_SIZE,
+    DEFAULT_LIMIT,
+    AmbiguousFileAttributionError,
+    SolrFileBatch,
+    attribution_key,
+    build_file_result_processor,
+    check_attribution_is_unambiguous,
+    plan_solr_file_batches,
+    record_file_document,
+    record_solr_file_access,
+)
 from esmporium.db.results_to_database import (
     AmbiguousDataAccessError,
     IngestedDocument,
@@ -118,6 +119,7 @@ __all__ = [
     "METADATA",
     "MISSING",
     "AmbiguousDataAccessError",
+    "AmbiguousFileAttributionError",
     "ChangeRecord",
     "ConflictingWindowError",
     "DataAccess",
@@ -136,7 +138,6 @@ __all__ = [
     "IngestedDocument",
     "NetChange",
     "NoRunsInWindowError",
-    "NotASolrFacadeError",
     "OnNameClash",
     "RawDocVersionLink",
     "RequirementNameClashError",
@@ -153,7 +154,6 @@ __all__ = [
     "SearchRunVersion",
     "SearchSummary",
     "SolrFileBatch",
-    "SolrSearchAPI",
     "StoredRequirement",
     "StoredRequirementInfo",
     "TrackedSearchResult",
@@ -164,12 +164,14 @@ __all__ = [
     "VersionRecord",
     "aggregate_host_health",
     "annotations",
+    "attribution_key",
+    "build_file_result_processor",
     "build_health_selector",
     "build_result_processor",
     "build_result_processor_factory",
     "build_tracking_result_processor_factory",
     "check_access_payload_is_attributable",
-    "check_facade_is_solr",
+    "check_attribution_is_unambiguous",
     "collapse_changes",
     "compute_changes",
     "configure_sqlite_for_concurrency",
@@ -187,6 +189,7 @@ __all__ = [
     "load_requirement",
     "plan_solr_file_batches",
     "record_changes",
+    "record_file_document",
     "record_run_versions",
     "record_search_api_calls",
     "record_solr_file_access",
@@ -196,7 +199,6 @@ __all__ = [
     "save_data_access_payload",
     "save_dataset",
     "search_and_track",
-    "solr_api",
     "store_requirement",
     "summarise_search",
     "to_catalogue_entry",

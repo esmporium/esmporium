@@ -22,7 +22,13 @@ from esmporium.search.search.firing import (
     log_request_as_url_and_curl,
 )
 from esmporium.search.search.keys import FacadeKey, get_facade_key
-from esmporium.search.search.pagination import FacadePages, collect_all_pages
+from esmporium.search.search.pagination import (
+    FacadePages,
+    FilePages,
+    Pages,
+    collect_all_file_pages,
+    collect_all_pages,
+)
 from esmporium.search.search.planning import (
     LeafSearch,
     SearchPlan,
@@ -46,9 +52,11 @@ __all__ = [
     "CouldNotUseSearchResultsError",
     "FacadeKey",
     "FacadePages",
+    "FilePages",
     "LeafSearch",
     "LeafSearchOutcome",
     "NoFacadeAnsweredError",
+    "Pages",
     "PaginationLimitError",
     "PaginationWarning",
     "ProcessorFactory",
@@ -56,6 +64,7 @@ __all__ = [
     "SearchOutcome",
     "SearchPlan",
     "SubSearch",
+    "collect_all_file_pages",
     "collect_all_pages",
     "curl_equivalent",
     "fire",

@@ -514,10 +514,24 @@ STAC_TYPE_TO_CONTAINER_FORMAT: Mapping[str, ContainerFormat] = {
     "application/netcdf": ContainerFormat.NETCDF,
     "application/x-netcdf": ContainerFormat.NETCDF,
     "application/kerchunk": ContainerFormat.KERCHUNK,
-    "application/vnd+zarr": ContainerFormat.ZARR,
+    "application/vnd.zarr": ContainerFormat.ZARR,
     "text/html": ContainerFormat.HTML,
 }
-"""How a STAC asset's `type` maps onto [ContainerFormat][esmporium.datasets.ContainerFormat]"""  # noqa: E501
+"""
+How a STAC asset's `type` maps onto [ContainerFormat][esmporium.datasets.ContainerFormat]
+
+Keyed by media type with its parameters stripped and in lower case, which is what
+[media_type_without_parameters][(m).media_type_without_parameters] hands the lookup.
+
+The zarr key is `application/vnd.zarr` -- a dot. `application/vnd+zarr` is a
+long-lived typo rather than an alternative spelling (pystac shipped and then fixed
+the same one), and nothing publishes it.
+
+Icechunk is deliberately absent: it has no registered media type, so there is nothing
+to key it by. An icechunk asset therefore raises
+[UnknownContainerFormatError][(m).UnknownContainerFormatError], which is what we want
+-- see [ContainerFormat.ICECHUNK][esmporium.datasets.ContainerFormat.ICECHUNK].
+"""  # noqa: E501
 
 DATA_ROLE = "data"
 """The asset role that means "this asset is the data", rather than a thumbnail or similar"""  # noqa: E501
@@ -564,7 +578,8 @@ class UnknownContainerFormatError(ValueError):
         super().__init__(
             f"The {asset_name!r} asset of {feature_id!r} is of type "
             f"{asset_type!r}, which we have no ContainerFormat for. "
-            f"The types we know are: {sorted(STAC_TYPE_TO_CONTAINER_FORMAT)}. "
+            f"The types we know are: {sorted(STAC_TYPE_TO_CONTAINER_FORMAT)} "
+            "(matched with any media type parameters, e.g. '; version=3', stripped). "
             "We raise rather than skipping the asset, "
             "because a route we silently dropped is a way of getting this data "
             "that we would never know we had been offered."
@@ -751,12 +766,41 @@ def _stac_service(
     return service
 
 
+def media_type_without_parameters(media_type: str) -> str:
+    """
+    Reduce a media type to the part we classify on
+
+    A media type may carry parameters after a semicolon, and a store is where they
+    actually turn up: STAC's zarr best practices write
+    `application/vnd.zarr; version=3`, and `; profile=multiscales` for a pyramided
+    store. Those say something about *that* store, not about what kind of thing it is,
+    so they are dropped before the lookup -- matching on the whole string would miss
+    every real zarr asset while matching every netCDF one, so the gap would not show
+    up until the day it mattered.
+
+    Case is dropped too, because a media type is case-insensitive.
+
+    Parameters
+    ----------
+    media_type
+        The media type to reduce, e.g. `application/vnd.zarr; version=3`
+
+    Returns
+    -------
+    :
+        Its type and subtype, lower-cased, e.g. `application/vnd.zarr`
+    """
+    return media_type.split(";", maxsplit=1)[0].strip().lower()
+
+
 def _stac_container_format(
     asset: Mapping[str, Any], *, asset_name: str, feature_id: str
 ) -> ContainerFormat:
     """Read an asset's `type` as a [ContainerFormat][esmporium.datasets.ContainerFormat]"""  # noqa: E501
     asset_type = str(asset.get("type"))
-    container_format = STAC_TYPE_TO_CONTAINER_FORMAT.get(asset_type)
+    container_format = STAC_TYPE_TO_CONTAINER_FORMAT.get(
+        media_type_without_parameters(asset_type)
+    )
     if container_format is None:
         raise UnknownContainerFormatError(asset_type, asset_name, feature_id)
 

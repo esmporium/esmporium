@@ -647,6 +647,13 @@ class DataAccess(EsmporiumBase, table=True):
     and a row-type column to say so would mean every reader learning a type
     vocabulary before they could ask the only question that matters: file, or version?
 
+    A store needs more than a URL to open -- a storage backend, credentials, and a
+    snapshot, branch or tag -- and that extra information has a home already: it
+    arrives *in the asset*, and the asset is kept verbatim in `raw_json`. So the day
+    one is published it is recorded without a migration. See
+    [ContainerFormat.ICECHUNK][esmporium.datasets.ContainerFormat.ICECHUNK] for why
+    naming a column for it now would be guessing at a convention ESGF has not made.
+
     **`service` and `container_format` are two orthogonal columns on purpose.** How
     the bytes move is not what the bytes are: a kerchunk sidecar is fetched over
     `https` and opened as `kerchunk`, and an OPeNDAP route hands you `html`.
@@ -760,24 +767,31 @@ class DataAccess(EsmporiumBase, table=True):
     The route's URL, exactly as the API published it
 
     Not normalised and not made openable. For example an OPeNDAP route's URL ends
-    `.nc.html` (a landing page, not the DAP endpoint) and a Globus route's URL is an
-    `https://app.globus.org/file-manager?...` web-app page, not a transfer endpoint.
-    Deriving something fetchable from either is a later step's problem, and guessing
-    at it here would be guessing on behalf of a reader who knows better.
+    `.nc.html` (a landing page, not the DAP endpoint); ESGF-NG's Globus route is an
+    `https://app.globus.org/file-manager?...` web-app page rather than a transfer
+    endpoint, and Solr's is a `globus:<endpoint-uuid>/<path>` string which is not a
+    URL an ordinary parser will take apart at all. Deriving something fetchable from
+    any of them is a later step's problem, and guessing at it here would be guessing
+    on behalf of a reader who knows better.
+
+    For a whole-version store this column is also *not sufficient*, by itself, to
+    open anything; what makes up the difference is `raw_json`.
     """
 
     raw_json: str
     """
     The API's own description of this route, JSON-encoded
 
-    For ESGF-NG STAC this is the asset object. ESGF-1 Solr describes a route only as
-    a `"<url>|<mime>|<service>"` triple inside a document that describes the *file*,
-    so for Solr this is that triple -- JSON-encoded, hence a quoted string rather
-    than an object.
+    For ESGF-NG STAC this is the asset object. Solr (classic ESGF-1 and the 1.5
+    bridge alike) describes a route only as a `"<url>|<mime>|<service>"` triple inside
+    a document that describes the *file*, so for Solr this is that triple --
+    JSON-encoded, hence a quoted string rather than an object.
 
     Kept so that nothing a record carried is lost to our column choices, the same
     reason [DatasetRawDoc.raw_json][esmporium.db.schema.DatasetRawDoc.raw_json]
-    exists.
+    exists. That is not only insurance against our own column choices: it is where
+    the opening hints for a zarr or icechunk store will land, because they are part
+    of the asset and we have no column for them (see the note on this class).
     """
 
 

@@ -1,5 +1,5 @@
 """
-Filling in per-file access for ESGF-1 results, as its own second request
+Filling in per-file access for Solr results, as its own second request
 
 Nothing here touches the network: the Solr answer is served by a mock transport, and
 the requests the code builds are inspected on the way past. The live equivalent is in
@@ -14,9 +14,9 @@ from sqlmodel import Session, select
 
 from esmporium.datasets import AccessService, ContainerFormat
 from esmporium.db import (
+    AmbiguousFileAttributionError,
     DataAccess,
     File,
-    NotASolrFacadeError,
     ingest_parsed_documents,
     plan_solr_file_batches,
     record_solr_file_access,
@@ -26,9 +26,11 @@ from esmporium.search import (
     ESGF1_CMIP6_FACADE_PARAMETERS,
     ESGFNG_CMIP6_FACADE_PARAMETERS,
     SOLR_FORMAT_TAG,
+    CouldNotGetSearchResponseError,
     DataNodeInfo,
     DatasetFacets,
     ESGFNGResultParser,
+    NotASolrFacadeError,
     ParsedDocument,
     SearchAPIESGF1Solr,
     SearchAPIESGFNGSTAC,
@@ -116,13 +118,16 @@ def _answering_client(docs, seen: list[httpx.Request] | None = None) -> httpx.Cl
     return httpx.Client(transport=httpx.MockTransport(handler))
 
 
-def test_batches_are_grouped_by_variable_not_merely_chunked(engine):
+def test_batches_are_grouped_by_variable_when_the_facade_asks_for_that(engine):
     """
     A CMIP5 bundle fans out into one batch per variable, which is what makes it work
 
     One CMIP5 document becomes one version per variable, and the variable is the only
     thing which says which of them a file belongs to -- so asking about the whole
     bundle at once would give back files with nowhere to go.
+
+    Which facets to group by is not this function's decision: it is read off the
+    facade's result parser, and `("variable",)` is what the CMIP5 one answers.
     """
     bundle = _document("a.bundle|esgf.ceda.ac.uk", "tas", "pr", "psl")
 
@@ -130,9 +135,13 @@ def test_batches_are_grouped_by_variable_not_merely_chunked(engine):
         ingested = ingest_parsed_documents(session, [bundle])
         session.commit()
 
-        batches = plan_solr_file_batches(ingested)
+        batches = plan_solr_file_batches(ingested, ("variable",))
 
-    assert {batch.variable for batch in batches} == {"tas", "pr", "psl"}
+    assert {batch.facet_values["variable"] for batch in batches} == {
+        ("tas",),
+        ("pr",),
+        ("psl",),
+    }
     # Each batch knows which version its answers belong to, with no lookup needed.
     version_ids = {
         version_id
@@ -140,6 +149,50 @@ def test_batches_are_grouped_by_variable_not_merely_chunked(engine):
         for version_id in batch.dataset_version_id_by_dataset_id.values()
     }
     assert len(version_ids) == 3
+
+
+def test_datasets_needing_no_narrowing_go_into_one_request(engine):
+    """
+    A CMIP6/CMIP7 `dataset_id` names one dataset row, so one request can carry many
+
+    This is what the facade answering `()` buys. Grouping by variable regardless
+    would put every one of these in a batch of its own, because each has a variable
+    of its own -- so a page of 50 datasets would cost 50 requests instead of 1, and
+    the whole point of `batch_size` would be lost.
+    """
+    documents = [
+        _document(f"CMIP6.a{i}.v1|esgf.ceda.ac.uk", variable)
+        for i, variable in enumerate(("tas", "pr", "psl", "hurs"))
+    ]
+
+    with Session(engine) as session:
+        ingested = ingest_parsed_documents(session, documents)
+        session.commit()
+
+        batches = plan_solr_file_batches(ingested, ())
+
+    assert len(batches) == 1
+    assert batches[0].facet_values == {}
+    assert len(batches[0].dataset_version_id_by_dataset_id) == 4
+
+
+def test_narrowing_which_cannot_tell_two_versions_apart_is_refused(engine):
+    """
+    A bundle grouped by nothing would place every file by guessing, so it raises
+
+    Impossible with the parsers we have -- the bundling one names `variable` -- which
+    is exactly why it is checked rather than assumed. The facets come from the facade
+    now, so a parser which bundles rows without saying what tells them apart is a
+    mistake this catches at planning time, before a single file is misfiled.
+    """
+    bundle = _document("a.bundle|esgf.ceda.ac.uk", "tas", "pr")
+
+    with Session(engine) as session:
+        ingested = ingest_parsed_documents(session, [bundle])
+        session.commit()
+
+        with pytest.raises(AmbiguousFileAttributionError, match="narrowed by nothing"):
+            plan_solr_file_batches(ingested, ())
 
 
 def test_the_join_key_is_the_document_id_the_dataset_search_published(engine):
@@ -155,7 +208,7 @@ def test_the_join_key_is_the_document_id_the_dataset_search_published(engine):
         ingested = ingest_parsed_documents(session, [document])
         session.commit()
 
-        batches = plan_solr_file_batches(ingested)
+        batches = plan_solr_file_batches(ingested, ())
 
     assert list(batches[0].dataset_version_id_by_dataset_id) == [
         "CMIP6.a.v1|esgf.ceda.ac.uk"
@@ -170,14 +223,14 @@ def test_batches_respect_the_batch_size(engine):
         ingested = ingest_parsed_documents(session, documents)
         session.commit()
 
-        batches = plan_solr_file_batches(ingested, batch_size=2)
+        batches = plan_solr_file_batches(ingested, ("variable",), batch_size=2)
 
     assert [len(batch.dataset_version_id_by_dataset_id) for batch in batches] == [
         2,
         2,
         1,
     ]
-    assert {batch.variable for batch in batches} == {"tas"}
+    assert {batch.facet_values["variable"] for batch in batches} == {("tas",)}
 
 
 def test_a_stac_facade_is_refused_loudly(engine):
@@ -239,12 +292,12 @@ def test_a_recorded_shaped_answer_becomes_files_and_routes(engine):
     }
 
 
-def test_the_request_asks_for_file_documents_narrowed_by_variable(engine):
+def test_the_request_asks_for_file_documents_and_narrows_no_further(engine):
     """
-    The request that goes out, inspected: `type=File`, the ids OR-ed, and the variable
+    The request that goes out, inspected: `type=File` and the ids OR-ed
 
-    The variable facet is spelled the way *this* API spells it, which is the point of
-    reading the name off the facade.
+    No variable, because a CMIP6 `dataset_id` already names one dataset row, so
+    narrowing by one would only make the request longer and the batches smaller.
     """
     document = _document("CMIP6.a.v1|esgf.ceda.ac.uk", "tas")
     seen: list[httpx.Request] = []
@@ -262,17 +315,17 @@ def test_the_request_asks_for_file_documents_narrowed_by_variable(engine):
     params = httpx.URL(seen[0].url).params
     assert params["type"] == "File"
     assert params["dataset_id"] == "CMIP6.a.v1|esgf.ceda.ac.uk"
-    # CMIP6 spells it `variable_id`...
-    assert params["variable_id"] == "tas"
+    assert "variable_id" not in params
 
 
 def test_a_cmip5_request_narrows_by_the_name_cmip5_uses(engine):
     """
-    ...and CMIP5 spells it `variable`, which is why it is never hard-coded
+    A CMIP5 request does narrow, and spells the facet the way CMIP5 spells it
 
-    For CMIP5 this narrowing is load-bearing rather than merely tidy: its
-    `dataset_id` is table-grained, so without it the answer covers every variable in
-    the table.
+    The facade translates the canonical `variable` into this API's own name, which is
+    why neither spelling is hard-coded anywhere outside it. For CMIP5 the narrowing
+    is load-bearing rather than merely tidy: its `dataset_id` is table-grained, so
+    without it the answer covers every variable in the table.
     """
     bundle = _document("cmip5.a.v1|esgf.ceda.ac.uk", "tas")
     seen: list[httpx.Request] = []
@@ -341,3 +394,48 @@ def test_recording_the_same_answer_twice_writes_nothing_new(engine):
             second = len(session.exec(select(DataAccess)).all())
 
     assert first == second == 2
+
+
+def test_a_batch_which_fails_part_way_keeps_what_it_wrote_and_still_raises(engine):
+    """
+    The failure is loud, and the pages before it are in the session either way
+
+    `record_solr_file_access` answers with the rows it wrote, so there is nowhere on
+    its answer to hang a failure -- a caller which was told nothing would believe it
+    had every file. The write side is unaffected: each page is written as it arrives,
+    so whatever got in before the failure is still there for a caller which commits.
+    """
+    document = _document("CMIP6.a.v1|esgf.ceda.ac.uk", "tas")
+    answers = [
+        httpx.Response(
+            200,
+            json={
+                "response": {
+                    "numFound": 2,
+                    "docs": [_file_doc("CMIP6.a.v1|esgf.ceda.ac.uk", "first.nc")],
+                }
+            },
+        ),
+        httpx.Response(500),
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return answers.pop(0)
+
+    with Session(engine) as session:
+        ingested = ingest_parsed_documents(session, [document])
+        facade = _solr_facade(
+            ESGF1_CMIP6_FACADE_PARAMETERS, SolrSingleRowResultParser()
+        )
+
+        with (
+            httpx.Client(transport=httpx.MockTransport(handler)) as client,
+            pytest.raises(CouldNotGetSearchResponseError),
+        ):
+            record_solr_file_access(session, facade, ingested, client=client, limit=1)
+
+        session.commit()
+
+        assert [stored.filename for stored in session.exec(select(File)).all()] == [
+            "first.nc"
+        ]

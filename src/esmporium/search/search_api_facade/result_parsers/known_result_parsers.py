@@ -288,6 +288,19 @@ class SolrSingleRowResultParser:
     [MultipleFacetValuesError][esmporium.search.apis.MultipleFacetValuesError].
     """
 
+    @property
+    def file_attribution_facets(self) -> tuple[str, ...]:
+        """
+        No narrowing needed to place a file
+
+        See
+        [ResultParserProtocol.file_attribution_facets][esmporium.search.ResultParserProtocol.file_attribution_facets].
+        A CMIP6/CMIP7 `dataset_id` names exactly one of our dataset rows, because one
+        record is one row, so a file which names its `dataset_id` has already said
+        everything about which row it belongs to.
+        """
+        return ()
+
     def parse_search_results(
         self,
         raw: dict[str, Any],
@@ -339,6 +352,26 @@ class SolrVariableBundleResultParser:
     `variable` is a single value shared by the rows;
     `variable` is read as a list and the record explodes into one row per value.
     """
+
+    @property
+    def file_attribution_facets(self) -> tuple[str, ...]:
+        """
+        Narrow a file-level request by `variable`
+
+        See
+        [ResultParserProtocol.file_attribution_facets][esmporium.search.ResultParserProtocol.file_attribution_facets].
+        This is the project-specific fact that makes the file step work for CMIP5,
+        and it follows directly from the bundling this parser exists to unpick. One
+        CMIP5 record becomes one of our dataset rows per variable, and every one of
+        them shares the record's `dataset_id`, so a file which names only its
+        `dataset_id` could belong to any of them. The variable is the one thing which
+        says which.
+
+        Narrowing is also what makes the *answer* the right size: a CMIP5
+        `dataset_id` is table-grained, so asking about one CMIP5 dataset without a
+        variable returns every variable in its table.
+        """
+        return ("variable",)
 
     def parse_search_results(
         self,
@@ -460,6 +493,22 @@ class ESGFNGResultParser:
     """
     Read results from the ESGF-NG STAC API
     """
+
+    @property
+    def file_attribution_facets(self) -> tuple[str, ...]:
+        """
+        No narrowing needed, and in fact no file-level request at all
+
+        See
+        [ResultParserProtocol.file_attribution_facets][esmporium.search.ResultParserProtocol.file_attribution_facets].
+        A STAC item carries its files in its own `assets`, so they are already parsed
+        and recorded by the time a second request could be made. Asking a STAC facade
+        for file documents is refused loudly
+        ([NotASolrFacadeError][esmporium.search.NotASolrFacadeError]), so nothing
+        reads this -- it is here because the protocol asks for it, and `()` is the
+        honest answer.
+        """
+        return ()
 
     def parse_search_results(
         self,

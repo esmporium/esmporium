@@ -133,7 +133,12 @@ class DataAccessInfo:
     """
 
     url: str
-    """See [DataAccess.url][esmporium.db.schema.DataAccess.url]."""
+    """
+    See [DataAccess.url][esmporium.db.schema.DataAccess.url].
+
+    Exactly as the API published it. For a whole-version store this is not enough to
+    open anything on its own; what the API said about the store is kept in `raw_json`.
+    """
 
     raw_json: str
     """See [DataAccess.raw_json][esmporium.db.schema.DataAccess.raw_json]."""
@@ -148,10 +153,11 @@ class DataAccessPayload:
     them would let a caller hold half of a pair.
 
     Both empty is the honest answer for a document that says nothing about files,
-    which is every Solr *dataset* document: ESGF-1 publishes no per-file URLs at
-    dataset level, so those are filled in by a separate `type=File` request (see
-    [esmporium.db.record_solr_file_access][]). ESGF-NG STAC carries its files in the
-    item's `assets`, so its parser fills these in with no extra request.
+    which is every Solr *dataset* document: neither classic ESGF-1 nor the 1.5 bridge
+    publishes per-file URLs at dataset level, so those are filled in by a separate
+    `type=File` request (see [esmporium.db.record_solr_file_access][]). ESGF-NG STAC
+    carries its files in the item's `assets`, so its parser fills these in with no
+    extra request.
     """
 
     files: tuple[FileInfo, ...] = ()
@@ -228,6 +234,42 @@ class ParsedDocument:
     """
 
 
+@dataclass(frozen=True)
+class ParsedFileDocument:
+    """
+    One raw `type=File` document, reduced to the pieces we store
+
+    The file-level mirror of [ParsedDocument][(m).ParsedDocument], and only Solr
+    produces one: ESGF-NG STAC carries its files inside the dataset document, so its
+    files arrive as part of a [ParsedDocument][(m).ParsedDocument] instead.
+
+    Carries a `dataset_id` and not a database id, because `search` has none. Placing
+    this against a stored version is the `db` layer's job, and it can do it with no
+    lookup -- see [dataset_id][(c).dataset_id].
+    """
+
+    dataset_id: str
+    """
+    The node-specific id of the dataset version this document's file belongs to
+
+    i.e. `<instance_id>|<data_node>`, which is exactly what the dataset document
+    published as its `id`, and so exactly
+    [ParsedDocument.esgf_doc_id][(m).ParsedDocument.esgf_doc_id]. That is what makes
+    a file placeable without going back to the database.
+    """
+
+    payload: DataAccessPayload
+    """
+    The one file this document described, and every route to it
+
+    A Solr File document is always about exactly one file, so in practice this is one
+    [FileInfo][(m).FileInfo] and one [DataAccessInfo][(m).DataAccessInfo] per `url`
+    triple. It is a whole payload rather than that pair because it is written through
+    the same path ESGF-NG's files take, so the two sources cannot grow two ways of
+    being stored.
+    """
+
+
 # Note: this shape will likely need to change once we want to link Datasets
 # and searches/query collections in our database.
 # (No need to change anything now though,
@@ -245,4 +287,24 @@ class ResultProcessor(Protocol):
     ) -> None:
         """
         Process the results that come from a given facade
+        """
+
+
+class FileResultProcessor(Protocol):
+    """
+    A callback that processes the parsed file documents one host answered with
+
+    The file-level mirror of [ResultProcessor][(m).ResultProcessor], with the same
+    shape and the same division of labour: `search` fetches, pages and parses, and
+    the database layer supplies the callback that writes
+    (see [esmporium.db.build_file_result_processor][]).
+    """
+
+    def __call__(
+        self,
+        facade: SearchAPIFacade,
+        parsed_documents: tuple[ParsedFileDocument, ...],
+    ) -> None:
+        """
+        Process the file documents that come from a given facade
         """
