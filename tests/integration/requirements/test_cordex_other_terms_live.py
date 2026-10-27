@@ -1,13 +1,13 @@
 """
 Testing CORDEX, an unmodelled project, run end to end against the live ESGF APIs
 
-CORDEX is the test because it is a projext that doesn't match our `Dataset` columns
+CORDEX is the test because it is a project that doesn't match our `Dataset` columns
 and because there are facets that will go through `other_terms`, the escape hatch.
 Since esmporium registers no CORDEX query class, a CORDEX document models nothing
 (`CatalogueEntry.project_facets` is empty), so the facets grouped and ranked on
 cannot be answered by a modelled path and these tests cannot pass by accident.
 
-**The naming table below is a test-local claim, not esmporium's position on how CORDEX
+**The query style below is a test-local claim, not esmporium's position on how CORDEX
 is modelled.** CORDEX is not a project esmporium supports: it is absent from
 `PROJECT_QUERY_MAP_DEFAULT`, from `get_default_facade_definition` and from
 `DEFAULT_SELECTOR`. Searching it at all means injecting a facade, a selector and a
@@ -62,7 +62,7 @@ LIMIT = 50
 """
 Records per page
 
-Comfortably more than the slice below matches, so one page holds all of it.
+Comfortably more than the query below matches, so one page holds all of it.
 """
 
 PROJECT = "CORDEX-CMIP6"
@@ -85,11 +85,11 @@ class ESGFNGCordexCMIP6ParametersQueryStyle(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     # One declaration per `DatasetFacets` column and nothing else, because that is
-    # all a row needs: a column with no API name here is left unset and then fails
-    # `DatasetFacets` validation, while a facet which is not a column (`activity`,
-    # say) is never read by the parser at all. `project` is absent for the same
-    # reason it is absent from the CMIP6 and CMIP7 STAC styles: a STAC parser reads
-    # the project from the feature's `collection`.
+    # all a row needs: a column with no parameter name here is left unset and then
+    # fails `DatasetFacets` validation, while a facet which is not a column
+    # (`activity`, say) is never read by the parser at all. `project` is absent
+    # for the same reason it is absent from the CMIP6 and CMIP7 STAC styles: a
+    # STAC parser reads the project from the feature's `collection`.
     source_id: Annotated[FacetValues, QueryFacet("model")] = ()
     """The regional model. See [Dataset.model][esmporium.db.schema.Dataset.model]."""
 
@@ -101,7 +101,8 @@ class ESGFNGCordexCMIP6ParametersQueryStyle(BaseModel):
 
     driving_variant_label: Annotated[FacetValues, QueryFacet("variant_label")] = ()
     """See [Dataset.variant_label][esmporium.db.schema.Dataset.variant_label]."""
-    # This is an example of a mapping that might not be correct if you tried to use this in practice.
+    # This is an example of a mapping that might not be correct if you tried to
+    # use this in practice.
 
     variable_id: Annotated[FacetValues, QueryFacet("variable")] = ()
     """See [Dataset.variable][esmporium.db.schema.Dataset.variable]."""
@@ -111,8 +112,8 @@ class ESGFNGCordexCMIP6ParametersQueryStyle(BaseModel):
 
     # CORDEX-CMIP6 has no concept of CMOR table, and `processing_id` is required
     # non-null, so something has to answer for it. `version_realization` is the
-    # nearest (another example of an imprecise mapping that you'd want to think through more
-    # if you were using this for real).
+    # nearest (another example of an imprecise mapping that you'd want to think
+    # through more if you were using this for real).
     version_realization: Annotated[FacetValues, QueryFacet("processing_id")] = ()
     """See [Dataset.processing_id][esmporium.db.schema.Dataset.processing_id]."""
 
@@ -173,10 +174,10 @@ DOMAIN_ID = "cordex-cmip6:domain_id"
 
 LEAF_QUERY = Query(
     project=PROJECT,
-    # Each facet in exactly one home. `variable` and `reporting_interval` are modelled
-    # because the table above can express them, so writing them in `other_terms` would
-    # be using the escape hatch for something that is not escaping. `other_terms`
-    # carries the two facets which have nowhere else to go.
+    # Each facet in exactly one home. `variable` and `reporting_interval` are
+    # modelled because the query style above can express them, so writing them in
+    # `other_terms` would be using the escape hatch for something that is not
+    # escaping. `other_terms` carries the two facets which have nowhere else to go.
     variable="tas",
     reporting_interval="mon",
     other_terms={
@@ -195,7 +196,7 @@ grouping by driving model is also what a real analysis looks like.
 
 EXPECTED_ROWS = 6
 """
-How many datasets the slice held when this test was written
+How many datasets the query matched when this test was written
 
 Should be used as a floor rather than an equality: the archive grows, and a test which
 fails because more CORDEX data was published would be telling us nothing.
@@ -203,7 +204,7 @@ fails because more CORDEX data was published would be telling us nothing.
 
 
 def a_requirement(**kwargs):
-    """Build a requirement for the slice above, overriding whatever is passed"""
+    """Build a requirement around `LEAF_QUERY` above, overriding whatever is passed"""
     return requirement(
         name=kwargs.pop("name", "cordex-tas-monthly-live"),
         tree=leaf(LEAF_QUERY, "tas"),
@@ -234,7 +235,7 @@ def saved(engine) -> list[Dataset]:
 @pytest.fixture(scope="module")
 def searched(tmp_path_factory):
     """
-    Search the slice once, live, and hand back the database and the outcomes
+    Search the query once, live, and hand back the database and the outcomes
 
     Module-scoped because every test below reads the same rows and none of them
     writes, so one search serves all of them. That also keeps this module to a single
@@ -273,8 +274,8 @@ def searched(tmp_path_factory):
             f"{describe(LEAF_QUERY)}. Either an `other_terms` key is wrong (they are "
             "never translated or checked, and these APIs answer a mis-spelled facet "
             "name with an empty result rather than an error) or the archive no "
-            "longer holds this slice. Both are worth knowing, so this fails rather "
-            "than skipping.",
+            "longer holds matching datasets. Both are worth knowing, so this "
+            "fails rather than skipping.",
             pytrace=False,
         )
 
@@ -289,26 +290,26 @@ def catalogue(searched):
     CORDEX is absent from the default project-to-query mapping, so the catalogue
     models nothing for it and everything a CORDEX document records is reachable only
     through `other_terms`. That is the point of using CORDEX, and
-    `test_our_cordex_naming_table_still_reads_a_live_document` asserts it.
+    `test_our_cordex_query_style_still_reads_a_live_document` asserts it.
     """
     engine, _ = searched
 
     return DatabaseCatalogue(engine)
 
 
-def test_our_cordex_naming_table_still_reads_a_live_document(searched, catalogue):
+def test_our_cordex_query_style_still_reads_a_live_document(searched, catalogue):
     """
     Every column a stored CORDEX row needs was read from a live document
 
-    This is here to keep two failure modes apart -- the naming table at the top of
+    This is here to keep two failure modes apart -- the query style at the top of
     this module is ours, the archive is not -- and it comes first for that reason.
     """
     engine, _ = searched
     rows = saved(engine)
     blame = (
-        "Our CORDEX naming table disagrees with the archive. That table is this "
-        "module's own (CORDEX is not a project esmporium supports), so look there "
-        "first and not at the `other_terms` path."
+        "Our CORDEX query style disagrees with the archive. That query style is "
+        "this module's own (CORDEX is not a project esmporium supports), so look "
+        "there first and not at the `other_terms` path."
     )
 
     assert len(rows) >= EXPECTED_ROWS, (
@@ -519,7 +520,7 @@ def test_prefer_other_terms_breaks_a_tie(catalogue):
         chosen = with_prefer.satisfied[key].one("tas")
         # Read back under the document's own key, which is how it was asked for.
         # That the same value also happens to fill the `processing_id` column under
-        # this module's naming table is beside the point: `prefer` was never given
+        # this module's query style is beside the point: `prefer` was never given
         # that column, so the only thing that can have narrowed this group is
         # `prefer_other_terms`.
         assert chosen.facet(VERSION_REALIZATION) == preferred, (

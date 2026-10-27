@@ -9,20 +9,21 @@ questions which are easy to run together:
 - *is this project registered?* -- which decides whether a caller has to inject a
   facade and a selector at all, and
 - *does this project fit our dataset columns?* -- which decides whether the facade they
-  build needs a naming table of its own.
+  build needs a query style of its own.
 
 CORDEX answers no to both. CMIP6Plus answers no to the first and **yes** to the second,
 because a CMIP6Plus document is the same shape as a CMIP6 document. Hence:
 
-                            CORDEX-CMIP6                 CMIP6Plus
-    query class mapping     inject it                    already registered
-    facade                  build it                     build it
-    selector                build it                     build it
-    naming table            write a new one              reuse CMIP6's, unchanged
-    not applicable column values  processing_id, grid_label     none
-    `other_terms` needed    for domain and driving model  none at all
+                                CORDEX-CMIP6                  CMIP6Plus
+    query class mapping         inject it                     already registered
+    facade                      build it                      build it
+    selector                    build it                      build it
+    query style                 write a new one               reuse CMIP6's, unchanged
+    columns with no equivalent  processing_id, grid_label     none
+    `other_terms` needed        for domain and driving model  none at all
 
-Put another way, this module shows the irreducible cost of a project not being registered.
+Put another way, this module shows the irreducible cost of a project not being
+registered.
 
 **Two of these tests need no network**, and carry no marker, so they run in the normal
 suite: they pin the registration gap itself, which is ours and not the archive's, and
@@ -75,7 +76,7 @@ TIMEOUT = 60.0
 """How long to wait for a node, in seconds"""
 
 LIMIT = 50
-"""Records per page, comfortably more than the slice below matches"""
+"""Records per page, comfortably more than the query below matches"""
 
 PROJECT = "CMIP6Plus"
 
@@ -83,12 +84,13 @@ HOST = "esgf.nci.org.au"
 """
 An ESGF1 Solr node which indexes CMIP6Plus
 
-Solr rather than STAC on purpose: `test_the_cmip6_stac_table_cannot_be_reused` shows
-why the STAC table cannot be borrowed the way this one can.
+Solr rather than STAC on purpose:
+`test_the_cmip6_stac_facade_parameters_cannot_be_reused_for_cmip6plus` shows why
+the STAC facade parameters cannot be borrowed the way these can.
 """
 
 CMIP6PLUS_FACADE = SearchAPIFacade(
-    # The whole point of this module. 
+    # The whole point of this module.
     # Nothing specific to CMIP6Plus, we just use CMIP6 pieces as they are.
     # If CMIP6Plus ever needs pieces of its own, this line is where that shows up.
     parameters=ESGF1_CMIP6_FACADE_PARAMETERS,
@@ -110,9 +112,9 @@ SELECTOR = build_project_list_selector({PROJECT: (CMIP6PLUS_FACADE,)})
 LEAF_QUERY = Query(
     project=PROJECT,
     # Every facet modelled, and `other_terms` empty. There is nothing CMIP6Plus
-    # records that esmporium does not already have a canonical name for, so the `other_terms` escape
-    # hatch cannot be tested here. We test it with the CORDEX integration tests instead,
-    # see [add cross-ref].
+    # records that esmporium does not already have a canonical name for, so the
+    # `other_terms` escape hatch cannot be tested here. We test it with the CORDEX
+    # integration tests instead, see `test_cordex_other_terms_live.py`.
     variable="tas",
     reporting_interval="mon",
     experiment="esm-hist",
@@ -120,8 +122,8 @@ LEAF_QUERY = Query(
 """
 The query every search here works from
 
-Tiny on purpose: this query gave four datasets when we searched: one model, four variant labels, so grouping by model
-and variant gives one dataset per group.
+Tiny on purpose: this query gave four datasets when we searched: one model, four
+variant labels, so grouping by model and variant gives one dataset per group.
 `esm-hist` because CMIP6Plus runs its own experiments and has no `historical`.
 """
 
@@ -129,8 +131,8 @@ EXPECTED_ROWS = 4
 """
 How many datasets the query matched when this was written
 
-Should be used as a floor, not an equality: the archive grows, and a test which failed because more
-CMIP6Plus data was published would be telling us nothing.
+Should be used as a floor, not an equality: the archive grows, and a test which
+failed because more CMIP6Plus data was published would be telling us nothing.
 """
 
 
@@ -182,9 +184,9 @@ def searched(tmp_path_factory):
         # moved its experiment names. Worth being told either way.
         pytest.fail(
             f"{HOST} answered and returned no {PROJECT} dataset for monthly `tas` of "
-            "`esm-hist`. Either the slice has gone (CMIP6Plus runs its own "
-            "experiments and they change) or the reused CMIP6 naming table no longer "
-            "builds the request we think it does.",
+            "`esm-hist`. Either the archive no longer holds matching datasets "
+            "(CMIP6Plus runs its own experiments and they change) or the reused "
+            "CMIP6 facade parameters no longer build the request we think they do.",
             pytrace=False,
         )
 
@@ -220,9 +222,9 @@ def test_cmip6plus_is_registered_for_translation_but_not_for_searching():
         DEFAULT_SELECTOR(canonical, 0)
 
 
-def test_the_cmip6_stac_table_cannot_be_reused_for_cmip6plus():
+def test_the_cmip6_stac_facade_parameters_cannot_be_reused_for_cmip6plus():
     """
-    The Solr table is reusable for CMIP6Plus and the STAC one is not
+    The Solr facade parameters are reusable for CMIP6Plus and the STAC ones are not
 
     Worth pinning because it is the one place the "CMIP6Plus is just CMIP6" story
     breaks, and the reason is not the facet names -- those are identical -- but the
@@ -246,20 +248,22 @@ def test_the_cmip6_stac_table_cannot_be_reused_for_cmip6plus():
 
 
 @pytest.mark.hits_esgf_search_api
-def test_cmip6plus_needs_no_naming_table_of_its_own(searched):
+def test_cmip6plus_needs_no_query_style_of_its_own(searched):
     """
-    CMIP6's naming table reads a live CMIP6Plus document with nothing invented
+    CMIP6's query style reads a live CMIP6Plus document with nothing invented
 
-    The direct contrast with `test_our_cordex_naming_table_still_reads_a_live_document`.
+    The direct contrast with `test_our_cordex_query_style_still_reads_a_live_document`.
     There, two of the nine columns had to be decided rather than read, and `grid_label`
     came back `None` because CORDEX has no grid concept. Here every column is read off
-    the document, `grid_label` among them, by a table nobody wrote for this project.
+    the document, `grid_label` among them, by a query style nobody wrote for this
+    project.
     """
     engine, _ = searched
     rows = saved(engine)
 
     assert CMIP6PLUS_FACADE.parameters is ESGF1_CMIP6_FACADE_PARAMETERS, (
-        "this test only means something while the table is CMIP6's own, reused"
+        "this test only means something while the facade parameters are CMIP6's "
+        "own, reused"
     )
     assert len(rows) >= EXPECTED_ROWS
 
@@ -320,9 +324,9 @@ def test_a_cmip6plus_requirement_is_searched_saved_and_solved(searched):
         len(result.satisfied) + len(result.unsatisfied) + len(result.ambiguous)
     )
 
-    # One dataset per model and variant in this slice, so every group is satisfied and
-    # the group keys are plain column values -- no `None` anywhere, which is what an
-    # unanswerable facet would have left.
+    # One dataset per model and variant among the saved rows, so every group is
+    # satisfied and the group keys are plain column values -- no `None` anywhere,
+    # which is what an unanswerable facet would have left.
     assert result.satisfied, f"no group was satisfied: {result.explain()}"
     for key in result.satisfied:
         assert [name for name, _ in key] == ["model", "variant_label"]
