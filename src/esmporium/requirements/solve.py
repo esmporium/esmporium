@@ -229,11 +229,11 @@ class UnrankableFacetError(ValueError):
 # The last case is the one to be careful not to break: two projects can share a query
 # class, and then they declare the same project-specific facets. A caller who maps
 # CMIP6Plus to `QueryCMIP6` (which is what searching it takes -- see
-# `tests/integration/requirements/test_cmip6plus_registration.py`) has a catalogue
-# where every candidate answers for `sub_experiment_id`, whichever of the two projects
-# it came from, so it can be grouped on throughout. "Spans more than one project"
-# would refuse that, which is why the test is what the candidates can answer rather
-# than what projects they come from.
+# `tests/integration/unmodelled_project/test_cmip6plus_registration.py`) has a
+# catalogue where every candidate answers for `sub_experiment_id`, whichever of the
+# two projects it came from, so it can be grouped on throughout. "Spans more than one
+# project" would refuse that, which is why the test is what the candidates can answer
+# rather than what projects they come from.
 #
 # Canonical facets with no column (`realm`, `activity`, `resolution`) are deliberately
 # left out: partial coverage there is ordinary -- two mirrors of one project return
