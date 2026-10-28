@@ -624,20 +624,6 @@ class File(EsmporiumBase, table=True):
     (`cmip6:tracking_id`, `cmip7:tracking_id`, ...); Solr carries it as `tracking_id`.
     """
 
-    local_path: str | None = None
-    """
-    The publisher's DRS-relative path for this file, if it published one
-
-    From ESGF-NG STAC's `file:local_path`, e.g.
-    `CMIP6/CMIP/NIMS-KMA/UKESM1-0-LL/.../tas_Amon_....nc`. Solr publishes no
-    equivalent, so this is `None` for anything learned from Solr.
-
-    Kept on the file rather than on the route because every node we have looked at
-    publishes the same DRS-relative path. That is an observation rather than a
-    guarantee: a node publishing an absolute path would leave that one node's answer
-    here.
-    """
-
 
 class DataAccess(EsmporiumBase, table=True):
     """

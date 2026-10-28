@@ -300,17 +300,16 @@ def test_the_two_apis_agree_about_one_cmip6_dataset(
     `(dataset_version_id, filename)`, whatever described it, so if the two APIs
     disagreed, ingest order would decide what we hold.
 
-    They agree, and that is the finding. On the four node-independent facts -- size,
-    checksum, the algorithm it is of, and the tracking id -- Solr and STAC are
-    identical, so a checksum learned from one really is comparable with the other.
+    They agree, and that is the finding. On all four facts we keep about a file --
+    size, checksum, the algorithm it is of, and the tracking id -- Solr and STAC are
+    identical, so a checksum learned from one really is comparable with the other,
+    and whichever answered first, we hold the same thing.
 
-    The one asymmetry is `local_path`: STAC publishes `file:local_path`, the DRS-
-    relative path, and Solr publishes no equivalent at all. That is why
-    `save_data_access_payload` treats silence and assertion differently -- a Solr file
-    step running after a STAC ingest must not read Solr's silence as "the path is
-    nothing" and erase it. Pinned here rather than only in the unit tests because it
-    is a fact about the two APIs, not about our code, and it is the kind of fact that
-    changes without telling us.
+    Worth pinning live rather than only in the unit tests, because it is a fact about
+    the two APIs and not about our code: nothing stops them drifting apart, and if
+    they do, the first we would otherwise know is a
+    [FileFactsChangedWarning][esmporium.db.FileFactsChangedWarning] from somebody's
+    ingest.
 
     Each side is ingested into a database of its own, because that is the only way to
     compare them: into one database, the second ingest would overwrite the thing we
@@ -360,10 +359,6 @@ def test_the_two_apis_agree_about_one_cmip6_dataset(
             "supposed to be the same from either, and a `File` row can only hold one "
             "answer. See esmporium.db.FileFactsChangedWarning."
         )
-
-        # The asymmetry, asserted in both directions so it fails if either side moves.
-        assert from_stac.local_path is not None
-        assert from_solr.local_path is None
 
 
 def test_the_west_cmip6_mirror_offers_whole_version_routes(engine, skip_or_fail):

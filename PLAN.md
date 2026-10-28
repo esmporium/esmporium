@@ -500,6 +500,15 @@ needs before it writes anything (both are written up on
   step which believed the advertised `access` list would fail on every one of them.
   The whole-version branch of the model is not wrong -- the assets really are
   published -- but nothing can be fetched through it yet.
+- **The DRS path is this step's to build, not the database's to store.** `File` had a
+  `local_path` column holding the publisher's DRS-relative path; it was dropped,
+  because it is the dataset's own project-specific id with its dots turned into
+  slashes, plus the version and the filename, all of which are stored already (3761
+  of 3761 live STAC file assets reconstructed exactly, 2026-10-28). It was also empty
+  for every CMIP5 file and for any CMIP6 file a Solr host answered about, since Solr
+  publishes no equivalent -- so a download step reading it would have worked for
+  CMIP7, sometimes for CMIP6 and never for CMIP5. Deriving it works for all three,
+  and where a file goes on *our* disk is this step's decision anyway.
 
 Downloads
 Tracking node health

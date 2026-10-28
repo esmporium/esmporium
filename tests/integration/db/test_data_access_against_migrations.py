@@ -71,7 +71,6 @@ def test_a_file_and_both_kinds_of_route_store_in_a_migrated_database(engine):
             checksum="bacddda94d64f75f9832b163929d0c099c6c320805df204a97f83fb15fb76884",
             checksum_type="SHA256",
             tracking_id="hdl:21.14100/84ce33af-1a76-4f66-b9eb-c222df3da596",
-            local_path="CMIP6/CMIP/.../tas_Amon_185001-194912.nc",
         )
         session.add(stored_file)
         session.flush()

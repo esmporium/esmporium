@@ -152,7 +152,6 @@ def test_a_netcdf_asset_becomes_one_file_and_one_route_to_it():
         == "42ef6eefb38c02b5138a9e967a7b49c572685f87aa383e780a25b46c1bd89d04"
     )
     assert stored.tracking_id == "hdl:21.14100/007da5e5-12bb-4fe9-8df9-5cd473280650"
-    assert stored.local_path.endswith(NETCDF_ASSET_NAME)
 
     assert len(payload.accesses) == 1
     route = payload.accesses[0]
@@ -472,8 +471,6 @@ def test_a_solr_file_document_becomes_one_file_and_every_route_to_it():
     assert stored.checksum_type == "SHA256"
     assert stored.checksum == SOLR_FILE_DOC["checksum"][0]
     assert stored.tracking_id == SOLR_FILE_DOC["tracking_id"][0]
-    # Solr publishes no DRS-relative path, unlike STAC.
-    assert stored.local_path is None
 
     assert len(payload.accesses) == 2
     assert all(route.filename == stored.filename for route in payload.accesses)

@@ -70,7 +70,6 @@ def _a_file_info(filename: str = "tas_Amon_185001-194912.nc") -> FileInfo:
         checksum="ab" * 32,
         checksum_type="SHA256",
         tracking_id="hdl:21.14100/abc",
-        local_path=f"CMIP6/x/{filename}",
     )
 
 
@@ -344,7 +343,6 @@ def test_a_files_scalars_are_refreshed_on_a_later_ingest(engine):
             checksum="cd" * 32,
             checksum_type="SHA256",
             tracking_id="hdl:21.14100/abc",
-            local_path="CMIP6/x/tas_Amon_185001-194912.nc",
         )
         with pytest.warns(FileFactsChangedWarning) as warned:
             save_data_access_payload(session, 1, DataAccessPayload(files=(corrected,)))
@@ -363,34 +361,33 @@ def test_a_files_scalars_are_refreshed_on_a_later_ingest(engine):
 
 def test_a_fact_a_document_is_silent_about_is_kept(engine):
     """
-    Solr publishes no DRS path, and a Solr file step must not erase STAC's
+    A document which does not name the checksum algorithm must not erase the name
 
     The two APIs are silent about different things, and CMIP6 is served by both, so
-    this is an ordinary sequence rather than a corner case: record a version from
-    STAC, fill in file access from Solr, and the `local_path` STAC taught us is still
-    there. Reading Solr's silence as "the path is nothing" would have dropped it,
-    with nothing to say it had.
+    this is an ordinary sequence rather than a corner case. Solr states the algorithm
+    in a field of its own; STAC encodes it in a multihash prefix, and one we cannot
+    decode is stored as published with `checksum_type` left `None`. So a document can
+    hand us a digest without naming its algorithm, and reading that `None` as "the
+    algorithm is nothing" would throw away a name the other API had given us --
+    leaving a digest that can no longer be compared with anything.
     """
     with Session(engine) as session:
         save_data_access_payload(session, 1, DataAccessPayload(files=(_a_file_info(),)))
         session.commit()
 
-        # Shaped the way a Solr file document arrives: no DRS path, everything else
-        # asserted and agreeing.
-        from_solr = FileInfo(
+        unnameable = FileInfo(
             filename="tas_Amon_185001-194912.nc",
             size=123,
             checksum="ab" * 32,
-            checksum_type="SHA256",
+            checksum_type=None,
             tracking_id="hdl:21.14100/abc",
-            local_path=None,
         )
-        save_data_access_payload(session, 1, DataAccessPayload(files=(from_solr,)))
+        save_data_access_payload(session, 1, DataAccessPayload(files=(unnameable,)))
         session.commit()
 
         stored = session.exec(select(File)).one()
 
-    assert stored.local_path == "CMIP6/x/tas_Amon_185001-194912.nc"
+    assert stored.checksum_type == "SHA256"
 
 
 def test_recording_the_same_facts_twice_says_nothing(engine):
@@ -443,7 +440,6 @@ def test_a_disagreement_names_the_node_the_document_came_from(engine):
             checksum="ab" * 32,
             checksum_type="SHA256",
             tracking_id="hdl:21.14100/abc",
-            local_path="CMIP6/x/tas_Amon_185001-194912.nc",
         )
         other_node = DataAccessInfo(
             filename="tas_Amon_185001-194912.nc",
@@ -499,7 +495,6 @@ def test_what_counts_as_a_disagreement(held, asserted, expected, why):
         checksum=None,
         checksum_type=None,
         tracking_id=None,
-        local_path=None,
     )
 
     assert file_fact_differences(stored, info) == expected, why

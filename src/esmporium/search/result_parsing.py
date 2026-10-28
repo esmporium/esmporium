@@ -99,9 +99,6 @@ class FileInfo:
     tracking_id: str | None
     """See [File.tracking_id][esmporium.db.schema.File.tracking_id]."""
 
-    local_path: str | None
-    """See [File.local_path][esmporium.db.schema.File.local_path]."""
-
 
 @dataclass(frozen=True)
 class DataAccessInfo:

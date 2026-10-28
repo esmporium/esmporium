@@ -829,7 +829,6 @@ def _stac_file(name: str, asset: Mapping[str, Any]) -> FileInfo:
         checksum=checksum.value if checksum is not None else None,
         checksum_type=checksum.checksum_type if checksum is not None else None,
         tracking_id=_suffixed_value(asset, ":tracking_id"),
-        local_path=asset.get("file:local_path"),
     )
 
 

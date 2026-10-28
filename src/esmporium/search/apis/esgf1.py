@@ -490,8 +490,6 @@ def solr_file_access(doc: dict[str, Any]) -> DataAccessPayload:
         checksum=extract_one_element_list(doc.get("checksum")),
         checksum_type=extract_one_element_list(doc.get("checksum_type")),
         tracking_id=extract_one_element_list(doc.get("tracking_id")),
-        # Solr publishes no DRS-relative path, so there is nothing to record.
-        local_path=None,
     )
 
     accesses = []

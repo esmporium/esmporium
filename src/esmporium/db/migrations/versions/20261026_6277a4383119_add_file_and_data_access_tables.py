@@ -37,7 +37,6 @@ def upgrade() -> None:
         sa.Column("checksum", sqlmodel.sql.sqltypes.AutoString(), nullable=True),
         sa.Column("checksum_type", sqlmodel.sql.sqltypes.AutoString(), nullable=True),
         sa.Column("tracking_id", sqlmodel.sql.sqltypes.AutoString(), nullable=True),
-        sa.Column("local_path", sqlmodel.sql.sqltypes.AutoString(), nullable=True),
         sa.ForeignKeyConstraint(
             ["dataset_version_id"],
             ["datasetversion.id"],

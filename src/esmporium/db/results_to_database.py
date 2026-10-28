@@ -659,7 +659,6 @@ FILE_FACT_COLUMNS: tuple[str, ...] = (
     "checksum",
     "checksum_type",
     "tracking_id",
-    "local_path",
 )
 """
 The columns of [File][esmporium.db.schema.File] which describe the bytes
@@ -694,10 +693,13 @@ def file_fact_differences(stored: File, info: FileInfo) -> dict[str, tuple[Any, 
     """
     Find the facts a document asserts about a file which disagree with what we hold
 
-    A fact the document is silent about (`None`) is not a disagreement: Solr publishes
-    no DRS-relative path at all, so every Solr file is silent about `local_path`, and
-    reading that as "the path is now nothing" would mean a Solr ingest erasing what a
-    STAC ingest had learned. Silence is silence, in either direction.
+    A fact the document is silent about (`None`) is not a disagreement. A document can
+    be silent about any of these: a checksum we cannot decode is stored as published
+    with `checksum_type` left `None` (see
+    [File.checksum][esmporium.db.schema.File.checksum]), so a STAC document can hand
+    us a digest without naming its algorithm where a Solr one names it. Reading that
+    `None` as "the algorithm is now nothing" would erase what the other API told us.
+    Silence is silence, in either direction.
 
     Parameters
     ----------
@@ -813,9 +815,10 @@ def save_data_access_payload(
       [DatasetVersion][esmporium.db.schema.DatasetVersion]'s snapshot flags are
       refreshed.
     - **Silence changes nothing**, because the two APIs are silent about different
-      things: Solr publishes no DRS-relative path, so taking its `None` as an
-      assertion would mean a Solr file step erasing the `local_path` a STAC ingest
-      had learned about the very same file.
+      things. A checksum we cannot decode leaves `checksum_type` `None` while the
+      digest is stored as published, so one API can be silent about the algorithm
+      where the other names it; taking that `None` as an assertion would erase the
+      name we had.
 
     A document which asserts something *different* from what we hold is neither of
     those, and warns: see
@@ -940,7 +943,6 @@ def _get_or_create_file(
             checksum=info.checksum,
             checksum_type=info.checksum_type,
             tracking_id=info.tracking_id,
-            local_path=info.local_path,
         ),
     )
 

@@ -136,7 +136,6 @@ CREATE TABLE file (
 	checksum VARCHAR,
 	checksum_type VARCHAR,
 	tracking_id VARCHAR,
-	local_path VARCHAR,
 	CONSTRAINT pk_file PRIMARY KEY (id),
 	CONSTRAINT uq_file_dataset_version_id_filename UNIQUE (dataset_version_id, filename),
 	CONSTRAINT fk_file_dataset_version_id_datasetversion FOREIGN KEY(dataset_version_id) REFERENCES datasetversion (id)
