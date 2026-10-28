@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import httpx
 import pytest
-from sqlmodel import Session, select
+from sqlmodel import Session, create_engine, select
 
 from esmporium.datasets import AccessService, ContainerFormat
 from esmporium.db import (
@@ -32,6 +32,7 @@ from esmporium.db import (
     Dataset,
     DatasetVersion,
     File,
+    configure_sqlite_for_concurrency,
     ingest_parsed_documents,
     record_solr_file_access,
 )
@@ -268,6 +269,101 @@ def test_a_live_search_records_a_checksum_we_can_name(
         for stored in named:
             assert stored.checksum
             assert stored.checksum_type == "SHA256"
+
+
+def _file_facts(engine, facade, query):
+    """Record a query through one facade and read back what it stored about each file"""
+    upgrade_to_head(engine)
+
+    with Session(engine) as session:
+        _record(session, facade, query)
+
+    with Session(engine) as session:
+        rows = session.exec(
+            select(File, DatasetVersion).join(
+                DatasetVersion, File.dataset_version_id == DatasetVersion.id
+            )
+        ).all()
+
+        return {(version.version, stored.filename): stored for stored, version in rows}
+
+
+def test_the_two_apis_agree_about_one_cmip6_dataset(
+    engine, database_path, skip_or_fail
+):
+    """
+    Solr and STAC, head to head on the same dataset version: do they say the same thing?
+
+    CMIP6 is the one project both serve, so it is the only place this can be asked at
+    all -- and it needs asking, because both answers land in the same
+    [File][esmporium.db.schema.File] row. One row per
+    `(dataset_version_id, filename)`, whatever described it, so if the two APIs
+    disagreed, ingest order would decide what we hold.
+
+    They agree, and that is the finding. On the four node-independent facts -- size,
+    checksum, the algorithm it is of, and the tracking id -- Solr and STAC are
+    identical, so a checksum learned from one really is comparable with the other.
+
+    The one asymmetry is `local_path`: STAC publishes `file:local_path`, the DRS-
+    relative path, and Solr publishes no equivalent at all. That is why
+    `save_data_access_payload` treats silence and assertion differently -- a Solr file
+    step running after a STAC ingest must not read Solr's silence as "the path is
+    nothing" and erase it. Pinned here rather than only in the unit tests because it
+    is a fact about the two APIs, not about our code, and it is the kind of fact that
+    changes without telling us.
+
+    Each side is ingested into a database of its own, because that is the only way to
+    compare them: into one database, the second ingest would overwrite the thing we
+    came to measure.
+    """
+    solr_facade = _facade("CMIP6", "esgf.nci.org.au")
+    stac_facade = _facade("CMIP6", "search.west.esgf.io")
+
+    stac_engine = configure_sqlite_for_concurrency(
+        create_engine(f"sqlite:///{database_path.parent / 'stac.db'}")
+    )
+
+    try:
+        solr = _file_facts(engine, solr_facade, CMIP6_QUERY)
+        stac = _file_facts(stac_engine, stac_facade, CMIP6_QUERY)
+    except NoFacadeAnsweredError as error:
+        skip_or_fail(
+            error.failures,
+            skippable=SearchAPIRequestError,
+            reason="one of the two APIs did not answer",
+        )
+
+    shared = sorted(set(solr) & set(stac))
+    assert shared, (
+        "the two APIs returned no (version, filename) in common for "
+        f"{CMIP6_QUERY}, so there is nothing to compare. Solr offered "
+        f"{sorted(solr)[:3]} and STAC offered {sorted(stac)[:3]}. Either the query "
+        "has drifted off data one of them holds, or they no longer agree about which "
+        "version is published -- both findings rather than outages."
+    )
+
+    for key in shared:
+        from_solr, from_stac = solr[key], stac[key]
+        assert (
+            from_solr.size,
+            from_solr.checksum,
+            from_solr.checksum_type,
+            from_solr.tracking_id,
+        ) == (
+            from_stac.size,
+            from_stac.checksum,
+            from_stac.checksum_type,
+            from_stac.tracking_id,
+        ), (
+            f"the two APIs describe {key[1]} of version {key[0]} differently. "
+            "These facts describe the bytes rather than where they are, so they are "
+            "supposed to be the same from either, and a `File` row can only hold one "
+            "answer. See esmporium.db.FileFactsChangedWarning."
+        )
+
+        # The asymmetry, asserted in both directions so it fails if either side moves.
+        assert from_stac.local_path is not None
+        assert from_solr.local_path is None
 
 
 def test_the_west_cmip6_mirror_offers_whole_version_routes(engine, skip_or_fail):

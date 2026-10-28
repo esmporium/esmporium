@@ -536,6 +536,14 @@ class File(EsmporiumBase, table=True):
     Where the bytes can be fetched from is
     [DataAccess][esmporium.db.schema.DataAccess], one row per route per node.
 
+    "The same on every replica" is an assumption, so it is checked rather than
+    trusted: there is one row per `(dataset_version_id, filename)` however many
+    documents describe it, and a document which describes one differently from
+    another warns
+    ([FileFactsChangedWarning][esmporium.db.FileFactsChangedWarning]). Measured
+    against live answers it holds -- of 153 files served by more than one node within
+    one version, every node agreed.
+
     This holds no URL and no local copy. Nothing in esmporium opens, fetches or
     downloads any of this yet.
     """

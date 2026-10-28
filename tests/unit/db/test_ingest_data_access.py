@@ -9,6 +9,7 @@ be misread.
 from __future__ import annotations
 
 import json
+import warnings
 from pathlib import Path
 
 import pytest
@@ -21,7 +22,9 @@ from esmporium.db import (
     DataNode,
     Dataset,
     File,
+    FileFactsChangedWarning,
     UnknownRouteFileError,
+    file_fact_differences,
     ingest_parsed_documents,
     save_data_access_payload,
 )
@@ -323,10 +326,13 @@ def test_a_cmip5_bundle_carrying_files_is_refused(engine):
 
 def test_a_files_scalars_are_refreshed_on_a_later_ingest(engine):
     """
-    Every document which mentions a file asserts its size and checksum afresh
+    The later answer wins, and we say so rather than swapping it in quietly
 
-    So the later answer wins, the way `DatasetVersion`'s snapshot flags do. A
-    publisher correcting a checksum should not leave us holding the old one.
+    Keeping the newer value is the right call -- holding a checksum we have been told
+    is wrong is worse than holding the new one, and there is only one row to hold it
+    in. But the same filename under the same version is supposed to describe the same
+    bytes, so being told otherwise is a finding, and the value we drop cannot be
+    recovered: a file document's own JSON is stored nowhere.
     """
     with Session(engine) as session:
         save_data_access_payload(session, 1, DataAccessPayload(files=(_a_file_info(),)))
@@ -340,8 +346,160 @@ def test_a_files_scalars_are_refreshed_on_a_later_ingest(engine):
             tracking_id="hdl:21.14100/abc",
             local_path="CMIP6/x/tas_Amon_185001-194912.nc",
         )
-        save_data_access_payload(session, 1, DataAccessPayload(files=(corrected,)))
+        with pytest.warns(FileFactsChangedWarning) as warned:
+            save_data_access_payload(session, 1, DataAccessPayload(files=(corrected,)))
         session.commit()
 
         stored = session.exec(select(File)).one()
         assert (stored.size, stored.checksum) == (456, "cd" * 32)
+
+    # Both values, so the one we dropped is at least in the log.
+    said = str(warned[0].message)
+    assert "we hold 123" in said
+    assert "this document says 456" in said
+    assert "ab" * 32 in said
+    assert "cd" * 32 in said
+
+
+def test_a_fact_a_document_is_silent_about_is_kept(engine):
+    """
+    Solr publishes no DRS path, and a Solr file step must not erase STAC's
+
+    The two APIs are silent about different things, and CMIP6 is served by both, so
+    this is an ordinary sequence rather than a corner case: record a version from
+    STAC, fill in file access from Solr, and the `local_path` STAC taught us is still
+    there. Reading Solr's silence as "the path is nothing" would have dropped it,
+    with nothing to say it had.
+    """
+    with Session(engine) as session:
+        save_data_access_payload(session, 1, DataAccessPayload(files=(_a_file_info(),)))
+        session.commit()
+
+        # Shaped the way a Solr file document arrives: no DRS path, everything else
+        # asserted and agreeing.
+        from_solr = FileInfo(
+            filename="tas_Amon_185001-194912.nc",
+            size=123,
+            checksum="ab" * 32,
+            checksum_type="SHA256",
+            tracking_id="hdl:21.14100/abc",
+            local_path=None,
+        )
+        save_data_access_payload(session, 1, DataAccessPayload(files=(from_solr,)))
+        session.commit()
+
+        stored = session.exec(select(File)).one()
+
+    assert stored.local_path == "CMIP6/x/tas_Amon_185001-194912.nc"
+
+
+def test_recording_the_same_facts_twice_says_nothing(engine):
+    """
+    Which is every re-run of a search, so a warning here would be noise, not news
+
+    The check has to be quiet for the case that happens constantly, or nobody will
+    read it on the day it fires.
+    """
+    with Session(engine) as session:
+        save_data_access_payload(session, 1, DataAccessPayload(files=(_a_file_info(),)))
+        session.commit()
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", FileFactsChangedWarning)
+            save_data_access_payload(
+                session, 1, DataAccessPayload(files=(_a_file_info(),))
+            )
+            session.commit()
+
+
+def test_a_disagreement_names_the_node_the_document_came_from(engine):
+    """
+    Read off the routes, because a `File` has no node of its own
+
+    A `File` is node-independent by design -- the point of the table -- so the only
+    way to say who told us this is to look at the routes travelling with it. Without
+    that the warning says a file changed but not who says so, which is most of what
+    somebody raising it upstream needs.
+    """
+    with Session(engine) as session:
+        save_data_access_payload(
+            session,
+            1,
+            DataAccessPayload(
+                files=(_a_file_info(),),
+                accesses=(
+                    _a_route(
+                        filename="tas_Amon_185001-194912.nc",
+                        url="https://ceda.ac.uk/x/tas_Amon_185001-194912.nc",
+                    ),
+                ),
+            ),
+        )
+        session.commit()
+
+        disagreeing = FileInfo(
+            filename="tas_Amon_185001-194912.nc",
+            size=999,
+            checksum="ab" * 32,
+            checksum_type="SHA256",
+            tracking_id="hdl:21.14100/abc",
+            local_path="CMIP6/x/tas_Amon_185001-194912.nc",
+        )
+        other_node = DataAccessInfo(
+            filename="tas_Amon_185001-194912.nc",
+            data_node="esgf.nci.org.au",
+            service=AccessService.HTTPS,
+            container_format=ContainerFormat.NETCDF,
+            url="https://esgf.nci.org.au/x/tas_Amon_185001-194912.nc",
+            raw_json="{}",
+        )
+        with pytest.warns(FileFactsChangedWarning, match="esgf.nci.org.au"):
+            save_data_access_payload(
+                session,
+                1,
+                DataAccessPayload(files=(disagreeing,), accesses=(other_node,)),
+            )
+
+
+@pytest.mark.parametrize(
+    ("held", "asserted", "expected", "why"),
+    [
+        pytest.param(
+            123, 456, {"size": (123, 456)}, "two values, two answers", id="differs"
+        ),
+        pytest.param(123, 123, {}, "the same value asserted again", id="agrees"),
+        pytest.param(
+            123,
+            None,
+            {},
+            "this document is silent, which asserts nothing",
+            id="asserted-is-silent",
+        ),
+        pytest.param(
+            None,
+            456,
+            {},
+            "we held nothing, so there is nothing to disagree with",
+            id="held-is-silent",
+        ),
+    ],
+)
+def test_what_counts_as_a_disagreement(held, asserted, expected, why):
+    """
+    Silence is not a disagreement, in either direction
+
+    The rule the whole check rests on: a `None` means "this document does not say",
+    not "the answer is nothing". Get it wrong in one direction and every Solr file
+    warns about the path it never had; wrong in the other and Solr erases STAC's.
+    """
+    stored = File(dataset_version_id=1, filename="tas.nc", size=held)
+    info = FileInfo(
+        filename="tas.nc",
+        size=asserted,
+        checksum=None,
+        checksum_type=None,
+        tracking_id=None,
+        local_path=None,
+    )
+
+    assert file_fact_differences(stored, info) == expected, why

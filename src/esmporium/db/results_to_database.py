@@ -5,6 +5,7 @@ Writing search results into the database
 from __future__ import annotations
 
 import json
+import warnings
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar
@@ -43,7 +44,7 @@ from esmporium.search.result_parsing import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Iterator, Mapping
+    from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
     from contextlib import AbstractContextManager
 
     from esmporium.search.search_api_facade import SearchAPIFacade
@@ -653,6 +654,128 @@ def check_access_payload_is_attributable(parsed: ParsedDocument) -> None:
         raise AmbiguousDataAccessError(parsed)
 
 
+FILE_FACT_COLUMNS: tuple[str, ...] = (
+    "size",
+    "checksum",
+    "checksum_type",
+    "tracking_id",
+    "local_path",
+)
+"""
+The columns of [File][esmporium.db.schema.File] which describe the bytes
+
+i.e. everything a document *asserts* about a file, as opposed to the two columns which
+identify the row (`dataset_version_id` and `filename`). These are the ones
+[save_data_access_payload][(m).save_data_access_payload] refreshes, and so the ones
+[check_file_facts_agree][(m).check_file_facts_agree] compares.
+"""
+
+
+class FileFactsChangedWarning(UserWarning):
+    """
+    Warned when two documents describe the same file differently
+
+    Same version, same filename, different bytes: either two nodes disagree about a
+    replica, or data was republished under a version that already existed. Both are
+    upstream problems rather than ours, and neither is something our model can
+    represent -- there is one [File][esmporium.db.schema.File] row per
+    `(dataset_version_id, filename)`, so one of the two answers is all we can hold.
+
+    This is a warning rather than an error on purpose. It is ESGF's inconsistency to
+    fix, the same way replicas lagging on retraction is -- which is recorded the same
+    way, in the note on how a version row's snapshot flags are refreshed -- and
+    raising here would abort an entire search over one file: the processors which
+    write results are called from inside paging, which does not catch this, so a
+    raise would discard every page not yet committed.
+    """
+
+
+def file_fact_differences(stored: File, info: FileInfo) -> dict[str, tuple[Any, Any]]:
+    """
+    Find the facts a document asserts about a file which disagree with what we hold
+
+    A fact the document is silent about (`None`) is not a disagreement: Solr publishes
+    no DRS-relative path at all, so every Solr file is silent about `local_path`, and
+    reading that as "the path is now nothing" would mean a Solr ingest erasing what a
+    STAC ingest had learned. Silence is silence, in either direction.
+
+    Parameters
+    ----------
+    stored
+        The file row we already hold
+
+    info
+        What this document says about the same file
+
+    Returns
+    -------
+    :
+        The held and asserted value of each of
+        [FILE_FACT_COLUMNS][(m).FILE_FACT_COLUMNS] on which the two disagree, keyed by
+        column. Empty when they agree, or when one of the two is silent.
+    """
+    differences: dict[str, tuple[Any, Any]] = {}
+    for column in FILE_FACT_COLUMNS:
+        held = getattr(stored, column)
+        asserted = getattr(info, column)
+        if held is None or asserted is None or held == asserted:
+            continue
+
+        differences[column] = (held, asserted)
+
+    return differences
+
+
+def check_file_facts_agree(
+    stored: File, info: FileInfo, data_nodes: Sequence[str] = ()
+) -> None:
+    """
+    Check a document describes a file we already hold the same way, and say so if not
+
+    Parameters
+    ----------
+    stored
+        The file row we already hold
+
+    info
+        What this document says about the same file
+
+    data_nodes
+        The nodes this document says serve the file, named in the warning
+
+        Read from the routes travelling with the file rather than from the file
+        itself, because a [File][esmporium.db.schema.File] is node-independent by
+        design and carries no node of its own.
+
+    Warns
+    -----
+    FileFactsChangedWarning
+        The document asserts a different value for something we already hold
+    """
+    differences = file_fact_differences(stored, info)
+    if not differences:
+        return
+
+    served_by = ", ".join(data_nodes) if data_nodes else "a node we cannot name"
+    changes = "; ".join(
+        f"{column}: we hold {held!r}, this document says {asserted!r}"
+        for column, (held, asserted) in sorted(differences.items())
+    )
+    warnings.warn(
+        f"{info.filename} of dataset version {stored.dataset_version_id} is "
+        f"described differently by two documents. {changes}. The newer value is "
+        f"kept, so the one we held is now gone: a file document's own JSON is not "
+        f"stored anywhere, so it cannot be recovered from the database. This "
+        f"document came from {served_by}. The same filename under the same version "
+        "should describe the same bytes on every replica, so this means either two "
+        "nodes disagree or the data was republished under a version that already "
+        "existed. Both are ESGF's to fix, and we cannot ask upstream without cases: "
+        "please raise an issue at https://github.com/esmporium/esmporium/issues.",
+        FileFactsChangedWarning,
+        stacklevel=2,
+    )
+
+
 @dataclass(frozen=True)
 class SavedDataAccess:
     """The rows one payload turned into, flushed, so every `id` is set"""
@@ -680,11 +803,26 @@ def save_data_access_payload(
     `(dataset_version_id, filename)` and a route on
     `(dataset_version_id, service, container_format, url)` -- see the identity notes
     on [File][esmporium.db.schema.File] and
-    [DataAccess][esmporium.db.schema.DataAccess]. Scalars on a file we already hold
-    (`size`, `checksum`, `checksum_type`, `tracking_id`, `local_path`) are refreshed
-    last-write-wins, the way
-    [DatasetVersion][esmporium.db.schema.DatasetVersion]'s snapshot flags are,
-    because every document which mentions a file asserts them afresh.
+    [DataAccess][esmporium.db.schema.DataAccess].
+
+    On a file we already hold, each of [FILE_FACT_COLUMNS][(m).FILE_FACT_COLUMNS] is
+    refreshed from what this document *asserts*, and left alone where this document is
+    silent (`None`). Both halves matter, and they are not the same rule:
+
+    - **Asserted wins**, so a re-ingest keeps what we hold current, the way
+      [DatasetVersion][esmporium.db.schema.DatasetVersion]'s snapshot flags are
+      refreshed.
+    - **Silence changes nothing**, because the two APIs are silent about different
+      things: Solr publishes no DRS-relative path, so taking its `None` as an
+      assertion would mean a Solr file step erasing the `local_path` a STAC ingest
+      had learned about the very same file.
+
+    A document which asserts something *different* from what we hold is neither of
+    those, and warns: see
+    [FileFactsChangedWarning][(m).FileFactsChangedWarning]. Measured against live
+    answers, that does not happen -- of 153 files served by more than one node within
+    one version, every node agreed on all four node-independent facts -- so if it
+    fires, it is news.
 
     Does not commit: the caller owns the transaction boundary.
 
@@ -710,8 +848,12 @@ def save_data_access_payload(
         A route named a file which is neither in `payload` nor already stored for
         this version
     """
+    nodes_of = _data_nodes_by_filename(payload)
     files = [
-        _get_or_create_file(session, dataset_version_id, info) for info in payload.files
+        _get_or_create_file(
+            session, dataset_version_id, info, nodes_of.get(info.filename, ())
+        )
+        for info in payload.files
     ]
     by_filename = {stored.filename: stored for stored in files}
 
@@ -760,8 +902,32 @@ def _find_file(session: Session, dataset_version_id: int, filename: str) -> File
     ).one_or_none()
 
 
+def _data_nodes_by_filename(payload: DataAccessPayload) -> dict[str, list[str]]:
+    """
+    Work out which nodes a payload says serve each of its files
+
+    Read from the routes, because that is where a node is named: a
+    [File][esmporium.db.schema.File] is node-independent by design, so
+    [FileInfo][esmporium.search.FileInfo] carries no node either. Only used to name
+    the nodes in [FileFactsChangedWarning][(m).FileFactsChangedWarning].
+    """
+    nodes: dict[str, list[str]] = {}
+    for info in payload.accesses:
+        if info.filename is None:
+            continue
+
+        for_file = nodes.setdefault(info.filename, [])
+        if info.data_node not in for_file:
+            for_file.append(info.data_node)
+
+    return nodes
+
+
 def _get_or_create_file(
-    session: Session, dataset_version_id: int, info: FileInfo
+    session: Session,
+    dataset_version_id: int,
+    info: FileInfo,
+    data_nodes: Sequence[str] = (),
 ) -> File:
     """Reuse the row for this version's file if we have one, else create it."""
     stored = get_or_create(
@@ -778,12 +944,17 @@ def _get_or_create_file(
         ),
     )
 
-    # Last-write-wins on the scalars, as documented on `save_data_access_payload`.
-    stored.size = info.size
-    stored.checksum = info.checksum
-    stored.checksum_type = info.checksum_type
-    stored.tracking_id = info.tracking_id
-    stored.local_path = info.local_path
+    # On a row we just built these all agree, so this says nothing; on one we already
+    # held, it is the only place a disagreement is visible, because the refresh below
+    # is about to overwrite what we held with what this document says.
+    check_file_facts_agree(stored, info, data_nodes)
+
+    # Asserted wins, silence changes nothing: see `save_data_access_payload`.
+    for column in FILE_FACT_COLUMNS:
+        asserted = getattr(info, column)
+        if asserted is not None:
+            setattr(stored, column, asserted)
+
     session.add(stored)
     session.flush()
 
