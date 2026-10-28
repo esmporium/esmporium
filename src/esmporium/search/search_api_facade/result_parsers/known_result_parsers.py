@@ -501,9 +501,7 @@ class ESGFNGResultParser:
 
         See
         [ResultParserProtocol.file_attribution_facets][esmporium.search.ResultParserProtocol.file_attribution_facets].
-        A STAC item carries its files in its own `assets`, so they are already parsed
-        and recorded by the time a second request could be made. Asking a STAC facade
-        for file documents is refused loudly
+        Asking a STAC facade for file documents is refused loudly
         ([NotASolrFacadeError][esmporium.search.NotASolrFacadeError]), so nothing
         reads this -- it is here because the protocol asks for it, and `()` is the
         honest answer.

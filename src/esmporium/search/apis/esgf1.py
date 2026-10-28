@@ -380,22 +380,6 @@ SOLR_SERVICE_TO_CONTAINER_FORMAT: Mapping[str, ContainerFormat] = {
 }
 """
 What the bytes are on a Solr route, read from its **service** not its mime type
-
-Deliberately not from the mime slot of the `url` triple, even though there is one.
-That slot is not reliable: a live CEDA CMIP5 file publishes
-`...evspsbl_Amon_EC-EARTH_historical_r13i1p1_195001-195912.nc4|text/html|HTTPServer`
--- `text/html` for a netCDF file on an HTTPServer route.
-
-Reading the service instead is also the more honest model of Solr, which has no
-container-format axis at all. Its `access` vocabulary is a list of services and
-nothing else -- live `esgf.nci.org.au` publishes
-`['HTTPServer', 'GridFTP', 'OPENDAP', 'Globus']` -- and every one of those moves
-whole files, so none of them says what the bytes are and there is no way to describe
-a virtual or remote store. The format of a Solr route is therefore a function of its
-service, and nothing is lost by saying so --
-the mime type is still kept verbatim in
-[DataAccess.raw_json][esmporium.db.schema.DataAccess.raw_json] along with the rest of
-the triple.
 """
 
 _URL_TRIPLE_PARTS = 3
@@ -457,11 +441,7 @@ def solr_file_access(doc: dict[str, Any]) -> DataAccessPayload:
     Read the one file, and every route to it, out of a Solr `type=File` document
 
     A Solr File document is always about exactly one file, so this never produces a
-    whole-dataset-version route: every route it returns names its file. (Solr has no
-    way of expressing a whole-version route at all -- its `url` triple has a service
-    slot but no container-format slot, and every service it names moves whole files;
-    see [SOLR_SERVICE_TO_CONTAINER_FORMAT][(m).SOLR_SERVICE_TO_CONTAINER_FORMAT].
-    Virtual and remote access is an ESGF-NG capability.)
+    whole-dataset-version route: every route it returns names its file.
 
     Reads the same way for classic ESGF-1 and for the 1.5 bridge, which publish File
     documents of the same shape.
@@ -714,15 +694,10 @@ class SearchAPIESGF1Solr:
         """
         Build the `type=File` request that gets per-file information for datasets
 
-        ESGF-1 publishes `access`, `size` and `number_of_files` on a dataset document
+        Solr publishes `access`, `size` and `number_of_files` on a dataset document
         but **no per-file URLs**, so getting them is a second request. This is the
         whole asymmetry with ESGF-NG, where a STAC item's `assets` are its files and
         the dataset search already carries them.
-
-        Deliberately not on [SearchAPI][esmporium.search.apis.SearchAPI]: asking for
-        File documents is a Solr-only capability, and putting it on the protocol
-        would force [SearchAPIESGFNGSTAC][esmporium.search.apis.SearchAPIESGFNGSTAC]
-        to implement something meaningless.
 
         Parameters
         ----------

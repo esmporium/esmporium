@@ -510,6 +510,15 @@ STAC_PROTOCOL_TO_SERVICE: Mapping[str, AccessService] = {
 }
 """How a STAC asset's `protocol` maps onto [AccessService][esmporium.datasets.AccessService]"""  # noqa: E501
 
+# Note for developers:
+# The zarr key is `application/vnd.zarr` -- a dot. `application/vnd+zarr` is a
+# long-lived typo rather than an alternative spelling (pystac shipped and then fixed
+# the same one), and nothing publishes it.
+
+# Icechunk is deliberately absent: it has no registered media type, so there is nothing
+# to key it by. An icechunk asset therefore raises
+# [UnknownContainerFormatError][(m).UnknownContainerFormatError], which is what we want
+# -- see [ContainerFormat.ICECHUNK][esmporium.datasets.ContainerFormat.ICECHUNK].
 STAC_TYPE_TO_CONTAINER_FORMAT: Mapping[str, ContainerFormat] = {
     "application/netcdf": ContainerFormat.NETCDF,
     "application/x-netcdf": ContainerFormat.NETCDF,
@@ -522,15 +531,6 @@ How a STAC asset's `type` maps onto [ContainerFormat][esmporium.datasets.Contain
 
 Keyed by media type with its parameters stripped and in lower case, which is what
 [media_type_without_parameters][(m).media_type_without_parameters] hands the lookup.
-
-The zarr key is `application/vnd.zarr` -- a dot. `application/vnd+zarr` is a
-long-lived typo rather than an alternative spelling (pystac shipped and then fixed
-the same one), and nothing publishes it.
-
-Icechunk is deliberately absent: it has no registered media type, so there is nothing
-to key it by. An icechunk asset therefore raises
-[UnknownContainerFormatError][(m).UnknownContainerFormatError], which is what we want
--- see [ContainerFormat.ICECHUNK][esmporium.datasets.ContainerFormat.ICECHUNK].
 """  # noqa: E501
 
 DATA_ROLE = "data"
@@ -613,6 +613,12 @@ def stac_asset_roles(asset: Mapping[str, Any]) -> tuple[str, ...]:
     return ()
 
 
+# Note for developers:
+# Deliberately not a hard-coded list of the non-file asset names we have seen
+# (`globus` and `reference_file`). Those are west-only today and the set will grow,
+# so a list would quietly start mis-classifying the next one to appear. Checking
+# the shape instead means a new whole-version asset is classified correctly on the
+# day it turns up:
 def stac_asset_is_one_file(name: str, asset: Mapping[str, Any]) -> bool:
     """
     Work out whether a STAC asset is one file, or a route to the whole version
@@ -621,12 +627,6 @@ def stac_asset_is_one_file(name: str, asset: Mapping[str, Any]) -> bool:
     `file:local_path`. STAC keys a data asset by its filename, and publishes that same
     filename at the end of the path, so the two agreeing is what "this asset is a
     file" looks like in the data.
-
-    Deliberately not a hard-coded list of the non-file asset names we have seen
-    (`globus` and `reference_file`). Those are west-only today and the set will grow,
-    so a list would quietly start mis-classifying the next one to appear. Checking
-    the shape instead means a new whole-version asset is classified correctly on the
-    day it turns up:
 
     - a `.nc` asset is named `tas_Amon_....nc` and its path ends `/tas_Amon_....nc`,
       so it is one file
@@ -664,17 +664,6 @@ def stac_data_access(
     ESGF-NG needs no second request for this: a STAC item is one dataset version and
     its `assets` are that version's files, plus any whole-version routes the node
     offers.
-
-    Only assets claiming the `data` role are read. That is both the filter that keeps
-    a future thumbnail or metadata asset out of the route table, and the reason
-    [stac_asset_roles][(m).stac_asset_roles] has to cope with the misspelled `role`
-    key.
-
-    `properties.access` is deliberately **never** read. It claims to list the
-    services a dataset is available over, but it lies: items advertise
-    `["HTTPServer", "OPENDAP", "GridFTP", "Globus"]` while carrying only https,
-    globus and kerchunk assets, and east CMIP6 omits it entirely. Only an asset that
-    is really there becomes a route.
 
     Parameters
     ----------

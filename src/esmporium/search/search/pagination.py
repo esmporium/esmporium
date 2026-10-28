@@ -65,6 +65,8 @@ FilePages = Pages[ParsedFileDocument]
 """
 The outcome of paging through one facade's answer to a `type=File` request
 
+This is Solr only.
+
 The same four things as [FacadePages][(m).FacadePages], because the hazards of paging
 do not care what is being paged: see
 [collect_all_file_pages][(m).collect_all_file_pages].

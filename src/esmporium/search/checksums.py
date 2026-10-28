@@ -4,9 +4,9 @@ Reading a file's checksum out of what a search API published
 The two APIs disagree about how to say "this file's checksum is this, of this
 algorithm", and the disagreement is not cosmetic:
 
-- ESGF-1 Solr publishes a bare hex digest in `checksum` and names the algorithm
+- Solr publishes a bare hex digest in `checksum` and names the algorithm
   separately in `checksum_type`, e.g. `SHA256`.
-- ESGF-NG STAC has **no** `checksum_type` field at all. Its `file:checksum` is a
+- STAC has **no** `checksum_type` field at all. Its `file:checksum` is a
   hex-encoded [multihash](https://github.com/multiformats/multihash), in which the
   algorithm and the digest length are a prefix on the digest itself.
 
@@ -77,7 +77,9 @@ def decode_multihash_checksum(published: str) -> Checksum:
     Anything we cannot read with confidence comes back **verbatim**, with
     `checksum_type` of `None`, and is logged at `DEBUG`. We record what upstream
     published rather than repairing it, and one unreadable value must not take a
-    whole search down: a live CMIP6Plus asset carries 72 hex characters where a
+    whole search down.
+
+    For example, a live CMIP6Plus asset carries 72 hex characters where a
     sha2-256 multihash is 68, because the `1220` prefix is there twice. That is an
     upstream bug, not an algorithm we have not heard of, and guessing which 64 of
     those characters are the digest would be a guess about someone else's data.

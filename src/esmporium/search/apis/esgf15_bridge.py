@@ -97,15 +97,10 @@ class SearchAPIESGF15BridgeSolr:
         """
         Build the `type=File` request that gets per-file information for datasets
 
-        ESGF-1 publishes `access`, `size` and `number_of_files` on a dataset document
+        Solr publishes `access`, `size` and `number_of_files` on a dataset document
         but **no per-file URLs**, so getting them is a second request. This is the
         whole asymmetry with ESGF-NG, where a STAC item's `assets` are its files and
         the dataset search already carries them.
-
-        Deliberately not on [SearchAPI][esmporium.search.apis.SearchAPI]: asking for
-        File documents is a Solr-only capability, and putting it on the protocol
-        would force [SearchAPIESGFNGSTAC][esmporium.search.apis.SearchAPIESGFNGSTAC]
-        to implement something meaningless.
 
         Parameters
         ----------
