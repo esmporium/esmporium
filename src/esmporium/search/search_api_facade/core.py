@@ -5,9 +5,9 @@ Definition of our core [SearchAPIFacade][(m).] class
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from esmporium.query import (
     FacetNotExpressibleError,
@@ -15,8 +15,14 @@ from esmporium.query import (
     QueryProtocol,
     facet_spec,
 )
-from esmporium.search.apis import Request, SearchAPI
-from esmporium.search.result_parsing import DatasetFacets, ParsedDocument
+from esmporium.search.apis import Request, SearchAPI, SolrSearchAPI
+from esmporium.search.apis.esgf1 import solr_parsed_file_documents
+from esmporium.search.result_normalisation import SOLR_FORMAT_TAG
+from esmporium.search.result_parsing import (
+    DatasetFacets,
+    ParsedDocument,
+    ParsedFileDocument,
+)
 from esmporium.search.search_api_facade.parameters import (
     FacadeParametersProtocol,
     OneProjectRequiredError,
@@ -84,6 +90,24 @@ def check_facets_expressible(
     unexpressible = get_unexpressible_facets(query_style, facets)
     if unexpressible:
         raise FacetNotExpressibleError(unexpressible, facet_spec(query_style).name)
+
+
+class NotASolrFacadeError(ValueError):
+    """Raised when a facade with no `type=File` request to make is asked for one"""
+
+    def __init__(self, facade: SearchAPIFacade) -> None:
+        self.facade = facade
+        """The facade we refused"""
+
+        super().__init__(
+            f"{facade.search_api.host} answers in the "
+            f"{facade.search_api.raw_docs_format_tag!r} format, not "
+            f"{SOLR_FORMAT_TAG!r}, so it has no `type=File` request to make. "
+            "ESGF-NG carries per-file information in the search response itself, so "
+            "its routes are already recorded by the time this could be called. "
+            "This is a mistake rather than a no-op, so it is loud: a caller which "
+            "thinks it is filling in file access here is not."
+        )
 
 
 class UnaskableFacetError(AssertionError):
@@ -444,6 +468,150 @@ class SearchAPIFacade:
         return self.result_parser.parse_search_results(
             raw, api=self.search_api, facade_parameters=self.parameters
         )
+
+    @property
+    def file_attribution_facets(self) -> tuple[str, ...]:
+        """
+        The facets a file-level request from this facade must narrow by
+
+        See
+        [ResultParserProtocol.file_attribution_facets][esmporium.search.ResultParserProtocol.file_attribution_facets],
+        which this reads: whether one document is one dataset row is the
+        [result_parser][(c).result_parser]'s knowledge, so it is the parser which
+        states this, and the facade which hands it on.
+
+        Returns
+        -------
+        :
+            The facets to narrow by, named canonically, possibly none
+        """
+        return self.result_parser.file_attribution_facets
+
+    def file_search_api(self) -> SolrSearchAPI:
+        """
+        Check this facade can be asked for file documents, and give back its API as that shape
+
+        The check and the narrowing are one method so that the narrowed type cannot be
+        had without the check.
+
+        Returns
+        -------
+        :
+            This facade's search API, as the shape which carries
+            `build_file_search_request`
+
+        Raises
+        ------
+        NotASolrFacadeError
+            It does not answer in the Solr format, so it has no `type=File` request
+            to make
+        """  # noqa: E501
+        if self.search_api.raw_docs_format_tag != SOLR_FORMAT_TAG:
+            raise NotASolrFacadeError(self)
+
+        # Established by the check above, which the type system cannot see.
+        return cast("SolrSearchAPI", self.search_api)
+
+    def build_file_search_request(
+        self,
+        dataset_ids: Sequence[str],
+        limit: int,
+        facet_values: Mapping[str, Sequence[str]] | None = None,
+    ) -> Request:
+        """
+        Build a request for the file documents of some datasets
+
+        The facade owns this for the same reason it owns
+        [build_search_request][(c).build_search_request]: the facets come in named
+        canonically and go out named the way this project is spelled on this API
+        (`variable` for CMIP5, `variable_id` for CMIP6 and CMIP7), so no caller has
+        to know either name.
+
+        Parameters
+        ----------
+        dataset_ids
+            The node-specific dataset ids to ask about, i.e.
+            `<instance_id>|<data_node>`
+
+        limit
+            The page size to ask for
+
+        facet_values
+            Further facets to narrow by, named canonically
+
+            Usually the values of
+            [file_attribution_facets][(c).file_attribution_facets].
+
+        Returns
+        -------
+        :
+            The request to send to `search_api`
+
+        Raises
+        ------
+        LimitOutOfRangeError
+            `limit` is outside the range `search_api` accepts
+
+        NotASolrFacadeError
+            This facade has no `type=File` request to make
+
+        FacetNotExpressibleError
+            This facade cannot express one of `facet_values`' facets, so the request
+            could not narrow by it
+        """
+        api = self.file_search_api()
+        asked = dict(facet_values or {})
+        field_of = self.parameters.get_mapping_to_api_facet_names(set(asked))
+        unexpressible = set(asked) - set(field_of)
+        if unexpressible:
+            # The same failure build_search_request reports, raised the same way:
+            # narrowing we were asked for and cannot do is not narrowing we may skip,
+            # because the answer would then be about more datasets than the caller
+            # can place.
+            raise FacetNotExpressibleError(
+                unexpressible, self.parameters.base_query_style.__name__
+            )
+
+        return api.build_file_search_request(
+            list(dataset_ids),
+            limit,
+            {field_of[facet]: tuple(values) for facet, values in asked.items()},
+        )
+
+    def parse_file_search_results(
+        self, raw: dict[str, Any]
+    ) -> tuple[ParsedFileDocument, ...]:
+        """
+        Parse a raw file-document response into the documents it carries
+
+        The file-level counterpart of [parse_search_results][(c).parse_search_results].
+        It does not go through [result_parser][(c).result_parser]: a File document is
+        a File document whatever project it describes, so there is nothing
+        project-specific left to do by the time the answer is in hand. What was
+        project-specific happened on the way out, in
+        [build_file_search_request][(c).build_file_search_request].
+
+        Parameters
+        ----------
+        raw
+            The response to read
+
+            Usually the answer to a request built with
+            [build_file_search_request][(c).build_file_search_request].
+
+        Returns
+        -------
+        :
+            Parsed file documents
+
+        Raises
+        ------
+        NotASolrFacadeError
+            This facade has no `type=File` request to make, so it cannot have an
+            answer to one either
+        """
+        api = self.file_search_api()
+        return solr_parsed_file_documents(raw, api)
 
     def read_dataset_rows(self, doc: dict[str, Any]) -> tuple[DatasetFacets, ...]:
         """

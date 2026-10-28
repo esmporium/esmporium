@@ -4,22 +4,31 @@ ESGF1 search API class
 
 from __future__ import annotations
 
+import json
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
 
 from tenacity import Retrying
 
+from esmporium.datasets.data_access import AccessService, ContainerFormat
 from esmporium.search.apis.protocol import (
     LimitOutOfRangeError,
     NoFacetValuesReturnedError,
     NoSearchResultDocumentsError,
     NoSearchResultNumberOfMatchesReturnedError,
+    SearchAPI,
     single_facet_value_or_none,
 )
 from esmporium.search.apis.request import Request
 from esmporium.search.result_normalisation import SOLR_FORMAT_TAG
+from esmporium.search.result_parsing import (
+    DataAccessInfo,
+    DataAccessPayload,
+    FileInfo,
+    ParsedFileDocument,
+)
 
 
 def solr_bool(value: bool) -> str:
@@ -347,6 +356,255 @@ def solr_read_facet_as_string(doc: dict[str, Any], api_field: str) -> str | None
     )
 
 
+DATASET_DOCUMENTS = "Dataset"
+"""The `type` of a Solr document describing a dataset version"""
+
+FILE_DOCUMENTS = "File"
+"""The `type` of a Solr document describing one file of a dataset version"""
+
+SOLR_SERVICE_TO_SERVICE: Mapping[str, AccessService] = {
+    "HTTPServer": AccessService.HTTPS,
+    "OPENDAP": AccessService.OPENDAP,
+    "GridFTP": AccessService.GRIDFTP,
+    "Globus": AccessService.GLOBUS,
+}
+"""How the service in a Solr `url` triple maps onto [AccessService][esmporium.datasets.AccessService]"""  # noqa: E501
+
+SOLR_SERVICE_TO_CONTAINER_FORMAT: Mapping[str, ContainerFormat] = {
+    "HTTPServer": ContainerFormat.NETCDF,
+    # An OPeNDAP URL here ends `.nc.html`: a form page for a human, not the DAP
+    # endpoint. Recording it as HTML is how a reader is told that.
+    "OPENDAP": ContainerFormat.HTML,
+    "GridFTP": ContainerFormat.NETCDF,
+    "Globus": ContainerFormat.NETCDF,
+}
+"""
+What the bytes are on a Solr route, read from its **service** not its mime type
+"""
+
+_URL_TRIPLE_PARTS = 3
+
+
+class UnreadableURLTripleError(ValueError):
+    """Raised when a Solr `url` entry is not the `url|mime|service` triple we expect"""
+
+    def __init__(self, triple: str) -> None:
+        self.triple = triple
+        """The entry we could not read"""
+
+        super().__init__(
+            f"The Solr url entry {triple!r} does not split into the "
+            f"{_URL_TRIPLE_PARTS} `<url>|<mime>|<service>` parts every such entry "
+            "has, so we cannot tell what it is a route to or how to reach it."
+        )
+
+
+def solr_url_triple(triple: str) -> tuple[str, str, str]:
+    """
+    Split a Solr `url` entry into its URL, mime type and service
+
+    ESGF-1 publishes a file's routes as a list of `<url>|<mime>|<service>` strings,
+    e.g.
+    `https://esgf.ceda.ac.uk/thredds/fileServer/...nc|application/netcdf|HTTPServer`.
+
+    Parameters
+    ----------
+    triple
+        The entry to split
+
+    Returns
+    -------
+    :
+        Its URL, mime type and service
+
+    Raises
+    ------
+    UnreadableURLTripleError
+        `triple` does not have three parts
+
+    Examples
+    --------
+    >>> solr_url_triple("https://x.invalid/t.nc|application/netcdf|HTTPServer")
+    ('https://x.invalid/t.nc', 'application/netcdf', 'HTTPServer')
+    """
+    parts = triple.split("|")
+    if len(parts) != _URL_TRIPLE_PARTS:
+        raise UnreadableURLTripleError(triple)
+
+    url, mime, service = parts
+
+    return url, mime, service
+
+
+def solr_file_access(doc: dict[str, Any]) -> DataAccessPayload:
+    """
+    Read the one file, and every route to it, out of a Solr `type=File` document
+
+    A Solr File document is always about exactly one file, so this never produces a
+    whole-dataset-version route: every route it returns names its file.
+
+    Reads the same way for classic ESGF-1 and for the 1.5 bridge, which publish File
+    documents of the same shape.
+
+    Parameters
+    ----------
+    doc
+        The document to read
+
+    Returns
+    -------
+    :
+        The one file, and the routes to it
+
+    Raises
+    ------
+    UnreadableURLTripleError
+        One of the document's `url` entries is not a three-part triple
+    """
+    filename = extract_one_element_list(doc["title"])
+    data_node = extract_one_element_list(doc["data_node"])
+
+    found = FileInfo(
+        filename=filename,
+        size=doc.get("size"),
+        checksum=extract_one_element_list(doc.get("checksum")),
+        checksum_type=extract_one_element_list(doc.get("checksum_type")),
+        tracking_id=extract_one_element_list(doc.get("tracking_id")),
+    )
+
+    accesses = []
+    for triple in doc.get("url", []):
+        url, _mime, service = solr_url_triple(triple)
+        accesses.append(
+            DataAccessInfo(
+                filename=filename,
+                data_node=data_node,
+                service=_solr_service(service, triple),
+                container_format=_solr_container_format(service, triple),
+                url=url,
+                # Solr describes a route only as this triple, inside a document which
+                # describes the file, so the triple is the whole of what it said
+                # about the route. JSON-encoded, hence a quoted string.
+                raw_json=json.dumps(triple),
+            )
+        )
+
+    return DataAccessPayload(files=(found,), accesses=tuple(accesses))
+
+
+def solr_parsed_file_documents(
+    raw: dict[str, Any], api: SearchAPI
+) -> tuple[ParsedFileDocument, ...]:
+    """
+    Read a `type=File` response into the file documents it carries
+
+    The file-level counterpart of a result parser's `parse_search_results`, and
+    deliberately not one of those: a File document is a File document whatever
+    project it is from, so there is nothing here for a per-project parser to do.
+    What *is* project-specific -- which facets the request had to narrow by for these
+    answers to be placeable -- is settled before the request goes out, by
+    [ResultParserProtocol.file_attribution_facets][esmporium.search.ResultParserProtocol.file_attribution_facets].
+
+    Parameters
+    ----------
+    raw
+        The response to read
+
+        Usually the answer to a request built with
+        [SearchAPIESGF1Solr.build_file_search_request][(m).SearchAPIESGF1Solr.build_file_search_request].
+
+    api
+        The API the response came from, used to split it into documents
+
+    Returns
+    -------
+    :
+        One [ParsedFileDocument][esmporium.search.ParsedFileDocument] per document
+
+    Raises
+    ------
+    KeyError
+        A document does not name the dataset it belongs to
+
+        Trusted the same way `solr_file_access` trusts `title`: a File document
+        which does not say which dataset its file is part of is one we could not
+        place anywhere, so it is better to hear about it than to drop it.
+
+    UnreadableURLTripleError
+        One of a document's `url` entries is not a three-part triple
+    """
+    return tuple(
+        ParsedFileDocument(
+            dataset_id=str(extract_one_element_list(doc["dataset_id"])),
+            payload=solr_file_access(doc),
+        )
+        for doc in api.extract_result_documents(raw)
+    )
+
+
+def solr_file_search_params(limit: int) -> dict[str, Any]:
+    """
+    Build the parameters a `type=File` request shares across the Solr dialects
+
+    Only the parameters whose spelling the two agree on. How several values for one
+    facet are joined is **not** one of them, which is why this does not take any
+    facets: classic Solr ORs on a repeated parameter and the 1.5 bridge ORs on a
+    comma, and the bridge silently keeps only *one* value of a repeated parameter
+    rather than rejecting it. Asking the bridge about several datasets the classic
+    way therefore returns an answer about one of them, with nothing to say so. Each
+    API spells its own facets, in its own `build_file_search_request`.
+
+    Parameters
+    ----------
+    limit
+        Page size
+
+    Returns
+    -------
+    :
+        The shared parameters
+    """
+    return {
+        "format": "application/solr+json",
+        "type": FILE_DOCUMENTS,
+        "limit": limit,
+    }
+
+
+def _solr_service(service: str, triple: str) -> AccessService:
+    """Read a triple's service as an [AccessService][esmporium.datasets.AccessService]"""  # noqa: E501
+    found = SOLR_SERVICE_TO_SERVICE.get(service)
+    if found is None:
+        msg = (
+            f"The Solr url entry {triple!r} names the service {service!r}, "
+            f"which we have no AccessService for. "
+            f"The services we know are: {sorted(SOLR_SERVICE_TO_SERVICE)}. "
+            "We raise rather than skipping the route, because a route we silently "
+            "dropped is a way of getting this data that we would never know we had "
+            "been offered."
+        )
+        raise ValueError(msg)
+
+    return found
+
+
+def _solr_container_format(service: str, triple: str) -> ContainerFormat:
+    """Read what a triple's service implies the bytes are"""
+    found = SOLR_SERVICE_TO_CONTAINER_FORMAT.get(service)
+    if found is None:
+        msg = (
+            f"The Solr url entry {triple!r} names the service {service!r}, "
+            f"which we have no ContainerFormat for. "
+            f"The services we know are: {sorted(SOLR_SERVICE_TO_CONTAINER_FORMAT)}. "
+            "We raise rather than skipping the route, because a route we silently "
+            "dropped is a way of getting this data that we would never know we had "
+            "been offered."
+        )
+        raise ValueError(msg)
+
+    return found
+
+
 @dataclass(frozen=True)
 class SearchAPIESGF1Solr:
     """
@@ -404,6 +662,18 @@ class SearchAPIESGF1Solr:
 
         params: dict[str, Any] = {
             "format": "application/solr+json",
+            # `type` is a document-type discriminator inside one index, and we want
+            # the dataset documents. `Dataset` is also the server's default, so
+            # saying it changes nothing today -- but it is said anyway, for two
+            # reasons. The failure mode if a node's default ever changed is silent
+            # corruption rather than an error: a File document carries `master_id`,
+            # `version` and `data_node`, i.e. every field the dataset parser reads,
+            # and its `master_id` is the dataset's with the filename appended, so we
+            # would quietly store dataset rows whose id ended in `.nc`. And the
+            # sibling request, `solr_file_search_request`, asks for `File`; leaving
+            # the one parameter that distinguishes them implicit here would hide the
+            # distinction in exactly the place a reader goes looking for it.
+            "type": DATASET_DOCUMENTS,
             "limit": limit,
             "distrib": solr_bool(self.distrib),
         }
@@ -411,6 +681,56 @@ class SearchAPIESGF1Solr:
             # A list becomes a repeated parameter,
             # which is how ESGF1 APIs perform OR queries
             # across multiple values for a given facet.
+            params[api_name] = list(values)
+
+        return Request("GET", "/esg-search/search", params=params)
+
+    def build_file_search_request(
+        self,
+        dataset_ids: Sequence[str],
+        limit: int,
+        facet_values: Mapping[str, Sequence[str]] | None = None,
+    ) -> Request:
+        """
+        Build the `type=File` request that gets per-file information for datasets
+
+        Solr publishes `access`, `size` and `number_of_files` on a dataset document
+        but **no per-file URLs**, so getting them is a second request. This is the
+        whole asymmetry with ESGF-NG, where a STAC item's `assets` are its files and
+        the dataset search already carries them.
+
+        Parameters
+        ----------
+        dataset_ids
+            The node-specific dataset ids to ask about, i.e.
+            `<instance_id>|<data_node>`
+
+            These are exactly the `id` the dataset documents published, and exactly
+            what a File document names as its `dataset_id`, so the answers join back
+            onto the datasets with no lookup.
+
+        limit
+            Page size
+
+        facet_values
+            Any further facets to narrow by, keyed as this API names them
+
+            This is how `variable` is passed, and passing it matters: a CMIP5
+            `dataset_id` is *table*-grained, so without narrowing, asking about one
+            CMIP5 dataset returns every variable in its table. The facet is spelled
+            `variable` for CMIP5 and `variable_id` for CMIP6/CMIP7, so the caller
+            must read the name from the facade rather than hard-coding either.
+
+        Returns
+        -------
+        :
+            The request to send
+        """
+        params = solr_file_search_params(limit)
+        params["distrib"] = solr_bool(self.distrib)
+        # A list becomes a repeated parameter, which is how this API ORs.
+        params["dataset_id"] = list(dataset_ids)
+        for api_name, values in (facet_values or {}).items():
             params[api_name] = list(values)
 
         return Request("GET", "/esg-search/search", params=params)

@@ -82,6 +82,12 @@ dev = [
     # -------------------------------
     "ty==0.0.33",
     "typer>=0.27.1",
+    # Note for the download step: nothing here reads data files, so the engines for
+    # that (xarray, fsspec, h5netcdf, scipy, kerchunk, zarr and friends) are not
+    # dependencies of this package, dev or otherwise. They were here briefly, for a
+    # one-off probe which opened the routes we had recorded; what it found is written
+    # up on `esmporium.datasets.ContainerFormat` and in PLAN.md's download step, so
+    # the dependencies went when the probe did.
 ]
 docs = [
     # Key dependencies

@@ -112,3 +112,41 @@ def test_read_facet_list_reads_the_solr_way():
     )
     assert api().read_facet_list({"variable_id": "tas"}, "variable_id") == ("tas",)
     assert api().read_facet_list({}, "variable_id") == ()
+
+
+def test_build_search_request_asks_for_dataset_documents():
+    """Stated rather than left to the default, as on classic Solr"""
+    request = api().build_search_request({"variable_id": ("tas",)}, limit=25)
+
+    assert request.params["type"] == "Dataset"
+
+
+def test_build_file_search_request_joins_the_dataset_ids_on_a_comma():
+    """
+    This API ORs on a comma, and silently keeps only *one* value of a repeated parameter
+
+    Which makes joining the classic way worse than an error: asking this API about
+    three datasets with repeated parameters returns an answer about one of them, with
+    nothing in the response to say so. Verified live -- the same two-value OR gives
+    281,864 matches repeated and 938,500 comma-joined.
+    """
+    request = api().build_file_search_request(
+        ["CMIP6.a.v1|esgf.ceda.ac.uk", "CMIP6.b.v1|esgf.nci.org.au"], limit=25
+    )
+
+    assert request.params["type"] == "File"
+    assert request.path == "/esgf-1-5-bridge/"
+    assert request.params["dataset_id"] == (
+        "CMIP6.a.v1|esgf.ceda.ac.uk,CMIP6.b.v1|esgf.nci.org.au"
+    )
+
+
+def test_build_file_search_request_joins_its_facets_on_a_comma_too():
+    """The same dialect applies to the variable narrowing CMIP5 needs"""
+    request = api().build_file_search_request(
+        ["cmip5.a.v1|esgf.ceda.ac.uk"],
+        limit=25,
+        facet_values={"variable": ("tas", "pr")},
+    )
+
+    assert request.params["variable"] == "tas,pr"

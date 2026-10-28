@@ -35,6 +35,7 @@ are defined in [our naming section][esmporium--naming].
 from __future__ import annotations
 
 from esmporium.search.search_api_facade.core import (
+    NotASolrFacadeError,
     SearchAPIFacade,
     UnaskableFacetError,
     check_facets_askable,
@@ -107,6 +108,7 @@ __all__ = [
     "FacadeDefinition",
     "FacadeParametersProtocol",
     "MissingResultFieldError",
+    "NotASolrFacadeError",
     "OneProjectRequiredError",
     "ProjectPrefixMismatchError",
     "ResultParserProtocol",

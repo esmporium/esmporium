@@ -364,6 +364,19 @@ Adding File i.e. data access tracking
 Note that I think we should call this data access rather than file in preparation for the day when some data is made available by e.g. zarr archives, which aren't really 'files' in the way we normally think about it.
 This probably means we'll need a DataAccess table with a type column, and only 'file' types have links to a `File` table (which then has further links to a `FileAccess` table). Other types would have different access patterns and information.
 
+*What was built instead, as of PR62:* `DataAccess` has **no type column**, and there
+is no `FileAccess` table. `DataAccess.file_id` is nullable and that is the
+discriminator — set means "this route serves one file", `NULL` means "this route
+serves the whole dataset version" — so the only question a reader has to ask is
+"file, or version?" rather than learning a type vocabulary first. What a type column
+would have carried instead became two orthogonal columns, `service` (how the bytes
+move) and `container_format` (what the bytes are), because a kerchunk reference set
+is fetched over plain HTTPS and opened as zarr, so one column cannot say both. A
+zarr or icechunk store needs more than a URL to open, and that extra information
+arrives inside the API's own description of the route, which is kept verbatim in
+`DataAccess.raw_json` — so it needs no column of its own until something is actually
+published.
+
 Use the old mermaid diagrams to help us think through the objects and tables we want (https://mermaid.live/edit#pako:eNqVV2- [ ]2zYQ_iuEvsTBbCOxncRxsAFBg67F2ixogg0YAgg0dbLZSKRKUmlcJ_99d5TkyBHtrf4kkvf63KvXkdAJRLMIzJXkC8Pze8XwdwvciOWXUrHn58FArxl-foZ8DsYuZcFmzIDQJrE7qK-44xbcuyVXC0BqofOidFCT169viP9C2VIrpL6Pltyyx-ps76MtroZsm_mTFtw13BbMIyQMTwqd-w8B72UGG50pHvbSP4esLbgB5eLa4PgBVo0IL7yl6FIIsNYzJfq7yjRP-BxJUqPzLk9Q2RJ4AoYVyKEdeuk0Mb6Nw7q6oJ9UjsmE3fzxemWdkWrBbAEi_mpR8H2ktMl5Ji1K_FaCWV2wRKYpQyglWNZyqcUPKik0io9Lk23rU2Uep7pUSffaOm0g6driuCvt63XCHTiZAxMG8DOJuevwOL5Ay3VBgecZEzzLEJmMzyFjPQUYD0zTb6VEfYeN-S_bKbjuCM25dWBijxhKr4M6YJfXVz6dBh-vEyjQdQx5ABOMy1cQXVulsk66kkxF2V33dWkEhF7gqcAY5JRggddHbiTHJ-90-BXzK8Tpdj0sjEx2yEsJTlBi1XlROpcYg9iA1Zn3MgR3k8frIDxceQQq3H9tBeKXphcE8E4qyVR07D0xDn5rtA03EgJ8tUQqREyv-vYCEcskXSQMi9qCL06nGff52GepNhgq45C2LXOudUYpbhE37HJuO-tJqfwBnUusBuynsU7jqu10UqnTVt56WOM5bKPXu3VQsMkFahHZsPHzMJSqlfytBCM8QGT4krCq0wy0ylYsB8cJatajVsXuPny8bUQfVG1zj4b9SVoT7a6AmoALJx-lW4VI5gbdX8bUMGKp4oqjQ1U5FJMHHnIPKY4LnTqGoFLjHcrkgmr4ERQBynT62mkbDMKtZDOB1rtyzavzyY1h3BvEHXkeU_8JNXKwizRuKsEH0S2h6lbU42UqBY2AXkvFM70eBpLYQJFJwcM6CGAUkRc09TA3vEGvtwG7Df_ejJgvl3-zDVNtLQ4YGlks0YL1HgAKy8h0eMJooym2zNzb1u3n47pTTU3jsKUxeoFleMEUjhSDg4Fw77WC0PcJq3geTNqfq7eAgEY4skqaEohmxrgwGid_ja5tswV7RC1LLEE82DLvtm_DxQN-hKqhznPunLEN-IQqGYbVusj0nCzCZzmnrYz1DkK1fhBCp11D3G8zgSqq1hysJXTblTiWV-g438JqM99rgfS-mfGtSNcb0_-IdwDSTZE3caxLfF99dUczbpNSUDQ_3N3d3NJuadgz-_MGrq8ub_Drd8SztAGZW2tRkxzWb134hAKrw0DjOlGtgbiE_WxJeh99zW_V-_5SxM_XUiQJrTrclFvUj2gXiGbOlNCPcsANkY6RD4ZPqRxR98ssNw_ERzwFV_9onTdsRpeLZTRLeWbxVBYU-PqvxoaEtinzDvdFF83OpudeRjRbR0_RbDA6Hw8no9Px6Gg8PR-NJuN-tMLr8dl0OB6fjKfjk-Oj0dHR5KUf_fBqj4fj6en5-PTkaHI8GZ-Npmf9CBKJa-fn6q-O_8fTj3jp9O1KicqKl38BECNB5A).
 
 We want to avoid lots of project-specific fields if we can, but some might just make sense to keep (more tables, more problems, but maybe necessary).
@@ -471,6 +484,31 @@ Use cases: `15-pattern-scaling`, `17-etccdi` — both have a lineage and no cons
 ## 9. Downloads
 
 *Was PR8.*
+
+Two things step 6 found out by opening the routes it had recorded, which this step
+needs before it writes anything (both are written up on
+`esmporium.datasets.ContainerFormat`, with dates):
+
+- **`container_format` is a routing hint, not a complete instruction.** `netcdf` is
+  two on-disk formats -- classic and netCDF-4/HDF5 -- which need different readers,
+  and ESGF serves both. So a download has to read a file's first four bytes to know
+  how to open it, even though the route is already classified. Our records of netCDF
+  routes were otherwise checked and correct: a `HEAD` returned exactly the `size` we
+  had stored, and the file opened over HTTPS without being downloaded first.
+- **Every kerchunk route ESGF-NG advertises is dead** (twelve of twelve sampled, 404,
+  re-checked 2026-10-27). Virtual access is announced and not served, so a download
+  step which believed the advertised `access` list would fail on every one of them.
+  The whole-version branch of the model is not wrong -- the assets really are
+  published -- but nothing can be fetched through it yet.
+- **The DRS path is this step's to build, not the database's to store.** `File` had a
+  `local_path` column holding the publisher's DRS-relative path; it was dropped,
+  because it is the dataset's own project-specific id with its dots turned into
+  slashes, plus the version and the filename, all of which are stored already (3761
+  of 3761 live STAC file assets reconstructed exactly, 2026-10-28). It was also empty
+  for every CMIP5 file and for any CMIP6 file a Solr host answered about, since Solr
+  publishes no equivalent -- so a download step reading it would have worked for
+  CMIP7, sometimes for CMIP6 and never for CMIP5. Deriving it works for all three,
+  and where a file goes on *our* disk is this step's decision anyway.
 
 Downloads
 Tracking node health

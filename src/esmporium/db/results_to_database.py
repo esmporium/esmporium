@@ -5,6 +5,7 @@ Writing search results into the database
 from __future__ import annotations
 
 import json
+import warnings
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar
@@ -18,11 +19,13 @@ from esmporium.db.dataset_uniqueness import facet_differences
 from esmporium.db.engine import is_sqlite_configured_for_concurrency
 from esmporium.db.schema import (
     DATASET_IDENTITY_INDEX,
+    DataAccess,
     DataNode,
     Dataset,
     DatasetRawDoc,
     DatasetVersion,
     DatasetVersionDataNodeLink,
+    File,
     RawDocVersionLink,
 )
 from esmporium.search.result_normalisation import (
@@ -32,13 +35,16 @@ from esmporium.search.result_normalisation import (
     normalise_stored_document,
 )
 from esmporium.search.result_parsing import (
+    DataAccessInfo,
+    DataAccessPayload,
     DatasetFacets,
+    FileInfo,
     ParsedDocument,
     ResultProcessor,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Iterator, Mapping
+    from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
     from contextlib import AbstractContextManager
 
     from esmporium.search.search_api_facade import SearchAPIFacade
@@ -320,7 +326,24 @@ class IngestedDocument:
     """
     The version rows it was written to, flushed, so each one's `id` is set
 
-    One per dataset the document described.
+    One per dataset the document described, **index-aligned with
+    `parsed.datasets`**: `versions[i]` is the version of `parsed.datasets[i]`.
+    """
+
+    files: tuple[File, ...] = ()
+    """
+    The file rows written for this document, flushed, so each one's `id` is set
+
+    Empty for a document that described no files, which is every Solr *dataset*
+    document -- those get their files from
+    [record_solr_file_access][esmporium.db.record_solr_file_access] instead.
+    """
+
+    accesses: tuple[DataAccess, ...] = ()
+    """
+    The route rows written for this document, flushed
+
+    Empty for the same documents as `files`.
     """
 
 
@@ -543,7 +566,400 @@ def _ingest_document(
             session, flushed_id(raw_doc), flushed_id(version)
         )
 
-    return IngestedDocument(parsed=parsed, versions=tuple(dataset_versions))
+    # Files and routes come last, because a route is the most derived thing here: it
+    # needs its version, its file and its node to exist first.
+    check_access_payload_is_attributable(parsed)
+    saved = (
+        save_data_access_payload(
+            session,
+            flushed_id(dataset_versions[0]),
+            DataAccessPayload(files=parsed.files, accesses=parsed.accesses),
+        )
+        if parsed.files or parsed.accesses
+        else SavedDataAccess()
+    )
+
+    return IngestedDocument(
+        parsed=parsed,
+        versions=tuple(dataset_versions),
+        files=saved.files,
+        accesses=saved.accesses,
+    )
+
+
+class AmbiguousDataAccessError(ValueError):
+    """
+    Raised when a document described files but maps to more than one dataset version
+    """
+
+    def __init__(self, parsed: ParsedDocument) -> None:
+        self.parsed = parsed
+        """The document we refused"""
+
+        super().__init__(
+            f"The document {parsed.esgf_doc_id!r} described "
+            f"{len(parsed.files)} file(s) and {len(parsed.accesses)} route(s), "
+            f"but maps to {len(parsed.datasets)} dataset rows "
+            f"({sorted(row.variable for row in parsed.datasets)}). "
+            "A file belongs to one dataset version, and a document which bundles "
+            "many variables carries nothing that says which of them a file is part "
+            "of, so attributing its files to any one of them would be a guess. "
+            "Fill these in with `esmporium.db.record_solr_file_access` instead, "
+            "which asks one variable at a time and so knows the answer."
+        )
+
+
+class UnknownRouteFileError(ValueError):
+    """Raised when a route names a file neither its payload nor the database has"""
+
+    def __init__(self, info: DataAccessInfo, dataset_version_id: int) -> None:
+        self.info = info
+        """The route we could not place"""
+
+        super().__init__(
+            f"A route to {info.url!r} says it serves the file "
+            f"{info.filename!r} of dataset version {dataset_version_id}, "
+            "but that version has no such file, either in the payload alongside "
+            "this route or already stored. "
+            "A route and the file it serves are parsed together, so either the two "
+            "have been taken apart somewhere between parsing and here, or the "
+            "route has been attributed to the wrong version "
+            "(the same filename under another version is a different file)."
+        )
+
+
+def check_access_payload_is_attributable(parsed: ParsedDocument) -> None:
+    """
+    Check that a document's files and routes can be attributed to one version
+
+    Parameters
+    ----------
+    parsed
+        The document to check
+
+    Raises
+    ------
+    AmbiguousDataAccessError
+        It carries files or routes, and maps to more than one dataset version
+    """
+    carries_access = bool(parsed.files or parsed.accesses)
+    if carries_access and len(parsed.datasets) > 1:
+        raise AmbiguousDataAccessError(parsed)
+
+
+FILE_FACT_COLUMNS: tuple[str, ...] = (
+    "size",
+    "checksum",
+    "checksum_type",
+    "tracking_id",
+)
+"""
+The columns of [File][esmporium.db.schema.File] which describe the bytes
+
+i.e. everything a document *asserts* about a file, as opposed to the two columns which
+identify the row (`dataset_version_id` and `filename`). These are the ones
+[save_data_access_payload][(m).save_data_access_payload] refreshes, and so the ones
+[check_file_facts_agree][(m).check_file_facts_agree] compares.
+"""
+
+
+class FileFactsChangedWarning(UserWarning):
+    """
+    Warned when two documents describe the same file differently
+
+    Same version, same filename, different bytes: either two nodes disagree about a
+    replica, or data was republished under a version that already existed. Both are
+    upstream problems rather than ours, and neither is something our model can
+    represent -- there is one [File][esmporium.db.schema.File] row per
+    `(dataset_version_id, filename)`, so one of the two answers is all we can hold.
+    """
+
+
+def file_fact_differences(stored: File, info: FileInfo) -> dict[str, tuple[Any, Any]]:
+    """
+    Find the facts a document asserts about a file which disagree with what we hold
+
+    A fact the document is silent about (`None`) is not a disagreement. A document can
+    be silent about any of these: a checksum we cannot decode is stored as published
+    with `checksum_type` left `None` (see
+    [File.checksum][esmporium.db.schema.File.checksum]), so a STAC document can hand
+    us a digest without naming its algorithm where a Solr one names it. Reading that
+    `None` as "the algorithm is now nothing" would erase what the other API told us.
+    Silence is silence, in either direction.
+
+    Parameters
+    ----------
+    stored
+        The file row we already hold
+
+    info
+        What this document says about the same file
+
+    Returns
+    -------
+    :
+        The held and asserted value of each of
+        [FILE_FACT_COLUMNS][(m).FILE_FACT_COLUMNS] on which the two disagree, keyed by
+        column. Empty when they agree, or when one of the two is silent.
+    """
+    differences: dict[str, tuple[Any, Any]] = {}
+    for column in FILE_FACT_COLUMNS:
+        held = getattr(stored, column)
+        asserted = getattr(info, column)
+        if held is None or asserted is None or held == asserted:
+            continue
+
+        differences[column] = (held, asserted)
+
+    return differences
+
+
+def check_file_facts_agree(
+    stored: File, info: FileInfo, data_nodes: Sequence[str] = ()
+) -> None:
+    """
+    Check a document describes a file we already hold the same way, and say so if not
+
+    Parameters
+    ----------
+    stored
+        The file row we already hold
+
+    info
+        What this document says about the same file
+
+    data_nodes
+        The nodes this document says serve the file, named in the warning
+
+        Read from the routes travelling with the file rather than from the file
+        itself, because a [File][esmporium.db.schema.File] is node-independent by
+        design and carries no node of its own.
+
+    Warns
+    -----
+    FileFactsChangedWarning
+        The document asserts a different value for something we already hold
+    """
+    differences = file_fact_differences(stored, info)
+    if not differences:
+        return
+
+    served_by = ", ".join(data_nodes) if data_nodes else "a node we cannot name"
+    changes = "; ".join(
+        f"{column}: we hold {held!r}, this document says {asserted!r}"
+        for column, (held, asserted) in sorted(differences.items())
+    )
+    warnings.warn(
+        f"{info.filename} of dataset version {stored.dataset_version_id} is "
+        f"described differently by two documents. {changes}. The newer value is "
+        f"kept, so the value we held is no longer on the file row. Whether it can be "
+        f"dug back out depends on which API described it: an ESGF-NG STAC asset is "
+        f"stored verbatim in DataAccess.raw_json (and the whole item in "
+        f"DatasetRawDoc.raw_json), so a value learned that way is still there, but a "
+        f"Solr type=File document is not stored anywhere -- only its "
+        f"url|mime|service triple reaches DataAccess.raw_json -- so a value learned "
+        f"from Solr is gone for good. This document came from {served_by}. The same "
+        f"filename under the same version "
+        "should describe the same bytes on every replica, so this means either two "
+        "nodes disagree or the data was republished under a version that already "
+        "existed. Both are ESGF's to fix, and we cannot ask upstream without cases: "
+        "please raise an issue at https://github.com/esmporium/esmporium/issues.",
+        FileFactsChangedWarning,
+        stacklevel=2,
+    )
+
+
+@dataclass(frozen=True)
+class SavedDataAccess:
+    """The rows one payload turned into, flushed, so every `id` is set"""
+
+    files: tuple[File, ...] = ()
+    """The file rows written"""
+
+    accesses: tuple[DataAccess, ...] = ()
+    """The route rows written"""
+
+
+def save_data_access_payload(
+    session: Session, dataset_version_id: int, payload: DataAccessPayload
+) -> SavedDataAccess:
+    """
+    Write one dataset version's files and routes, reusing anything already stored
+
+    Idempotent, the way the rest of ingestion is: re-recording the same file or the
+    same route reuses the row rather than duplicating it. A file is matched on
+    `(dataset_version_id, filename)` and a route on
+    `(dataset_version_id, service, container_format, url)` -- see the identity notes
+    on [File][esmporium.db.schema.File] and
+    [DataAccess][esmporium.db.schema.DataAccess].
+
+    On a file we already hold, [FILE_FACT_COLUMNS][(m).FILE_FACT_COLUMNS] are
+    refreshed from what the document asserts, and left alone where it says nothing: a
+    `None` means the document did not say, not that the value is nothing. A document
+    which says something *different* warns
+    ([FileFactsChangedWarning][(m).FileFactsChangedWarning]).
+
+    Does not commit: the caller owns the transaction boundary.
+
+    Parameters
+    ----------
+    session
+        Session to write with
+
+    dataset_version_id
+        The version these files and routes belong to
+
+    payload
+        The files and routes to write
+
+    Returns
+    -------
+    :
+        The rows written or reused, flushed
+
+    Raises
+    ------
+    UnknownRouteFileError
+        A route named a file which is neither in `payload` nor already stored for
+        this version
+    """
+    nodes_of = _data_nodes_by_filename(payload)
+    files = [
+        _get_or_create_file(
+            session, dataset_version_id, info, nodes_of.get(info.filename, ())
+        )
+        for info in payload.files
+    ]
+    by_filename = {stored.filename: stored for stored in files}
+
+    accesses = []
+    for info in payload.accesses:
+        file_id = None
+        if info.filename is not None:
+            # Both lookups are scoped to this version -- `by_filename` holds the
+            # files just written against it, and `_find_file` filters on it -- so a
+            # route can only ever be given the id of a file belonging to the version
+            # the route is for. That is the invariant on `DataAccess.file_id`, held
+            # by construction rather than by a runtime check.
+            #
+            # Scoping is also required, not merely convenient: the same filename
+            # legitimately exists under two versions, so an unfiltered lookup by
+            # name would find two rows and raise.
+            stored_file = by_filename.get(info.filename) or _find_file(
+                session, dataset_version_id, info.filename
+            )
+            if stored_file is None:
+                raise UnknownRouteFileError(info, dataset_version_id)
+
+            file_id = flushed_id(stored_file)
+
+        node = _get_or_create_node(session, info.data_node)
+        accesses.append(
+            _get_or_create_data_access(
+                session,
+                dataset_version_id,
+                file_id,
+                flushed_id(node),
+                info,
+            )
+        )
+
+    return SavedDataAccess(files=tuple(files), accesses=tuple(accesses))
+
+
+def _find_file(session: Session, dataset_version_id: int, filename: str) -> File | None:
+    """Find a file we already hold for this version, by name."""
+    return session.exec(
+        select(File).where(
+            File.dataset_version_id == dataset_version_id,
+            File.filename == filename,
+        )
+    ).one_or_none()
+
+
+def _data_nodes_by_filename(payload: DataAccessPayload) -> dict[str, list[str]]:
+    """
+    Work out which nodes a payload says serve each of its files
+
+    Read from the routes, because that is where a node is named.
+    """
+    nodes: dict[str, list[str]] = {}
+    for info in payload.accesses:
+        if info.filename is None:
+            continue
+
+        for_file = nodes.setdefault(info.filename, [])
+        if info.data_node not in for_file:
+            for_file.append(info.data_node)
+
+    return nodes
+
+
+def _get_or_create_file(
+    session: Session,
+    dataset_version_id: int,
+    info: FileInfo,
+    data_nodes: Sequence[str] = (),
+) -> File:
+    """Reuse the row for this version's file if we have one, else create it."""
+    stored = get_or_create(
+        session,
+        lambda: _find_file(session, dataset_version_id, info.filename),
+        lambda: File(
+            dataset_version_id=dataset_version_id,
+            filename=info.filename,
+            size=info.size,
+            checksum=info.checksum,
+            checksum_type=info.checksum_type,
+            tracking_id=info.tracking_id,
+        ),
+    )
+
+    # On a row we just built these all agree, so this says nothing; on one we already
+    # held, it is the only place a disagreement is visible, because the refresh below
+    # is about to overwrite what we held with what this document says.
+    check_file_facts_agree(stored, info, data_nodes)
+
+    # Asserted wins, silence changes nothing: see `save_data_access_payload`.
+    for column in FILE_FACT_COLUMNS:
+        asserted = getattr(info, column)
+        if asserted is not None:
+            setattr(stored, column, asserted)
+
+    session.add(stored)
+    session.flush()
+
+    return stored
+
+
+def _get_or_create_data_access(
+    session: Session,
+    dataset_version_id: int,
+    file_id: int | None,
+    data_node_id: int,
+    info: DataAccessInfo,
+) -> DataAccess:
+    """Reuse the row for this route if we have one, else create it."""
+    return get_or_create(
+        session,
+        lambda: session.exec(
+            select(DataAccess).where(
+                DataAccess.dataset_version_id == dataset_version_id,
+                DataAccess.service == info.service,
+                DataAccess.container_format == info.container_format,
+                DataAccess.url == info.url,
+            )
+        ).one_or_none(),
+        lambda: DataAccess(
+            dataset_version_id=dataset_version_id,
+            file_id=file_id,
+            data_node_id=data_node_id,
+            service=info.service,
+            container_format=info.container_format,
+            url=info.url,
+            raw_json=info.raw_json,
+        ),
+    )
 
 
 _Row = TypeVar("_Row")

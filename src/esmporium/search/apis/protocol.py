@@ -5,7 +5,7 @@ Search API protocol class
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any, Protocol
 
 from tenacity import Retrying
@@ -882,5 +882,41 @@ class SearchAPI(Protocol):
         -------
         :
             Every value the document carries for that field
+        """
+        ...
+
+
+class SolrSearchAPI(SearchAPI, Protocol):
+    """
+    A Solr-shaped search API, i.e. one with a `type=File` request to make
+
+    [SearchAPI][(m).SearchAPI] deliberately does not carry
+    `build_file_search_request`: asking for File documents is Solr-only, and putting
+    it on the protocol would force
+    [SearchAPIESGFNGSTAC][esmporium.search.apis.SearchAPIESGFNGSTAC] to implement
+    something meaningless. This is the narrower shape that does carry it, so that
+    what
+    [SearchAPIFacade.file_search_api][esmporium.search.SearchAPIFacade.file_search_api]
+    checks at runtime is also what the types say.
+
+    Both [SearchAPIESGF1Solr][esmporium.search.apis.SearchAPIESGF1Solr] (classic
+    ESGF-1) and
+    [SearchAPIESGF15BridgeSolr][esmporium.search.apis.SearchAPIESGF15BridgeSolr] (the
+    1.5 bridge) satisfy this. They differ in the path they send to and in how they OR
+    several values of one facet, which is why each builds its own request rather than
+    sharing one.
+    """
+
+    def build_file_search_request(
+        self,
+        dataset_ids: Sequence[str],
+        limit: int,
+        facet_values: Mapping[str, Sequence[str]] | None = None,
+    ) -> Request:
+        """
+        Build the `type=File` request for some datasets
+
+        See
+        [SearchAPIESGF1Solr.build_file_search_request][esmporium.search.apis.SearchAPIESGF1Solr.build_file_search_request].
         """
         ...

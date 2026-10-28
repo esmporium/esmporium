@@ -5,15 +5,17 @@ ESGF1.5 bridge search API class
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from tenacity import Retrying
 
 from esmporium.search.apis.esgf1 import (
+    DATASET_DOCUMENTS,
     solr_extract_result_documents,
     solr_facet_values,
+    solr_file_search_params,
     solr_n_matches,
     solr_next_page_request,
     solr_read_facet_as_string,
@@ -75,10 +77,64 @@ class SearchAPIESGF15BridgeSolr:
 
         params: dict[str, Any] = {
             "format": "application/solr+json",
+            # See `SearchAPIESGF1Solr.build_search_request` for why this is stated
+            # rather than left to the server default.
+            "type": DATASET_DOCUMENTS,
             "limit": limit,
         }
         for api_name, values in facet_values.items():
             # This API ORs on a comma.
+            params[api_name] = ",".join(values)
+
+        return Request("GET", "/esgf-1-5-bridge/", params=params)
+
+    def build_file_search_request(
+        self,
+        dataset_ids: Sequence[str],
+        limit: int,
+        facet_values: Mapping[str, Sequence[str]] | None = None,
+    ) -> Request:
+        """
+        Build the `type=File` request that gets per-file information for datasets
+
+        Solr publishes `access`, `size` and `number_of_files` on a dataset document
+        but **no per-file URLs**, so getting them is a second request. This is the
+        whole asymmetry with ESGF-NG, where a STAC item's `assets` are its files and
+        the dataset search already carries them.
+
+        Parameters
+        ----------
+        dataset_ids
+            The node-specific dataset ids to ask about, i.e.
+            `<instance_id>|<data_node>`
+
+            These are exactly the `id` the dataset documents published, and exactly
+            what a File document names as its `dataset_id`, so the answers join back
+            onto the datasets with no lookup.
+
+        limit
+            Page size
+
+        facet_values
+            Any further facets to narrow by, keyed as this API names them
+
+            This is how `variable` is passed, and passing it matters: a CMIP5
+            `dataset_id` is *table*-grained, so without narrowing, asking about one
+            CMIP5 dataset returns every variable in its table. The facet is spelled
+            `variable` for CMIP5 and `variable_id` for CMIP6/CMIP7, so the caller
+            must read the name from the facade rather than hard-coding either.
+
+        Returns
+        -------
+        :
+            The request to send
+        """
+        params = solr_file_search_params(limit)
+        # This API ORs on a comma, and -- unlike rejecting it -- silently keeps only
+        # one value of a repeated parameter. Joining the wrong way here would ask
+        # about one of these datasets and look like an answer about all of them.
+        params["dataset_id"] = ",".join(dataset_ids)
+        for api_name, values in (facet_values or {}).items():
             params[api_name] = ",".join(values)
 
         return Request("GET", "/esgf-1-5-bridge/", params=params)

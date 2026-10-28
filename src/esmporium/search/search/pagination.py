@@ -1,5 +1,5 @@
 """
-Paging through one facade's whole answer to a search query
+Paging through one facade's whole answer to one request
 """
 
 from __future__ import annotations
@@ -8,14 +8,21 @@ import json
 import logging
 import math
 import warnings
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
+from typing import Any, Generic, TypeVar
 
 import httpx
 
 from esmporium.search.apis import Request, UnreadableResponseError
 from esmporium.search.health import SearchAPICallObserver
-from esmporium.search.result_parsing import ParsedDocument, ResultProcessor
+from esmporium.search.result_parsing import (
+    FileResultProcessor,
+    ParsedDocument,
+    ParsedFileDocument,
+    ResultProcessor,
+)
 from esmporium.search.search.errors import (
     CouldNotGetSearchResponseError,
     CouldNotSearchError,
@@ -25,17 +32,20 @@ from esmporium.search.search.errors import (
     SearchAPIRequestError,
 )
 from esmporium.search.search.firing import fire, get_url
-from esmporium.search.search.keys import get_facade_key
+from esmporium.search.search.keys import FacadeKey, get_facade_key
 from esmporium.search.search_api_facade import SearchAPIFacade
 
 logger = logging.getLogger(__name__)
 
+Parsed = TypeVar("Parsed")
+"""What one page of a response parses into, e.g. a [ParsedDocument][esmporium.search.ParsedDocument]"""  # noqa: E501
+
 
 @dataclass(frozen=True)
-class FacadePages:
-    """The outcome of paging through one facade's answer to a search"""
+class Pages(Generic[Parsed]):
+    """The outcome of paging through one facade's answer to one request"""
 
-    collected: tuple[ParsedDocument, ...]
+    collected: tuple[Parsed, ...]
     """Every parsed document we fetched, across all pages"""
 
     n_matches: int | None
@@ -46,6 +56,21 @@ class FacadePages:
 
     failure: CouldNotSearchError | None
     """The failure that stopped us, if paging did not complete"""
+
+
+FacadePages = Pages[ParsedDocument]
+"""The outcome of paging through one facade's answer to a *dataset* search"""
+
+FilePages = Pages[ParsedFileDocument]
+"""
+The outcome of paging through one facade's answer to a `type=File` request
+
+This is Solr only.
+
+The same four things as [FacadePages][(m).FacadePages], because the hazards of paging
+do not care what is being paged: see
+[collect_all_file_pages][(m).collect_all_file_pages].
+"""
 
 
 # TODO: In a future PR add this to SearchAPIHealth ?
@@ -188,9 +213,151 @@ def collect_all_pages(  # noqa: PLR0913 - the keyword-only extras are injection 
         We collected more than `max_results`, or the endpoint asked us to
         re-request a page we had already requested
     """
+    return _collect_all_pages(
+        client,
+        facade,
+        request,
+        limit=limit,
+        max_results=max_results,
+        warn_on_pagination=warn_on_pagination,
+        api_call_observer=api_call_observer,
+        parse_page=facade.parse_search_results,
+        processor=processor,
+    )
+
+
+def collect_all_file_pages(  # noqa: PLR0913 - the keyword-only extras are injection seams
+    client: httpx.Client,
+    facade: SearchAPIFacade,
+    request: Request,
+    *,
+    limit: int,
+    max_results: int | None,
+    warn_on_pagination: bool,
+    api_call_observer: SearchAPICallObserver | None,
+    processor: FileResultProcessor | None,
+) -> FilePages:
+    """
+    Fetch and page through one facade's whole answer to a `type=File` request
+
+    The file-level counterpart of [collect_all_pages][(m).collect_all_pages], and the
+    same function underneath: the only difference is that each page is read with
+    [parse_file_search_results][esmporium.search.SearchAPIFacade.parse_file_search_results]
+    rather than as dataset documents.
+
+    They share an engine on purpose. Everything that can go wrong while paging --
+    an endpoint which asks us to re-request a page we have already had (which would
+    page forever), a result set larger than we meant to pull, a page that fails part
+    way through -- goes wrong the same way whatever the pages contain, and files are
+    where it bites hardest: a `type=File` request against a whole batch of datasets
+    is the largest answer we ever ask for.
+
+    Parameters
+    ----------
+    client
+        The HTTP client to fetch the pages with
+
+    facade
+        The facade whose answer we are paging through
+
+        Must be a Solr-shaped one; ESGF-NG carries its files in the search response
+        itself.
+
+    request
+        The file search request to send for the first page
+
+        Usually built with
+        [build_file_search_request][esmporium.search.SearchAPIFacade.build_file_search_request].
+
+    limit
+        The page size that was asked for, i.e. the most files in one response
+
+    max_results
+        The most file documents to collect before stopping with a
+        [PaginationLimitError][esmporium.search.search.PaginationLimitError].
+        `None` disables the cap.
+
+    warn_on_pagination
+        Whether to emit a
+        [PaginationWarning][esmporium.search.search.PaginationWarning] when the
+        endpoint reports more matches than fit in one page
+
+    api_call_observer
+        Told about each request, as in [fire][esmporium.search.search.fire]
+
+    processor
+        Handed each page as it is parsed, so a failure part way still leaves the
+        earlier pages saved
+
+        The database layer supplies one; see
+        [esmporium.db.build_file_result_processor][].
+
+    Returns
+    -------
+    :
+        What we collected, the total matched, and whether we got every page
+
+    Raises
+    ------
+    NotASolrFacadeError
+        `facade` has no `type=File` request to make, so it cannot answer one either
+
+    PaginationLimitError
+        We collected more than `max_results`, or the endpoint asked us to
+        re-request a page we had already requested
+    """
+    # Checked before the first fetch rather than when the first page is parsed, so a
+    # facade which could never answer this is refused without a request going out.
+    facade.file_search_api()
+
+    return _collect_all_pages(
+        client,
+        facade,
+        request,
+        limit=limit,
+        max_results=max_results,
+        warn_on_pagination=warn_on_pagination,
+        api_call_observer=api_call_observer,
+        parse_page=facade.parse_file_search_results,
+        processor=processor,
+    )
+
+
+def _collect_all_pages(  # noqa: PLR0913 - the keyword-only extras are injection seams
+    client: httpx.Client,
+    facade: SearchAPIFacade,
+    request: Request,
+    *,
+    limit: int,
+    max_results: int | None,
+    warn_on_pagination: bool,
+    api_call_observer: SearchAPICallObserver | None,
+    parse_page: Callable[[dict[str, Any]], tuple[Parsed, ...]],
+    processor: Callable[[SearchAPIFacade, tuple[Parsed, ...]], None] | None,
+) -> Pages[Parsed]:
+    """
+    Page through one facade's whole answer, reading each page with `parse_page`
+
+    The engine behind [collect_all_pages][(m).collect_all_pages] and
+    [collect_all_file_pages][(m).collect_all_file_pages]; see either for what the
+    shared parameters mean.
+
+    Parameters
+    ----------
+    parse_page
+        Reads one raw page into the records it carries
+
+    processor
+        Handed each page as it is parsed
+
+    Returns
+    -------
+    :
+        What we collected, the total matched, and whether we got every page
+    """
     api = facade.search_api
-    facade_key = get_facade_key(facade)
-    collected: list[ParsedDocument] = []
+    facade_key: FacadeKey = get_facade_key(facade)
+    collected: list[Parsed] = []
     # Stays None if the first fetch fails before we can read a count.
     n_matches: int | None = None
     seen: set[str] = set()
@@ -211,7 +378,7 @@ def collect_all_pages(  # noqa: PLR0913 - the keyword-only extras are injection 
         seen = {_request_fingerprint(request)}
 
         while True:
-            parsed = facade.parse_search_results(raw)
+            parsed = parse_page(raw)
             collected.extend(parsed)
             if processor is not None:
                 processor(facade, parsed)
@@ -240,14 +407,14 @@ def collect_all_pages(  # noqa: PLR0913 - the keyword-only extras are injection 
             request = nxt
             raw = fire_here(request=nxt)
     except SearchAPIRequestError as exc:
-        return FacadePages(
+        return Pages(
             tuple(collected),
             n_matches,
             completed=False,
             failure=CouldNotGetSearchResponseError(facade_key, cause=exc),
         )
     except UnreadableResponseError as exc:
-        return FacadePages(
+        return Pages(
             tuple(collected),
             n_matches,
             completed=False,
@@ -271,4 +438,4 @@ def collect_all_pages(  # noqa: PLR0913 - the keyword-only extras are injection 
             n_matches,
         )
 
-    return FacadePages(tuple(collected), n_matches, completed=True, failure=None)
+    return Pages(tuple(collected), n_matches, completed=True, failure=None)
