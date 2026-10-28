@@ -224,6 +224,48 @@ def test_two_nodes_serving_one_file_share_the_file_row(engine):
         }
 
 
+def test_a_version_published_as_a_store_has_no_files_at_all(engine):
+    """
+    Zero files is a shape of the model, not an empty result
+
+    A store -- a zarr or icechunk one, when something publishes one -- cannot be named
+    piece by piece and cannot be checksummed piece by piece, so there is nothing for
+    [File][esmporium.db.schema.File] to hold and the whole version is reached through
+    one route with `file_id` NULL. Nothing writes a placeholder file to hang it off,
+    and nothing complains that the files are missing.
+
+    Pinned because nothing publishes a store to us yet: everything live and recorded
+    has at least one file, so without this the branch is only ever exercised by west
+    CMIP6's mixed answer (a `.nc` file *and* a whole-version kerchunk route), and
+    "published as a store" would be a claim about the schema rather than something we
+    had seen work.
+    """
+    store = DataAccessInfo(
+        filename=None,
+        data_node="store.example",
+        service=AccessService.HTTPS,
+        container_format=ContainerFormat.ICECHUNK,
+        url="s3://bucket/CMIP7.ScenarioMIP.../tas.icechunk",
+        raw_json="{}",
+    )
+
+    with Session(engine) as session:
+        saved = save_data_access_payload(
+            session, 1, DataAccessPayload(files=(), accesses=(store,))
+        )
+        session.commit()
+
+        assert saved.files == ()
+        assert session.exec(select(File)).all() == []
+
+        routes = session.exec(select(DataAccess)).all()
+        assert len(routes) == 1
+        assert routes[0].file_id is None
+        # The version is still named, which is what makes the route findable.
+        assert routes[0].dataset_version_id == 1
+        assert routes[0].container_format == ContainerFormat.ICECHUNK
+
+
 def test_a_route_cannot_be_given_another_versions_file(engine):
     """
     The invariant on `DataAccess.file_id`, which holds by construction

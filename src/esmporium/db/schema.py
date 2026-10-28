@@ -530,7 +530,31 @@ class File(EsmporiumBase, table=True):
     """
     One named, individually checksummable piece of a dataset version
 
-    The *unit* of data: a dataset version is published as some number of these.
+    **A dataset version has zero or more of these, not necessarily any.** Not all data
+    is published in pieces, so this table answers "which pieces is this version made
+    of", and [DataAccess][esmporium.db.schema.DataAccess] answers the question every
+    version can be asked: "how do I get it". The three shapes a version comes in:
+
+    | how it is published | `File` rows | `DataAccess` rows |
+    | ------------------- | ----------- | ----------------- |
+    | as files | one per file | per-file (`file_id` set) |
+    | as a single store | **none** | whole-version (`file_id` NULL) |
+    | as both | one per file | both kinds |
+
+    All three are real. Files-only is every Solr answer and ESGF-NG east; both-at-once
+    is ESGF-NG west today, which publishes a `.nc` file *and* a kerchunk reference set
+    covering the whole version; store-only is what a zarr or icechunk store will be
+    (see [ContainerFormat][esmporium.datasets.ContainerFormat]), and nothing publishes
+    one to us yet.
+
+    What makes something a row here is in the first line: it can be *named* and
+    *checksummed on its own*. A store can be neither -- there is no filename for it
+    and no digest of it -- so it gets no row here and is reached through a
+    whole-version route instead. "File" is the word both APIs use for the pieces
+    (Solr returns `type=File` documents; STAC writes `file:size` and `file:checksum`),
+    so it is the word used here; the general term, for the thing every version has, is
+    *data access*.
+
     Deliberately node-independent -- `filename`, `checksum` and `tracking_id`
     describe the bytes, not where they are, so they are the same on every replica.
     Where the bytes can be fetched from is
