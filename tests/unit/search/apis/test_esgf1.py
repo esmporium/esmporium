@@ -387,13 +387,6 @@ def test_n_matches_with_no_count_raises(raw, exp):
 def test_build_search_request_asks_for_dataset_documents():
     """
     The dataset search says `type=Dataset` rather than leaving it to the default
-
-    `Dataset` is the server default, so this changes nothing today. It is stated
-    because the failure mode if a node's default ever changed is silent corruption
-    rather than an error: a File document carries `master_id`, `version` and
-    `data_node`, i.e. every field the dataset parser reads, and its `master_id` is
-    the dataset's with the filename appended -- so we would quietly store dataset
-    rows whose project specific id ended in `.nc`.
     """
     request = api().build_search_request({"variable_id": ("tas",)}, limit=25)
 

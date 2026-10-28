@@ -4,10 +4,6 @@ Files and data-access routes against a migrated database
 The unit tests in `tests/unit/test_schema.py` build the schema with `create_all`,
 which is what our models say it should be. This checks the two new tables against
 what the *migrations* actually produce, which is what a real database has.
-
-Worth its own test because the things most likely to drift between the two are
-exactly the things these tables lean on: `file_id` being nullable, and
-`DataAccess`'s identity deliberately not mentioning it.
 """
 
 from __future__ import annotations

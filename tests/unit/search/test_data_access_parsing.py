@@ -163,7 +163,7 @@ def test_a_netcdf_asset_becomes_one_file_and_one_route_to_it():
 
 def test_the_kerchunk_asset_is_a_whole_version_route_fetched_over_https():
     """
-    The route this PR exists for: a virtual store covering the whole dataset version
+    The route: a virtual store covering the whole dataset version
 
     `service` and `container_format` disagree here, and that is the whole argument
     for them being two columns -- the sidecar is *fetched* over plain HTTPS, and

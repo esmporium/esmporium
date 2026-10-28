@@ -456,11 +456,6 @@ def test_summary_facet_keys_have_not_drifted_in_case(name, facade):
     If a deployment renamed a key only by case (say `CMIP7:variable_id`), the
     exact match would miss it and the facet would be dropped silently, read
     downstream as "this facet has no enumerable values" rather than as an error.
-
-    This catches that drift by finding a summary key that matches one of our
-    facet names when case is ignored but not when it is respected, and only when
-    the correctly-cased key is absent (so the facet really would be lost). It is
-    the loud counterpart to the exact match the parser deliberately keeps.
     """
     raw = load(f"{name}-facets")
     facets = every_facet(facade)

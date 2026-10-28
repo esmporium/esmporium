@@ -637,10 +637,6 @@ def test_there_is_no_cmip5_stac_facade():
     Asserting it keeps the gap visible, and this test is what fails if ESGF-NG ever
     fills it.
 
-    Both of the ways of asking refuse, for the same reason in different words: the
-    inbuilt store has no such pairing to hand out, and the default-definition
-    builder will not invent one.
-
     See `tests/integration/search/test_data_access_live.py` for the cells that do
     exist.
     """

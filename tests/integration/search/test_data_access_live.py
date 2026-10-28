@@ -10,14 +10,6 @@ The matrix is four cells, not six, because the two APIs barely overlap:
 |--------------|-----------------------|----------------|--------------------|
 | ESGF-1 Solr  | yes -- the only route | yes            | no -- holds none   |
 | ESGF-NG STAC | no -- no collection   | yes, east+west | yes -- only route  |
-
-STAC serves no CMIP5 at all (pinned by
-`tests/unit/search/test_facade.py::test_there_is_no_cmip5_stac_facade`, which needs
-no network so lives with the unit tests), and
-ESGF-1 holds no CMIP7: `type=File&project=CMIP7` answers `numFound=0` on CEDA,
-DKRZ, NSC and NCI, with `distrib=true` as well as `false`. CMIP6 is the one project
-both serve, which makes it the only place the two routes can be compared head to
-head -- which `test_the_two_apis_agree_about_one_cmip6_dataset` does.
 """
 
 from __future__ import annotations
@@ -98,13 +90,6 @@ CMIP6_QUERY = QueryCMIP6(
 )
 """
 A CMIP6 query narrow enough to be a handful of datasets, on *both* APIs
-
-The model matters. ESGF-NG's CMIP6 collection is a partial mirror of ESGF-1's: asking
-either STAC deployment for `ACCESS-ESM1-5`, `MPI-ESM1-2-LR` or `TaiESM1` returns
-nothing, while Solr has all three. Worse, STAC's own facet summaries advertise all of
-them, because those summaries describe the collection rather than answering the
-query -- so "it is in the facet list" is not evidence a search will find it.
-`BCC-CSM2-MR` is one of the models all three endpoints really hold.
 """
 
 CMIP7_QUERY = QueryCMIP7(
@@ -121,6 +106,11 @@ Needs the experiment as well as the member: CMIP7 publishes many experiments per
 member, so model and member alone is still dozens of datasets.
 """
 
+# Note for developers:
+# ESGF-NG West is listed separately from east because it is the only deployment
+# publishing whole-version routes -- a kerchunk reference set and a Globus
+# link -- so leaving it out would mean never exercising that branch of the
+# model against a live answer.
 LIVE_CASES = (
     pytest.param(
         _facade("CMIP5", "esgf.ceda.ac.uk"),
@@ -150,10 +140,6 @@ LIVE_CASES = (
 )
 """
 Every live (API, project) pair there is, plus both STAC mirrors for CMIP6
-
-West is listed separately from east because it is the only deployment publishing
-whole-version routes -- a kerchunk reference set and a Globus link -- so leaving it
-out would mean never exercising that branch of the model against a live answer.
 """
 
 
@@ -304,16 +290,6 @@ def test_the_two_apis_agree_about_one_cmip6_dataset(
     size, checksum, the algorithm it is of, and the tracking id -- Solr and STAC are
     identical, so a checksum learned from one really is comparable with the other,
     and whichever answered first, we hold the same thing.
-
-    Worth pinning live rather than only in the unit tests, because it is a fact about
-    the two APIs and not about our code: nothing stops them drifting apart, and if
-    they do, the first we would otherwise know is a
-    [FileFactsChangedWarning][esmporium.db.FileFactsChangedWarning] from somebody's
-    ingest.
-
-    Each side is ingested into a database of its own, because that is the only way to
-    compare them: into one database, the second ingest would overwrite the thing we
-    came to measure.
     """
     solr_facade = _facade("CMIP6", "esgf.nci.org.au")
     stac_facade = _facade("CMIP6", "search.west.esgf.io")
