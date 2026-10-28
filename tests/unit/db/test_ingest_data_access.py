@@ -372,8 +372,10 @@ def test_a_files_scalars_are_refreshed_on_a_later_ingest(engine):
     Keeping the newer value is the right call -- holding a checksum we have been told
     is wrong is worse than holding the new one, and there is only one row to hold it
     in. But the same filename under the same version is supposed to describe the same
-    bytes, so being told otherwise is a finding, and the value we drop cannot be
-    recovered: a file document's own JSON is stored nowhere.
+    bytes, so being told otherwise is a finding, and the value we drop may not be
+    recoverable: a STAC asset is kept verbatim in `DataAccess.raw_json`, but a Solr
+    `type=File` document is stored nowhere, so a value learned from Solr is gone. The
+    warning carries both values for that reason.
     """
     with Session(engine) as session:
         save_data_access_payload(session, 1, DataAccessPayload(files=(_a_file_info(),)))

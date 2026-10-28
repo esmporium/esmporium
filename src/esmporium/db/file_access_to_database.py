@@ -7,26 +7,6 @@ per-file URLs**: `type` is a document-type discriminator inside one index, and o
 request, which is the whole asymmetry with ESGF-NG, where a STAC item's `assets` are
 its files and [ingest_parsed_documents][esmporium.db.ingest_parsed_documents] has
 already recorded its routes by the time this could be called.
-
-"Solr" here means both of our Solr-shaped APIs: classic ESGF-1 (`/esg-search`) and
-the ESGF-1.5 bridge (`/esgf-1-5-bridge/`). Both answer `type=File` requests with
-documents of the same shape, down to the `url` triples, so both take this path; what
-decides it is the facade's
-[raw_docs_format_tag][esmporium.search.apis.SearchAPI.raw_docs_format_tag] and never
-the host.
-
-**The fetching does not happen here.** Sending the request and paging through the
-answer is `search`'s job
-([collect_all_file_pages][esmporium.search.collect_all_file_pages]), exactly as it is
-for a dataset search, and what is left here is the half that needs a database: which
-stored version each answer belongs to, and writing it. The two meet at
-[FileResultProcessor][esmporium.search.FileResultProcessor], the file-level mirror of
-the [ResultProcessor][esmporium.search.ResultProcessor] that dataset results are
-saved through.
-
-[record_solr_file_access][(m).record_solr_file_access] drives both halves from here,
-for the same reason [esmporium.db.search_tracking][] drives a live search from here:
-it both fetches and writes, and `search` never imports `db`.
 """
 
 from __future__ import annotations
@@ -176,15 +156,6 @@ def check_attribution_is_unambiguous(
     """
     Check a batch would not be asking about two versions it could not tell apart
 
-    Within one batch a file is placed by its `dataset_id` alone, so the same
-    `dataset_id` arriving twice for two different versions means the narrowing does
-    not narrow enough and every file in the answer would be guessed at.
-
-    Impossible today -- the one parser whose documents map to several dataset rows
-    names the facet which tells them apart -- which is exactly why it is checked here
-    rather than trusted: the facets come from the facade now, so a future parser can
-    get this wrong, and this is where that would otherwise go unnoticed.
-
     Parameters
     ----------
     dataset_version_id_by_dataset_id
@@ -219,15 +190,6 @@ def plan_solr_file_batches(
 ) -> tuple[SolrFileBatch, ...]:
     """
     Work out the `type=File` requests needed for some ingested Solr documents
-
-    Datasets are grouped by the values of `attribution_facets`, and each group is then
-    chunked to `batch_size`. With no facets to group by that is one group and as many
-    datasets per request as the URL budget allows; with `("variable",)` it is one
-    group per variable.
-
-    Which it is, is the facade's answer rather than this function's: see
-    [file_attribution_facets][esmporium.search.SearchAPIFacade.file_attribution_facets]
-    for why a CMIP5 request must narrow by variable and a CMIP6/CMIP7 one need not.
 
     Parameters
     ----------
@@ -313,11 +275,6 @@ def build_file_result_processor(
     piece of work whose transaction boundary the caller owns, the same way
     [ingest_parsed_documents][esmporium.db.ingest_parsed_documents] leaves that to its
     caller.
-
-    Writes through
-    [save_data_access_payload][esmporium.db.save_data_access_payload], the same path
-    ESGF-NG's results take, so the two sources of file information cannot grow two
-    ways of being stored.
 
     Parameters
     ----------
@@ -411,14 +368,6 @@ def record_solr_file_access(  # noqa: PLR0913 - one parameter per injection seam
     A separate, explicit step rather than part of parsing, because it is a separate
     request: there is nothing about files on a Solr dataset document for a parser to
     read.
-
-    Each batch is fetched and paged by
-    [collect_all_file_pages][esmporium.search.collect_all_file_pages] and written by
-    [build_file_result_processor][(m).build_file_result_processor], which is the same
-    division of labour a dataset search has: `search` fetches and parses, `db` writes.
-
-    Does not commit: the caller owns the transaction boundary, as
-    [ingest_parsed_documents][esmporium.db.ingest_parsed_documents] does.
 
     Parameters
     ----------

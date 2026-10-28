@@ -530,7 +530,7 @@ class File(EsmporiumBase, table=True):
     """
     One named, individually checksummable piece of a dataset version
 
-    **A dataset version has zero or more of these, not necessarily any.** Not all data
+    A dataset version has zero or more of these. Not all data
     is published in pieces, so this table answers "which pieces is this version made
     of", and [DataAccess][esmporium.db.schema.DataAccess] answers the question every
     version can be asked: "how do I get it". The three shapes a version comes in:
@@ -540,12 +540,6 @@ class File(EsmporiumBase, table=True):
     | as files | one per file | per-file (`file_id` set) |
     | as a single store | **none** | whole-version (`file_id` NULL) |
     | as both | one per file | both kinds |
-
-    All three are real. Files-only is every Solr answer and ESGF-NG east; both-at-once
-    is ESGF-NG west today, which publishes a `.nc` file *and* a kerchunk reference set
-    covering the whole version; store-only is what a zarr or icechunk store will be
-    (see [ContainerFormat][esmporium.datasets.ContainerFormat]), and nothing publishes
-    one to us yet.
 
     What makes something a row here is in the first line: it can be *named* and
     *checksummed on its own*. A store can be neither -- there is no filename for it
@@ -564,12 +558,7 @@ class File(EsmporiumBase, table=True):
     trusted: there is one row per `(dataset_version_id, filename)` however many
     documents describe it, and a document which describes one differently from
     another warns
-    ([FileFactsChangedWarning][esmporium.db.FileFactsChangedWarning]). Measured
-    against live answers it holds -- of 153 files served by more than one node within
-    one version, every node agreed.
-
-    This holds no URL and no local copy. Nothing in esmporium opens, fetches or
-    downloads any of this yet.
+    ([FileFactsChangedWarning][esmporium.db.FileFactsChangedWarning]).
     """
 
     # See the note on `Dataset.model_config`.
@@ -598,7 +587,7 @@ class File(EsmporiumBase, table=True):
     For example `tas_Amon_UKESM1-0-LL_historical_r15i1p1f2_gn_185001-194912.nc`.
 
     This is the file's identity within its version, and it is what both APIs key on:
-    ESGF-NG STAC keys a data asset by exactly this, and ESGF-1 Solr publishes it as a
+    STAC keys a data asset by exactly this, and Solr publishes it as a
     File document's `title`.
     """
 
@@ -618,16 +607,14 @@ class File(EsmporiumBase, table=True):
     The file's checksum as a bare hex digest, if the API published one
 
     Normalised across the two APIs, which disagree about how to say this. Solr
-    publishes a bare digest alongside a separate `checksum_type`; ESGF-NG STAC
+    publishes a bare digest alongside a separate `checksum_type`; STAC
     publishes a *multihash* (`file:checksum`) in which the algorithm and digest
     length are encoded as a hex prefix, and has no `checksum_type` field at all.
     [decode_multihash_checksum][esmporium.search.decode_multihash_checksum] strips
     that prefix, so a value here means the same thing whichever API it came from.
 
     A value we could not decode is stored **exactly as published**, with
-    `checksum_type` left `None`. That really happens: a live CMIP6Plus asset carried
-    72 hex characters where a sha2-256 multihash is 68, i.e. the `1220` prefix twice.
-    We record what upstream published rather than repairing it.
+    `checksum_type` left `None`.
     """
 
     checksum_type: str | None = None
@@ -644,7 +631,7 @@ class File(EsmporiumBase, table=True):
     The file's own persistent identifier, e.g. `hdl:21.14100/0fd04828-...`
 
     Written into the file's header at publication, so it is a property of the bytes
-    and the same on every replica. ESGF-NG STAC carries it under a project prefix
+    and the same on every replica. STAC carries it under a project prefix
     (`cmip6:tracking_id`, `cmip7:tracking_id`, ...); Solr carries it as `tracking_id`.
     """
 
@@ -684,8 +671,6 @@ class DataAccess(EsmporiumBase, table=True):
     URL column: turning a route into something a reader can open is the reader's job,
     and needs libraries this package deliberately does not depend on.
 
-    This table is record-only. Nothing in esmporium opens, fetches or downloads any
-    of these routes yet.
 
     !!! note "Two search mirrors describing the same version"
         ESGF-NG east and west give the same STAC item the same `id`, which is what
@@ -780,36 +765,36 @@ class DataAccess(EsmporiumBase, table=True):
     `service`; see the note on this class.
     """
 
+    # TODO plus note for developers:
+    # Not normalised and not made openable. For example an OPeNDAP route's URL ends
+    # `.nc.html` (a landing page, not the DAP endpoint); ESGF-NG's Globus route is an
+    # `https://app.globus.org/file-manager?...` web-app page rather than a transfer
+    # endpoint, and Solr's is a `globus:<endpoint-uuid>/<path>` string which is not a
+    # URL an ordinary parser will take apart at all. Deriving something fetchable from
+    # any of them is a later step's problem, and guessing at it here would be guessing
+    # on behalf of a reader who knows better.
+
+    # For a whole-version store this column is also *not sufficient*, by itself, to
+    # open anything; what makes up the difference is `raw_json`.
     url: str
     """
     The route's URL, exactly as the API published it
-
-    Not normalised and not made openable. For example an OPeNDAP route's URL ends
-    `.nc.html` (a landing page, not the DAP endpoint); ESGF-NG's Globus route is an
-    `https://app.globus.org/file-manager?...` web-app page rather than a transfer
-    endpoint, and Solr's is a `globus:<endpoint-uuid>/<path>` string which is not a
-    URL an ordinary parser will take apart at all. Deriving something fetchable from
-    any of them is a later step's problem, and guessing at it here would be guessing
-    on behalf of a reader who knows better.
-
-    For a whole-version store this column is also *not sufficient*, by itself, to
-    open anything; what makes up the difference is `raw_json`.
     """
 
+    # TODO plus note for developers:
+    # Kept so that nothing a record carried is lost to our column choices, the same
+    # reason [DatasetRawDoc.raw_json][esmporium.db.schema.DatasetRawDoc.raw_json]
+    # exists. That is not only insurance against our own column choices: it is where
+    # the opening hints for a zarr or icechunk store will land, because they are part
+    # of the asset and we have no column for them (see the note on this class).
     raw_json: str
     """
     The API's own description of this route, JSON-encoded
 
-    For ESGF-NG STAC this is the asset object. Solr (classic ESGF-1 and the 1.5
-    bridge alike) describes a route only as a `"<url>|<mime>|<service>"` triple inside
+    For STAC this is the asset object. Solr describes a route only as a
+    `"<url>|<mime>|<service>"` triple inside
     a document that describes the *file*, so for Solr this is that triple --
     JSON-encoded, hence a quoted string rather than an object.
-
-    Kept so that nothing a record carried is lost to our column choices, the same
-    reason [DatasetRawDoc.raw_json][esmporium.db.schema.DatasetRawDoc.raw_json]
-    exists. That is not only insurance against our own column choices: it is where
-    the opening hints for a zarr or icechunk store will land, because they are part
-    of the asset and we have no column for them (see the note on this class).
     """
 
 

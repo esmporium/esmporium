@@ -328,10 +328,6 @@ class IngestedDocument:
 
     One per dataset the document described, **index-aligned with
     `parsed.datasets`**: `versions[i]` is the version of `parsed.datasets[i]`.
-
-    That alignment was always true and is now relied on, so it is written down:
-    [plan_solr_file_batches][esmporium.db.plan_solr_file_batches] uses it to work out
-    which variable each of a CMIP5 bundle's versions is for, without a lookup.
     """
 
     files: tuple[File, ...] = ()
@@ -341,9 +337,6 @@ class IngestedDocument:
     Empty for a document that described no files, which is every Solr *dataset*
     document -- those get their files from
     [record_solr_file_access][esmporium.db.record_solr_file_access] instead.
-
-    Returned because the next step needs them: dataset ancestry reads a file's header
-    and has to be able to say which file a fact came from.
     """
 
     accesses: tuple[DataAccess, ...] = ()
@@ -679,13 +672,6 @@ class FileFactsChangedWarning(UserWarning):
     upstream problems rather than ours, and neither is something our model can
     represent -- there is one [File][esmporium.db.schema.File] row per
     `(dataset_version_id, filename)`, so one of the two answers is all we can hold.
-
-    This is a warning rather than an error on purpose. It is ESGF's inconsistency to
-    fix, the same way replicas lagging on retraction is -- which is recorded the same
-    way, in the note on how a version row's snapshot flags are refreshed -- and
-    raising here would abort an entire search over one file: the processors which
-    write results are called from inside paging, which does not catch this, so a
-    raise would discard every page not yet committed.
     """
 
 
@@ -766,9 +752,14 @@ def check_file_facts_agree(
     warnings.warn(
         f"{info.filename} of dataset version {stored.dataset_version_id} is "
         f"described differently by two documents. {changes}. The newer value is "
-        f"kept, so the one we held is now gone: a file document's own JSON is not "
-        f"stored anywhere, so it cannot be recovered from the database. This "
-        f"document came from {served_by}. The same filename under the same version "
+        f"kept, so the value we held is no longer on the file row. Whether it can be "
+        f"dug back out depends on which API described it: an ESGF-NG STAC asset is "
+        f"stored verbatim in DataAccess.raw_json (and the whole item in "
+        f"DatasetRawDoc.raw_json), so a value learned that way is still there, but a "
+        f"Solr type=File document is not stored anywhere -- only its "
+        f"url|mime|service triple reaches DataAccess.raw_json -- so a value learned "
+        f"from Solr is gone for good. This document came from {served_by}. The same "
+        f"filename under the same version "
         "should describe the same bytes on every replica, so this means either two "
         "nodes disagree or the data was republished under a version that already "
         "existed. Both are ESGF's to fix, and we cannot ask upstream without cases: "
@@ -795,11 +786,6 @@ def save_data_access_payload(
     """
     Write one dataset version's files and routes, reusing anything already stored
 
-    Public, unlike the `_get_or_create_*` helpers it is built from, because the Solr
-    file step ([record_solr_file_access][esmporium.db.record_solr_file_access])
-    writes through exactly this path. The two sources of file information must not
-    grow two ways of storing it.
-
     Idempotent, the way the rest of ingestion is: re-recording the same file or the
     same route reuses the row rather than duplicating it. A file is matched on
     `(dataset_version_id, filename)` and a route on
@@ -807,25 +793,11 @@ def save_data_access_payload(
     on [File][esmporium.db.schema.File] and
     [DataAccess][esmporium.db.schema.DataAccess].
 
-    On a file we already hold, each of [FILE_FACT_COLUMNS][(m).FILE_FACT_COLUMNS] is
-    refreshed from what this document *asserts*, and left alone where this document is
-    silent (`None`). Both halves matter, and they are not the same rule:
-
-    - **Asserted wins**, so a re-ingest keeps what we hold current, the way
-      [DatasetVersion][esmporium.db.schema.DatasetVersion]'s snapshot flags are
-      refreshed.
-    - **Silence changes nothing**, because the two APIs are silent about different
-      things. A checksum we cannot decode leaves `checksum_type` `None` while the
-      digest is stored as published, so one API can be silent about the algorithm
-      where the other names it; taking that `None` as an assertion would erase the
-      name we had.
-
-    A document which asserts something *different* from what we hold is neither of
-    those, and warns: see
-    [FileFactsChangedWarning][(m).FileFactsChangedWarning]. Measured against live
-    answers, that does not happen -- of 153 files served by more than one node within
-    one version, every node agreed on all four node-independent facts -- so if it
-    fires, it is news.
+    On a file we already hold, [FILE_FACT_COLUMNS][(m).FILE_FACT_COLUMNS] are
+    refreshed from what the document asserts, and left alone where it says nothing: a
+    `None` means the document did not say, not that the value is nothing. A document
+    which says something *different* warns
+    ([FileFactsChangedWarning][(m).FileFactsChangedWarning]).
 
     Does not commit: the caller owns the transaction boundary.
 
@@ -909,10 +881,7 @@ def _data_nodes_by_filename(payload: DataAccessPayload) -> dict[str, list[str]]:
     """
     Work out which nodes a payload says serve each of its files
 
-    Read from the routes, because that is where a node is named: a
-    [File][esmporium.db.schema.File] is node-independent by design, so
-    [FileInfo][esmporium.search.FileInfo] carries no node either. Only used to name
-    the nodes in [FileFactsChangedWarning][(m).FileFactsChangedWarning].
+    Read from the routes, because that is where a node is named.
     """
     nodes: dict[str, list[str]] = {}
     for info in payload.accesses:
