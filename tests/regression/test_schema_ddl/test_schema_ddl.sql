@@ -211,3 +211,59 @@ CREATE INDEX ix_dataaccess_data_node_id ON dataaccess (data_node_id);
 CREATE INDEX ix_dataaccess_dataset_version_id ON dataaccess (dataset_version_id);
 
 CREATE INDEX ix_dataaccess_file_id ON dataaccess (file_id);
+
+CREATE TABLE datanodecallrecord (
+	id INTEGER NOT NULL,
+	created_at DATETIME NOT NULL,
+	data_node_id INTEGER NOT NULL,
+	file_id INTEGER,
+	data_access_id INTEGER,
+	url VARCHAR NOT NULL,
+	http_method VARCHAR NOT NULL,
+	response_code INTEGER,
+	outcome VARCHAR NOT NULL,
+	error VARCHAR,
+	bytes_transferred BIGINT NOT NULL,
+	seconds FLOAT NOT NULL,
+	attempt_number INTEGER NOT NULL,
+	resumed BOOLEAN NOT NULL,
+	CONSTRAINT pk_datanodecallrecord PRIMARY KEY (id),
+	CONSTRAINT fk_datanodecallrecord_data_node_id_datanode FOREIGN KEY(data_node_id) REFERENCES datanode (id),
+	CONSTRAINT fk_datanodecallrecord_file_id_file FOREIGN KEY(file_id) REFERENCES file (id),
+	CONSTRAINT fk_datanodecallrecord_data_access_id_dataaccess FOREIGN KEY(data_access_id) REFERENCES dataaccess (id)
+);
+
+CREATE INDEX ix_datanodecallrecord_created_at ON datanodecallrecord (created_at);
+
+CREATE INDEX ix_datanodecallrecord_data_access_id ON datanodecallrecord (data_access_id);
+
+CREATE INDEX ix_datanodecallrecord_data_node_id ON datanodecallrecord (data_node_id);
+
+CREATE INDEX ix_datanodecallrecord_file_id ON datanodecallrecord (file_id);
+
+CREATE INDEX ix_datanodecallrecord_outcome ON datanodecallrecord (outcome);
+
+CREATE TABLE download (
+	id INTEGER NOT NULL,
+	file_id INTEGER NOT NULL,
+	status VARCHAR NOT NULL,
+	path VARCHAR,
+	size_bytes BIGINT,
+	checksum_verified BOOLEAN NOT NULL,
+	checksum_type_used VARCHAR,
+	served_by_data_access_id INTEGER,
+	attempts INTEGER NOT NULL,
+	last_error VARCHAR,
+	queued_at DATETIME NOT NULL,
+	started_at DATETIME,
+	finished_at DATETIME,
+	CONSTRAINT pk_download PRIMARY KEY (id),
+	CONSTRAINT fk_download_file_id_file FOREIGN KEY(file_id) REFERENCES file (id),
+	CONSTRAINT fk_download_served_by_data_access_id_dataaccess FOREIGN KEY(served_by_data_access_id) REFERENCES dataaccess (id)
+);
+
+CREATE UNIQUE INDEX ix_download_file_id ON download (file_id);
+
+CREATE INDEX ix_download_served_by_data_access_id ON download (served_by_data_access_id);
+
+CREATE INDEX ix_download_status ON download (status);

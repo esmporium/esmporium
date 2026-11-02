@@ -197,6 +197,7 @@ addopts = [
 markers = [
     "network: test which needs network access, for something not worth naming more specifically",
     "hits_esgf_search_api: test which talks to the live ESGF search APIs",
+    "downloads_data: test which downloads real files from the live ESGF data nodes",
 ]
 
 [tool.ruff]

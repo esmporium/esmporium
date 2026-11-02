@@ -6,12 +6,12 @@ from __future__ import annotations
 
 import json
 import logging
-import shlex
 import time
 from typing import Any
 
 import httpx
 
+from esmporium.http import log_request_as_url_and_curl
 from esmporium.search.apis import (
     NoSearchResultNumberOfMatchesReturnedError,
     Request,
@@ -41,74 +41,6 @@ def get_url(api: SearchAPI, request: Request) -> str:
         The URL to send `request` to
     """
     return f"{api.scheme}://{api.host}{request.path}"
-
-
-def curl_equivalent(request: httpx.Request) -> str:
-    """
-    Render an httpx request as a `curl` command which reproduces it
-
-    Every piece is shell-quoted, so the result is safe to paste into a terminal.
-
-    Parameters
-    ----------
-    request
-        The request to render
-
-    Returns
-    -------
-    :
-        A `curl` command equivalent to `request`
-    """
-    parts = ["curl", "-X", request.method]
-    for name, value in request.headers.items():
-        parts += ["-H", shlex.quote(f"{name}: {value}")]
-
-    body = request.content
-    if body:
-        parts += ["--data", shlex.quote(body.decode("utf-8", errors="replace"))]
-
-    parts.append(shlex.quote(str(request.url)))
-
-    return " ".join(parts)
-
-
-def log_request_as_url_and_curl(
-    api: SearchAPI, request: httpx.Request, log_level: int = logging.DEBUG
-) -> None:
-    """
-    Log a request we are about to send, at `DEBUG`
-
-    Parameters
-    ----------
-    api
-        The API the request is going to
-
-    request
-        The request
-
-    log_level
-        Level at which to log
-    """
-    if not logger.isEnabledFor(log_level):
-        # Skip rendering if the logger is not enabled for the given level
-        return
-
-    url = str(request.url)
-    curl = curl_equivalent(request)
-    logger.log(
-        log_level,
-        "search request to %s\n%s %s\n%s",
-        api.host,
-        request.method,
-        url,
-        curl,
-        extra={
-            "search_api_host": api.host,
-            "http_method": request.method,
-            "http_url": url,
-            "http_curl": curl,
-        },
-    )
 
 
 def _result_count_or_none(api: SearchAPI, raw: dict[str, Any]) -> int | None:
@@ -184,7 +116,9 @@ def fire(
         json=request.json_body,
         timeout=api.timeout,
     )
-    log_request_as_url_and_curl(api, built)
+    log_request_as_url_and_curl(
+        logger, api.host, built, what="search", host_field="search_api_host"
+    )
 
     request_body = json.dumps(request.json_body) if request.json_body else None
 

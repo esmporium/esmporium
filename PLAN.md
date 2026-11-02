@@ -2,7 +2,7 @@
 
 What we are building, in the order we mean to build it.
 
-Last updated: 2026-10-15
+Last updated: 2026-11-02
 
 ## What changed about this document
 
@@ -74,7 +74,7 @@ and then downloading what it finds).
   watch what         get the data       say what we        load it, and
   changes                               need precisely     tidy up
 
-  steps 1–5          steps 6–10         steps 11–16        steps 17–22
+  steps 1–5          steps 6–11         steps 12–17        steps 18–23
 ```
 
 ## Roadmap at a glance
@@ -86,32 +86,53 @@ and then downloading what it finds).
 | 3 | Track changes in search results | PR4 | 1 |
 | 4 | Nice summaries of results and of changes | PR5 | 1 |
 | 5 | A live pattern-effect watch on the server, emailing us | PR4 live tests | 1 |
-| 6 | Data access tracking (`DataAccess`, `File`, `FileAccess`) | PR7 | 2 |
-| 7 | Dataset ancestry | PR6 | 2 |
-| 8 | `Ancestors` lineage in requirements | R5 | 2 |
-| 9 | Downloads | PR8 | 2 |
-| 10 | Deploy downloading off the watched searches | new | 2 |
-| 11 | The `Constraint` protocol, nothing shipped | R6 | 3 |
-| 12 | `Covers` | R7 | 3 |
-| 13 | `any_of`, `optional` | R8 | 3 |
-| 14 | `scope` and `SameTimeRange` | R9 (`namespace`) | 3 |
-| 15 | `Aux` | R11 | 3 |
-| 16 | Rework `prefer` | new | 3 |
-| 17 | Data loading | PR9 | 4 |
-| 18 | `Sibling` | R10 | 4 |
-| 19 | Dataset clash handling | PR5.5 | 4 |
-| 20 | Ingesting from a local source | new | 4 |
-| 21 | Daily CMIP5/CMIP6 downloads, using what is already local | new | 4 |
-| 22 | Clean up, including retiring the prototype | R13 + new | 4 |
+| 6 | Data access tracking (`DataAccess`, `File`) | PR7 | 2 |
+| 7 | Downloads, and the data-node access layer | PR8 | 2 |
+| 8 | Download parallelisation and per-data-node caps | new | 2 |
+| 9 | Deploy downloading off the watched searches | new | 2 |
+| 10 | Dataset ancestry | PR6 | 2 |
+| 11 | `Ancestors` lineage in requirements | R5 | 2 |
+| 12 | The `Constraint` protocol, nothing shipped | R6 | 3 |
+| 13 | `Covers` | R7 | 3 |
+| 14 | `any_of`, `optional` | R8 | 3 |
+| 15 | `scope` and `SameTimeRange` | R9 (`namespace`) | 3 |
+| 16 | `Aux` | R11 | 3 |
+| 17 | Rework `prefer` | new | 3 |
+| 18 | Data loading | PR9 | 4 |
+| 19 | `Sibling` | R10 | 4 |
+| 20 | Dataset clash handling | PR5.5 | 4 |
+| 21 | Ingesting from a local source | new | 4 |
+| 22 | Daily CMIP5/CMIP6 downloads, using what is already local | new | 4 |
+| 23 | Clean up, including retiring the prototype | R13 + new | 4 |
 
-Two orderings changed on purpose, and both are worth knowing about:
+Three things about this order are not obvious, and all are worth knowing about. The
+numbers run in the order we mean to work, so these are the reasons the sequence is
+what it is rather than the other way round:
 
-- **Data access tracking (step 6) now comes before ancestry (step 7).** It used to be
-  the other way around, with ancestry throwing file information away and `File`
-  arriving next. Doing it this way means ancestry can link a fact read out of a file
+- **Data access tracking (step 6) comes before ancestry (step 10).** The obvious
+  order is the reverse, with ancestry throwing file information away and `File`
+  arriving afterwards. This way round, ancestry can link a fact read out of a file
   header to the file it came from as it goes, instead of us coming back to add that
-  link afterwards.
-- **`Sibling` (step 18) is late, and `Ancestors` (step 8) is early.** Ancestors is
+  link later.
+- **All the download work (steps 7-9) comes before ancestry (step 10) too**, which is
+  step 6's argument applied one step further. Downloads and ancestry need the same
+  brand-new layer -- pick a data node from the routes step 6 recorded, fetch over
+  HTTPS, classify the failure, record node health, rank next time, retry then fall
+  back to the next mirror -- and neither can skip it. The search side already has
+  that shape for search APIs (`search/health.py`, `db/search_health.py`,
+  `search_api_facade/selectors.py`); data nodes needed the twin.
+
+  So the question was never "ancestry or downloads" but *which step should be
+  carrying that layer while it is being built*. Downloads is the thin wrapper on top
+  of it: a streamer, a path, a checksum. Ancestry is the thick one: parent-query
+  generation, a fixes mechanism, a cross-dataset cache, recursion to a stopping
+  point. Building the shared layer inside the thick step would have meant one PR
+  doing two hard new things at once.
+
+  Note the consequence for step 9: the deployment it describes wants to follow
+  parents back to `historical`, which is ancestry, so that part of it has to wait for
+  step 10 even though the downloading itself does not.
+- **`Sibling` (step 19) is late, and `Ancestors` (step 11) is early.** Ancestors is
   what the live searches need (parents back to `historical`); siblings are not needed
   until the ERF use cases.
 
@@ -132,6 +153,29 @@ The search-and-database track:
 | PR3.5 | Concurrent saving, dataset clashes under races | [#43](https://github.com/esmporium/esmporium/pull/43) |
 | — | Facade fixes, `get_n_matches` moved onto the APIs | [#49](https://github.com/esmporium/esmporium/pull/49) |
 | — | Keep both ESGF-NG mirrors' documents (`search_host`) | [#54](https://github.com/esmporium/esmporium/pull/54) |
+
+The numbered steps of this plan, as they have landed:
+
+| Step | What landed | PR |
+|---|---|---|
+| 1 | CORDEX integration test: `other_terms` from search to solve | [#57](https://github.com/esmporium/esmporium/pull/57) |
+| 2 | Make `find` ~6x cheaper (`needs_facets`) | [#58](https://github.com/esmporium/esmporium/pull/58) |
+| 3 | Track changes in search results | [#59](https://github.com/esmporium/esmporium/pull/59) |
+| 4 | Nice summaries of results and of changes (`summarise_search`) | [#61](https://github.com/esmporium/esmporium/pull/61) |
+| 6 | Data access tracking (`File`, `DataAccess`) | [#62](https://github.com/esmporium/esmporium/pull/62) |
+| 7 | Downloads, and the data-node access layer | _this PR_ |
+
+So **phase 1 is done except step 5** (the live pattern-effect watch on the server),
+and phase 2 has steps 6 and 7 done, leaving 8 (parallelism), 9 (deployment), 10
+(ancestry) and 11 (`Ancestors`).
+
+**Step 9 is now unblocked**, which is the nearest thing to a live archive: step 5
+watches and step 7 can download, so wiring those two together is the only thing
+between us and data arriving on disk by itself. Its one caveat is in the ordering
+note above -- following parents back to `historical` needs step 10.
+
+The PR numbers above are taken from the `changelog/<PR>.<type>.md` fragment names, so
+they should be right, but they were not checked against GitHub -- worth a glance.
 
 The requirements track:
 
@@ -355,7 +399,7 @@ and what we have actually pulled down — and then starts pulling it down.
 
 ## 6. Data access tracking
 
-*Was PR7.* Note the swap: this now comes **before** ancestry (step 7), so that
+*Was PR7.* Note the swap: this now comes **before** ancestry (step 10), so that
 ancestry can record which file a fact came from while it is reading it, rather than us
 adding that link afterwards.
 
@@ -392,96 +436,7 @@ Integration tests:
 - [ ] Do a search query that gets file information from an ESGF API, assert that the expected data access information and links appear in the database
     - do this on all combinations of ESGF-1 ESGF-NG and CMIP5/CMIP6/CMIP7. Yes, that's more expensive, but it's also the key test so we are happy to pay that price
 
-## 7. Dataset ancestry
-
-*Was PR6.* The "Not included: the File class, we will add it next" note that used to end
-this step no longer applies — step 6 landed first, so file information is already
-there and a fact read out of a header should be linked to the file it came from as it
-is read.
-
-Finding dataset ancestry
-
-Note that this is currently huge.
-Before we start implementing, let's think about how to split this up, perhaps:
-
-1. functionality to find a file that belongs to a dataset
-1. functionality to retrieve the header of a file (also includes tracking of node health for this retrieval and the same 'selector' idea as we have for search)
-1. addition of information only accessible from file headers to dataset entries in the database (with the link between that information and the file it came from, which step 6 has made possible)
-1. generation of a 'parent query' from a dataset in the database
-1. (not needed, but noting): executing a parent query search and parsing results
-1. linking parent and child datasets in the database
-1. recursion i.e. adding ancestry back to a given level/experiment
-1. caching/fast-path i.e. ensuring that we don't query again if we have information already or can get information from another dataset in the database (e.g. if we know parent for tas, we can use that to generate the parent query for rsdt, we don't need an rsdt file)
-
-Also keep in mind that the above is very ESGF1 specific, the flow will likely be quite different for ESGF-NG so we'll need to think about that as we go too.
-
-Will require adding the parent information to our dataset version table
-Will require adding the file header query logic and parallelisation and node selection and health monitoring too
-Will require adding some concept of fixes (initially do it in this package e.g. `src/esmporium/fixes`, can split out later) so we can inject corrected metadata on the fly
-
-Tests:
-
-Unit tests:
-
-- [ ] we can navigate the ancestry in different cases
-    - this is the key one because we should be able to cover lots of cases because the tests will be very fast as we will mock out all the calls to search and fetch file header etc.
-- [ ] tests of file header retrieval that can use mocking
-- [ ] tests of node health monitoring that can use mocking
-- [ ] tests of node selection that can use mocking
-- [ ] tests of node selection passing from high level down to low-level functions
-
-Integration tests:
-
-- [ ] start with a dataset, get its ancestry up to a given point, assert that all the expected parents and links end up in the database
-    - [ ] key cases to cover
-        - [ ] CMIP5 abrupt4xCO2
-        - [ ] CMIP5 scenario
-        - [ ] CMIP6 abrupt4xCO2 (pick a simulation with broken parent information here to test the fixes path)
-        - [ ] CMIP6 scenario (or maybe even better, g6solar)
-        - [ ] CMIP7 abrupt4xCO2
-        - [ ] CMIP7 scenario
-        - [ ] CMIP7 scenario extension when available
-    - [ ] this will be very slow, because it will need to do lots of live API calls (ok, just make sure it is marked)
-    - [ ] use parallelisation approaches and nodes that seem to be stable, so this test is as stable as possible
-    - [ ] also assert that node health stats that we expect end up in the database
-    - [ ] also assert that dataset information is updated as we expect
-    - [ ] also assert that information which came out of a file header is linked to the file it came from
-- [ ] 'fast path' testing i.e. pre-load a database with a dataset that already has all the parent information, then
-    - [ ] test that if we ask for parent information to be added to this dataset again, no queries are actually done because all the information is already there
-        - [ ] I don't think we need a `--force` flag that forces the queries to be re-run because the files attached to a dataset cannot be changed on ESGF without making a new version (and all of this parent stuff is version specific). This is one to check. A force flag isn't that expensive so maybe we just include it anyway, although it then means we have to track changes in parent information over time, which is tricky, so on second thoughts let's not include force for now, and we just note that this could be an issue in our docstring and wait and see if it is an issue before doing anything else.
-    - [ ] test that if we ask for parent information of a dataset that should have the same parent information, no queries are done because we just use the parent information from the 'other' dataset instead
-        - e.g. if we know parent information for tas, then we can get parent information for tos by just looking at the tas info, we don't need to re-query ESGF and read a file header
-        - this tests the key optimisation that we need for large-scale parent attachment
-        - we should note in our docstring clearly that this all relies on the assumption that we can do this 'cross-dataset' parent information jump. If we can't, the logic of this 'fast path' falls over (and then we'll need to introduce a `do_not_use_cross_dataset` flag or something, but again let's wait before doing that)
-
-## 8. `Ancestors` lineage in requirements
-
-*Was R5.* Step 7 puts parent links in the database; this is how a requirement asks for
-them.
-
-- `relations.py` (new): `RELATION_MODEL_CONFIG`, `Ancestors`, and `Lineage` with `index_of`.
-  `Lineage` lives here rather than in `constraints.py` (which does not exist yet) because it is
-  the resolved form of `Ancestors`/`Sibling` and solving needs it before any constraint exists;
-  `constraints.py` imports it from here at step 11.
-- `catalogue.py`: `Catalogue.parent_of`, `InMemoryCatalogue.parents`, reference checking in
-  `__post_init__`, and the `DatabaseCatalogue` implementation reading the links step 7 stored.
-- `tree.py`: `LineageRelation` (one member for now), `Leaf.lineage`, `.with_lineage()`,
-  `RESERVED_ROLES`, the leaf-role-versus-lineage-role validator, lineage entries in
-  `role_paths`.
-- `solve.py`: `_lineage`, `_ancestor_lineage`, `Resolved.lineages`, lineage role paths in
-  `_eval_leaf`.
-
-Role paths gain their second level here: `control.tas`, `chain.0.tas`.
-
-Tests: `test_branch_chain_back_to_picontrol`, `test_bell_is_rooted_in_esm_picontrol`,
-`test_lineage_role_names_where_it_stopped`, `test_catalog_rejects_unknown_references`,
-`test_leaf_role_cannot_be_its_own_lineage_role`,
-`test_role_names_are_free_unless_a_lineage_uses_them`,
-`test_machinery_role_names_are_always_reserved`, no parent recorded, `max_depth` exhausted.
-
-Use cases: `15-pattern-scaling`, `17-etccdi` — both have a lineage and no constraints.
-
-## 9. Downloads
+## 7. Downloads
 
 *Was PR8.*
 
@@ -521,40 +476,220 @@ Maybe too big and should be split, perhaps:
 1. parallelisation and (re-)queueing (will also require a basic selector function)
 1. auto-selecting nodes based on health (fancy 'selector' function)
 
+*What was built, and how it was split:* the four-way split above became **three of
+four in one PR, with parallelisation left out**. The first, second and fourth went
+together because they are one layer wearing three hats -- you cannot rank data nodes
+without health, and health is only recorded by something that fetches -- while
+parallelisation is genuinely separable and is next.
+
+The package is `src/esmporium/downloads/`, mirroring `search/`:
+
+| module | the search twin |
+|---|---|
+| `health.py` (`DataNodeCall`, `fan_out`) | `search/health.py` |
+| `retry.py` (`build_download_retrying`) | `search/retry.py` |
+| `fetching.py` (`fetch_to_path`) | `search/search/firing.py`'s `fire` |
+| `selectors.py` (`DataNodeSelector`) | `search_api_facade/selectors.py` |
+| `run.py` (`download_files`) | `search/search/run.py` |
+| `routes.py`, `paths.py`, `errors.py` | — (new concerns) |
+| `db/download_health.py` | `db/search_health.py` |
+| `db/downloads_to_database.py` (`download`) | `db/search_tracking.py`'s `search_and_track` |
+
+Six things are worth knowing, because four of them are departures from what this step
+guessed and two are facts about ESGF we only learned by downloading:
+
+- **Health is read over a *window*, and a selector can refresh itself mid-run.** This
+  is the one place downloads genuinely needed something search does not.
+  `build_health_selector`'s docstring says health "is read *once*, now, when the
+  selector is built", which is right for a search measured in seconds and wrong for a
+  download measured in days -- a selector built on Monday is still sending files to
+  Monday's best node on Thursday. So `aggregate_data_node_health` takes `since`
+  (default a week) and `build_refreshing_data_node_health_selector` re-reads on a
+  timer (default three hours), lazily, with an injected clock so it is testable in
+  milliseconds. Wire the observer up and a long download learns from its own
+  experience as it goes.
+- **Download health is ranked on reliability first, then throughput**, where search
+  ranks on median response time alone. A node serving at 80 MB/s one time in five is
+  worse than one serving at 20 MB/s every time, because each failure costs a timeout
+  before you find out. It is also measured as *throughput*, not latency: the
+  prototype wrote two nodes off as dead on a header-read timeout, and both then
+  downloaded 2.1x and 3.9x faster than the probe suggested.
+- **There is no default *ranking* of data nodes, on purpose.** Search ships a
+  hand-curated ordered list of index nodes. There is no honest equivalent here: which
+  data nodes hold a given file varies per file, and before anything has been
+  downloaded there is nothing to rank by. So `DEFAULT_DATA_NODE_SELECTOR` does only
+  the two defensible things -- drop what cannot be fetched, prefer HTTPS -- and
+  otherwise keeps the caller's order. `build_data_node_list_selector` takes your own
+  ranked list (with `only_listed=True` to pin a download to nodes you trust), and the
+  health selector is what to use once there are measurements.
+- **The DRS path is one layout for every project, and it is ours rather than a
+  reproduction of anyone's.** This step already decided the path was ours to build;
+  what it did not know is that reproducing real DRS is *project-specific*. The "3761
+  of 3761 reconstructed exactly" result above is a CMIP7/STAC measurement; CMIP5's
+  DRS puts the variable *after* the version, and one CMIP5 `id_project_specific`
+  covers several variables. Faithful reproduction therefore needs per-project logic,
+  which belongs on a facade or parser rather than in a path helper. So the layout is
+  `<id_project_specific with dots as slashes>/v<version>/<filename>`, every component
+  of which is `NOT NULL` in our schema -- so there is no path by which a missing
+  facet becomes a literal `unknown` directory, which is what the prototype's
+  `drs_path` did. `PathBuilder` is the seam for anyone who needs the publisher's real
+  DRS.
+- **ESGF sometimes publishes metadata that does not match the file it serves, and
+  that needed its own outcome.** Live CMIP7 `areacella` for
+  `CanESM5-1 piControl r1i1p2f1` is published as 52,597 bytes with one SHA256, and
+  its data node serves a *complete*, valid netCDF-4 file of 44,638 bytes with a
+  different one -- its URL carries an older version than its siblings, ten of which
+  agreed exactly (2026-11-02). The node is behaving correctly; the publication is
+  wrong. So `DownloadOutcome` distinguishes `SIZE_MISMATCH` (the node served exactly
+  its own `Content-Length`, and the *index* is what disagrees) from `SHORT_READ` (the
+  transfer was cut off). Only the second counts against the node. Collapsing them
+  would have let every mis-published file slowly retire a healthy replica from the
+  health ranking -- and since we rank nodes by health, that would steer downloads
+  *away* from working nodes.
+- **Authentication is a seam, not an implementation.** `fetch_to_path` and `download`
+  take an `httpx.Client`, which carries a client certificate or credentials natively,
+  so an authenticated download needs no new code here. A `401` is classified
+  `NEEDS_CREDENTIALS`: recorded, never retried, and never held against the node. Note
+  the ambiguity, which is written up on the enum: a node refusing an unauthenticated
+  request *may* answer 403 instead, which we cannot tell from rate limiting without
+  guessing at body text. (For what it is worth, `esgf-scraper` solved this with
+  `pyesgf`'s `LogonManager` -> OpenID -> an X.509 cert at `~/.esg/credentials.pem`,
+  which is exactly what an `httpx.Client(cert=...)` wants.)
+
+Two tables were added: `DataNodeCallRecord` (append-only, one row per fetch *attempt*,
+with throughput -- a general measure of ESGF data node health, not just download
+bookkeeping) and `Download` (one row per `File`, with
+`QUEUED/RUNNING/DONE/FAILED/GIVEN_UP`, a cumulative `attempts` and `last_error`). The
+status column is what makes the queue durable: the prototype had no non-terminal
+status at all, so it recomputed its work set by walking the disk on every run, and it
+*overwrote* `attempts` with the current run's count -- so a file that had failed
+twenty times looked like one that had failed once.
+
+`scripts/download_cmip7_demo.py` runs the whole thing against live ESGF and prints
+each stage. On the day it was written it fetched 6 CMIP7 `tas` files, 103 MB, all
+SHA256-verified, at 0.55-0.87 MB/s per file.
+
 Tests:
 
 Unit tests:
 
 - [ ] parsing of parallelisation and node preferencing options from high- to low-level functions
-- [ ] automated node preferencing logic
+    - the node preferencing half is done (`tests/unit/downloads/test_selectors.py`): a
+      selector threads from `db.download` through `download_files` to `download_file`,
+      and an injected list or health selector is honoured all the way down.
+      Parallelisation options do not exist yet, so that half is the next PR's.
+- [x] automated node preferencing logic
     - e.g. when a node is marked as dead, what controls whether one node is picked over another
     - we should be able to do this with a mock node health table/object so it is only a test of the preferencing logic, free from actual database calls
-- [ ] preparation of download calls
+    - done exactly that way: `rank_by_reliability_then_throughput` is tested against
+      hand-built `DataNodeHealth` objects with no database in sight, and separately
+      against real recorded rows. Also pinned: a node we have never used is tried,
+      just not first; a 404 or a 401 does not count against a node; and the
+      refreshing selector notices a node going bad mid-run (with an injected clock, so
+      it takes milliseconds rather than three hours).
+- [x] preparation of download calls
     - my assumption is that we'll a flow something like: 1) specify the data of interest (maybe using a query object, maybe something else) 2) find all the datasets in the database that match 3) identify datasets that aren't available locally 4) put those datasets in a queue 5) do the downloading 6) update the database with the local download information
     - we can test the flow up by mocking out step 5, so we should be able to make this test very fast and cheap but still check all the key pieces of logic along the way
-- [ ] handling of node failures and other responses within the download call
+    - the flow is exactly that, and it is `plan_downloads` -> `queue_downloads` ->
+      `download_files` -> `record_result`. Tested both with step 5 mocked and with it
+      replaced by an `httpx.MockTransport`, which turned out to be just as cheap and
+      checks more. The query object is the *same* one a search takes, so "download
+      what I searched for" needs no translation.
+- [x] handling of node failures and other responses within the download call
     - mock out the actual node responses with specific behaviour (e.g. a node that fails after a given amount of time, a node that returns a 404)
     - make sure that the behaviour is handled correctly
     - should be able to keep this as an integration test, as we can just adjust the failure tresholds and 'slow response' times together so the test only waits e.g. 1 second before declaring a node as a failure but we have confidence about this 'identifying failing node' and config (so have at least some confidence that a failing node can be handled)
+    - done as **unit** tests rather than integration ones, which is better than this
+      asked for: `httpx.MockTransport` says exactly what the node does, so no
+      thresholds have to be lowered and nothing waits at all. One test per branch --
+      404, 410, 401, 403, 429 (with and without `Retry-After`), 503, 500, 418,
+      connect timeout, read timeout, connect error, protocol error, truncated body,
+      complete-but-wrong-size body, bad checksum -- plus the retry policy and mirror
+      fallback on top. The whole download suite runs in 0.2s.
 
 Integration tests:
 
 - [ ] actual downloading in parallel
-    - [ ] populate a database with say 4 entries, then call download in a way that should only download two of them
-    - [ ] pick files/datasets we know are small (e.g. areacella files or setting this up in a way that means we only need to download two years of EC Earth data, which is in one year files that are tiny)
-    - [ ] actually download them
-    - [ ] check that the data is there, the database state is as expected etc.
+    - [x] populate a database with say 4 entries, then call download in a way that should only download two of them
+    - [x] pick files/datasets we know are small (e.g. areacella files or setting this up in a way that means we only need to download two years of EC Earth data, which is in one year files that are tiny)
+    - [x] actually download them
+    - [x] check that the data is there, the database state is as expected etc.
+    - **in parallel** is the one part outstanding, because parallelism is the next PR.
+      Everything else is done sequentially in
+      `tests/integration/downloads/test_download_live.py`, opt-in behind
+      `--run-downloads-data` / `make test-downloads`. `areacella` turned out to be the
+      right call: CMIP7 `areacella` is 52,593 bytes, so the live test runs in about
+      7 seconds. It also checks the second run downloads nothing, which is what makes
+      step 9 safe to point at a nightly watch.
 
 Not included:
 
 - integration tests that hit a node we are confident is failing. I hope we can get the confidence we want from unit tests and can avoid having a live 'node failure wait' test. Let's make a note that we may want to revisit this decision in the test file
+    - held to: there is no such test, and the note is in
+      `tests/integration/downloads/test_download_live.py`'s module docstring. It also
+      says what this leaves untested, which is worth knowing -- whether our
+      *classification* matches what real broken ESGF nodes do. We have assumed, for
+      instance, that an unauthenticated request for restricted data answers 401 or
+      403, and a real node may do something else entirely.
 
-## 10. Deploy downloading off the watched searches
+## 8. Download parallelisation and per-data-node caps
 
-*New step.* Step 5 watches; step 9 can download; this is the two wired together on the
+*New step, split out of step 7.*
+
+Step 7 is deliberately sequential. The seams parallelism needs are already in place,
+which is most of why it was worth separating:
+
+- `download_files` takes an `httpx.Client`, which is safe to share between threads;
+- `record_data_node_calls` opens a fresh session per call and commits it on its own,
+  so it is already thread safe;
+- every database write goes through a function taking a session, and `db.download`
+  already writes one row per file in its own transaction;
+- `configure_sqlite_for_concurrency` already makes concurrent writers take turns, and
+  `search` already proves the `ThreadPoolExecutor` pattern against it.
+
+What this step adds:
+
+- a `max_workers` on `download_files`, mirroring `search`'s;
+- a **per-data-node cap**, which search does not need and downloads do: a hundred
+  workers all pulling from one node is how we get ourselves rate limited, and
+  `BLOCKED` already exists to notice when that happens;
+- re-queueing, so a file that fails is picked up again within the same run rather
+  than only on the next one.
+
+What to be careful of, from reading the prototype: it grew an AIMD congestion
+controller, data node eviction, affinity clustering and pre-flight liveness probing,
+roughly 330 lines of generic scheduler, and **none of it ever fired against the real
+network** -- its live runs totalled 9 files with zero timeouts, zero blocks and zero
+mirror fallbacks. Start with a fixed cap and a thread pool; add adaptation only if
+measurements ask for it.
+
+## 9. Deploy downloading off the watched searches
+
+*New step.* Step 5 watches; step 7 can download; this is the two wired together on the
 server, triggered off what the watch finds.
 
-We're going to be a bit stupid about this and just do a clean archive. The reason is that the logic for ingesting data that is already available locally will be tricky and I don't want us to get delayed worrying about that headache: downloading is not that expensive and we have to do it for CMIP7 anyway. We just need to be a bit careful to not re-download anything really expensive i.e. let's not start downloading any daily CMIP6 data until we have the 'ingest from local' functionality working (steps 20 and 21).
+*Now unblocked, as of step 7.* The download half is `db.download(engine, query, root)`,
+which plans, queues, fetches and records in one call -- the twin of
+`search_and_track`. Three things about it matter for a server deployment:
+
+- **It is safe to re-run.** A file already `DONE`, still on disk and still the right
+  size is not planned again, so a nightly job does not re-pull the archive. That is
+  checked by a live test.
+- **It is resumable.** One row is written per file as that file finishes, in its own
+  transaction, so a run killed on day two keeps day one. An interrupted transfer
+  leaves a `.part` which the next run continues with a `Range` request.
+- **Pass the refreshing health selector.** On a multi-day download, use
+  `build_refreshing_data_node_health_selector(engine)` with
+  `observer=record_data_node_calls(engine)`. The attempts the run records are what
+  its own next refresh reads, so it moves away from nodes that go bad while it is
+  running.
+
+Still missing for a real deployment: **parallelism** (the next PR), and a decision
+about disk. Nothing here caps total size, and `plan_downloads` will happily plan a
+petabyte -- the only guard is that it tells you how many files first, and
+`download_summary` tells you what is outstanding.
+
+We're going to be a bit stupid about this and just do a clean archive. The reason is that the logic for ingesting data that is already available locally will be tricky and I don't want us to get delayed worrying about that headache: downloading is not that expensive and we have to do it for CMIP7 anyway. We just need to be a bit careful to not re-download anything really expensive i.e. let's not start downloading any daily CMIP6 data until we have the 'ingest from local' functionality working (steps 21 and 22).
 
 As soon as this and downloading lands, I would like to spin up and start doing tracking and downloading for scenario tas
 (but only following parents back up to historical, not piControl):
@@ -565,6 +700,123 @@ I'm going to need it for a paper and it's a nice simple use case.
       run out of space if we do that)
 
 ---
+
+## 10. Dataset ancestry
+
+*Was PR6.* The "Not included: the File class, we will add it next" note that used to end
+this step no longer applies — step 6 landed first, so file information is already
+there and a fact read out of a header should be linked to the file it came from as it
+is read.
+
+Finding dataset ancestry
+
+Note that this is currently huge.
+Before we start implementing, let's think about how to split this up, perhaps:
+
+1. functionality to find a file that belongs to a dataset
+1. functionality to retrieve the header of a file (also includes tracking of node health for this retrieval and the same 'selector' idea as we have for search)
+1. addition of information only accessible from file headers to dataset entries in the database (with the link between that information and the file it came from, which step 6 has made possible)
+1. generation of a 'parent query' from a dataset in the database
+1. (not needed, but noting): executing a parent query search and parsing results
+1. linking parent and child datasets in the database
+1. recursion i.e. adding ancestry back to a given level/experiment
+1. caching/fast-path i.e. ensuring that we don't query again if we have information already or can get information from another dataset in the database (e.g. if we know parent for tas, we can use that to generate the parent query for rsdt, we don't need an rsdt file)
+
+Also keep in mind that the above is very ESGF1 specific, the flow will likely be quite different for ESGF-NG so we'll need to think about that as we go too.
+
+Will require adding the parent information to our dataset version table
+Will require adding the file header query logic and parallelisation and node selection and health monitoring too
+Will require adding some concept of fixes (initially do it in this package e.g. `src/esmporium/fixes`, can split out later) so we can inject corrected metadata on the fly
+
+*Smaller than it was, now step 7 has landed.* "node selection and health monitoring"
+is **done and reusable**: `esmporium.downloads` has the data node selection, health
+observation, retry policy and failure classification, and
+`db/download_health.py` has the recording and ranking. Ancestry should reuse those
+rather than grow its own, which is exactly why downloads was moved in front of this
+step (see the ordering note at the top).
+
+What is genuinely left for this step is the part that is about *ancestry* rather than
+about data nodes:
+
+- reading a header, which step 7 deliberately does **not** do. `fetch_to_path` writes
+  whole files and verifies digests; it never opens one, imports no netCDF library, and
+  has no "fetch me just the first few KB" mode. That boundary is what kept step 7
+  small, so this step adds the ranged read rather than finding one waiting for it.
+- parent-query generation, the fixes mechanism, the recursion, and the cross-dataset
+  fast path.
+
+Two things step 7 learned that this step will meet:
+
+- a `netcdf` route is two on-disk formats (classic and netCDF-4/HDF5) and the magic
+  bytes have to be read to tell which, so a header reader cannot trust
+  `container_format` alone. For what it is worth, every CMIP7 file downloaded so far
+  has been netCDF-4 (`\x89HDF\r\n\x1a\n`).
+- ESGF's published metadata and the served file can disagree
+  (see step 7's `SIZE_MISMATCH` note), so a fact read out of a header may not describe
+  the file the index thinks it describes. Linking a fact to the `File` it came from --
+  which step 6 made possible -- is what makes that recoverable.
+
+Tests:
+
+Unit tests:
+
+- [ ] we can navigate the ancestry in different cases
+    - this is the key one because we should be able to cover lots of cases because the tests will be very fast as we will mock out all the calls to search and fetch file header etc.
+- [ ] tests of file header retrieval that can use mocking
+- [ ] tests of node health monitoring that can use mocking
+- [ ] tests of node selection that can use mocking
+- [ ] tests of node selection passing from high level down to low-level functions
+
+Integration tests:
+
+- [ ] start with a dataset, get its ancestry up to a given point, assert that all the expected parents and links end up in the database
+    - [ ] key cases to cover
+        - [ ] CMIP5 abrupt4xCO2
+        - [ ] CMIP5 scenario
+        - [ ] CMIP6 abrupt4xCO2 (pick a simulation with broken parent information here to test the fixes path)
+        - [ ] CMIP6 scenario (or maybe even better, g6solar)
+        - [ ] CMIP7 abrupt4xCO2
+        - [ ] CMIP7 scenario
+        - [ ] CMIP7 scenario extension when available
+    - [ ] this will be very slow, because it will need to do lots of live API calls (ok, just make sure it is marked)
+    - [ ] use parallelisation approaches and nodes that seem to be stable, so this test is as stable as possible
+    - [ ] also assert that node health stats that we expect end up in the database
+    - [ ] also assert that dataset information is updated as we expect
+    - [ ] also assert that information which came out of a file header is linked to the file it came from
+- [ ] 'fast path' testing i.e. pre-load a database with a dataset that already has all the parent information, then
+    - [ ] test that if we ask for parent information to be added to this dataset again, no queries are actually done because all the information is already there
+        - [ ] I don't think we need a `--force` flag that forces the queries to be re-run because the files attached to a dataset cannot be changed on ESGF without making a new version (and all of this parent stuff is version specific). This is one to check. A force flag isn't that expensive so maybe we just include it anyway, although it then means we have to track changes in parent information over time, which is tricky, so on second thoughts let's not include force for now, and we just note that this could be an issue in our docstring and wait and see if it is an issue before doing anything else.
+    - [ ] test that if we ask for parent information of a dataset that should have the same parent information, no queries are done because we just use the parent information from the 'other' dataset instead
+        - e.g. if we know parent information for tas, then we can get parent information for tos by just looking at the tas info, we don't need to re-query ESGF and read a file header
+        - this tests the key optimisation that we need for large-scale parent attachment
+        - we should note in our docstring clearly that this all relies on the assumption that we can do this 'cross-dataset' parent information jump. If we can't, the logic of this 'fast path' falls over (and then we'll need to introduce a `do_not_use_cross_dataset` flag or something, but again let's wait before doing that)
+
+## 11. `Ancestors` lineage in requirements
+
+*Was R5.* Step 7 puts parent links in the database; this is how a requirement asks for
+them.
+
+- `relations.py` (new): `RELATION_MODEL_CONFIG`, `Ancestors`, and `Lineage` with `index_of`.
+  `Lineage` lives here rather than in `constraints.py` (which does not exist yet) because it is
+  the resolved form of `Ancestors`/`Sibling` and solving needs it before any constraint exists;
+  `constraints.py` imports it from here at step 12.
+- `catalogue.py`: `Catalogue.parent_of`, `InMemoryCatalogue.parents`, reference checking in
+  `__post_init__`, and the `DatabaseCatalogue` implementation reading the links step 10 stored.
+- `tree.py`: `LineageRelation` (one member for now), `Leaf.lineage`, `.with_lineage()`,
+  `RESERVED_ROLES`, the leaf-role-versus-lineage-role validator, lineage entries in
+  `role_paths`.
+- `solve.py`: `_lineage`, `_ancestor_lineage`, `Resolved.lineages`, lineage role paths in
+  `_eval_leaf`.
+
+Role paths gain their second level here: `control.tas`, `chain.0.tas`.
+
+Tests: `test_branch_chain_back_to_picontrol`, `test_bell_is_rooted_in_esm_picontrol`,
+`test_lineage_role_names_where_it_stopped`, `test_catalog_rejects_unknown_references`,
+`test_leaf_role_cannot_be_its_own_lineage_role`,
+`test_role_names_are_free_unless_a_lineage_uses_them`,
+`test_machinery_role_names_are_always_reserved`, no parent recorded, `max_depth` exhausted.
+
+Use cases: `15-pattern-scaling`, `17-etccdi` — both have a lineage and no constraints.
 
 # Phase 3 — say what we need precisely
 
@@ -587,9 +839,9 @@ One thing has changed since this was written, and it affects every step below:
 needs the `to_search_plan` branch and test that the old R12 would have added at the
 end. The old R12's `test_gcmagicc_includes_every_alternative_and_optional`,
 `test_erf_includes_sibling_query` and `test_carbon_closure` are the shape of those
-tests; they belong to steps 13, 18 and 14 respectively.
+tests; they belong to steps 14, 19 and 15 respectively.
 
-## 11. The `Constraint` protocol, with nothing shipped
+## 12. The `Constraint` protocol, with nothing shipped
 
 *Was R6.*
 
@@ -613,7 +865,7 @@ Tests: `test_user_defined_constraint`, `test_missing_metadata`,
 `test_constraint_which_is_not_a_pydantic_model`, `test_round_trip_user_defined_constraint`,
 `test_with_lineage_and_with_constraints_reach_every_leaf`.
 
-## 12. `Covers`
+## 13. `Covers`
 
 *Was R7.*
 
@@ -629,7 +881,7 @@ Tests: `test_covers_calendar`, `test_covers_branch_needs_ancestor`, `test_covers
 Use cases: `01-tcr`, `03-tcre-flat10`, `04-tcre-1pct`, `05-zec-flat10`,
 `11-tas-scenario-anomalies`, plus `TO_CONTROL`, `CONTROL_COVERS` and `CONTROL_IDEALLY_COVERS`.
 
-## 13. `any_of`, `optional`
+## 14. `any_of`, `optional`
 
 *Was R8.*
 
@@ -653,7 +905,7 @@ Tests: `test_alternative_chosen_in_order`, `test_alternative_applies_to_whole_li
 
 Use cases: `06-zec-1pct`, `07-zec-bell`, `08-flat10-cdr`, `12-gcmagicc`, `18-amoc`.
 
-## 14. `scope` and `SameTimeRange`
+## 15. `scope` and `SameTimeRange`
 
 *Was R9, where it was called `namespace`. Let's settle on `scope` unless the code reads
 better the other way when we get there.*
@@ -679,7 +931,7 @@ round-tripping whole.
 
 Use cases: `02-ecs`, `16-carbon-closure`, `16a-carbon-calibration`.
 
-## 15. `Aux`
+## 16. `Aux`
 
 *Was R11.*
 
@@ -708,7 +960,7 @@ Use cases: `13-energy-balance`, `19-sea-ice`. All twenty now build and solve.
 If this runs long, split at the `via` boundary: first `via="match"` with match levels and
 required-versus-optional, then `via="link"` and `also_for_lineage`.
 
-## 16. Rework `prefer`
+## 17. Rework `prefer`
 
 *New step.*
 
@@ -741,7 +993,7 @@ like in every node type, which is what an arbitrary `prefer` function has to be 
 
 # Phase 4 — load it, and tidy up
 
-## 17. Data loading
+## 18. Data loading
 
 *Was PR9.*
 
@@ -769,7 +1021,7 @@ Integration tests:
 
 - [ ]
 
-## 18. `Sibling`
+## 19. `Sibling`
 
 *Was R10.*
 
@@ -784,7 +1036,7 @@ Tests: `test_erf_control_found_as_sibling`, `test_lineage_kinds_round_trip`.
 
 Use cases: `09-erf-transient`, `10-erf-timeslice`.
 
-## 19. Dataset clash handling
+## 20. Dataset clash handling
 
 *Was PR5.5.*
 
@@ -803,9 +1055,9 @@ So testing it now does mean fixing it now. And the fix is bigger than it first l
 
 See note in `test_health`
 
-## 20. Ingesting from a local source
+## 21. Ingesting from a local source
 
-*New step.* This is the headache step 10 deliberately deferred.
+*New step.* This is the headache step 9 deliberately deferred.
 
 Adding datasets to the database because we found them on disk, rather than because a
 search returned them. The column for this already exists —
@@ -813,7 +1065,7 @@ search returned them. The column for this already exists —
 the schema.
 
 - [ ] walk a local archive, read what we need out of each file (the same header-reading
-      step 7 built), and produce the same objects the search path produces
+      step 10 built), and produce the same objects the search path produces
 - [ ] the hard part, named up front: deciding when a local file **is** a dataset ESGF
       would have given us. Same dataset, same version, same enough to count as already
       downloaded? Get this wrong in one direction and we re-download; wrong in the
@@ -821,15 +1073,15 @@ the schema.
 - [ ] make it clear in the database which answer came from where, so a disagreement
       between a local file and a search document is debuggable
 
-## 21. Daily CMIP5/CMIP6 downloads, using what is already local
+## 22. Daily CMIP5/CMIP6 downloads, using what is already local
 
-*New step.* Depends on step 20.
+*New step.* Depends on step 21.
 
 Downloading daily CMIP6/CMIP5 data, cogniscent of the data that is already available
-locally. This is the expensive data that step 10's note said to leave alone until
+locally. This is the expensive data that step 9's note said to leave alone until
 'ingest from local' works — so this is where that guard comes off.
 
-## 22. Clean up
+## 23. Clean up
 
 *Was R13, plus the loose ends from everything above.*
 
@@ -840,12 +1092,12 @@ wherever analyses need it. `PLAN-REQUIREMENTS.md` and
 esmporium's docs and in this file.
 
 This can happen as soon as nothing in esmporium-processing imports the prototype,
-which is after step 15 — it sits here because it is tidy-up, not because it is blocked.
+which is after step 16 — it sits here because it is tidy-up, not because it is blocked.
 
 Also sweep, at this point:
 
 - [ ] the import-boundary test question (see *Deviations still outstanding* below)
-- [ ] the branch-time handling note carried into step 12
+- [ ] the branch-time handling note carried into step 13
 - [ ] whatever "wait and see if this bites us" notes we wrote along the way and now
       have an answer for
 
@@ -892,11 +1144,25 @@ already done; these two are not:
   nothing else from `esmporium.search` or `esmporium.db`.
   Unclear why we need this, maybe remove (at least chek).
 - **The `atmos`/`land`/`ocean` test helpers start auxiliary-free** and gain their `Aux` lists
-  at step 15. Six lines change in one helper module; the twenty use cases themselves never change.
+  at step 16. Six lines change in one helper module; the twenty use cases themselves never change.
 
 ## Loose ends we have noticed but not scheduled
 
 Not steps of their own, but written down so they are not lost:
+
+- **ESGF publishes metadata that disagrees with the files it serves, and we now
+  detect it.** Found while writing step 7's demo: CMIP7 `areacella` for
+  `CanESM5-1 piControl r1i1p2f1` is published as 52,597 bytes with one SHA256, and
+  its data node serves a complete, valid 44,638-byte netCDF-4 file with a different
+  one (2026-11-02). Ten sibling files agreed exactly, so it is per-file rather than a
+  broken node. A download of it fails with `SIZE_MISMATCH`, which is the behaviour we
+  want -- we are not going to store a file that is not the file we asked for.
+
+  The open question is what to *do* about it at scale. Options, none chosen: report
+  upstream (as with the search mirror disagreement); keep a count per data node and
+  per project so we can say how widespread it is; or allow a deliberate
+  "take what the node has" override. Worth revisiting once step 9 is running and we
+  can see how often it actually bites.
 
 - **`merge_on_variable`.** `to_search_plan` deduplicates identical queries but does not
   yet merge two queries that differ only by variable into one search. It was on the old
@@ -916,7 +1182,7 @@ Not steps of their own, but written down so they are not lost:
   "Requirement became satisfiable" is the difference between `solve` at t1 and at t2. (This is
   now step 3, rather than out of scope.)
 - **Linking from `cell_measures`** at ingestion, which is what makes `Aux(via="link")` the
-  default rather than the fallback. Lands between steps 6 and 15.
+  default rather than the fallback. Lands between steps 6 and 16.
 - **Backtracking.** Solving stays greedy: a choice made for one leaf is never revisited to
   satisfy another. [TODO: clarify what this means]
 - **Narrowing auxiliary searches.** Auxiliary queries inherit nothing, so they find fx data for
@@ -1175,7 +1441,7 @@ Integration tess:
 From `esmporium-processing/PLAN-REQUIREMENTS-TO-ESMPORIUM.md`, written 2026-09-16.
 Kept verbatim: the framing, the `CatalogueEntry` reasoning, and the steps which are
 done (`R0`–`R4`). The steps which are still to come (`R5`–`R13`) are not repeated here
-— they are steps 8, 11–15, 18 and 22 above, carrying their original text.
+— they are steps 11, 12–16, 19 and 23 above, carrying their original text.
 
 One wrinkle to know when reading it: the table in that document drifted out of step
 with its own sections. The table said `R4` was `to_search_plan`, while the section

@@ -49,9 +49,15 @@ test:  ## run the tests
 test-esgf-search-api:  ## run only the tests which talk to the live ESGF search APIs
 	uv run --group tests pytest tests -r a -v --run-hits-esgf-search-api -m hits_esgf_search_api
 
+.PHONY: test-downloads
+test-downloads:  ## run only the tests which really download files from the ESGF data nodes
+    # These write real bytes to a temporary directory. The files are small on purpose
+    # (CMIP7 `areacella`, ~51 KB), so this is quick.
+	uv run --group tests pytest tests -r a -v --run-downloads-data -m downloads_data
+
 .PHONY: test-live-apis
 test-live-apis:  ## run the tests, including all tests that talk to live APIs
-	uv run --group tests pytest tests -r a -v --run-network --run-hits-esgf-search-api
+	uv run --group tests pytest tests -r a -v --run-network --run-hits-esgf-search-api --run-downloads-data
 
 # Note on code coverage and testing:
 # You must specify cov=src.

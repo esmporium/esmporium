@@ -73,7 +73,7 @@ from esmporium.search.search_api_facade.result_parsers import (
 )
 from esmporium.search.search_api_facade.selectors import (
     DEFAULT_SEARCH_API_FACADES_BY_PROJECT,
-    DEFAULT_SELECTOR,
+    DEFAULT_SEARCH_API_SELECTOR,
     SearchAPIFacadeSelector,
     SelectorOfferedNoAPIFacadeError,
     build_list_selector,
@@ -90,7 +90,7 @@ from esmporium.search.search_api_facade.store import (
 
 __all__ = [
     "DEFAULT_SEARCH_API_FACADES_BY_PROJECT",
-    "DEFAULT_SELECTOR",
+    "DEFAULT_SEARCH_API_SELECTOR",
     "ESGF1_CMIP5_FACADE_PARAMETERS",
     "ESGF1_CMIP6_FACADE_PARAMETERS",
     "ESGF1_CMIP7_FACADE_PARAMETERS",

@@ -29,7 +29,7 @@ from esmporium.db.schema import (
 )
 from esmporium.formatting import readable_list
 from esmporium.requirements import Requirement
-from esmporium.search import DEFAULT_SELECTOR, search
+from esmporium.search import DEFAULT_SEARCH_API_SELECTOR, search
 from esmporium.search.result_normalisation import DEFAULT_NORMALISERS
 
 if TYPE_CHECKING:
@@ -926,7 +926,7 @@ class TrackedSearchResult:
 def search_and_track(  # noqa: PLR0913 - one argument per thing a search has to be told
     engine: Engine,
     requirement: Requirement,
-    selector: SearchAPIFacadeSelector = DEFAULT_SELECTOR,
+    selector: SearchAPIFacadeSelector = DEFAULT_SEARCH_API_SELECTOR,
     *,
     on_name_clash: OnNameClash = OnNameClash.RAISE,
     stop_at_first_result: bool = True,
@@ -1092,7 +1092,7 @@ def _close_run(engine: Engine, search_run_id: int, *, complete: bool) -> None:
 def rerun_search_esgf(  # noqa: PLR0913 - one argument per thing a search has to be told
     engine: Engine,
     name_or_id: str | int,
-    selector: SearchAPIFacadeSelector = DEFAULT_SELECTOR,
+    selector: SearchAPIFacadeSelector = DEFAULT_SEARCH_API_SELECTOR,
     *,
     stop_at_first_result: bool = True,
     limit: int = 10_000,

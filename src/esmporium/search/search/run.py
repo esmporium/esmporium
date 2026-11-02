@@ -26,7 +26,7 @@ from esmporium.search.search.keys import FacadeKey, get_facade_key
 from esmporium.search.search.pagination import collect_all_pages
 from esmporium.search.search.planning import SubSearch, plan_sub_searches
 from esmporium.search.search_api_facade import (
-    DEFAULT_SELECTOR,
+    DEFAULT_SEARCH_API_SELECTOR,
     ClashingFacetsError,
     SearchAPIFacadeSelector,
     SelectorOfferedNoAPIFacadeError,
@@ -83,7 +83,7 @@ class SearchOutcome:
 
 def search_single_project(  # noqa: PLR0913 - the keyword-only extras are deliberate injection seams
     query: QueryProtocol,
-    selector: SearchAPIFacadeSelector = DEFAULT_SELECTOR,
+    selector: SearchAPIFacadeSelector = DEFAULT_SEARCH_API_SELECTOR,
     *,
     stop_at_first_result: bool = True,
     limit: int = 10_000,
@@ -342,7 +342,7 @@ class LeafSearchOutcome:
 
 def search(  # noqa: PLR0913 - the keyword-only extras are deliberate injection seams
     requirement: Requirement,
-    selector: SearchAPIFacadeSelector = DEFAULT_SELECTOR,
+    selector: SearchAPIFacadeSelector = DEFAULT_SEARCH_API_SELECTOR,
     *,
     stop_at_first_result: bool = True,
     limit: int = 10_000,

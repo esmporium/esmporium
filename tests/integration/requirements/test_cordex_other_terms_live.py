@@ -10,11 +10,11 @@ cannot be answered by a modelled path and these tests cannot pass by accident.
 **The naming table below is a test-local claim, not esmporium's position on how CORDEX
 is modelled.** CORDEX is not a project esmporium supports: it is absent from
 `PROJECT_QUERY_MAP_DEFAULT`, from `get_default_facade_definition` and from
-`DEFAULT_SELECTOR`. Searching it at all means injecting a facade, a selector and a
-project-to-query mapping, which is what a user would have to do today and what the
-docstring of `PROJECT_QUERY_MAP_DEFAULT` points at ("to search a project we do not
-know about yet"). So these tests also check, incidentally, that those injection seams
-work as advertised.
+`DEFAULT_SEARCH_API_SELECTOR`. Searching it at all means injecting a facade, a
+selector and a project-to-query mapping, which is what a user would have to do today
+and what the docstring of `PROJECT_QUERY_MAP_DEFAULT` points at ("to search a project
+we do not know about yet"). So these tests also check, incidentally, that those
+injection seams work as advertised.
 """
 
 from __future__ import annotations
@@ -148,8 +148,8 @@ SELECTOR = build_project_list_selector({PROJECT: (CORDEX_FACADE,)})
 """
 Facade selection for CORDEX
 
-`DEFAULT_SELECTOR` raises `KeyError` for a project it has no facade list for, so a
-selector is the second of the three things a caller has to inject.
+`DEFAULT_SEARCH_API_SELECTOR` raises `KeyError` for a project it has no facade list
+for, so a selector is the second of the three things a caller has to inject.
 """
 
 PROJECT_QUERY_MAP = {PROJECT: Query}

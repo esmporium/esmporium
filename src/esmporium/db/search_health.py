@@ -18,7 +18,7 @@ from sqlmodel import Session, col, select
 from esmporium.db.schema import SearchAPICallRecord
 from esmporium.search.search_api_facade import (
     DEFAULT_SEARCH_API_FACADES_BY_PROJECT,
-    DEFAULT_SELECTOR,
+    DEFAULT_SEARCH_API_SELECTOR,
     SearchAPIFacade,
     SearchAPIFacadeSelector,
 )
@@ -235,7 +235,7 @@ def build_health_selector(
     candidates: Mapping[str, Sequence[SearchAPIFacade]] | None = None,
     *,
     ranker: HostRanker = get_median_response_time_for_ranking,
-    fallback: SearchAPIFacadeSelector = DEFAULT_SELECTOR,
+    fallback: SearchAPIFacadeSelector = DEFAULT_SEARCH_API_SELECTOR,
 ) -> SearchAPIFacadeSelector:
     """
     Build a selector that orders each project's search APIs by their health
