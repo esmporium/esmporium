@@ -3,17 +3,7 @@ Downloading many files, falling back across mirrors
 
 The entry points here know nothing about the database: they are handed
 [DownloadRequest][(m).]s and hand back [DownloadResult][(m).]s. The engine-taking
-entry point is [download][esmporium.db.download], in the database layer, exactly as
-[search_and_track][esmporium.db.search_and_track] is the engine-taking twin of
-[search][esmporium.search.search].
-
-That split is not tidiness. It is what keeps [esmporium.downloads][] testable without
-a database, and what stops the two packages importing each other.
-
-The per-file loop is the same shape as
-[search_single_project][esmporium.search.search_single_project]'s: ask the selector
-for the next thing to try, keep every failure rather than discarding it, and complain
-loudly if the selector never offered anything at all.
+entry point is [download][esmporium.db.download], in the database layer.
 """
 
 from __future__ import annotations
@@ -52,8 +42,7 @@ Told about each file as soon as it is finished
 
 The seam the database layer uses to write one row per file as a run proceeds,
 rather than at the end -- which is what makes a run killed on day two keep day
-one. The analogue of
-[ResultProcessor][esmporium.search.ResultProcessor] on the search side.
+one.
 """
 
 _PERMANENT_OUTCOMES = frozenset(
@@ -68,13 +57,6 @@ _PERMANENT_OUTCOMES = frozenset(
 )
 """
 Outcomes which will not change by trying again later
-
-If *every* route for a file ends in one of these, retrying tomorrow is pointless: the
-routes have gone away, the data needs credentials we do not have, or what the nodes
-serve does not match what the index published. That is the difference between
-[DownloadStatus.FAILED][esmporium.db.schema.DownloadStatus.FAILED] and
-[GIVEN_UP][esmporium.db.schema.DownloadStatus.GIVEN_UP], and it is why outcomes are
-classified rather than collapsed into a boolean.
 """
 
 
@@ -83,7 +65,7 @@ class DownloadRequest:
     """
     One file to get: where from, where to, and what to check it against
 
-    Deliberately carries no database rows, only ids. See this module's docstring.
+    Deliberately carries no database rows, only ids.
     """
 
     routes: tuple[Route, ...]
@@ -178,10 +160,6 @@ class DownloadResult:
     failures: tuple[RouteFailure, ...] = ()
     """
     Every route that was tried and did not work, in the order they were tried
-
-    Kept rather than discarded even on success, because "we got it, but only from the
-    fourth mirror" is worth knowing. One route being down says nothing; all of them
-    being down says a lot.
     """
 
     skipped: bool = False
@@ -260,16 +238,6 @@ def download_file(  # noqa: PLR0913 - the keyword-only extras are deliberate inj
 ) -> DownloadResult:
     """
     Get one file, working through its mirrors until one serves it
-
-    The loop is deliberately the same shape as
-    [search_single_project][esmporium.search.search_single_project]'s: ask the
-    selector for attempt 0, 1, 2... until it returns `None`, keep every failure, and
-    raise if it never offered anything at all.
-
-    Note the two levels of retrying, which is also how search works:
-
-    1. *within* one route, the retry policy handles a flaky connection;
-    2. *across* routes, this loop moves to the next mirror.
 
     Parameters
     ----------
@@ -403,10 +371,6 @@ def download_files(  # noqa: PLR0913 - the keyword-only extras are deliberate in
 ) -> tuple[DownloadResult, ...]:
     """
     Get many files, one after another
-
-    Sequential on purpose: parallelism is its own step, and the seams it needs are
-    already here (an injected client, which `httpx` makes safe to share between
-    threads, and an observer which opens its own session per call).
 
     Parameters
     ----------

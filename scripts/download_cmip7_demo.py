@@ -1,21 +1,6 @@
 """
 A runnable example of the download step: a CMIP7 query -> bytes on disk -> node health
 
-Proves the whole path end to end against live ESGF, starting from what the search step
-already produces rather than from hand-made rows:
-
-1. search CMIP7 and save the results, so `File` and `DataAccess` rows exist;
-2. plan what to download, and print what is queued;
-3. download it, with progress, into a throwaway directory;
-4. print where each file landed, its size, whether its checksum verified, and which
-   data node served it;
-5. print the per-attempt `DataNodeCallRecord` rows, with throughput;
-6. print the data node health those rows add up to, and the order the health-based
-   selector would hand back next time -- which is `health_selector_demo.py`'s ending,
-   applied to data nodes instead of index nodes.
-
-It hits live ESGF and really downloads, so it needs a network.
-
 Sizes were measured rather than guessed (2026-11-02):
 
 - `areacella` on `CanESM5-1` is **52,593 bytes** per file, so the default run takes
@@ -23,9 +8,6 @@ Sizes were measured rather than guessed (2026-11-02):
 - `tas` monthly for `1pctCO2 r1i1p2f1` is 11.8 MB and 23.1 MB per file, which is worth
   having because a 51 KB file never exercises streaming, the progress callback, or
   throughput-based health. That is `--with-tas`, and takes under a minute.
-
-Run it:  uv run python scripts/download_cmip7_demo.py
-         uv run python scripts/download_cmip7_demo.py --with-tas
 """
 
 from __future__ import annotations
@@ -88,9 +70,6 @@ TAS = QueryCMIP7(
 def search_and_store(engine, query) -> None:
     """
     Search live CMIP7 and save what comes back, so there is something to download
-
-    This is the step-6 machinery, used as-is: the download step starts from the
-    `File` and `DataAccess` rows a search produces, not from anything of its own.
 
     Parameters
     ----------

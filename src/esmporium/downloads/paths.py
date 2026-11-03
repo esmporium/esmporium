@@ -1,25 +1,5 @@
 """
 Where a downloaded file goes on our disk
-
-ESGF publishes data under a Data Reference Syntax (DRS) path, but **esmporium does not
-reproduce it**, and that is a decision rather than an omission.
-
-`File` used to carry a `local_path` column holding the publisher's DRS-relative path.
-It was dropped, because it was empty for every CMIP5 file and for any CMIP6 file a
-Solr host answered about -- Solr publishes no equivalent -- so a download step reading
-it would have worked for CMIP7, sometimes for CMIP6 and never for CMIP5.
-
-Deriving it instead works for all three, and reproducing each project's real DRS
-*exactly* is more than it looks: a CMIP7 STAC asset's path is the dataset's own
-project-specific id with its dots turned into slashes, but CMIP5's DRS puts the
-variable *after* the version, and one CMIP5 `id_project_specific` covers several
-variables. Faithful reproduction therefore needs per-project logic, and
-project-specific logic belongs on a facade or a parser rather than in a path helper.
-
-So this module writes **one layout for every project**, which is ours and is
-documented as ours (see [esmporium_layout][(m).]). Where a file goes on our own disk
-is this step's decision anyway. [PathBuilder][(m).] is the seam for anyone who needs
-the publisher's real DRS.
 """
 
 from __future__ import annotations
@@ -49,16 +29,6 @@ class UnsafeDownloadPathError(ValueError):
     A value containing `..`, an absolute path or a path separator would let a
     published record decide where on this machine we write, so the components are
     checked rather than cleaned.
-
-    Checked rather than *sanitised* on purpose. Silently rewriting `../../etc` into
-    something harmless would mean writing a file somewhere the record did not ask for
-    and recording that we had downloaded it, which is a quieter and worse failure
-    than refusing.
-
-    Nothing ESGF publishes today looks like this. The check exists because the cost of
-    being wrong is writing outside the download root, and because `version` in
-    particular is "as ESGF reports it", which is a promise about provenance and not
-    about shape.
     """
 
     def __init__(self, field: str, value: str, why: str) -> None:
@@ -133,10 +103,6 @@ Decides where one file goes, relative to the download root
 Returns a *relative* path. Making it absolute is
 [local_path][(m).local_path]'s job, which is also where the result is checked, so a
 builder of your own cannot accidentally escape the root.
-
-Pass one of these to put files where something else expects them -- most obviously, to
-reproduce a project's real DRS. See this module's docstring for why esmporium's own
-layout does not.
 """
 
 
@@ -215,25 +181,6 @@ def esmporium_layout(target: FileTarget) -> PurePosixPath:
     ```text
     <id_project_specific, dots turned into slashes>/v<version>/<filename>
     ```
-
-    DRS-shaped, so a tree of it is navigable by eye and sorts the way a climate
-    scientist expects, but **not a reproduction of any project's DRS** -- see this
-    module's docstring for why not.
-
-    Three properties make this safe to use for every project at once:
-
-    - **Nothing can be missing.** Every value it reads is `NOT NULL` in our schema, so
-      there is no path by which an absent facet becomes a literal `unknown` directory.
-    - **Nothing can collide.** `(dataset_version_id, filename)` is a file's identity,
-      and `id_project_specific` plus `version` identifies the version.
-    - **CMIP5 works.** One CMIP5 `id_project_specific` covers several variables, so
-      those datasets share a directory here; their filenames carry the variable, so
-      they sit alongside one another rather than overwriting. That is what CMIP5's own
-      DRS does above the variable level anyway.
-
-    The `v` prefix on the version is there because a bare `20261018` directory next to
-    a facet directory reads like another facet. It is also what ESGF's own published
-    paths do.
 
     Parameters
     ----------

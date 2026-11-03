@@ -1,24 +1,5 @@
 """
 Retry policies for fetching bytes from a data node
-
-Deliberately *not* reusing
-[build_transient_retrying][esmporium.search.build_transient_retrying]. A data node's
-transience is a different set from a search API's, in three ways:
-
-- **A 429 is worth waiting for.** Search's policy retries only `>= 500`, so it never
-  retries a rate limit. For a download, being told "slow down" is the most useful
-  thing a data node can say, and the one we most want to act on.
-- **A `Retry-After` is worth honouring.** A node that says how long to wait knows
-  better than our backoff curve does.
-- **Some failures are not `httpx` errors at all.** A checksum mismatch and a short
-  read happen after a perfectly good HTTP response, so a policy that only inspects
-  transport errors would never see them. They are not retried against the same
-  route -- bytes that arrived wrong once will arrive wrong again -- so what matters is
-  that they are classified as non-transient rather than retried silently.
-
-The backoff cap is also much longer than search's 8 seconds: a download is already
-slow, so waiting 60 seconds for a node to recover costs proportionally little, where
-for a search it would be most of the time taken.
 """
 
 from __future__ import annotations
@@ -33,9 +14,7 @@ DEFAULT_ATTEMPTS = 3
 """
 How many times to try one route before moving to the next mirror
 
-One try plus two retries. Kept low on purpose: with several mirrors to fall back on,
-trying a different data node is usually a better use of the next attempt than trying
-the same one again.
+One try plus two retries.
 """
 
 DEFAULT_BACKOFF_BASE_SECONDS = 1.0
@@ -44,8 +23,6 @@ DEFAULT_BACKOFF_BASE_SECONDS = 1.0
 DEFAULT_BACKOFF_CAP_SECONDS = 60.0
 """
 The longest we will wait between attempts
-
-Long compared with search's 8 seconds; see this module's docstring.
 """
 
 DEFAULT_JITTER = 0.25
@@ -54,8 +31,7 @@ How much to randomise each wait, as a fraction of it
 
 Without this, a run which started several downloads at once retries them all at the
 same instant, which is how a node that asked us to slow down gets hit by a
-synchronised burst. Matters more once downloads run in parallel, and costs nothing
-now.
+synchronised burst.
 """
 
 

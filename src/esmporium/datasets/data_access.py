@@ -159,16 +159,14 @@ class DownloadOutcome(str, Enum):
     """
     How one attempt to fetch bytes over a route turned out
 
-    Lives here, beside [AccessService][(m).AccessService] and
-    [ContainerFormat][(m).ContainerFormat], because it is the same shape of problem
+    Lives here, because it is the same shape of problem
     they solve: a term two layers have to agree on.
     [esmporium.downloads][] produces one of these per attempt and
     [DataNodeCallRecord.outcome][esmporium.db.schema.DataNodeCallRecord.outcome]
     stores it, so it can belong to neither.
 
     `str`-valued so the stored column reads as the name rather than an integer nobody
-    can interpret, matching
-    [DatasetChangeType][esmporium.db.schema.DatasetChangeType].
+    can interpret.
 
     **These are the distinctions that change what we do next**, which is why there are
     nine of them and not a `success` boolean. Three of them are failures that say
@@ -282,13 +280,6 @@ class DownloadOutcome(str, Enum):
     node would slowly retire a perfectly good replica for a publication error it had
     no part in -- and since `esmporium` ranks nodes by health, that would end up
     steering downloads *away* from working nodes.
-
-    Not hypothetical. Live CMIP7 `areacella` for `CanESM5-1 piControl r1i1p2f1`
-    (checked 2026-11-02) is published as 52,597 bytes with one SHA256, and the node
-    serves a complete, valid netCDF-4 file of 44,638 bytes with a different one --
-    its URL carries an older version than its siblings. Ten other `areacella` files
-    for the same model agreed exactly, so this is a per-file publication fault, not a
-    node that is broken.
     """
 
     TRANSPORT_ERROR = "transport_error"

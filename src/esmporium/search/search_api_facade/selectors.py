@@ -161,7 +161,4 @@ DEFAULT_SEARCH_API_SELECTOR = build_project_list_selector(
 )
 """
 The search API selector used when the caller does not choose one
-
-Named for what it selects, rather than just `DEFAULT_SELECTOR`, because choosing a
-*data node* to download from is a separate question with a default of its own.
 """

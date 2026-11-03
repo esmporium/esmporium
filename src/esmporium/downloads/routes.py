@@ -1,15 +1,5 @@
 """
 A route to bytes, as the download layer sees one
-
-[Route][(m).] is the download layer's view of a
-[DataAccess][esmporium.db.schema.DataAccess] row: the few fields needed to fetch
-something and to say afterwards which mirror served it.
-
-It is a plain frozen dataclass rather than the database row itself so that
-[esmporium.downloads][] never imports [esmporium.db][]. That is the same direction of
-dependency [esmporium.search][] has -- search is handed a processor and knows nothing
-about where results go -- and it is what lets every test in this package run without
-a database.
 """
 
 from __future__ import annotations

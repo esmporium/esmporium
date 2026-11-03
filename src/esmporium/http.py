@@ -3,16 +3,6 @@ Shared HTTP helpers
 
 Rendering a request so a human can reproduce it is not specific to searching or to
 downloading, so it lives here rather than in either.
-
-This module exists because
-[esmporium.search.apis.request][] carried the note *"we might need to move this
-elsewhere if it is needed for downloads too. Let's wait until we know we need that
-before we make such a move."* Downloads need it, so the move happened.
-
-Note what did **not** move: [Request][esmporium.search.apis.Request] stayed in
-[esmporium.search.apis][]. A download is a bare URL, not a
-method-path-params-body quadruple, so it has no use for that type and moving it would
-only widen what this module claims to be about.
 """
 
 from __future__ import annotations

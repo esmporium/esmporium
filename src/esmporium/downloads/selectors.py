@@ -1,15 +1,5 @@
 """
 In-built data node selectors
-
-The twin of [esmporium.search.search_api_facade.selectors][], and the same shape: a
-selector is a plain callable taking the candidates and a 0-based attempt index, and
-returning `None` to say there is nothing left to try.
-
-Note the one naming difference. Search's default is
-[DEFAULT_SEARCH_API_SELECTOR][esmporium.search.DEFAULT_SEARCH_API_SELECTOR] and this
-one is [DEFAULT_DATA_NODE_SELECTOR][(m).]; neither is called `DEFAULT_SELECTOR`,
-because both are flattened to the top of their package and "the default selector"
-would then mean two different things depending on which import you read.
 """
 
 from __future__ import annotations
@@ -25,9 +15,6 @@ Chooses which route to try next for one file
 Given every route we know of for a file and a 0-based attempt index, returns the next
 [Route][esmporium.downloads.Route] to try, or `None` to say that there is nothing left
 to try for this file.
-
-A selector is handed *one file's* routes, not the whole download, because which mirror
-is best is a per-file question: not every data node holds every file.
 """
 
 
@@ -44,9 +31,6 @@ class SelectorOfferedNoRouteError(ValueError):
     This is only about having nothing to try. Routes which *were* tried and did not
     serve the bytes are a different thing, and are reported as such -- see
     [DownloadStatus.GIVEN_UP][esmporium.db.schema.DownloadStatus.GIVEN_UP].
-
-    The twin of
-    [SelectorOfferedNoAPIFacadeError][esmporium.search.SelectorOfferedNoAPIFacadeError].
     """
 
     def __init__(self, routes: Sequence[Route], selector: DataNodeSelector) -> None:
@@ -169,11 +153,6 @@ def build_data_node_list_selector(
     """
     Build a selector which tries the named data nodes first, in the order given
 
-    This is the "I know which nodes are good, use mine" seam, and the download twin of
-    passing your own ordered list of index nodes to search. It is also what to reach
-    for instead of the health-based selector when you would rather not depend on
-    whatever health happens to have been recorded.
-
     Parameters
     ----------
     data_nodes
@@ -219,14 +198,7 @@ def select_as_given(candidates: Sequence[Route], attempt: int) -> Route | None:
     """
     Try a file's routes in the order they arrived, secure ones first
 
-    **This is deliberately not a ranking**, and it is worth being plain about why
-    there isn't one. Search's default list of index nodes is hand-curated by how many
-    results each returns, and nothing equivalent is honest for data nodes: which nodes
-    hold a given file varies per file, ESGF has dozens of them, and until something has
-    actually been downloaded there is no measurement to order them by. Inventing an
-    order would look like knowledge and be guesswork.
-
-    So this does the two things that are defensible without any measurements -- drop
+    This does the two things that are defensible without any measurements -- drop
     what cannot be fetched, and prefer HTTPS -- and otherwise trusts the caller's
     order. Once downloads have happened, use
     [build_data_node_health_selector][esmporium.db.build_data_node_health_selector],

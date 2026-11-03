@@ -1,16 +1,8 @@
 """
 What can go wrong fetching bytes from a data node
 
-Every error here except [UnfetchableRouteError][(m).] subclasses
-[DataNodeFetchError][(m).], and each one maps onto exactly one
-[DownloadOutcome][esmporium.datasets.DownloadOutcome]. That pairing is the whole
-point: the retry policy and the mirror-fallback loop both decide what to do next by
-looking at the outcome, so a failure which cannot be classified cannot be acted on.
-
 Classification is by **HTTP status code and exception type**, never by matching
-substrings in an exception's message. The prototype this replaces decided whether a
-connection error was retryable with `"refused" in str(exc).lower()`, which depends on
-the locale and the version of the library that raised it.
+substrings in an exception's message.
 """
 
 from __future__ import annotations
@@ -21,13 +13,6 @@ from esmporium.datasets import DownloadOutcome
 class DataNodeFetchError(OSError):
     """
     Base for every way one attempt at one route can fail
-
-    Subclasses `OSError` rather than `Exception` because that is what a failed attempt
-    at reading bytes *is*, and because it lets a caller which does not care why
-    catch the lot with one familiar type.
-
-    Carries the [outcome][(c).outcome] it corresponds to, so that whatever recorded
-    the attempt does not have to re-derive it from the exception's class.
     """
 
     outcome: DownloadOutcome
@@ -61,8 +46,7 @@ class DataNodeFetchError(OSError):
         self.detail = detail
         self.response_code = response_code
         # One argument to `OSError`, deliberately. Passing two makes the first the
-        # `errno`, so `str(exc)` renders as `[Errno https://...] detail` -- which is
-        # what the prototype did, and it put that nonsense in the database.
+        # `errno`, so `str(exc)` renders as `[Errno https://...] detail`.
         super().__init__(f"{detail}: {url}")
 
 
@@ -298,11 +282,6 @@ class SizeMismatchError(DataNodeFetchError):
     The transfer was fine -- exactly `Content-Length` bytes arrived -- so what is
     wrong is the published metadata: the file on the node is not the file the search
     index describes.
-
-    Kept apart from [ShortReadError][(m).ShortReadError] because only one of them is
-    the data node's fault, and `esmporium` ranks data nodes by their fault rate. See
-    [DownloadOutcome.SIZE_MISMATCH][esmporium.datasets.DownloadOutcome.SIZE_MISMATCH]
-    for the live example that prompted the split.
     """
 
     outcome = DownloadOutcome.SIZE_MISMATCH

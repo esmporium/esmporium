@@ -7,27 +7,6 @@ That is the one place where the route, the response code, any error,
 the bytes moved and the time taken all exist together,
 so it is where we observe an attempt.
 
-Observing is opt-in and deliberately use case agnostic.
-`fetch_to_path` builds a plain [DataNodeCall][(m).] describing what happened
-and hands it to a [DataNodeCallObserver][(m).] if one was given.
-What to *do* with that record is the observer's choice:
-the database layer provides an observer which records it
-(see [record_data_node_calls][esmporium.db.download_health.record_data_node_calls]),
-but an observer is just a function, so a caller can print it, collect it,
-or send it somewhere else instead.
-
-This is the deliberate twin of [esmporium.search.health][], which does the same job
-for the search APIs. Two things differ, and both come from downloads being a
-different kind of work:
-
-- **The measure is throughput, not latency.** A search is judged on how fast it
-  answered; a download on how fast the bytes moved, which is why a call here carries
-  `bytes_transferred` where a search call carries `num_results`.
-- **An outcome, not a `success` flag.** Which *way* a fetch failed decides what
-  happens next -- retry, try another mirror, or stop -- and three of the failures say
-  nothing at all about the data node. See
-  [DownloadOutcome][esmporium.datasets.DownloadOutcome].
-
 Note that we define a `download` as getting one file, and a `call` as one HTTP attempt
 against one route. A single download can result in several calls, across several data
 nodes (retrying policy, then mirror fallback).

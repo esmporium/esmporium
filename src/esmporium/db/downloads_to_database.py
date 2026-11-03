@@ -1,28 +1,5 @@
 """
 Turning a query into downloads, and recording what came of them
-
-This is the database side of downloading, and the engine-taking entry point
-[download][(m).] lives here rather than in [esmporium.downloads][] for the same reason
-[search_and_track][esmporium.db.search_and_track] lives here rather than in
-[esmporium.search][]: the dependency runs one way, so the download machinery can be
-used and tested without a database at all.
-
-The flow is the one the plan asked for:
-
-```text
-  a query
-     │
-     ▼  plan_downloads      which datasets match, which files they have,
-     │                      which routes serve them, and what is already here
-     ▼  queue_downloads     one QUEUED row per file we intend to get
-     │
-     ▼  download_files      the bytes (esmporium.downloads, no database)
-     │
-     ▼  record_result       one row updated per file, as each finishes
-```
-
-Every step is separately callable, so a caller can plan without queueing, or queue
-today and download tomorrow.
 """
 
 from __future__ import annotations
@@ -88,10 +65,6 @@ def _utcnow() -> datetime.datetime:
 class DownloadPlanItem:
     """
     One file a plan says to get, with everything needed to get it and record it
-
-    Carries both the request the download machinery wants and the ids the database
-    needs afterwards, so that the two are worked out once rather than looked up again
-    on the way back.
     """
 
     request: DownloadRequest
@@ -150,12 +123,6 @@ class DownloadSummary:
     def n_outstanding(self) -> int:
         """
         Get how many files are still to get
-
-        Counts [QUEUED][esmporium.db.schema.DownloadStatus.QUEUED],
-        [RUNNING][esmporium.db.schema.DownloadStatus.RUNNING] and
-        [FAILED][esmporium.db.schema.DownloadStatus.FAILED] -- the last because a
-        failure is retryable. [GIVEN_UP][esmporium.db.schema.DownloadStatus.GIVEN_UP]
-        is not counted, because nothing will change by asking again.
 
         Returns
         -------
@@ -460,12 +427,6 @@ def queue_downloads(
     """
     Record that we intend to download these files
 
-    Idempotent: a file already queued stays queued rather than being queued twice,
-    because identity here is the file. A file which previously
-    [FAILED][esmporium.db.schema.DownloadStatus.FAILED] is put back to
-    [QUEUED][esmporium.db.schema.DownloadStatus.QUEUED], which is what makes
-    re-running a download pick up where it left off.
-
     Does not commit: the caller owns the transaction boundary, as everywhere else in
     this layer.
 
@@ -612,8 +573,7 @@ def download(  # noqa: PLR0913 - one argument per thing a download has to be tol
     """
     Download everything a query asks for that we do not already have
 
-    The whole flow in one call: plan, queue, fetch, record. The twin of
-    [search_and_track][esmporium.db.search_and_track].
+    The whole flow in one call: plan, queue, fetch, record.
 
     Each file's row is written as that file finishes, in its own transaction, so a run
     interrupted on day two keeps everything from day one.

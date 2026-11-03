@@ -1270,29 +1270,10 @@ class DataNodeCallRecord(EsmporiumBase, table=True):
     """
     One recorded attempt to fetch bytes from one data node
 
-    An append-only log, and the download twin of
-    [SearchAPICallRecord][esmporium.db.schema.SearchAPICallRecord]: we never update
-    these rows, so they accumulate a history of which data node was asked for what,
-    when, how it answered, how long it took and how many bytes moved. That is enough
-    to tell, later and with a plain `GROUP BY`, which data nodes are fast, which are
-    flaky and which serve bad bytes.
-
     One row per *attempt*, not per download. A file fetched on the third try from the
     second mirror leaves four rows, and
     [attempt_number][(c).attempt_number] plus
     [data_node_id][(c).data_node_id] say which is which.
-
-    **This is a general measure of ESGF data node health, not only a download
-    bookkeeping table.** Nothing here is specific to why we were fetching, so the
-    same rows answer "is this node worth using" for anything that fetches from one.
-
-    !!! note "Why this is separate from search API health"
-        A data node and an index node are different machines doing different jobs, and
-        being good at one says nothing about being good at the other. The measure is
-        different too: a search is judged on latency, a download on throughput, which
-        is why this table records `bytes_transferred` where
-        [SearchAPICallRecord][esmporium.db.schema.SearchAPICallRecord] records
-        `num_results`.
     """
 
     # See the note on `Dataset.model_config`: this catches a bad *value* at
@@ -1318,9 +1299,8 @@ class DataNodeCallRecord(EsmporiumBase, table=True):
     The data node we fetched from
 
     See [DataNode][esmporium.db.schema.DataNode]. A foreign key rather than the bare
-    host string [SearchAPICallRecord.host][esmporium.db.schema.SearchAPICallRecord.host]
-    keeps, because every data node we fetch from already has a row -- it got here from
-    a [DataAccess][esmporium.db.schema.DataAccess] route -- so there is nothing to
+    host string because every data node we fetch from already has a row -- it got here
+    from a [DataAccess][esmporium.db.schema.DataAccess] route -- so there is nothing to
     create, and "how healthy are the nodes serving this version" becomes a join
     rather than a string match.
 
@@ -1363,8 +1343,7 @@ class DataNodeCallRecord(EsmporiumBase, table=True):
     The HTTP status code the data node answered with
 
     `None` when nothing answered at all (a transport error or a timeout), which is how
-    "the node said no" is told apart from "the node never spoke". The same convention as
-    [SearchAPICallRecord.response_code][esmporium.db.schema.SearchAPICallRecord.response_code].
+    "the node said no" is told apart from "the node never spoke".
     """
 
     outcome: DownloadOutcome = Field(sa_type=AutoString, index=True)
@@ -1388,10 +1367,6 @@ class DataNodeCallRecord(EsmporiumBase, table=True):
     error: str | None = None
     """
     The failure's type and message, or `None` on success
-
-    Rendered the same way as
-    [SearchAPICallRecord.error][esmporium.db.schema.SearchAPICallRecord.error], i.e.
-    `"TypeName: message"`.
     """
 
     bytes_transferred: int = Field(default=0, sa_type=BigInteger)
@@ -1434,12 +1409,6 @@ class DataNodeCallRecord(EsmporiumBase, table=True):
 class DownloadStatus(str, Enum):
     """
     Where a file has got to in being downloaded
-
-    Lives here rather than in [esmporium.datasets][] (where
-    [DownloadOutcome][esmporium.datasets.DownloadOutcome] lives) because only this
-    layer reads or writes it: it is the state of a row in this table, not a term the
-    download machinery and the database have to agree on. Same reasoning as
-    [DatasetChangeType][esmporium.db.schema.DatasetChangeType].
 
     `str`-valued, for the same reason as every other enum stored here.
     """
@@ -1506,29 +1475,6 @@ class Download(EsmporiumBase, table=True):
     two because they are one question asked at different times -- "is this file
     here?" -- and splitting them would mean every reader joining two tables to find
     out, and a way for them to disagree.
-
-    Where [DataAccess][esmporium.db.schema.DataAccess] says how a file *could* be
-    got, this says what happened when we tried. Where
-    [DataNodeCallRecord][esmporium.db.schema.DataNodeCallRecord] is the log of every
-    attempt, this is the current state: one row that gets updated, against many rows
-    that only accumulate.
-
-    Deliberately *not* a snapshot of the filesystem. A row here is our record of what
-    we did, and the file it points at can be moved or deleted behind our back, so a
-    reader that must be certain checks the path -- which
-    [plan_downloads][esmporium.db.plan_downloads] does, by existence and size rather
-    than by re-reading every byte.
-
-    !!! note "Why `file_id` is not nullable"
-        A [DataAccess][esmporium.db.schema.DataAccess] row with `file_id IS NULL` is a
-        route to a whole dataset version, and there is deliberately no way to record
-        having downloaded one, because nothing can be fetched through one yet: every
-        kerchunk route ESGF-NG advertises answered 404 when sampled, and no zarr or
-        icechunk store has ever been published to us. Opening such a store also needs
-        more than a URL, so "download it to a path" is not even the right shape for
-        it. See
-        [ContainerFormat.ICECHUNK][esmporium.datasets.ContainerFormat.ICECHUNK] for
-        why guessing at that now would be guessing at a convention ESGF has not made.
     """
 
     # See the note on `Dataset.model_config`.

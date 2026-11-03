@@ -1,24 +1,5 @@
 """
 Recording ESGF data node health into the database, and ranking nodes by it
-
-The twin of [esmporium.db.search_health][], and it diverges from it in three places.
-Each one is a consequence of a download taking days where a search takes seconds:
-
-1. **Health is read over a window.** [aggregate_data_node_health][(m).] takes `since`,
-   because on a multi-day download "how is this node doing *lately*" is the question
-   that matters. Lifetime totals would let one fast afternoon six months ago outrank a
-   node that is fast today.
-2. **Reliability is ranked before speed.** Search ranks on median response time alone.
-   For downloads, a node that works is worth more than a node that is quick, so the
-   default ranker sorts on failure rate first -- see
-   [rank_by_reliability_then_throughput][(m).].
-3. **A selector can refresh itself.**
-   [build_health_selector][esmporium.db.build_health_selector]'s docstring says the
-   health "is read *once*, now, when the selector is built... Build a new selector if
-   you want to use updated information." That is right for a search and wrong for a
-   download: a run that started on Monday should not still be using Monday's opinion
-   on Thursday. [build_refreshing_data_node_health_selector][(m).] re-reads on a
-   timer.
 """
 
 from __future__ import annotations
@@ -90,15 +71,6 @@ def _utcnow() -> datetime.datetime:
 def record_data_node_calls(engine: Engine) -> DataNodeCallObserver:
     """
     Build an observer which records each data node fetch attempt into the database
-
-    A fresh session is opened per call, so the observer is safe to call from several
-    threads at once. Each call is committed on its own, so a download killed part way
-    through keeps the records of the attempts it had already made -- which matters
-    much more here than for search, because a download that gets killed on day three
-    has three days of health information worth keeping.
-
-    The twin of
-    [record_search_api_calls][esmporium.db.search_health.record_search_api_calls].
 
     Parameters
     ----------
@@ -183,11 +155,6 @@ class DataNodeHealth:
 
     Built from the [DataNodeCallRecord][esmporium.db.schema.DataNodeCallRecord] rows
     recorded for every fetch attempt.
-
-    The counterpart of [HostHealth][esmporium.db.HostHealth], which does the same for
-    the search APIs. Note that the two are not interchangeable and must not be mixed:
-    a data node and an index node are different machines doing different jobs, and a
-    node that is bad at one can be good at the other.
     """
 
     data_node: str
@@ -224,11 +191,6 @@ class DataNodeHealth:
 
     `None` if nothing succeeded. Median rather than mean, so that one enormous file or
     one tiny one does not decide a node's reputation.
-
-    Throughput and not latency, because that is what a download is judged on. Two data
-    nodes the prototype wrote off as dead by a header-read timeout turned out to
-    download 2.1x and 3.9x *faster* than the probe suggested, which is why download
-    health is measured on its own terms and never inherited from another measurement.
     """
 
     total_bytes: int
@@ -295,8 +257,7 @@ def aggregate_data_node_health(
         A `timedelta` is taken as "this long ago"; a `datetime` as an absolute cut-off;
         `None` means all of history.
 
-        Defaults to [DEFAULT_HEALTH_WINDOW][(m).]. This is the main thing that differs
-        from the search twin -- see this module's docstring.
+        Defaults to [DEFAULT_HEALTH_WINDOW][(m).].
 
     Returns
     -------
@@ -428,7 +389,6 @@ DataNodeRanker = Callable[[DataNodeHealth], Any]
 Turns one data node's health into a sort key
 
 This should return keys such that, when nodes are sorted ascending, the best is first.
-The twin of [HostRanker][esmporium.db.HostRanker].
 """
 
 
@@ -496,12 +456,6 @@ def _rank_pool(
 ) -> tuple[Route, ...] | None:
     """
     Reorder a file's routes by their data nodes' health, or report there is none
-
-    Routes whose node has recorded health come first, sorted by `ranker`; routes whose
-    node has none keep their given order and follow, so a data node we have never
-    fetched from is still tried, just not first. Exactly the rule
-    [esmporium.db.search_health][] uses, and for the same reason: a node with no
-    record is unknown, not bad.
 
     Parameters
     ----------
@@ -623,22 +577,6 @@ def build_refreshing_data_node_health_selector(  # noqa: PLR0913 - one parameter
 ) -> DataNodeSelector:
     """
     Build a selector which re-reads data node health as a download goes on
-
-    **This is the one place downloads genuinely need something search does not.** A
-    search takes seconds, so reading health once and using it for the whole run is
-    both cheap and correct. A download can take days, over which the nodes move: one
-    goes down for maintenance, another comes back, a third starts throttling us. A
-    selector built on Monday's health and still using it on Thursday is sending every
-    remaining file to a node that stopped being the best one days ago.
-
-    So this one takes a snapshot, uses it for `refresh_after`, and then takes another.
-    The refresh happens lazily, on the first selection after the snapshot has expired,
-    so a download that stops asking stops querying.
-
-    The health it re-reads includes **the attempts this very download has been
-    recording**, as long as `record_data_node_calls` is wired up as the observer. That
-    is the feedback loop: the download learns which nodes are serving it well from its
-    own experience, not only from whatever happened before it started.
 
     Parameters
     ----------

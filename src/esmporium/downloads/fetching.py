@@ -1,17 +1,5 @@
 """
 Fetching one file's bytes from one data node
-
-This is the download twin of [fire][esmporium.search.search.fire], and deliberately
-the same shape: build the request once, wrap one attempt in the retry policy, and
-record what happened from *inside* the loop so that every attempt leaves its own
-observation rather than only the last one.
-
-What it does **not** do is open the file. It writes bytes and checks a digest; it does
-not read a netCDF header, does not sniff the magic bytes that distinguish classic
-netCDF from netCDF-4/HDF5, and imports no netCDF library. There is deliberately no
-"fetch me just the first few KB" mode either -- the only use of `Range` here is
-resuming an interrupted download of a whole file. Reading headers is a separate step's
-work, and a seam for it here is how this module would stop being small.
 """
 
 from __future__ import annotations
@@ -114,8 +102,7 @@ ProgressCallback = Callable[[int, int | None], None]
 Told how a transfer is going, as `(bytes_so_far, bytes_expected)`
 
 `bytes_expected` is `None` when the published size is not known. Called roughly once
-per chunk, so an implementation must be cheap -- printing every call will dominate the
-download of a large file.
+per chunk,.
 
 This exists because a multi-day download that prints nothing is indistinguishable
 from one that has hung.
@@ -333,11 +320,6 @@ def fetch_to_path(  # noqa: PLR0913 - the keyword-only extras are deliberate inj
 ) -> FetchOutcome:
     """
     Fetch one route's bytes to a path, verifying them on the way in
-
-    The sequence is: stream to `<dest>.part`, hashing as we go; `fsync`; check the
-    size and the digest; then `os.replace` onto `dest`. Because the rename is atomic
-    within a filesystem, a run killed at any point leaves either the old file or a
-    `.part`, and never a truncated file that looks complete.
 
     Parameters
     ----------
