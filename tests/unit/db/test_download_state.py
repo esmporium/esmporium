@@ -252,6 +252,39 @@ def test_a_successful_result_is_recorded(engine, stored, tmp_path):
         assert row.finished_at is not None
 
 
+def test_a_skipped_file_is_recorded_as_done(engine, stored, tmp_path):
+    """
+    Already on disk is a finished download, not an unfinished one
+
+    A skip carries no `FetchOutcome`, which is what a failure looks like too. Without
+    the `skipped` branch the row would go back as `FAILED` and the next run would
+    download a file we already have.
+    """
+    file_id = stored["file_ids"][0]
+    dest = tmp_path / "tas_a.nc"
+    route = Route(
+        url="https://esgf.example.org/tas_a.nc",
+        data_node="esgf.example.org",
+        service=AccessService.HTTPS,
+        container_format=ContainerFormat.NETCDF,
+        data_access_id=99,
+    )
+    result = DownloadResult(
+        request=DownloadRequest(routes=(route,), dest=dest, file_id=file_id),
+        skipped=True,
+    )
+
+    with Session(engine) as session:
+        row = record_result(session, result)
+        session.commit()
+
+        assert row.status == DownloadStatus.DONE
+        # Nothing was fetched, so there is nothing to say about where from or how
+        # it was verified.
+        assert row.served_by_data_access_id is None
+        assert row.last_error is None
+
+
 def test_a_retryable_failure_is_recorded_as_failed(engine, stored, tmp_path):
     """A timeout is worth another go, so the status says so"""
     file_id = stored["file_ids"][0]
@@ -430,6 +463,43 @@ def test_a_wrong_sized_file_on_disk_is_planned_again(engine, stored, tmp_path):
         again = plan_downloads(session, QUERY, tmp_path)
 
     assert "tas_a.nc" in [item.request.dest.name for item in again]
+
+
+def test_a_file_the_api_never_sized_is_taken_as_done_if_it_is_there(
+    engine, stored, tmp_path
+):
+    """
+    With no published size, being there is the best answer available
+
+    The counterpart to the test above: the size check is skipped rather than failed.
+    Failing it instead would re-download every unsized file on every run, forever.
+    """
+    with Session(engine) as session:
+        plan = plan_downloads(session, QUERY, tmp_path)
+        first = plan[0]
+
+        # ESGF does not always publish a size, and then there is nothing to check
+        # what is on disk against.
+        unsized = session.get(File, first.file_id)
+        unsized.size = None
+        session.add(unsized)
+
+        first.request.dest.parent.mkdir(parents=True, exist_ok=True)
+        # Deliberately not the length the fixture published: with nothing to check
+        # against, the length must not matter.
+        first.request.dest.write_bytes(b"whatever landed here")
+        session.add(
+            Download(
+                file_id=first.file_id,
+                status=DownloadStatus.DONE,
+                path=str(first.request.dest),
+            )
+        )
+        session.commit()
+
+        again = plan_downloads(session, QUERY, tmp_path)
+
+    assert [item.request.dest.name for item in again] == ["tas_b.nc"]
 
 
 def test_skip_done_false_plans_everything(engine, stored, tmp_path):

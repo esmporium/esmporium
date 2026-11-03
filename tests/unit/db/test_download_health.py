@@ -254,6 +254,22 @@ def test_asking_about_no_data_nodes_returns_nothing(engine):
     assert aggregate_data_node_health(engine, [], since=None) == {}
 
 
+def test_asking_about_some_data_nodes_leaves_the_others_out(engine):
+    """
+    The pool the caller cares about, not every node we have ever recorded
+
+    The other half of the rule above: an empty list narrows to nothing, and a
+    non-empty one narrows to itself.
+    """
+    observer = record_data_node_calls(engine)
+    observer(make_call(FAST))
+    observer(make_call(FLAKY))
+
+    health = aggregate_data_node_health(engine, [FAST], since=None)
+
+    assert set(health) == {FAST}
+
+
 def test_reliability_is_ranked_before_speed():
     """
     A node that works beats a node that is quick

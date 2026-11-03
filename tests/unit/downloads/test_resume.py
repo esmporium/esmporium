@@ -5,9 +5,11 @@ Tests of resuming an interrupted download
 import httpx
 import pytest
 
+from esmporium.datasets import DownloadOutcome
 from esmporium.downloads import (
     DataNodeTransportError,
     ShortReadError,
+    SizeMismatchError,
     fetch_to_path,
     part_path,
 )
@@ -201,3 +203,44 @@ def test_a_resumed_transfer_that_comes_up_short_still_raises(
 
     assert caught.value.got == 600
     assert caught.value.expected == len(body)
+
+
+def test_a_node_which_will_not_say_how_big_the_file_is_is_still_held_to_it(
+    tmp_path, route, body, client_for, no_retry
+):
+    """
+    `Content-Range: bytes 400-8499/*` is a node declining to state the total
+
+    The whole size then has to be worked out as what was already on disk plus what
+    this response carries. Getting that wrong is not harmless: with no promise to
+    compare against, a complete-but-wrong-sized file is reported as a
+    `ShortReadError`, which *counts against the data node* and would slowly retire
+    a working replica over what is really a publication error in the index.
+    """
+    dest = tmp_path / "tas.nc"
+    part_path(dest).write_bytes(body[:400])
+
+    def handler(request):
+        return httpx.Response(
+            206,
+            content=body[400:],
+            # `*` is what a node sends when it does not know the total.
+            headers={"Content-Range": f"bytes 400-{len(body) - 1}/*"},
+        )
+
+    with pytest.raises(SizeMismatchError) as caught:
+        fetch_to_path(
+            client_for(handler),
+            route,
+            dest,
+            # The index says the file is longer than the node actually serves.
+            expected_size=len(body) + 50,
+            retrying=no_retry,
+        )
+
+    # The node delivered every byte it said it would, so the disagreement is with
+    # the index and the node's health must not move.
+    assert caught.value.outcome == DownloadOutcome.SIZE_MISMATCH
+    assert caught.value.published == len(body) + 50
+    assert caught.value.served == len(body)
+    assert not DownloadOutcome.SIZE_MISMATCH.counts_against_data_node
