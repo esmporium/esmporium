@@ -20,6 +20,7 @@ from esmporium.downloads import (
     DownloadRequest,
     DuplicateDestinationError,
     Route,
+    SelectorOfferedNoRouteError,
     build_data_node_limiter,
     build_data_node_list_selector,
     download_files,
@@ -434,10 +435,15 @@ def test_two_files_writing_the_same_path_is_refused_before_anything_is_fetched(
         ),
     ]
 
-    with pytest.raises(DuplicateDestinationError, match="file ids 1 and 2"):
+    with pytest.raises(DuplicateDestinationError, match="file ids 1 and 2") as excinfo:
         download_files(
             clashing, client=client_for(handler), retrying=no_retry, max_workers=2
         )
+
+    # Carried as well as said, so a caller can see which two files clashed without
+    # reading the prose -- and so that the path named is the one they share.
+    assert excinfo.value.dest == tmp_path / "tas.nc"
+    assert (excinfo.value.first, excinfo.value.second) == (clashing[0], clashing[1])
 
     assert asked == []
 
@@ -475,7 +481,7 @@ def test_one_file_blowing_up_does_not_lose_the_others_already_recorded(
         file_id=2,
     )
 
-    with pytest.raises(Exception, match="No route was offered"):
+    with pytest.raises(SelectorOfferedNoRouteError, match="No route was offered"):
         download_files(
             [good, hopeless],
             client=client_for(lambda request: httpx.Response(200, content=body)),

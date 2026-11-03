@@ -273,16 +273,28 @@ def test_a_file_longer_than_published_is_also_refused(
     tmp_path, route, body, client_for, no_retry
 ):
     """
-    Longer is just as wrong as shorter
+    Longer is just as wrong as shorter, and it is the *publication* that is wrong
 
     An earlier version only checked `total < expected`, which would have accepted a
     duplicated body -- exactly what a mishandled resume produces.
+
+    Which of the two size errors this is matters as much as that it raises. The node
+    served exactly as many bytes as it said it would, so nothing about the transfer
+    went wrong and this must not count against the node: that is
+    [SizeMismatchError][esmporium.downloads.SizeMismatchError], not
+    [ShortReadError][esmporium.downloads.ShortReadError]. Accepting either here would
+    tolerate the one confusion that would let mis-published files retire healthy
+    replicas from the health ranking.
     """
     dest = tmp_path / "tas.nc"
     client = client_for(lambda request: httpx.Response(200, content=body + body))
 
-    with pytest.raises((SizeMismatchError, ShortReadError)):
+    with pytest.raises(SizeMismatchError) as excinfo:
         fetch_to_path(client, route, dest, expected_size=len(body), retrying=no_retry)
+
+    assert excinfo.value.outcome == DownloadOutcome.SIZE_MISMATCH
+    assert excinfo.value.published == len(body)
+    assert excinfo.value.served == 2 * len(body)
 
     assert not dest.exists()
 
