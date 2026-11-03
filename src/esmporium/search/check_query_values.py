@@ -49,7 +49,7 @@ from esmporium.search.search import (
     plan_sub_searches,
 )
 from esmporium.search.search_api_facade import (
-    DEFAULT_SELECTOR,
+    DEFAULT_SEARCH_API_SELECTOR,
     SearchAPIFacade,
     SearchAPIFacadeSelector,
     SelectorOfferedNoAPIFacadeError,
@@ -559,7 +559,7 @@ class ValueCheckOutcome:
 
 def check_query_values_single_project(  # noqa: PLR0913 - the keyword-only extras are deliberate injection seams
     query: QueryProtocol,
-    selector: SearchAPIFacadeSelector = DEFAULT_SELECTOR,
+    selector: SearchAPIFacadeSelector = DEFAULT_SEARCH_API_SELECTOR,
     *,
     stop_at_first_result: bool = True,
     close_matches: CloseMatcher = close_matches_difflib,
@@ -710,7 +710,7 @@ class LeafValueCheckOutcome:
 
 def check_query_values(  # noqa: PLR0913 - the keyword-only extras are deliberate injection seams
     requirement: Requirement,
-    selector: SearchAPIFacadeSelector = DEFAULT_SELECTOR,
+    selector: SearchAPIFacadeSelector = DEFAULT_SEARCH_API_SELECTOR,
     *,
     stop_at_first_result: bool = True,
     close_matches: CloseMatcher = close_matches_difflib,

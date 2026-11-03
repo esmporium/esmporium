@@ -153,3 +153,197 @@ class ContainerFormat(str, Enum):
     told "this is not bytes you can open", rather than us dropping them and losing
     the fact that they were offered at all.
     """
+
+
+class DownloadOutcome(str, Enum):
+    """
+    How one attempt to fetch bytes over a route turned out
+
+    Lives here, because it is the same shape of problem
+    they solve: a term two layers have to agree on.
+    [esmporium.downloads][] produces one of these per attempt and
+    [DataNodeCallRecord.outcome][esmporium.db.schema.DataNodeCallRecord.outcome]
+    stores it, so it can belong to neither.
+
+    `str`-valued so the stored column reads as the name rather than an integer nobody
+    can interpret.
+
+    **These are the distinctions that change what we do next**, which is why there are
+    nine of them and not a `success` boolean. Three of them are failures that say
+    nothing about the data node (`MISSING`, `NEEDS_CREDENTIALS`, and arguably
+    `BLOCKED`), so counting them against its health would retire a node for serving us
+    correctly.
+    """
+
+    SUCCESS = "success"
+    """
+    The bytes arrived, and matched whatever we could check them against
+
+    "Whatever we could check" is the caveat: a route whose file has no usable checksum
+    still reports this, with the verification recorded separately on
+    [Download.checksum_verified][esmporium.db.schema.Download.checksum_verified].
+    """
+
+    MISSING = "missing"
+    """
+    The data node answered that there is nothing at this URL (404 or 410)
+
+    **Not the data node's fault, and deliberately excluded from its failure rate.** A
+    route we recorded can simply stop existing -- most visibly for the kerchunk
+    routes ESGF-NG advertises, every one of which was a 404 when sampled. Try the next
+    mirror; do not retry this one, and do not hold it against the node.
+    """
+
+    NEEDS_CREDENTIALS = "needs_credentials"
+    """
+    The data node asked us to authenticate (401)
+
+    Never retried -- retrying an anonymous request that was refused for being
+    anonymous will be refused again -- and never counted against the node, which is
+    behaving correctly. esmporium fetches anonymously; supplying credentials is done
+    by passing an already-authenticated client, so this outcome means "this route
+    needs a client we were not given".
+
+    Note the ambiguity with [BLOCKED][(c).BLOCKED]: a data node refusing an
+    unauthenticated request *may* answer 403 rather than 401, in which case we cannot
+    tell it apart from rate limiting and will record it as `BLOCKED`. Classifying on
+    the status code alone is the best we can do without guessing at body text.
+    """
+
+    BLOCKED = "blocked"
+    """
+    The data node is refusing us for now (403, 429 or 503)
+
+    Rate limiting, a concurrency cap, or a node that is up but not serving. Worth
+    backing off and preferring another mirror, and worth retrying with a longer wait
+    than an ordinary transient failure -- a `Retry-After` header, where one is sent,
+    says how long.
+
+    Counted against the node's health, unlike the two above, because a node that keeps
+    refusing us is one we should stop going to first. See the note on
+    [NEEDS_CREDENTIALS][(c).NEEDS_CREDENTIALS] for what else can land here.
+    """
+
+    TIMEOUT = "timeout"
+    """
+    The data node took too long, either to connect or to send the next chunk
+
+    Measured per read rather than over the whole transfer: a large file legitimately
+    takes a long time, so a wall-clock deadline would fail exactly the downloads we
+    most want to finish. What is wrong is a transfer that has *stalled*.
+    """
+
+    HOST_FAULT = "host_fault"
+    """
+    We never reached the data node at all: DNS, TLS, or a refused connection
+
+    Distinct from [TIMEOUT][(c).TIMEOUT] because nothing answered, so there is no
+    response code to record -- the same distinction
+    [SearchAPICallRecord.response_code][esmporium.db.schema.SearchAPICallRecord.response_code]
+    draws with its `None`.
+    """
+
+    CHECKSUM_FAILED = "checksum_failed"
+    """
+    The bytes arrived in full and did not match the published digest
+
+    **The one outcome that says the data node served us bad data**, rather than no
+    data, so it is worth separating from every other failure even though it is rare.
+    Whatever landed is discarded rather than kept: a file that fails its checksum is
+    worse than a file we do not have, because it looks like one we do.
+    """
+
+    SHORT_READ = "short_read"
+    """
+    The transfer was cut off part way: fewer bytes arrived than the node promised
+
+    "Promised" means the response's own `Content-Length`, so this is the data node
+    failing to deliver what it said it would -- a dropped connection, a proxy giving
+    up. Worth retrying, and it counts against the node.
+
+    Checked because it is the failure a missing checksum hides: a file with no digest
+    to verify against, truncated in transit, is otherwise indistinguishable from a
+    complete one, and would be renamed into place and recorded as a success.
+    """
+
+    SIZE_MISMATCH = "size_mismatch"
+    """
+    The node served a *complete* file, of a different size than the index published
+
+    Told apart from [SHORT_READ][(c).SHORT_READ] by the response's own
+    `Content-Length`: the node delivered exactly what it said it would, so the
+    transfer was fine and it is the **published metadata that is wrong**. The file on
+    the node is not the file the search index describes.
+
+    **This is why the distinction exists, rather than both being "wrong size".**
+    Neither is retried, but only one is the data node's fault. Charging this to the
+    node would slowly retire a perfectly good replica for a publication error it had
+    no part in -- and since `esmporium` ranks nodes by health, that would end up
+    steering downloads *away* from working nodes.
+    """
+
+    TRANSPORT_ERROR = "transport_error"
+    """
+    Any other transient failure, e.g. a 5xx that is not 503, or a reset connection
+
+    The catch-all for "worth trying again". Anything we cannot classify more
+    specifically lands here rather than being silently treated as success.
+    """
+
+    @property
+    def is_worth_retrying(self) -> bool:
+        """
+        Whether this outcome is worth trying again against the *same* data node
+
+        Lives on the enum rather than in the retry policy so that there is one answer
+        to this question, and so that adding a member forces a decision about it here
+        rather than leaving it to be inferred somewhere else.
+
+        `False` for [SUCCESS][(c).SUCCESS] too, which reads oddly in isolation but is
+        right: the question is only ever asked about something that failed, and
+        answering `True` would describe a retry loop that never terminates.
+
+        Returns
+        -------
+        :
+            `True` if retrying the same route might work
+        """
+        return self in {
+            # The node is up and struggling, or the connection broke. All three
+            # plausibly work on a second go.
+            DownloadOutcome.BLOCKED,
+            DownloadOutcome.TIMEOUT,
+            DownloadOutcome.TRANSPORT_ERROR,
+            # A transfer cut off part way is worth finishing: the node said how many
+            # bytes there were, so a second attempt (or a resume) can get the rest.
+            DownloadOutcome.SHORT_READ,
+        }
+
+    @property
+    def counts_against_data_node(self) -> bool:
+        """
+        Whether this outcome should count against the data node's health
+
+        Four failures say nothing about the node: a 404 means the route is gone, a
+        401 means we did not present credentials, a
+        [SIZE_MISMATCH][(c).SIZE_MISMATCH] means the index is wrong rather than the
+        node, and none is the node behaving badly. Counting them would retire a data
+        node for answering us correctly.
+
+        [BLOCKED][(c).BLOCKED] *does* count, even though a rate limit is arguably
+        correct behaviour too, because a node which keeps refusing us is one we should
+        stop trying first -- which is exactly what health ranking is for.
+
+        Returns
+        -------
+        :
+            `True` if this outcome belongs in the node's failure rate
+        """
+        return self not in {
+            DownloadOutcome.SUCCESS,
+            DownloadOutcome.MISSING,
+            DownloadOutcome.NEEDS_CREDENTIALS,
+            # The node served exactly what it promised; the index is what is wrong.
+            # See the note on SIZE_MISMATCH for why this matters so much here.
+            DownloadOutcome.SIZE_MISMATCH,
+        }

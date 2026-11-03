@@ -36,7 +36,13 @@ __pycache__/
 build/
 develop-eggs/
 dist/
-downloads/
+# Anchored to the repository root, unlike the stock Python template's `downloads/`.
+# Unanchored it matches *any* directory of that name at any depth, which silently
+# swallowed `src/esmporium/downloads/` and both of its test directories -- they
+# existed on disk, passed every check, and were simply absent from the repository.
+# The intent here is pip's download cache and a download root someone makes while
+# trying things out, both of which live at the top level.
+/downloads/
 eggs/
 .eggs/
 lib/

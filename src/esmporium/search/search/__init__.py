@@ -16,10 +16,8 @@ from esmporium.search.search.errors import (
     SearchAPIRequestError,
 )
 from esmporium.search.search.firing import (
-    curl_equivalent,
     fire,
     get_url,
-    log_request_as_url_and_curl,
 )
 from esmporium.search.search.keys import FacadeKey, get_facade_key
 from esmporium.search.search.pagination import (
@@ -66,11 +64,9 @@ __all__ = [
     "SubSearch",
     "collect_all_file_pages",
     "collect_all_pages",
-    "curl_equivalent",
     "fire",
     "get_facade_key",
     "get_url",
-    "log_request_as_url_and_curl",
     "plan_sub_searches",
     "search",
     "search_single_project",

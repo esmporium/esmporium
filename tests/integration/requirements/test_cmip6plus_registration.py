@@ -61,7 +61,7 @@ from esmporium.query import (
 )
 from esmporium.requirements import leaf, requirement, solve
 from esmporium.search import (
-    DEFAULT_SELECTOR,
+    DEFAULT_SEARCH_API_SELECTOR,
     ESGF1_CMIP6_FACADE_PARAMETERS,
     ESGFNG_CMIP6_FACADE_PARAMETERS,
     AllSubQueriesFailedError,
@@ -108,7 +108,7 @@ difference from the CORDEX module in one line.
 """
 
 SELECTOR = build_project_list_selector({PROJECT: (CMIP6PLUS_FACADE,)})
-"""Facade selection for CMIP6Plus, which `DEFAULT_SELECTOR` has none of"""
+"""Facade selection for CMIP6Plus, which `DEFAULT_SEARCH_API_SELECTOR` has none of"""
 
 LEAF_QUERY = Query(
     project=PROJECT,
@@ -219,7 +219,7 @@ def test_cmip6plus_is_registered_for_translation_but_not_for_searching():
     # ("CMIP5", "CMIP6", "CMIP7"), so the lookup is a plain `KeyError` carrying none of
     # the guidance the other gates' errors carry.
     with pytest.raises(KeyError):
-        DEFAULT_SELECTOR(canonical, 0)
+        DEFAULT_SEARCH_API_SELECTOR(canonical, 0)
 
 
 def test_the_cmip6_stac_table_cannot_be_reused_for_cmip6plus():

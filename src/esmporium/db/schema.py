@@ -13,7 +13,11 @@ from sqlalchemy import BigInteger, Index, MetaData, UniqueConstraint, text
 from sqlalchemy.orm import registry
 from sqlmodel import AutoString, Field, SQLModel
 
-from esmporium.datasets.data_access import AccessService, ContainerFormat
+from esmporium.datasets.data_access import (
+    AccessService,
+    ContainerFormat,
+    DownloadOutcome,
+)
 
 if TYPE_CHECKING:
     # Only needed for `SearchAPICallRecord.from_call`'s annotation, which is quoted
@@ -1260,3 +1264,359 @@ class DatasetChange(EsmporiumBase, table=True):
 
     created_at: datetime.datetime = Field(default_factory=_utcnow)
     """When we computed this change (UTC)"""
+
+
+class DataNodeCallRecord(EsmporiumBase, table=True):
+    """
+    One recorded attempt to fetch bytes from one data node
+
+    One row per *attempt*, not per download. A file fetched on the third try from the
+    second mirror leaves four rows, and
+    [attempt_number][(c).attempt_number] plus
+    [data_node_id][(c).data_node_id] say which is which.
+    """
+
+    # See the note on `Dataset.model_config`: this catches a bad *value* at
+    # construction rather than at commit time.
+    model_config = {"validate_assignment": True}
+
+    id: int | None = Field(default=None, primary_key=True)
+    """Surrogate key; assigned by the database"""
+
+    created_at: datetime.datetime = Field(default_factory=_utcnow, index=True)
+    """
+    When the attempt was recorded (UTC)
+
+    Indexed because download health is read over a *window* rather than for all time
+    (see `since` on
+    [aggregate_data_node_health][esmporium.db.download_health.aggregate_data_node_health]):
+    a download can run for days, so "how is this node doing lately" is the question
+    that matters, and lifetime totals would let one fast afternoon last forever.
+    """
+
+    data_node_id: int = Field(foreign_key="datanode.id", index=True)
+    """
+    The data node we fetched from
+
+    See [DataNode][esmporium.db.schema.DataNode]. A foreign key rather than the bare
+    host string because every data node we fetch from already has a row -- it got here
+    from a [DataAccess][esmporium.db.schema.DataAccess] route -- so there is nothing to
+    create, and "how healthy are the nodes serving this version" becomes a join
+    rather than a string match.
+
+    Note this is the node's *name* as ESGF publishes it, resolved to its row, and not
+    the host in [url][(c).url]: the two differ, e.g. `ceda.ac.uk` serves over
+    `dap.ceda.ac.uk`. See
+    [DataAccess.data_node_id][esmporium.db.schema.DataAccess.data_node_id].
+    """
+
+    file_id: int | None = Field(default=None, foreign_key="file.id", index=True)
+    """
+    The file we were fetching, if we were fetching one
+
+    See [File][esmporium.db.schema.File]. `None` for an attempt that belongs to no
+    file -- there is nothing like that today, because whole-version routes are not
+    fetchable (see [Download][esmporium.db.schema.Download]), so this is nullable in
+    readiness rather than in use.
+    """
+
+    data_access_id: int | None = Field(
+        default=None, foreign_key="dataaccess.id", index=True
+    )
+    """
+    The route we tried, i.e. which mirror of the file this attempt used
+
+    See [DataAccess][esmporium.db.schema.DataAccess]. Nullable because a route can be
+    *derived* rather than stored -- an `http://`-only route is also tried over
+    `https://`, and that twin has no row of its own -- in which case the URL we really
+    sent is in [url][(c).url] and this is `None`.
+    """
+
+    url: str
+    """The full URL the attempt went to"""
+
+    http_method: str
+    """The HTTP method used, e.g. `GET`"""
+
+    response_code: int | None = None
+    """
+    The HTTP status code the data node answered with
+
+    `None` when nothing answered at all (a transport error or a timeout), which is how
+    "the node said no" is told apart from "the node never spoke".
+    """
+
+    outcome: DownloadOutcome = Field(sa_type=AutoString, index=True)
+    """
+    How the attempt turned out
+
+    See [DownloadOutcome][esmporium.datasets.DownloadOutcome]. Stored as its value, so
+    a row read back out of the database carries a plain `str` rather than the enum
+    member -- it compares equal to the member but is not it, so compare with `==` and
+    not `is`.
+
+    Indexed because every health question filters on it, and because three of its
+    members must be *excluded* when judging a node (a 404 or a 401 is not the node
+    behaving badly), so this is not a column a reader can skip.
+
+    There is deliberately no `success` boolean beside this. It would be derivable from
+    this column and so free to disagree with it; `outcome == DownloadOutcome.SUCCESS`
+    is the one source of truth.
+    """
+
+    error: str | None = None
+    """
+    The failure's type and message, or `None` on success
+    """
+
+    bytes_transferred: int = Field(default=0, sa_type=BigInteger)
+    """
+    How many bytes this attempt actually moved
+
+    `BigInteger` rather than the default `Integer` deliberately, for the same reason
+    as [File.size][esmporium.db.schema.File.size]: CMIP daily files routinely pass
+    2 GB, which overflows a 32-bit integer on PostgreSQL, and SQLite would not have
+    noticed.
+
+    Counts only what *this* attempt added, so a resumed attempt does not re-count the
+    bytes already on disk. With [seconds][(c).seconds] this is the throughput
+    measurement that download health ranks on.
+
+    `0` on an attempt that failed before any body arrived.
+    """
+
+    seconds: float
+    """How long the attempt took, in wall-clock seconds"""
+
+    attempt_number: int
+    """
+    Which attempt at this route this row is, 1-based
+
+    One row is recorded per attempt, so a fetch that had to be retried leaves several:
+    attempt 1, attempt 2, and so on. Counted per route, so moving to the next mirror
+    starts again at 1 -- the mirror is in [data_node_id][(c).data_node_id].
+    """
+
+    resumed: bool = False
+    """
+    Whether this attempt continued a part-downloaded file rather than starting fresh
+
+    Recorded because it changes what [bytes_transferred][(c).bytes_transferred] means
+    relative to the file's size, so a reader comparing the two needs to know.
+    """
+
+
+class DownloadStatus(str, Enum):
+    """
+    Where a file has got to in being downloaded
+
+    `str`-valued, for the same reason as every other enum stored here.
+    """
+
+    QUEUED = "queued"
+    """
+    We intend to download this file and have not started
+
+    What [plan_downloads][esmporium.db.plan_downloads] writes. Having a non-terminal
+    status is what makes the queue *durable*: how much is outstanding is a question
+    the database can answer, rather than one that has to be recomputed by walking the
+    disk on every run.
+    """
+
+    RUNNING = "running"
+    """
+    A download of this file is in progress
+
+    A row left in this state is how a killed run announces itself: nothing clears it,
+    so finding one on startup means the previous run did not finish. This is also why
+    a download writes its state per file rather than per run -- a run killed on day
+    two keeps day one.
+    """
+
+    DONE = "done"
+    """
+    The bytes are on disk at [Download.path][esmporium.db.schema.Download.path]
+
+    Note that this does *not* promise the checksum was verified, only that the
+    download completed and whatever could be checked passed. Not every file ESGF
+    publishes has a digest to check against;
+    [Download.checksum_verified][esmporium.db.schema.Download.checksum_verified] is
+    what distinguishes "verified" from "no way to verify".
+    """
+
+    FAILED = "failed"
+    """
+    This attempt did not get the file, and trying again may well work
+
+    A timeout, a refusal, a node that was down. Distinct from
+    [GIVEN_UP][(c).GIVEN_UP] because the difference decides whether a later run picks
+    the file up again, and a single status for both would mean either retrying things
+    that can never work or abandoning things that merely had a bad afternoon.
+    """
+
+    GIVEN_UP = "given_up"
+    """
+    Every route we know of has been tried and none of them can serve this file
+
+    Every mirror answered `missing`, or every one needs credentials we do not have.
+    Retrying changes nothing until either the routes or the credentials change, so a
+    later run leaves this alone -- which is only safe because the reason is recorded
+    in [Download.last_error][esmporium.db.schema.Download.last_error] and in the
+    [DataNodeCallRecord][esmporium.db.schema.DataNodeCallRecord] rows behind it.
+    """
+
+
+class Download(EsmporiumBase, table=True):
+    """
+    What we have, or are trying to get, of one file on our own disk
+
+    One row per [File][esmporium.db.schema.File], carrying both the queue (what we
+    intend to fetch) and the outcome (what we got). Those are one table rather than
+    two because they are one question asked at different times -- "is this file
+    here?" -- and splitting them would mean every reader joining two tables to find
+    out, and a way for them to disagree.
+    """
+
+    # See the note on `Dataset.model_config`.
+    model_config = {"validate_assignment": True}
+
+    # Identity is the file: we either have a file or we do not, so there is one row
+    # per `File`, and it is updated in place rather than appended to. That uniqueness
+    # is declared on the column as `unique=True, index=True` rather than as a
+    # `UniqueConstraint` in `__table_args__`, which is how `DataNode.data_node` does
+    # it: the pair collapses into one `CREATE UNIQUE INDEX`, where a constraint plus
+    # `index=True` would make the database keep two indexes on the same column.
+    #
+    # A plain unique is enough here, with no `coalesce` expression index (unlike
+    # `Dataset`): `file_id` is NOT NULL, so the "SQLite treats NULLs as distinct"
+    # trap that one solves does not arise.
+
+    id: int | None = Field(default=None, primary_key=True)
+    """Surrogate key; assigned by the database"""
+
+    file_id: int = Field(foreign_key="file.id", unique=True, index=True)
+    """
+    The file this is the download of
+
+    See [File][esmporium.db.schema.File]. Unique in this table, and always set: see
+    the note on this class for why a whole-version route gets no row here.
+    """
+
+    status: DownloadStatus = Field(sa_type=AutoString, index=True)
+    """
+    Where this file has got to
+
+    See [DownloadStatus][esmporium.db.schema.DownloadStatus]. Stored as its value, so
+    compare with `==` and not `is`.
+
+    Indexed because it is what the queue is read by: "what is still outstanding" and
+    "what failed" are the two questions this table exists to answer cheaply.
+    """
+
+    path: str | None = None
+    """
+    Where the bytes are on this machine, or `None` until a download completes
+
+    An absolute path. Derived rather than stored at publication time -- see
+    [esmporium.downloads.paths][] -- because the publisher's own relative path is not
+    available for every project, and where a file goes on *our* disk is ours to
+    decide anyway.
+    """
+
+    size_bytes: int | None = Field(default=None, sa_type=BigInteger)
+    """
+    How many bytes actually landed, or `None` until a download completes
+
+    `BigInteger` for the same reason as
+    [File.size][esmporium.db.schema.File.size]. Recorded separately from that column
+    because this one is measured and that one is reported: a download that disagrees
+    with what was published is exactly what we want to be able to see.
+    """
+
+    checksum_verified: bool = False
+    """
+    Whether the bytes were checked against a published digest and matched
+
+    `False` covers two different situations, deliberately: the download has not
+    happened yet, and the file has no usable digest to check against. Neither is a
+    failure -- a mismatch is, and a mismatch never reaches this table, because the
+    bytes are discarded rather than kept (see
+    [DownloadOutcome.CHECKSUM_FAILED][esmporium.datasets.DownloadOutcome.CHECKSUM_FAILED]).
+
+    Which of the two it is can be told from
+    [checksum_type_used][(c).checksum_type_used] together with
+    [status][(c).status].
+    """
+
+    checksum_type_used: str | None = None
+    """
+    Which algorithm the bytes were actually checked with, e.g. `SHA256`
+
+    `None` means nothing was run: either we have not downloaded yet, or
+    [File.checksum_type][esmporium.db.schema.File.checksum_type] was `None` because
+    the API published no digest, or published one we could not decode. Recorded rather
+    than assumed to equal the file's `checksum_type`, so that what was *checked* is
+    not inferred from what was *published*.
+    """
+
+    served_by_data_access_id: int | None = Field(
+        default=None, foreign_key="dataaccess.id", index=True
+    )
+    """
+    Which route finally served the file, or `None` if none has yet
+
+    Provenance: with several mirrors to choose from, which one answered is worth
+    keeping, and it is the link between this row and the
+    [DataNodeCallRecord][esmporium.db.schema.DataNodeCallRecord] rows for the attempt
+    that worked.
+
+    `None` also for a file served by a *derived* route (an `https://` twin of an
+    `http://`-only route), which has no `DataAccess` row to point at.
+    """
+
+    attempts: int = 0
+    """
+    How many attempts have been made on this file, across every run and every mirror
+
+    **Cumulative, never overwritten**, which is what makes "give up after N" and "this
+    file has been fighting us for a week" answerable at all. A per-run count would
+    make a file that has failed twenty times indistinguishable from one that failed
+    once.
+
+    This is a cheap triage number, not the record: the attempts themselves are
+    [DataNodeCallRecord][esmporium.db.schema.DataNodeCallRecord] rows, and anything
+    that needs to know *what* went wrong should read those rather than this.
+    """
+
+    last_error: str | None = None
+    """
+    Why the most recent attempt failed, or `None` if none has
+
+    Kept on the row so that "what is wrong with my downloads" needs no join. Not
+    cleared on success, because [status][(c).status] already says whether it still
+    matters, and clearing it would throw away the fact that a file which now works
+    had to be retried.
+    """
+
+    queued_at: datetime.datetime = Field(default_factory=_utcnow)
+    """When this file was first queued (UTC)"""
+
+    started_at: datetime.datetime | None = None
+    """
+    When the most recent attempt began (UTC), or `None` if none has
+
+    The most recent rather than the first, so that with [queued_at][(c).queued_at] it
+    says how long a file sat waiting, and with
+    [finished_at][(c).finished_at] how long the download that mattered took.
+    """
+
+    finished_at: datetime.datetime | None = None
+    """
+    When this file reached a terminal status (UTC), or `None` if it has not
+
+    Set for [DONE][esmporium.db.schema.DownloadStatus.DONE],
+    [FAILED][esmporium.db.schema.DownloadStatus.FAILED] and
+    [GIVEN_UP][esmporium.db.schema.DownloadStatus.GIVEN_UP] alike -- a failure is an
+    ending too, and not recording when it happened would make a stale failure
+    indistinguishable from a fresh one.
+    """

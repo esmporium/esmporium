@@ -27,6 +27,7 @@ from esmporium.requirements import VersionFilter
 OPT_IN_MARKERS: dict[str, str] = {
     "network": "a third-party service over the network",
     "hits_esgf_search_api": "the live ESGF search APIs",
+    "downloads_data": "the live ESGF data nodes, and really downloads files",
 }
 """
 Markers whose tests only run when they are explicitly asked for
