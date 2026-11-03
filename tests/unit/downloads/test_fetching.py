@@ -77,6 +77,33 @@ def test_a_file_with_no_checksum_downloads_but_is_not_verified(
     assert outcome.checksum_type_used is None
 
 
+def test_a_digest_with_no_algorithm_name_downloads_but_is_not_verified(  # noqa: PLR0913 - fixtures
+    tmp_path, route, body, sha256_of, client_for, no_retry
+):
+    """
+    A published digest with nothing saying how to read it is unusable, not fatal
+
+    The index records the digest and its algorithm in two separate fields and does
+    not always fill in the second. Distinct from no digest at all, which is the test
+    above: here there *is* something to check against and we still cannot use it.
+    """
+    dest = tmp_path / "tas.nc"
+    client = client_for(lambda request: httpx.Response(200, content=body))
+
+    outcome = fetch_to_path(
+        client,
+        route,
+        dest,
+        checksum=sha256_of(body),
+        checksum_type=None,
+        retrying=no_retry,
+    )
+
+    assert dest.read_bytes() == body
+    assert not outcome.checksum_verified
+    assert outcome.checksum_type_used is None
+
+
 def test_an_unknown_checksum_algorithm_downloads_but_is_not_verified(
     tmp_path, route, body, client_for, no_retry
 ):
@@ -178,6 +205,41 @@ def test_a_complete_file_of_the_wrong_size_is_a_publication_fault(
     assert not DownloadOutcome.SIZE_MISMATCH.is_worth_retrying
     assert not dest.exists()
     assert not part_path(dest).exists()
+
+
+def test_an_unreadable_content_length_is_treated_as_promising_nothing(
+    tmp_path, route, body, client_for, no_retry
+):
+    """
+    A `Content-Length` which is not a number is no promise at all
+
+    The same answer as a chunked response, and for the same reason: with nothing to
+    hold the node to, a file of the wrong length is reported as a transfer problem
+    and retried rather than blamed on the index. A *readable* length matching what
+    arrived would have made this a `SizeMismatchError` instead.
+    """
+    dest = tmp_path / "tas.nc"
+
+    def handler(request):
+        return httpx.Response(
+            200,
+            content=body[:100],
+            headers={"Content-Length": "not-a-number"},
+        )
+
+    with pytest.raises(ShortReadError) as caught:
+        fetch_to_path(
+            client_for(handler),
+            route,
+            dest,
+            expected_size=len(body),
+            retrying=no_retry,
+        )
+
+    assert caught.value.got == 100
+    assert caught.value.expected == len(body)
+    # Retryable, which is the conservative answer when there is nobody to blame.
+    assert DownloadOutcome.SHORT_READ.is_worth_retrying
 
 
 def test_a_chunked_response_of_the_wrong_size_is_treated_as_a_short_read(

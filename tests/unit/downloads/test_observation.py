@@ -11,6 +11,7 @@ import pytest
 
 from esmporium.datasets import AccessService, ContainerFormat, DownloadOutcome
 from esmporium.downloads import (
+    DataNodeCall,
     DataNodeTimeoutError,
     Route,
     RouteMissingError,
@@ -200,6 +201,28 @@ def test_throughput_is_none_when_there_is_nothing_to_measure(
 
     (call,) = calls
     assert call.throughput_mb_per_s is None
+
+
+def test_throughput_is_megabytes_of_a_million_bytes_per_second():
+    """
+    A megabyte is 1,000,000 bytes, so the number means what a network tool means
+
+    Built directly rather than fetched: the arithmetic is the whole point here, and
+    a real transfer's elapsed time is not reproducible enough to assert on.
+    """
+    call = DataNodeCall(
+        data_node=NODE,
+        url=URL,
+        http_method="GET",
+        response_code=200,
+        outcome=DownloadOutcome.SUCCESS,
+        error=None,
+        bytes_transferred=50_000_000,
+        seconds=2.0,
+        attempt_number=1,
+    )
+
+    assert call.throughput_mb_per_s == 25.0
 
 
 def test_progress_is_reported_as_the_transfer_proceeds(

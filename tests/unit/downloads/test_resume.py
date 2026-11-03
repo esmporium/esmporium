@@ -58,6 +58,42 @@ def test_a_partial_download_is_resumed_and_the_digest_covers_the_whole_file(  # 
     assert dest.read_bytes() == body
 
 
+def test_an_empty_part_file_is_started_again_rather_than_resumed(  # noqa: PLR0913 - fixtures
+    tmp_path, route, body, sha256_of, client_for, no_retry
+):
+    """
+    A `.part` of nothing is a run killed before the first chunk landed
+
+    Resuming it would send `Range: bytes=0-`, a roundabout way of asking for the
+    whole file which nodes are free to answer differently from a plain `GET`. There
+    is nothing to continue, so nothing is asked to continue from.
+    """
+    dest = tmp_path / "tas.nc"
+    part_path(dest).write_bytes(b"")
+
+    seen = {}
+
+    def handler(request):
+        seen["range"] = request.headers.get("Range")
+        return httpx.Response(200, content=body)
+
+    outcome = fetch_to_path(
+        client_for(handler),
+        route,
+        dest,
+        expected_size=len(body),
+        checksum=sha256_of(body),
+        checksum_type="SHA256",
+        retrying=no_retry,
+    )
+
+    assert seen["range"] is None
+    assert not outcome.resumed
+    assert outcome.bytes_written == len(body)
+    assert dest.read_bytes() == body
+    assert outcome.checksum_verified
+
+
 def test_a_stale_part_at_full_size_is_discarded_rather_than_resumed(  # noqa: PLR0913 - fixtures
     tmp_path, route, body, sha256_of, client_for, no_retry
 ):
@@ -205,17 +241,26 @@ def test_a_resumed_transfer_that_comes_up_short_still_raises(
     assert caught.value.expected == len(body)
 
 
-def test_a_node_which_will_not_say_how_big_the_file_is_is_still_held_to_it(
-    tmp_path, route, body, client_for, no_retry
+@pytest.mark.parametrize(
+    "total",
+    (
+        # What a node sends when it does not know the total.
+        pytest.param("*", id="declines-to-say"),
+        # And what one sends when it is simply broken.
+        pytest.param("not-a-number", id="unreadable"),
+    ),
+)
+def test_a_node_which_will_not_say_how_big_the_file_is_is_still_held_to_it(  # noqa: PLR0913 - fixtures
+    tmp_path, route, body, client_for, no_retry, total
 ):
     """
-    `Content-Range: bytes 400-8499/*` is a node declining to state the total
+    A `Content-Range` whose total cannot be used still has to yield a whole size
 
-    The whole size then has to be worked out as what was already on disk plus what
-    this response carries. Getting that wrong is not harmless: with no promise to
-    compare against, a complete-but-wrong-sized file is reported as a
-    `ShortReadError`, which *counts against the data node* and would slowly retire
-    a working replica over what is really a publication error in the index.
+    It is worked out as what was already on disk plus what this response carries.
+    Getting that wrong is not harmless: with no promise to compare against, a
+    complete-but-wrong-sized file is reported as a `ShortReadError`, which *counts
+    against the data node* and would slowly retire a working replica over what is
+    really a publication error in the index.
     """
     dest = tmp_path / "tas.nc"
     part_path(dest).write_bytes(body[:400])
@@ -224,8 +269,7 @@ def test_a_node_which_will_not_say_how_big_the_file_is_is_still_held_to_it(
         return httpx.Response(
             206,
             content=body[400:],
-            # `*` is what a node sends when it does not know the total.
-            headers={"Content-Range": f"bytes 400-{len(body) - 1}/*"},
+            headers={"Content-Range": f"bytes 400-{len(body) - 1}/{total}"},
         )
 
     with pytest.raises(SizeMismatchError) as caught:

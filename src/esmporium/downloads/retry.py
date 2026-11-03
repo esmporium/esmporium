@@ -59,6 +59,11 @@ def is_transient(exc: BaseException) -> bool:
     True
     >>> is_transient(RouteMissingError("https://x/a.nc", "not here"))
     False
+
+    Anything we never classified is not a flaky data node:
+
+    >>> is_transient(ValueError("not a fetch failure at all"))
+    False
     """
     if not isinstance(exc, DataNodeFetchError):
         # Anything we did not classify is a bug or an unrelated failure, not a flaky

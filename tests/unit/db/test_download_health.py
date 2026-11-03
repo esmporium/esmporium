@@ -416,6 +416,21 @@ def test_the_refreshing_selector_re_reads_once_its_snapshot_expires(engine):
     assert selector(routes, 0).data_node == FLAKY
 
 
+def test_the_refreshing_selector_also_falls_back_when_it_knows_nothing(engine):
+    """
+    The refresh does not change what "no evidence at all" means
+
+    The plain selector's fallback is pinned above. This is its twin: re-reading an
+    empty table still produces no ranking, and the fallback still decides.
+    """
+    selector = build_refreshing_data_node_health_selector(engine, since=None)
+    routes = [route_on(UNKNOWN), route_on("other.example.org")]
+
+    # The default fallback keeps the given order.
+    assert selector(routes, 0).data_node == UNKNOWN
+    assert selector(routes, 1).data_node == "other.example.org"
+
+
 def test_the_refreshing_selector_does_not_query_until_it_needs_to(engine):
     """
     Lazy: a download that stops asking stops querying
