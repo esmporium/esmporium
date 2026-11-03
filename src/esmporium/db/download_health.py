@@ -181,8 +181,8 @@ class DataNodeHealth:
 
     `0.0` when there is nothing to judge, which reads as "no evidence against it"
     rather than "perfect". That is the right way round: a node with no record should
-    not be *penalised*, and [_rank_pool][(m).] handles "no evidence at all"
-    separately anyway.
+    not be *penalised*, and `_rank_pool` handles "no evidence at all" separately
+    anyway.
     """
 
     median_throughput_mb_per_s: float | None

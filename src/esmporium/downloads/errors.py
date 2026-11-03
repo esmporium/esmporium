@@ -77,8 +77,8 @@ class DataNodeBlockedError(DataNodeFetchError):
     """
     The data node is refusing us for now (403, 429 or 503)
 
-    Carries [retry_after_seconds][(c).retry_after_seconds] when the node said how long
-    to wait, because a node that tells us is a node worth listening to.
+    Carries `retry_after_seconds` when the node said how long to wait, because a node
+    that tells us is a node worth listening to.
     """
 
     outcome = DownloadOutcome.BLOCKED
