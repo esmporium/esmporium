@@ -191,3 +191,47 @@ def test_a_second_run_skips_what_is_already_here(searched, tmp_path):
 
     with Session(searched) as session:
         assert download_summary(session).n_outstanding == 0
+
+
+def test_a_parallel_run_gets_everything_a_serial_one_does(searched, tmp_path):
+    """
+    The same files, fetched several at a time, against the real data nodes
+
+    The serial test above is kept alongside this one on purpose: if only one of the two
+    paths breaks, which one it was should be obvious from which test failed.
+    """
+    root = tmp_path / "downloads"
+
+    results = download(
+        searched,
+        SMALL_CMIP7,
+        root,
+        observer=record_data_node_calls(searched),
+        max_workers=4,
+    )
+
+    assert results, "nothing was attempted"
+    for result in results:
+        assert result.succeeded, (
+            f"{result.request.label} did not download: {result.last_error}"
+        )
+        assert result.fetch is not None
+        assert result.fetch.path.exists()
+        assert result.fetch.checksum_verified
+        # Nothing half-written left behind by a worker.
+        assert not result.fetch.path.with_suffix(
+            result.fetch.path.suffix + ".part"
+        ).exists()
+
+    with Session(searched) as session:
+        rows = session.exec(select(Download)).all()
+        assert rows
+        assert all(row.status == DownloadStatus.DONE for row in rows)
+        # The `on_start` seam ran inside the workers.
+        assert all(row.started_at is not None for row in rows)
+        assert download_summary(session).n_outstanding == 0
+
+        # Every attempt succeeded, so no node refused us under the cap.
+        attempts = session.exec(select(DataNodeCallRecord)).all()
+        assert attempts
+        assert all(each.outcome == DownloadOutcome.SUCCESS for each in attempts)

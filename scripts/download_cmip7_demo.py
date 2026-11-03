@@ -15,6 +15,8 @@ from __future__ import annotations
 import argparse
 import logging
 import tempfile
+import threading
+import time
 from pathlib import Path
 
 from sqlmodel import Session, create_engine, select
@@ -32,7 +34,7 @@ from esmporium.db import (
     routes_for_file,
 )
 from esmporium.db.migrate import upgrade_to_head
-from esmporium.downloads import prepare_routes, totals
+from esmporium.downloads import ProgressCallback, prepare_routes, totals
 from esmporium.query import QueryCMIP7
 from esmporium.search import search_single_project
 
@@ -251,6 +253,15 @@ def main() -> None:
         help="also download a ~12 MB tas file, to exercise streaming and throughput",
     )
     parser.add_argument(
+        "--max-workers",
+        type=int,
+        default=1,
+        help=(
+            "how many files to download at once (default 1, i.e. one after another); "
+            "no more than four at a time go to any one data node"
+        ),
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
         help="log every request as a URL and a curl command",
@@ -275,14 +286,22 @@ def main() -> None:
             print("\nnothing to download -- the search found no files.")
             return
 
-        print("\ndownloading...")
+        in_parallel = args.max_workers > 1
+        print(
+            f"\ndownloading (max_workers={args.max_workers})..."
+            if in_parallel
+            else "\ndownloading..."
+        )
+        started = time.monotonic()
         results = download(
             engine,
             query,
             root,
             observer=record_data_node_calls(engine),
-            progress=_progress(),
+            progress=_progress(show_worker=in_parallel),
+            max_workers=args.max_workers,
         )
+        print(f"\ntook {time.monotonic() - started:.1f}s")
 
         print_results(results)
         print_attempts(engine)
@@ -297,27 +316,44 @@ def main() -> None:
             print(f"  {path.relative_to(root)}  {path.stat().st_size} bytes")
 
 
-def _progress():
+def _progress(*, show_worker: bool = False) -> ProgressCallback:
     """
-    Build a progress callback which prints at most once per 10% of a file
+    Build a progress callback which prints at most once per 10% of each file
+
+    Several files can be in flight at once, and a callback is told only how far one
+    transfer has got, not which file it is. So the deciles are kept per thread, which
+    is per file -- a worker fetches one file at a time -- and each line is printed
+    while holding a lock, so two transfers reporting together cannot interleave one
+    line into the middle of another.
+
+    Parameters
+    ----------
+    show_worker
+        Whether to label each line with the worker that printed it
+
+        Worth it when several files are in flight, because the lines are otherwise
+        indistinguishable; noise when there is only ever one.
 
     Returns
     -------
     :
         The callback
     """
-    state: dict[str, int] = {}
+    reached = threading.local()
+    speaking = threading.Lock()
 
     def report(done: int, total: int | None) -> None:
         if total is None or total == 0:
             return
 
         decile = int(done / total * 10)
-        if state.get("decile") == decile:
+        if getattr(reached, "decile", None) == decile:
             return
 
-        state["decile"] = decile
-        print(f"    {done:>12}/{total} bytes ({done / total:.0%})")
+        reached.decile = decile
+        worker = f"[{threading.current_thread().name}] " if show_worker else ""
+        with speaking:
+            print(f"    {worker}{done:>12}/{total} bytes ({done / total:.0%})")
 
     return report
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Iterable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -27,6 +28,12 @@ from esmporium.downloads.fetching import (
     fetch_to_path,
 )
 from esmporium.downloads.health import DataNodeCallObserver
+from esmporium.downloads.limits import (
+    DEFAULT_PER_DATA_NODE,
+    DataNodeLimiter,
+    build_data_node_limiter,
+    no_data_node_limit,
+)
 from esmporium.downloads.routes import Route
 from esmporium.downloads.selectors import (
     DEFAULT_DATA_NODE_SELECTOR,
@@ -43,6 +50,21 @@ Told about each file as soon as it is finished
 The seam the database layer uses to write one row per file as a run proceeds,
 rather than at the end -- which is what makes a run killed on day two keep day
 one.
+
+Called from whichever thread finished that file, so an implementation which touches
+anything shared has to be safe to call from several threads at once. The
+database-backed one is, because it opens and commits its own session per call.
+"""
+
+StartCallback = Callable[["DownloadRequest"], None]
+"""
+Told about each file just before anything is fetched for it
+
+The seam the database layer uses to mark a file as being downloaded right now, so that
+what is in flight is a question the database can answer while a run is still going.
+
+Called from whichever thread is about to fetch that file, so the same thread-safety note
+as [ResultCallback][(m).] applies.
 """
 
 _PERMANENT_OUTCOMES = frozenset(
@@ -119,6 +141,45 @@ class DownloadRequest:
             The destination's name, which is the filename ESGF published
         """
         return self.dest.name
+
+
+class DuplicateDestinationError(ValueError):
+    """
+    Two files in one batch would be written to the same path
+
+    Which file belongs at which path is settled before a download starts, so two
+    requests sharing a destination means something upstream built the wrong plan.
+    Downloading them both would leave one file's bytes under the other file's name,
+    and when the two are fetched at the same time it leaves neither: both transfers
+    write the same part-file.
+    """
+
+    def __init__(
+        self, dest: Path, first: DownloadRequest, second: DownloadRequest
+    ) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        dest
+            The path both requests want to write
+
+        first
+            The earlier request to claim `dest`
+
+        second
+            The later request to claim it
+        """
+        self.dest = dest
+        self.first = first
+        self.second = second
+        super().__init__(
+            f"Two requests in this batch download to {str(dest)!r}: "
+            f"file ids {first.file_id} and {second.file_id}. "
+            "Downloading both would leave one file under the other's name, so the "
+            "plan has to name this path once."
+        )
 
 
 @dataclass(frozen=True)
@@ -230,6 +291,7 @@ def download_file(  # noqa: PLR0913 - the keyword-only extras are deliberate inj
     observer: DataNodeCallObserver | None = None,
     progress: ProgressCallback | None = None,
     max_routes: int | None = None,
+    limiter: DataNodeLimiter = no_data_node_limit,
     chunk_bytes: int = DEFAULT_CHUNK_BYTES,
     connect_timeout: float = DEFAULT_CONNECT_TIMEOUT_SECONDS,
     read_timeout: float = DEFAULT_READ_TIMEOUT_SECONDS,
@@ -264,6 +326,14 @@ def download_file(  # noqa: PLR0913 - the keyword-only extras are deliberate inj
 
         `None` (the default) means try every route the selector offers. Set it to stop
         a file with thirty dead replicas from spending thirty timeouts proving it.
+
+    limiter
+        Decides when a fetch against the chosen route's data node may start.
+        See [DataNodeLimiter][esmporium.downloads.DataNodeLimiter].
+
+        The default lets every fetch start straight away, which is all a single file
+        needs. It matters when several files are being fetched at once: see
+        [download_files][(m).download_files].
 
     chunk_bytes
         Passed through to [fetch_to_path][esmporium.downloads.fetch_to_path].
@@ -311,22 +381,26 @@ def download_file(  # noqa: PLR0913 - the keyword-only extras are deliberate inj
             break
 
         try:
-            fetched = fetch_to_path(
-                client,
-                route,
-                request.dest,
-                expected_size=request.expected_size,
-                checksum=request.checksum,
-                checksum_type=request.checksum_type,
-                observer=observer,
-                progress=progress,
-                file_id=request.file_id,
-                chunk_bytes=chunk_bytes,
-                connect_timeout=connect_timeout,
-                read_timeout=read_timeout,
-                retrying=retrying,
-                resume=resume,
-            )
+            # The slot is held around the whole fetch, retries included, so a node
+            # which is already busy is not asked for more while it works through what
+            # it has.
+            with limiter(route.data_node):
+                fetched = fetch_to_path(
+                    client,
+                    route,
+                    request.dest,
+                    expected_size=request.expected_size,
+                    checksum=request.checksum,
+                    checksum_type=request.checksum_type,
+                    observer=observer,
+                    progress=progress,
+                    file_id=request.file_id,
+                    chunk_bytes=chunk_bytes,
+                    connect_timeout=connect_timeout,
+                    read_timeout=read_timeout,
+                    retrying=retrying,
+                    resume=resume,
+                )
         except DataNodeFetchError as exc:
             # Keep it and move on to the next mirror. Every failure is kept because
             # "it took four mirrors" is worth knowing, and because whether to give up
@@ -354,6 +428,31 @@ def download_file(  # noqa: PLR0913 - the keyword-only extras are deliberate inj
     return DownloadResult(request=request, fetch=None, failures=tuple(failures))
 
 
+def _one_destination_per_file(requests: Sequence[DownloadRequest]) -> None:
+    """
+    Check that no two requests in a batch write to the same path
+
+    Parameters
+    ----------
+    requests
+        The batch to check
+
+    Raises
+    ------
+    DuplicateDestinationError
+        Two requests share a destination. Raised before anything is fetched, naming
+        both files, because the answer is to fix the plan rather than to download
+        either of them.
+    """
+    claimed: dict[Path, DownloadRequest] = {}
+    for request in requests:
+        clash = claimed.get(request.dest)
+        if clash is not None:
+            raise DuplicateDestinationError(request.dest, clash, request)
+
+        claimed[request.dest] = request
+
+
 def download_files(  # noqa: PLR0913 - the keyword-only extras are deliberate injection seams
     requests: Iterable[DownloadRequest],
     *,
@@ -362,24 +461,49 @@ def download_files(  # noqa: PLR0913 - the keyword-only extras are deliberate in
     observer: DataNodeCallObserver | None = None,
     progress: ProgressCallback | None = None,
     max_routes: int | None = None,
+    on_start: StartCallback | None = None,
     on_result: ResultCallback | None = None,
     chunk_bytes: int = DEFAULT_CHUNK_BYTES,
     connect_timeout: float = DEFAULT_CONNECT_TIMEOUT_SECONDS,
     read_timeout: float = DEFAULT_READ_TIMEOUT_SECONDS,
     retrying: Retrying | None = None,
     resume: bool = True,
+    max_workers: int | None = None,
+    per_data_node: int | None = DEFAULT_PER_DATA_NODE,
+    requeue_passes: int = 1,
 ) -> tuple[DownloadResult, ...]:
     """
-    Get many files, one after another
+    Get many files, optionally several at a time
+
+    By default the files are fetched one after another. Pass `max_workers > 1` to fetch
+    several at once: the work is network-bound, so this is usually a large win.
+
+    Two things shape a parallel run.
+
+    **No more than `per_data_node` transfers run against any one data node**, however
+    many workers there are. Most files are served by only one or two nodes, so an
+    uncapped pool becomes a pile of simultaneous requests against a single host, which
+    is how a node starts refusing us. A worker whose file's best node is busy waits for
+    a slot rather than being sent to a node the selector ranked lower.
+
+    **A file which fails for a reason that might not recur is tried again before the
+    run ends**, `requeue_passes` times. Files which cannot be got at all -- every route
+    gone, or every route needing credentials -- are not retried, because nothing about
+    them will have changed.
 
     Parameters
     ----------
     requests
         The files to get, in the order to get them
 
+        Every request must have a distinct `dest` (see `Raises`).
+
     client
         The HTTP client to fetch with, shared across every file.
         If `None`, one is built for the call and closed at the end.
+
+        Sharing one client across workers is deliberate: it is safe to use from several
+        threads, and it lets them reuse connections.
 
     selector
         Chooses which route to try for each file.
@@ -387,7 +511,7 @@ def download_files(  # noqa: PLR0913 - the keyword-only extras are deliberate in
         Note that a *refreshing* selector
         ([build_refreshing_data_node_health_selector][esmporium.db.build_refreshing_data_node_health_selector])
         is what makes a long run learn as it goes: passed here, it re-reads health
-        between files rather than being stuck with whatever was true when the run
+        as the run proceeds rather than being stuck with whatever was true when the run
         started.
 
     observer
@@ -396,8 +520,19 @@ def download_files(  # noqa: PLR0913 - the keyword-only extras are deliberate in
     progress
         Told how each transfer is going.
 
+        With more than one worker, several transfers report at once, so an
+        implementation which writes to a console or a file has to be safe to call from
+        several threads and should say which file each line is about.
+
     max_routes
         The most mirrors to try per file.
+
+    on_start
+        Called with each [DownloadRequest][(m).] just before anything is fetched for
+        it, so that a file being worked on right now can be recorded as such.
+
+        Called again for a file which is re-queued, because a later pass is a fresh
+        attempt on it.
 
     on_result
         Called with each [DownloadResult][(m).] as soon as that file is finished, so
@@ -406,6 +541,9 @@ def download_files(  # noqa: PLR0913 - the keyword-only extras are deliberate in
 
         This is the seam the database layer uses to write one row per file as the run
         proceeds, which is what makes a run killed on day two keep day one.
+
+        Called once per attempt rather than once per file, so a file which is re-queued
+        is reported each time it is tried.
 
     chunk_bytes
         Passed through to [download_file][(m).download_file].
@@ -419,41 +557,145 @@ def download_files(  # noqa: PLR0913 - the keyword-only extras are deliberate in
     retrying
         Passed through to [download_file][(m).download_file].
 
+        One policy is shared by every worker, which is safe: it keeps no state across
+        the calls it is used for.
+
     resume
         Passed through to [download_file][(m).download_file].
+
+    max_workers
+        How many files to fetch at once.
+
+        `None` (the default) or `1` fetches them one after another. A value greater
+        than `1` fetches them concurrently in a thread pool of that size.
+
+        This is a ceiling, not a promise: `per_data_node` can hold workers back, and a
+        run whose files all live on one data node moves `per_data_node` of them at a
+        time whatever this is set to.
+
+    per_data_node
+        The most transfers to run at once against any one data node.
+        Defaults to [DEFAULT_PER_DATA_NODE][esmporium.downloads.DEFAULT_PER_DATA_NODE].
+
+        `None` places no limit, which is worth knowing is a way to get a data node to
+        refuse us. Only consulted when `max_workers` is greater than `1`; a run fetching
+        one file at a time already asks for one transfer at a time.
+
+    requeue_passes
+        How many extra passes to make over files which failed for a reason that might
+        not recur.
+
+        `1` (the default) means a file which timed out, was refused, or hit a node that
+        was down gets one more go before the run ends. `0` makes a single pass, leaving
+        such files to the next run. Files whose every route is gone or needs credentials
+        are never re-queued.
 
     Returns
     -------
     :
         One result per request, in the order the requests were given
+
+        One per *request*, not one per attempt: a file which was re-queued is
+        represented by what became of it in the end. That order holds however many
+        workers were used.
+
+    Raises
+    ------
+    DuplicateDestinationError
+        Two requests write to the same path. Raised before anything is fetched.
+
+    ValueError
+        `requeue_passes` is negative, or `per_data_node` is less than one.
     """
+    if requeue_passes < 0:
+        msg = (
+            f"requeue_passes must be zero or more, got {requeue_passes}. "
+            "Zero makes a single pass over the requests."
+        )
+        raise ValueError(msg)
+
+    ordered = tuple(requests)
+    _one_destination_per_file(ordered)
+
     owns_client = client is None
     client = client if client is not None else httpx.Client(follow_redirects=True)
 
-    results: list[DownloadResult] = []
+    in_parallel = max_workers is not None and max_workers > 1
+    # A file at a time already asks a node for one transfer at a time, so there is
+    # nothing for a limiter to do and no reason to pay for its lock.
+    limiter = (
+        build_data_node_limiter(per_data_node)
+        if in_parallel and per_data_node is not None
+        else no_data_node_limit
+    )
+
+    def fetch_one(
+        indexed: tuple[int, DownloadRequest],
+    ) -> tuple[int, DownloadResult]:
+        # Carries the request's position with it, so results can be put back in the
+        # order they were asked for however they come back, and so a re-queued file
+        # replaces its own earlier result rather than being appended.
+        index, request = indexed
+
+        if on_start is not None:
+            on_start(request)
+
+        result = download_file(
+            client,
+            request,
+            selector=selector,
+            observer=observer,
+            progress=progress,
+            max_routes=max_routes,
+            limiter=limiter,
+            chunk_bytes=chunk_bytes,
+            connect_timeout=connect_timeout,
+            read_timeout=read_timeout,
+            retrying=retrying,
+            resume=resume,
+        )
+
+        if on_result is not None:
+            on_result(result)
+
+        return index, result
+
+    results: dict[int, DownloadResult] = {}
+    todo = tuple(enumerate(ordered))
+
     try:
-        for request in requests:
-            result = download_file(
-                client,
-                request,
-                selector=selector,
-                observer=observer,
-                progress=progress,
-                max_routes=max_routes,
-                chunk_bytes=chunk_bytes,
-                connect_timeout=connect_timeout,
-                read_timeout=read_timeout,
-                retrying=retrying,
-                resume=resume,
+        for extra_pass in range(requeue_passes + 1):
+            if not todo:
+                break
+
+            if extra_pass:
+                logger.info(
+                    "trying %d file(s) again (pass %d)",
+                    len(todo),
+                    extra_pass + 1,
+                    extra={"n_files": len(todo), "pass_number": extra_pass + 1},
+                )
+
+            if in_parallel:
+                # `map` keeps the input order and, if a worker raises, re-raises once
+                # the executor has joined the rest -- so whatever the other workers
+                # handed to `on_result` has already been acted on.
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    finished = list(executor.map(fetch_one, todo))
+            else:
+                finished = [fetch_one(each) for each in todo]
+
+            results.update(finished)
+            todo = tuple(
+                (index, request)
+                for index, request in todo
+                if not (results[index].succeeded or results[index].give_up)
             )
-            results.append(result)
-            if on_result is not None:
-                on_result(result)
     finally:
         if owns_client:
             client.close()
 
-    return tuple(results)
+    return tuple(results[index] for index in range(len(ordered)))
 
 
 @dataclass(frozen=True)
