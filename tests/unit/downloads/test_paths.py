@@ -95,30 +95,68 @@ def test_local_path_does_not_create_anything(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "field, value",
+    "field, value, blamed, culprit, why",
     (
-        ("version", ".."),
-        ("version", "/etc"),
-        ("version", "a/b"),
-        ("version", ""),
-        ("version", " 20261018"),
-        ("filename", "../../../etc/passwd"),
-        ("filename", "a/b.nc"),
-        ("filename", "."),
-        ("filename", ""),
-        ("filename", "tas.nc\x00"),
-        ("id_project_specific", "CMIP7./etc/passwd"),
-        ("id_project_specific", "CMIP7...CMIP"),
-        ("id_project_specific", "CMIP7...."),
+        ("version", "..", "version", "..", "is not a name"),
+        ("version", "/etc", "version", "/etc", "contains a path separator"),
+        ("version", "a/b", "version", "a/b", "contains a path separator"),
+        ("version", "", "version", "", "is not a name"),
+        (
+            "version",
+            " 20261018",
+            "version",
+            " 20261018",
+            "has leading or trailing whitespace",
+        ),
+        (
+            "filename",
+            "../../../etc/passwd",
+            "filename",
+            "../../../etc/passwd",
+            "contains a path separator",
+        ),
+        ("filename", "a/b.nc", "filename", "a/b.nc", "contains a path separator"),
+        ("filename", ".", "filename", ".", "is not a name"),
+        ("filename", "", "filename", "", "is not a name"),
+        ("filename", "tas.nc\x00", "filename", "tas.nc\x00", "contains a null byte"),
+        # A dotted id is blamed one segment at a time, so the culprit is the segment
+        # rather than the whole value: the dots are the layout's own separator.
+        (
+            "id_project_specific",
+            "CMIP7./etc/passwd",
+            "id_project_specific segment",
+            "/etc/passwd",
+            "contains a path separator",
+        ),
+        (
+            "id_project_specific",
+            "CMIP7...CMIP",
+            "id_project_specific segment",
+            "",
+            "is not a name",
+        ),
+        (
+            "id_project_specific",
+            "CMIP7....",
+            "id_project_specific segment",
+            "",
+            "is not a name",
+        ),
     ),
 )
-def test_a_component_which_would_escape_is_refused(field, value):
+def test_a_component_which_would_escape_is_refused(field, value, blamed, culprit, why):
     """
-    Refused, not sanitised
+    Refused, not sanitised, and the refusal says which value and which check
 
     Quietly rewriting `../../etc` into something harmless would mean writing a file
     somewhere the record did not name and then recording that we had downloaded it,
     which is a quieter and worse failure than stopping.
+
+    `blamed`, `culprit` and `why` are asserted rather than just the error type, because
+    every case here raises the same error and the message is what someone acts on. A
+    value refused for the wrong reason -- or a refusal blaming the wrong component --
+    sends them looking at the wrong part of a published record, and would otherwise be
+    invisible.
     """
     target = FileTarget(
         **{
@@ -129,8 +167,12 @@ def test_a_component_which_would_escape_is_refused(field, value):
         }
     )
 
-    with pytest.raises(UnsafeDownloadPathError):
+    with pytest.raises(UnsafeDownloadPathError) as excinfo:
         esmporium_layout(target)
+
+    assert excinfo.value.field == blamed
+    assert excinfo.value.why == why
+    assert excinfo.value.value == culprit
 
 
 def test_a_dotted_id_is_checked_segment_by_segment():

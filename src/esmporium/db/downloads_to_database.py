@@ -27,6 +27,7 @@ from esmporium.db.schema import (
 )
 from esmporium.downloads import (
     DEFAULT_DATA_NODE_SELECTOR,
+    DEFAULT_PER_DATA_NODE,
     DataNodeCallObserver,
     DataNodeSelector,
     DownloadRequest,
@@ -464,6 +465,44 @@ def queue_downloads(
     return tuple(rows)
 
 
+def mark_running(session: Session, file_id: int) -> Download:
+    """
+    Record that a file is being downloaded right now
+
+    Written before the transfer starts, so that what a run is working on is a question
+    the database can answer while the run is still going, and so that a run which is
+    killed leaves its unfinished files saying
+    [RUNNING][esmporium.db.schema.DownloadStatus.RUNNING] rather than looking as though
+    they were never started.
+
+    Does not commit; see [queue_downloads][(m).queue_downloads].
+
+    Parameters
+    ----------
+    session
+        The session to write to
+
+    file_id
+        The file whose download is starting
+
+    Returns
+    -------
+    :
+        The updated row, created if this file had none
+    """
+    row = session.exec(select(Download).where(col(Download.file_id) == file_id)).first()
+    if row is None:
+        row = Download(file_id=file_id, status=DownloadStatus.QUEUED)
+
+    row.status = DownloadStatus.RUNNING
+    row.started_at = _utcnow()
+
+    session.add(row)
+    session.flush()
+
+    return row
+
+
 def record_result(session: Session, result: DownloadResult) -> Download:
     """
     Record what came of trying to download one file
@@ -569,14 +608,22 @@ def download(  # noqa: PLR0913 - one argument per thing a download has to be tol
     observer: DataNodeCallObserver | None = None,
     progress: ProgressCallback | None = None,
     max_routes: int | None = None,
+    max_workers: int | None = None,
+    per_data_node: int | None = DEFAULT_PER_DATA_NODE,
+    requeue_passes: int = 1,
 ) -> tuple[DownloadResult, ...]:
     """
     Download everything a query asks for that we do not already have
 
     The whole flow in one call: plan, queue, fetch, record.
 
-    Each file's row is written as that file finishes, in its own transaction, so a run
-    interrupted on day two keeps everything from day one.
+    Each file's row is written as that file starts and again as it finishes, each in its
+    own transaction, so a run interrupted on day two keeps everything from day one and
+    says which files it was part way through.
+
+    Pass `max_workers > 1` to download several files at once; see
+    [download_files][esmporium.downloads.download_files] for how that interacts with
+    `per_data_node`.
 
     Parameters
     ----------
@@ -621,10 +668,26 @@ def download(  # noqa: PLR0913 - one argument per thing a download has to be tol
     max_routes
         The most mirrors to try per file.
 
+    max_workers
+        How many files to download at once. See
+        [download_files][esmporium.downloads.download_files].
+
+        On a shared SQLite database, note that the rows written per file take the write
+        lock in turn (see [esmporium.db.configure_sqlite_for_concurrency][]), which is
+        nothing beside a transfer but is why the engine has to be configured for it.
+
+    per_data_node
+        The most transfers to run at once against any one data node. See
+        [download_files][esmporium.downloads.download_files].
+
+    requeue_passes
+        How many extra passes to make over files which failed for a reason that might
+        not recur. See [download_files][esmporium.downloads.download_files].
+
     Returns
     -------
     :
-        One result per file attempted, in the order they were attempted
+        One result per file attempted, in the order they were planned
 
         Files already on disk are not attempted and so are not here; what the run as
         a whole holds is [download_summary][(m).download_summary].
@@ -648,10 +711,21 @@ def download(  # noqa: PLR0913 - one argument per thing a download has to be tol
         extra={"n_files": len(plan), "root": str(root)},
     )
 
+    def on_start(request: DownloadRequest) -> None:
+        # Every request a plan builds names its file, so this only guards against a
+        # request from somewhere else: a download outside the database is allowed, but
+        # there would be no row to mark.
+        if request.file_id is None:  # pragma: no cover - a planned request has one
+            return
+
+        with Session(engine) as session:
+            mark_running(session, request.file_id)
+            session.commit()
+
     def on_result(result: DownloadResult) -> None:
         # A session per file, committed on its own: this is what makes the run
-        # resumable, and it is safe to call from several threads when downloads are
-        # eventually parallelised.
+        # resumable, and it is what makes this safe to call from several workers at
+        # once.
         with Session(engine) as session:
             record_result(session, result)
             session.commit()
@@ -663,5 +737,9 @@ def download(  # noqa: PLR0913 - one argument per thing a download has to be tol
         observer=observer,
         progress=progress,
         max_routes=max_routes,
+        on_start=on_start,
         on_result=on_result,
+        max_workers=max_workers,
+        per_data_node=per_data_node,
+        requeue_passes=requeue_passes,
     )

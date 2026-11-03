@@ -5,14 +5,16 @@ Tests of the download queue and its state transitions
 from __future__ import annotations
 
 import hashlib
+import threading
 from pathlib import Path
 
 import httpx
 import pytest
-from sqlmodel import Session, select
+from sqlmodel import Session, create_engine, select
 
 from esmporium.datasets import AccessService, ContainerFormat, DownloadOutcome
 from esmporium.db import (
+    METADATA,
     DataAccess,
     DataNode,
     Dataset,
@@ -21,8 +23,10 @@ from esmporium.db import (
     DownloadPlanItem,
     DownloadStatus,
     File,
+    configure_sqlite_for_concurrency,
     download,
     download_summary,
+    mark_running,
     plan_downloads,
     queue_downloads,
     record_data_node_calls,
@@ -42,10 +46,25 @@ from esmporium.query import QueryCMIP6
 ID_PS = "CMIP6.CMIP.MOHC.UKESM1-0-LL.historical.r1i1p1f2.Amon.tas.gn"
 
 
-@pytest.fixture
-def stored(engine, get_dataset_kwargs):
+def store_one_dataset(engine, get_dataset_kwargs):
     """
-    Put one dataset, one version, two files and their routes in the database
+    Put one dataset, one version, two files and their routes in a database
+
+    A plain function rather than a fixture, so that a test which needs these rows in a
+    *file-backed* database can have them too.
+
+    Parameters
+    ----------
+    engine
+        The database to write to
+
+    get_dataset_kwargs
+        The shared factory for a dataset row's columns
+
+    Returns
+    -------
+    :
+        The version's id and its files' ids
     """
     with Session(engine) as session:
         node = DataNode(data_node="esgf.example.org")
@@ -121,6 +140,41 @@ def stored(engine, get_dataset_kwargs):
             "version_id": version.id,
             "file_ids": [each.id for each in files],
         }
+
+
+@pytest.fixture
+def stored(engine, get_dataset_kwargs):
+    """Put one dataset, one version, two files and their routes in the database"""
+    return store_one_dataset(engine, get_dataset_kwargs)
+
+
+@pytest.fixture
+def stored_on_disk(tmp_path, get_dataset_kwargs):
+    """
+    Get a file-backed database holding the same rows, and the bodies its files serve
+
+    Separate from [stored][(m).stored] because the shared in-memory engine keeps every
+    session on one connection, which is not the shape a parallel run has. A file gives
+    each worker its own connection, so their transactions really do have to take turns.
+    """
+    engine = configure_sqlite_for_concurrency(
+        create_engine(f"sqlite:///{tmp_path / 'esmporium.db'}")
+    )
+    METADATA.create_all(engine)
+    store_one_dataset(engine, get_dataset_kwargs)
+
+    bodies = {"tas_a.nc": b"a" * 100, "tas_b.nc": b"b" * 200}
+    # Real digests, so verification is exercised rather than skipped.
+    with Session(engine) as session:
+        for row in session.exec(select(File)).all():
+            row.checksum = hashlib.sha256(bodies[row.filename]).hexdigest()
+            row.checksum_type = "SHA256"
+            session.add(row)
+        session.commit()
+
+    yield engine, bodies
+
+    engine.dispose()
 
 
 QUERY = QueryCMIP6(experiment_id="historical", variable_id="tas")
@@ -675,3 +729,106 @@ def test_download_runs_the_whole_flow_offline(engine, stored, tmp_path):
 
     # And a second run has nothing to do.
     assert download(engine, QUERY, root, client=client) == ()
+
+
+def test_a_file_being_downloaded_right_now_says_so(engine, stored):
+    """
+    `RUNNING` is written before the transfer, so what is in flight is answerable
+
+    The point of a non-terminal status: a run which is killed part way leaves its
+    unfinished files saying `RUNNING`, rather than looking as though they were never
+    started.
+    """
+    file_id = stored["file_ids"][0]
+
+    with Session(engine) as session:
+        row = mark_running(session, file_id)
+        session.commit()
+
+        assert row.status == DownloadStatus.RUNNING
+        assert row.started_at is not None
+
+        summary = download_summary(session)
+        assert summary.n_by_status["running"] == 1
+        # Still outstanding: it has not landed.
+        assert summary.n_outstanding == 1
+
+
+def test_a_running_file_moves_on_when_it_finishes(engine, stored, tmp_path):
+    """`RUNNING` is a stage, not a resting place: a finished file is terminal"""
+    file_id = stored["file_ids"][0]
+    dest = tmp_path / "tas_a.nc"
+    dest.write_bytes(b"a" * 100)
+
+    with Session(engine) as session:
+        mark_running(session, file_id)
+        row = record_result(
+            session,
+            DownloadResult(
+                request=DownloadRequest(routes=(), dest=dest, file_id=file_id),
+                fetch=FetchOutcome(
+                    path=dest,
+                    bytes_written=100,
+                    size_on_disk=100,
+                    checksum_verified=True,
+                    checksum_type_used="SHA256",
+                    resumed=False,
+                    route=Route(
+                        url="https://esgf.example.org/tas_a.nc",
+                        data_node="esgf.example.org",
+                        service=AccessService.HTTPS,
+                        container_format=ContainerFormat.NETCDF,
+                        data_access_id=1,
+                    ),
+                ),
+            ),
+        )
+        session.commit()
+
+        assert row.status == DownloadStatus.DONE
+        # Both timestamps survive, so how long the download took is answerable.
+        assert row.started_at is not None
+        assert row.finished_at is not None
+
+
+def test_downloading_in_parallel_records_every_file(stored_on_disk, tmp_path):
+    """
+    Several workers writing one SQLite database all get their rows saved
+
+    A file-backed database with each worker on its own connection, because that is
+    what a real run has; the engine is configured so their writing transactions take
+    turns (see `esmporium.db.configure_sqlite_for_concurrency`).
+    """
+    engine, bodies = stored_on_disk
+    root = tmp_path / "downloads"
+    barrier = threading.Barrier(2, timeout=5)
+
+    def handler(request):
+        # Both files have to be in flight together, so the test fails rather than
+        # passes quietly if the workers turn out to be running one after another.
+        barrier.wait()
+        name = str(request.url).rsplit("/", 1)[-1]
+
+        return httpx.Response(200, content=bodies[name])
+
+    results = download(
+        engine,
+        QUERY,
+        root,
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        observer=record_data_node_calls(engine),
+        max_workers=2,
+    )
+
+    assert len(results) == 2
+    assert all(result.succeeded for result in results)
+
+    with Session(engine) as session:
+        rows = session.exec(select(Download)).all()
+        assert len(rows) == 2
+        assert all(row.status == DownloadStatus.DONE for row in rows)
+        assert all(row.checksum_verified for row in rows)
+        # Written by the `on_start` seam, from inside the worker.
+        assert all(row.started_at is not None for row in rows)
+
+        assert download_summary(session).n_outstanding == 0

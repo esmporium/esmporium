@@ -13,6 +13,7 @@ from esmporium.downloads import (
     build_list_selector,
     download_file,
     download_files,
+    is_fetchable,
     totals,
 )
 
@@ -195,16 +196,29 @@ def test_a_selector_with_nothing_to_offer_is_loud(request_for, client_for, no_re
 
     Returning an empty answer would read as "we tried and nobody had it", when nobody
     was tried at all.
+
+    What is asserted is *why* nothing was tried: this file's route was perfectly
+    fetchable and the selector declined to offer it. That is a different fault from a
+    file which has no fetchable route at all, and the two raise the same error -- so
+    the error has to carry enough to tell them apart.
     """
     client = client_for(by_host({}))
+    offers_nothing = build_list_selector([])
 
-    with pytest.raises(SelectorOfferedNoRouteError):
+    with pytest.raises(SelectorOfferedNoRouteError) as excinfo:
         download_file(
             client,
             request_for("a.example.org"),
-            selector=build_list_selector([]),
+            selector=offers_nothing,
             retrying=no_retry,
         )
+
+    assert excinfo.value.selector is offers_nothing
+    assert [route.url for route in excinfo.value.routes] == [
+        "https://a.example.org/tas.nc"
+    ]
+    # Nothing was wrong with the route itself.
+    assert all(is_fetchable(route) for route in excinfo.value.routes)
 
 
 def test_an_unfetchable_only_file_is_loud_rather_than_silently_failing(
@@ -229,8 +243,16 @@ def test_an_unfetchable_only_file_is_loud_rather_than_silently_failing(
         dest=tmp_path / "tas.nc",
     )
 
-    with pytest.raises(SelectorOfferedNoRouteError):
+    with pytest.raises(SelectorOfferedNoRouteError) as excinfo:
         download_file(client, request, retrying=no_retry)
+
+    # The mirror image of the test above: the route was published and was dropped
+    # because it cannot serve bytes. This file is not short of mirrors, it is short of
+    # a fetchable one, and the error says so.
+    assert [route.url for route in excinfo.value.routes] == [
+        "https://a.example.org/tas.nc.html"
+    ]
+    assert not any(is_fetchable(route) for route in excinfo.value.routes)
 
 
 def test_many_files_are_downloaded_in_order(tmp_path, body, client_for, no_retry):

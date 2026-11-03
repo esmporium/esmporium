@@ -106,6 +106,12 @@ per chunk,.
 
 This exists because a multi-day download that prints nothing is indistinguishable
 from one that has hung.
+
+When several files are being fetched at once, this is called from each of their threads,
+and a call says only how far *a* transfer has got -- not which file it is. So an
+implementation which writes anywhere shared has to be safe to call from several threads,
+and needs its own way of telling the transfers apart (the thread is one, because a
+worker fetches one file at a time).
 """
 
 
