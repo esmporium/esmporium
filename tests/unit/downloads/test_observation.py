@@ -207,9 +207,6 @@ def test_progress_is_reported_as_the_transfer_proceeds(
 ):
     """
     A long download is not silent
-
-    The prototype printed nothing until a file finished, so a multi-GB transfer was
-    indistinguishable from a hang.
     """
     seen = []
     client = client_for(lambda request: httpx.Response(200, content=body))

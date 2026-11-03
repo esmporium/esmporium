@@ -1,9 +1,5 @@
 """
 Tests of the mirror-fallback loop and the many-file driver
-
-The loop is the same shape as `search_single_project`'s, and these pin the parts that
-matter: that a dead mirror falls through to the next, that every failure is kept, and
-that "try again tomorrow" is distinguished from "this will never work".
 """
 
 import httpx

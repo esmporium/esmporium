@@ -4,10 +4,6 @@ Tests of recording and ranking ESGF data node health
 Three of these pin the places where download health deliberately differs from search
 health: the `since` window, reliability-before-speed ranking, and a selector that
 re-reads itself as a long download goes on.
-
-The ranking tests build `DataNodeHealth` by hand rather than through the database,
-which is what the plan asked for -- "a mock node health table/object so it is only a
-test of the preferencing logic, free from actual database calls".
 """
 
 from __future__ import annotations
@@ -287,8 +283,6 @@ def test_speed_breaks_ties_on_reliability():
 def test_ranking_by_throughput_puts_unmeasured_nodes_last():
     """
     `math.inf` rather than `0.0`, so an unmeasured node is not infinitely fast
-
-    The same trick `get_median_response_time_for_ranking` uses on the search side.
     """
     measured = health_of(FAST, failure_rate=0.0, throughput=10.0)
     unmeasured = health_of(UNKNOWN, failure_rate=0.0, throughput=None)
@@ -368,7 +362,7 @@ def test_the_plain_health_selector_does_not_notice_new_health(engine):
 
 def test_the_refreshing_selector_re_reads_once_its_snapshot_expires(engine):
     """
-    The point of the whole PR shape: a multi-day download learns as it goes
+    A multi-day download learns as it goes
 
     A selector built on Monday's health and still using it on Thursday sends every
     remaining file to a node that stopped being the best one days ago. The clock is

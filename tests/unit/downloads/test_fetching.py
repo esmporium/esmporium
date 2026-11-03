@@ -1,9 +1,5 @@
 """
 Tests of fetching one route's bytes to a path
-
-One test per way a data node can answer, because what we do next depends entirely on
-which of them it was. The awkward ones -- 416, a body that stops short, a server that
-ignores `Range` -- are the whole reason these are mocked rather than live.
 """
 
 import httpx
@@ -162,10 +158,6 @@ def test_a_complete_file_of_the_wrong_size_is_a_publication_fault(
     fault, and nodes are ranked by their fault rate. Charging this to the node would
     steer later downloads away from a working replica over an error it had no part
     in.
-
-    This is a real case, not a hypothetical: live CMIP7 `areacella` for
-    `CanESM5-1 piControl r1i1p2f1` is published as 52,597 bytes and the node serves a
-    complete, valid 44,638-byte file (checked 2026-11-02).
     """
     dest = tmp_path / "tas.nc"
     served = body[:100]

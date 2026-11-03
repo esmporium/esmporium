@@ -1,9 +1,5 @@
 """
 Downloads and data node health against a migrated database
-
-The unit tests build the schema with `create_all`, which is what our models say it
-should be. This checks the two new tables against what the *migrations* actually
-produce, which is what a real database has.
 """
 
 from __future__ import annotations
@@ -163,9 +159,6 @@ def test_a_data_node_call_record_round_trips(migrated):
 def test_the_observer_and_aggregation_work_against_migrations(migrated):
     """
     End to end through the real schema: observe, then read health back
-
-    Worth doing here rather than only with `create_all`, because the observer resolves
-    a data node name to an id, which depends on the unique index being there.
     """
     observer = record_data_node_calls(migrated)
 

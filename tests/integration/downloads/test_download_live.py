@@ -7,19 +7,6 @@ run it with `--run-downloads-data`, or `make test-downloads`.
 The target is CMIP7 `areacella` -- a time-invariant cell-area field, so one small 2D
 array and the cheapest real CMIP7 file there is (52,593 bytes, measured 2026-11-02).
 A download test that pulls gigabytes is one nobody runs.
-
-!!! note "There is deliberately no live 'failing data node' test"
-    Finding a node we are confident is broken, and keeping that confidence as ESGF
-    changes, is not something a test suite can rely on -- and a test which waits out a
-    real timeout is slow and flaky by construction. Every failure path is covered
-    offline instead, in `tests/unit/downloads/test_fetching.py`, with
-    `httpx.MockTransport` saying exactly what the node does: 404, 401, 403, 429, 503,
-    read timeouts, connection faults, truncated bodies and bad checksums.
-
-    We may want to revisit this. The thing it leaves untested is whether our
-    *classification* matches what real broken ESGF nodes actually do -- we have
-    assumed, for example, that an unauthenticated request to restricted data answers
-    401 or 403, and a real node may do something else entirely.
 """
 
 from __future__ import annotations
@@ -64,8 +51,7 @@ def searched(engine):
     """
     Get a migrated database with one small CMIP7 dataset's files and routes in it
 
-    Goes through the real search-and-ingest path rather than inserting rows, so this
-    test exercises what PR62 produces rather than what we imagine it produces.
+    Goes through the real search-and-ingest path rather than inserting rows.
     """
     upgrade_to_head(engine)
 
@@ -109,10 +95,6 @@ def search_single_project_or_skip(session) -> bool:
 def test_a_small_cmip7_file_really_downloads(searched, tmp_path):
     """
     The whole path, for real: plan, fetch, verify, record
-
-    What this proves that the offline tests cannot: that the URLs we stored are
-    fetchable, that the digests we decoded match the bytes ESGF serves, and that the
-    path we derive is one a filesystem accepts.
     """
     root = tmp_path / "downloads"
 
@@ -196,11 +178,6 @@ def test_the_database_records_what_was_downloaded(searched, tmp_path):
 def test_a_second_run_skips_what_is_already_here(searched, tmp_path):
     """
     The durable queue, end to end: downloading twice does not download twice
-
-    This is what makes it safe to point a download at a watched search (the
-    "deploy downloading off the watched searches" step) -- a nightly run must not
-    re-pull the archive. Named rather than numbered on purpose: the plan's step
-    numbers move when the order of work changes, and this one already has.
     """
     root = tmp_path / "downloads"
 

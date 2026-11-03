@@ -1,10 +1,5 @@
 """
 Tests of where a downloaded file goes on disk
-
-The refusal tests matter more than they look. Every component of a destination comes
-from a third party -- ESGF publishes `id_project_specific`, `version` and `filename`
-and we store what it published -- so a published record must not be able to decide
-where on this machine we write. The prototype had no such guard.
 """
 
 from pathlib import Path, PurePosixPath

@@ -1,9 +1,5 @@
 """
 Tests of choosing which data node to try next
-
-The injectable-list selector matters most here: "we provide a default order, and users
-can override it with their own ranked list" is a requirement, not a nicety, so it is
-tested on its own rather than only through a download.
 """
 
 import pytest

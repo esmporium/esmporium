@@ -1,14 +1,5 @@
 """
 Tests of resuming an interrupted download
-
-The prototype this replaces got two of these wrong, and both are the kind of bug that
-strands a file permanently rather than failing loudly:
-
-- a stale `.part` already at or past the full size asks for a range the server cannot
-  satisfy, which answers **416**; retrying that forever meant the file was recorded as
-  failed while a complete `.part` sat next to it;
-- a server that *ignores* `Range` answers `200` with the whole body, which appended to
-  the existing bytes would silently produce a file twice the right length.
 """
 
 import httpx
@@ -110,7 +101,7 @@ def test_a_416_discards_the_part_so_the_next_try_starts_clean(
 
     We cannot always know a `.part` is stale in advance -- without a published size
     there is nothing to compare against -- so the 416 path has to clean up after
-    itself. The prototype retried it instead, and the file never downloaded again.
+    itself.
     """
     dest = tmp_path / "tas.nc"
     part = part_path(dest)

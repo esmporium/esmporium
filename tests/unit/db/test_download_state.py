@@ -1,10 +1,5 @@
 """
 Tests of the download queue and its state transitions
-
-The status column exists so that "how much is outstanding" and "what broke" are
-questions the database can answer. These pin that, and pin the two things the
-prototype got wrong: a durable queue at all, and an `attempts` count that accumulates
-across runs instead of being overwritten by the current one.
 """
 
 from __future__ import annotations
@@ -51,9 +46,6 @@ ID_PS = "CMIP6.CMIP.MOHC.UKESM1-0-LL.historical.r1i1p1f2.Amon.tas.gn"
 def stored(engine, get_dataset_kwargs):
     """
     Put one dataset, one version, two files and their routes in the database
-
-    Mirrors what PR62 produces, so the planning tests start from real shapes rather
-    than from hand-made `Download` rows.
     """
     with Session(engine) as session:
         node = DataNode(data_node="esgf.example.org")
@@ -198,9 +190,6 @@ def test_queueing_is_idempotent(engine, stored, tmp_path):
 def test_a_failed_file_is_re_queued_but_a_done_one_is_not(engine, stored, tmp_path):
     """
     Re-running picks up where it left off without undoing finished work
-
-    This is what the durable queue is for: the prototype had no non-terminal status
-    at all and recomputed its work set from the filesystem every run.
     """
     first, second = stored["file_ids"]
     with Session(engine) as session:
@@ -329,9 +318,6 @@ def test_a_permanent_failure_is_recorded_as_given_up(engine, stored, tmp_path):
 def test_attempts_accumulate_across_runs(engine, stored, tmp_path):
     """
     Not overwritten by the current run's count
-
-    The prototype overwrote it, so a file that had failed twenty times was
-    indistinguishable from one that had failed once.
     """
     file_id = stored["file_ids"][0]
     route = Route(

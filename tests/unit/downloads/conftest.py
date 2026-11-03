@@ -1,10 +1,5 @@
 """
 Shared fixtures for the download tests
-
-Everything here is offline. `httpx.MockTransport` lets a test say exactly what a data
-node does -- including things that are awkward to arrange against a real one, like a
-416, a truncated body or a `Retry-After` -- which is why the plan deliberately has no
-live "failing data node" test.
 """
 
 import hashlib
@@ -93,8 +88,7 @@ def fast_retrying():
 
     The real policy's first wait is a second and it doubles, so a test of retrying
     would spend three seconds asleep. This keeps the transient rule -- which is the
-    part under test -- and drops only the backoff. The same trick the search tests
-    use.
+    part under test -- and drops only the backoff.
     """
 
     def factory(attempts):
