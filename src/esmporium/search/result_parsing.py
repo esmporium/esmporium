@@ -142,6 +142,92 @@ class DataAccessInfo:
 
 
 @dataclass(frozen=True)
+class ParentInfo:
+    """
+    The parent simulation one search document declared
+
+    The search-layer mirror of
+    [DatasetVersionParent][esmporium.db.schema.DatasetVersionParent].
+
+    Every field is optional because what identifies a parent is a *simulation* --
+    a model, an experiment and a variant -- and a document can name all of that, or
+    none of it. **An instance whose every field is `None` means the document was read
+    for parent information and declared none**, which is how a root of the tree says
+    so: CMIP7 announces "no parent" by carrying none of the keys rather than by
+    publishing a sentinel value.
+
+    That is a different statement from
+    [ParsedDocument.parent][(m).ParsedDocument.parent] being `None`, which means
+    nothing looked. See that field.
+
+    Note what is *not* here, because it shapes what can be done with this: there is no
+    parent variable, grid or processing id, because a simulation has none -- it is
+    published as many datasets and this names the run they share. There is also no
+    parent institution, because neither API publishes one, so a parent cannot be
+    searched for or matched by institution however much
+    [Dataset][esmporium.db.schema.Dataset] identity would like it.
+    """
+
+    parent_mip_era: str | None
+    """
+    See
+    [DatasetVersionParent.parent_mip_era][esmporium.db.schema.DatasetVersionParent.parent_mip_era].
+    """
+
+    parent_activity_id: str | None
+    """
+    See
+    [DatasetVersionParent.parent_activity_id][esmporium.db.schema.DatasetVersionParent.parent_activity_id].
+    """
+
+    parent_model: str | None
+    """
+    See
+    [DatasetVersionParent.parent_model][esmporium.db.schema.DatasetVersionParent.parent_model].
+    """
+
+    parent_experiment: str | None
+    """
+    See
+    [DatasetVersionParent.parent_experiment][esmporium.db.schema.DatasetVersionParent.parent_experiment].
+    """
+
+    parent_variant_label: str | None
+    """
+    See
+    [DatasetVersionParent.parent_variant_label][esmporium.db.schema.DatasetVersionParent.parent_variant_label].
+    """
+
+    parent_time_units: str | None
+    """
+    See
+    [DatasetVersionParent.parent_time_units][esmporium.db.schema.DatasetVersionParent.parent_time_units].
+    """
+
+    @property
+    def declares_a_parent(self) -> bool:
+        """
+        Whether this names a parent at all
+
+        Returns
+        -------
+        :
+            `True` if any field is set, `False` if the document declared no parent.
+        """
+        return any(
+            value is not None
+            for value in (
+                self.parent_mip_era,
+                self.parent_activity_id,
+                self.parent_model,
+                self.parent_experiment,
+                self.parent_variant_label,
+                self.parent_time_units,
+            )
+        )
+
+
+@dataclass(frozen=True)
 class DataAccessPayload:
     """
     Every file and route one search document described, for one dataset version
@@ -228,6 +314,29 @@ class ParsedDocument:
 
     Each names one of `files`, or the whole version with `filename=None`. Same
     attribution rule as `files`.
+    """
+
+    parent: ParentInfo | None = None
+    """
+    The parent simulation this document declared, if it was read for one
+
+    `None` means **nothing looked**: this document came from a parser which does not
+    read parent information, because the project does not publish any in its index
+    (CMIP5 and CMIP6 publish none on either API; for those the facts live in file
+    headers). No parent row is written for such a document.
+
+    A [ParentInfo][(m).ParentInfo] means the document *was* read, and it then says
+    either which simulation the parent is or -- with every field `None` -- that there
+    is no parent. Keeping those two apart is what lets a resolver tell "this is a root
+    of the tree" from "we have not looked yet", so that a root is not re-examined
+    forever.
+
+    **Unlike `files` and `accesses`, this applies to every dataset row the document
+    maps to.** A parent is a property of the simulation, and a document which bundles
+    several of our dataset rows (a CMIP5 Solr document, one row per variable) bundles
+    one simulation's variables, so there is no ambiguity about which row it belongs
+    to -- it belongs to all of them. That is why this is not subject to the
+    attribution rule above.
     """
 
 

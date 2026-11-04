@@ -1620,3 +1620,392 @@ class Download(EsmporiumBase, table=True):
     ending too, and not recording when it happened would make a stale failure
     indistinguishable from a fresh one.
     """
+
+
+class ParentInfoSource(str, Enum):
+    """
+    Where a recorded parent fact came from
+
+    `str`-valued, for the same reason as every other enum stored here.
+
+    This is the discriminator which lets several answers to the same question coexist.
+    It matters because the sources are not equally trustworthy, and which one to
+    believe differs by project: CMIP6 headers are usually right, CMIP5 headers are
+    known to be unreliable, and a correction we have made by hand should survive a
+    re-ingest that would otherwise overwrite it. Holding one row per source leaves
+    that choice to whoever reads, rather than baking it into whoever wrote.
+    """
+
+    SEARCH_METADATA = "search_metadata"
+    """
+    The search index published it as part of the dataset's own record
+
+    What CMIP7 does, on both APIs. Free: the facts arrive on documents a search was
+    fetching anyway, so recording them costs no extra request.
+    """
+
+    FILE_HEADER = "file_header"
+    """
+    It was read out of a data file's global attributes
+
+    The only source for CMIP5 and CMIP6, neither of which publishes parent facts in
+    any index. Nothing writes this yet; it is named here because it is what
+    [DatasetVersionParent.file_id][esmporium.db.schema.DatasetVersionParent.file_id]
+    exists for.
+    """
+
+    FIX = "fix"
+    """
+    We supplied it ourselves, because what was published is wrong
+
+    Nothing writes this yet. It is the reason this column exists at all: a correction
+    has to be able to outlive every re-ingest of the record it corrects, which it
+    cannot do if there is only one row to hold both.
+    """
+
+
+class ParentResolution(str, Enum):
+    """
+    How far a declared parent has got towards being a dataset we hold
+
+    `str`-valued, for the same reason as every other enum stored here.
+
+    There is deliberately no `has_parent` boolean beside this.
+    [NO_PARENT_DECLARED][(c).NO_PARENT_DECLARED] already says it, and a second column
+    saying the same thing would be derivable from this one and so free to disagree
+    with it -- the argument
+    [DataNodeCallRecord.outcome][esmporium.db.schema.DataNodeCallRecord.outcome]
+    already makes against having a `success` column.
+    """
+
+    NO_PARENT_DECLARED = "no_parent_declared"
+    """
+    The record was read for parent facts and declared none: a root of the tree
+
+    Terminal. Recorded rather than left as an absent row because "this has no parent"
+    and "nobody has looked at this" are different facts, and a resolver which could
+    not tell them apart would re-examine every root forever.
+
+    This is how CMIP7 says it -- by carrying none of the `parent_*` keys at all, which
+    `amip` does. It is not a value anyone publishes; the CMIP6 convention of a literal
+    `parent_experiment_id` of `"no parent"` does not occur in CMIP7.
+    """
+
+    UNRESOLVED = "unresolved"
+    """
+    A parent is declared, and we have not yet found the datasets it names
+
+    The starting state for every declared parent, and what
+    [plan_parent_searches][esmporium.db.plan_parent_searches] reads by. It says
+    nothing about whether the parent exists -- only that we have not looked, or looked
+    and the datasets were not stored yet.
+    """
+
+    RESOLVED = "resolved"
+    """
+    The declared parent was matched to a dataset we hold
+
+    Which dataset is [DatasetParentLink][esmporium.db.schema.DatasetParentLink].
+    """
+
+    VARIABLE_NOT_PUBLISHED = "variable_not_published"
+    """
+    The declared parent exists, and does not publish this dataset's variable
+
+    Terminal, and **not a failure**: the lineage is intact and only this one variable
+    of it has a hole at this ancestor. A Gregory calculation missing `rsdt` from the
+    control run is a different problem from one whose control run was never found, and
+    one state for both would hide which it was.
+
+    Set only after a search which asked that simulation for that variable came back
+    without it -- never from a simulation we merely hold part of, which would stop a
+    variable being fetched that nobody had asked for yet.
+
+    A snapshot, like [NOT_ON_ESGF][(c).NOT_ON_ESGF], and revisitable the same way
+    through [resolved_at][esmporium.db.schema.DatasetVersionParent.resolved_at].
+    """
+
+    NOT_ON_ESGF = "not_on_esgf"
+    """
+    We searched for the declared parent and the index had nothing for it
+
+    Terminal, and a real case rather than a defensive one: CMIP7 `piControl` declares
+    its parent as `piControl-spinup`, which is not published. So a chain can end in a
+    parent that is named but does not exist, which is not the same as ending in a
+    record that declares no parent.
+
+    A snapshot, like
+    [DatasetVersion.is_latest][esmporium.db.schema.DatasetVersion.is_latest]: the data
+    could be published later. When we looked is
+    [resolved_at][esmporium.db.schema.DatasetVersionParent.resolved_at], so a row can
+    be re-examined by age without needing a flag to force it.
+    """
+
+
+class DatasetVersionParent(EsmporiumBase, table=True):
+    """
+    The parent simulation one source says a dataset version branched from
+
+    **This names a simulation, not a dataset.** It carries a model, an experiment and
+    a variant, and that is all any source publishes: there is no parent variable,
+    grid or processing id, because a simulation is published as many datasets and this
+    says which run they share. Turning that into one
+    [Dataset][esmporium.db.schema.Dataset] row needs the child's own variable too,
+    which is what [DatasetParentLink][esmporium.db.schema.DatasetParentLink] records
+    the result of.
+
+    Note also what is missing and cannot be worked around: **no source publishes the
+    parent's institution.** `Dataset`'s identity index includes `institution`
+    precisely so that two institutes running the same model under the same variant can
+    be told apart, so a parent naming neither cannot be narrowed by it -- the
+    institution has to be discovered from whatever the search returns.
+
+    One row per `(dataset_version_id, source)`. Several sources can therefore describe
+    the same version at once and disagree, which is the point; see
+    [ParentInfoSource][esmporium.db.schema.ParentInfoSource]. Within one source,
+    repeated ingests merge per column -- asserted wins, silence changes nothing -- the
+    same rule [File][esmporium.db.schema.File] facts follow, and for the same reason:
+    the two search APIs do not publish the same set of parent facts, so a document
+    being silent about one is not a claim that it is nothing.
+    """
+
+    # See the note on `Dataset.model_config`: this catches a bad *value* at
+    # construction rather than at commit time.
+    model_config = {"validate_assignment": True}
+
+    # Identity is the version plus the source. Both columns are NOT NULL, so a plain
+    # UniqueConstraint is enough -- unlike `Dataset`, this needs no `coalesce`
+    # expression index to stop SQLite treating NULLs as distinct.
+    __table_args__ = (UniqueConstraint("dataset_version_id", "source"),)
+
+    id: int | None = Field(default=None, primary_key=True)
+    """Surrogate key; assigned by the database"""
+
+    dataset_version_id: int = Field(foreign_key="datasetversion.id", index=True)
+    """
+    The version whose parent this is
+
+    See [DatasetVersion][esmporium.db.schema.DatasetVersion]. The version rather than
+    the dataset, because a republication can correct what it says about its own
+    parent, and because the provenance columns below point at things which belong to a
+    version.
+
+    One consequence worth knowing: a parent fact is the same for every dataset of a
+    simulation, so this duplicates. One simulation of 708 datasets gets 708 rows
+    saying the same thing. That is paid deliberately, to keep the provenance exact.
+    """
+
+    source: ParentInfoSource = Field(sa_type=AutoString)
+    """
+    Where this answer came from
+
+    See [ParentInfoSource][esmporium.db.schema.ParentInfoSource]. Stored as its value,
+    so a row read back out of the database carries a plain `str` rather than the enum
+    member -- it compares equal to the member but is not it, so compare with `==` and
+    not `is`.
+    """
+
+    resolution: ParentResolution = Field(sa_type=AutoString, index=True)
+    """
+    How far this has got towards being a dataset we hold
+
+    See [ParentResolution][esmporium.db.schema.ParentResolution]. Stored as its value,
+    so compare with `==` and not `is`.
+
+    Indexed because it is what the work queue is read by: "whose parent do we still
+    need to go and find" is the question this table exists to answer cheaply, exactly
+    as [Download.status][esmporium.db.schema.Download.status] is for files.
+    """
+
+    parent_mip_era: str | None = None
+    """
+    The MIP era the parent belongs to, as published, e.g. `CMIP7`
+
+    Stored verbatim and **not** translated into
+    [Dataset.project][esmporium.db.schema.Dataset.project], whose own docstring warns
+    that the two are different concepts. Mapping one to the other is a guess which
+    only resolution is in a position to make, and only for the projects it knows.
+
+    `None` for a record which declared no parent.
+    """
+
+    parent_activity_id: str | None = None
+    """
+    The parent's activity (its MIP), as published, e.g. `CMIP`
+
+    Kept under ESGF's own name because no `Dataset` column corresponds to it.
+
+    **Recorded but never searched on.** A model, an experiment and a variant already
+    pin a simulation, so adding this to a parent query could only narrow it further --
+    and the one thing that buys is a way for a publisher's mistake to make a parent
+    that does exist impossible to find.
+
+    `None` for a record which declared no parent.
+    """
+
+    parent_model: str | None = None
+    """
+    The climate model that ran the parent
+
+    Published as `parent_source_id`; renamed here to match
+    [Dataset.model][esmporium.db.schema.Dataset.model], which is the column resolution
+    matches it against.
+
+    `None` for a record which declared no parent.
+    """
+
+    parent_experiment: str | None = None
+    """
+    The parent experiment, e.g. `piControl`
+
+    Published as `parent_experiment_id`; renamed to match
+    [Dataset.experiment][esmporium.db.schema.Dataset.experiment].
+
+    Note that this does not stop at `piControl`: CMIP7 `piControl` declares a parent of
+    `piControl-spinup`, which nobody publishes. So this naming an experiment is not a
+    promise that the experiment exists.
+
+    `None` for a record which declared no parent.
+    """
+
+    parent_variant_label: str | None = None
+    """
+    The parent's variant label, e.g. `r1i1p1f1`
+
+    **Not assumed to equal the child's.** A simulation frequently branches from a
+    different variant than its own, which is the whole reason this is read rather than
+    inferred. See
+    [Dataset.variant_label][esmporium.db.schema.Dataset.variant_label].
+
+    `None` for a record which declared no parent.
+    """
+
+    parent_time_units: str | None = None
+    """
+    The time units the parent's calendar is counted in, e.g. `days since 1850-01-01`
+
+    Kept under ESGF's own name because no `Dataset` column corresponds to it.
+
+    Recorded because it is published, though on its own it does nothing: it is the
+    units of a branch time, and no ESGF-NG record publishes a branch time. There is
+    therefore no `branch_time_in_parent` column yet -- ESGF-1 Solr publishes one for
+    CMIP7 and a file header will give one for CMIP5 and CMIP6, and the column can be
+    added when there is something to put in it.
+
+    `None` for a record which declared no parent.
+    """
+
+    raw_doc_id: int | None = Field(
+        default=None, foreign_key="datasetrawdoc.id", index=True
+    )
+    """
+    The search document this was read out of, when it was read from one
+
+    See [DatasetRawDoc][esmporium.db.schema.DatasetRawDoc]. Which document, not just
+    which version: a version can be described by several (one per mirror, one per
+    node), and they can disagree, so naming the one we believed is the only way the
+    answer can be traced back.
+
+    `None` when this did not come from a search document, i.e. for a
+    [FILE_HEADER][esmporium.db.schema.ParentInfoSource.FILE_HEADER] or a
+    [FIX][esmporium.db.schema.ParentInfoSource.FIX].
+    """
+
+    file_id: int | None = Field(default=None, foreign_key="file.id", index=True)
+    """
+    The file whose header this was read out of, when it was read from one
+
+    See [File][esmporium.db.schema.File]. `None` for everything written today, because
+    nothing reads headers yet -- this is nullable in readiness rather than in use, as
+    [DataNodeCallRecord.file_id][esmporium.db.schema.DataNodeCallRecord.file_id] is.
+
+    It is here now because linking a fact to the file it came from is the only thing
+    that makes a header-derived fact recoverable: what a node serves and what the
+    index says about it can differ, so a fact read out of bytes may not describe the
+    file the index thinks it describes.
+    """
+
+    recorded_at: datetime.datetime = Field(default_factory=_utcnow)
+    """When we first recorded this answer (UTC)"""
+
+    resolved_at: datetime.datetime | None = None
+    """
+    When we last tried to turn this into a dataset we hold (UTC), or `None` if never
+
+    Stamped for a failed attempt as well as a successful one, which is what makes
+    [NOT_ON_ESGF][esmporium.db.schema.ParentResolution.NOT_ON_ESGF] revisitable: a
+    parent published next month can be found by re-examining rows we last looked at
+    before some date, with no need for a flag that forces every row to be searched
+    again.
+    """
+
+
+class DatasetParentLink(EsmporiumBase, table=True):
+    """
+    One resolved parent: the dataset a declared parent turned out to be
+
+    [DatasetVersionParent][esmporium.db.schema.DatasetVersionParent] says which
+    *simulation* a version branched from; this says which of our
+    [Dataset][esmporium.db.schema.Dataset] rows that is. The step between the two is
+    matching on the child's own variable, reporting interval, grid label and
+    processing id, because a simulation publishes many datasets and only the child
+    says which of them continues *its* series.
+
+    **Points at a `Dataset` and not a `DatasetVersion`, deliberately.** Which version
+    of the parent to use is a question with a different answer tomorrow, and it is one
+    the read side already answers: a lookup picks versions through
+    [VersionFilter][esmporium.requirements.VersionFilter]. Pinning a version here
+    would be recording an answer that goes stale the moment the parent is
+    republished.
+
+    One row per resolved assertion. A declared parent which exists but does not publish
+    the child's variable gets **no** row -- the lineage is intact and only that one
+    variable has a hole in it, which is reported rather than stored.
+    """
+
+    # See the note on `Dataset.model_config`.
+    model_config = {"validate_assignment": True}
+
+    id: int | None = Field(default=None, primary_key=True)
+    """Surrogate key; assigned by the database"""
+
+    parent_info_id: int = Field(
+        foreign_key="datasetversionparent.id", unique=True, index=True
+    )
+    """
+    The declared parent this resolves
+
+    See [DatasetVersionParent][esmporium.db.schema.DatasetVersionParent]. Unique in
+    this table: one assertion resolves to one parent dataset, because the child's
+    variable picks exactly one out of the parent simulation.
+
+    Declared on the column as `unique=True, index=True` rather than as a
+    `UniqueConstraint` in `__table_args__`, which is how
+    [Download.file_id][esmporium.db.schema.Download.file_id] does it: the pair
+    collapses into one `CREATE UNIQUE INDEX`, where a constraint plus `index=True`
+    would make the database keep two indexes on the same column.
+    """
+
+    child_dataset_version_id: int = Field(foreign_key="datasetversion.id", index=True)
+    """
+    The version whose parent this is
+
+    Derivable from `parent_info_id`, and kept anyway for the same reason
+    [DataAccess.dataset_version_id][esmporium.db.schema.DataAccess.dataset_version_id]
+    is: it makes "what is this version's parent" one indexed lookup rather than a join
+    through the assertion.
+
+    **Invariant:** this equals the `dataset_version_id` of the row `parent_info_id`
+    points at. The database as we configure it cannot enforce that, so it holds by
+    construction at the only place these rows are written, in
+    [esmporium.db.parents_to_database][].
+    """
+
+    parent_dataset_id: int = Field(foreign_key="dataset.id", index=True)
+    """
+    The parent dataset
+
+    See [Dataset][esmporium.db.schema.Dataset]. Indexed so that "what branched from
+    this" is as cheap as "what did this branch from" -- a control run has many
+    children, and finding them is the direction a chain is usually walked in reverse.
+    """

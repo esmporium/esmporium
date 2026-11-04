@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 from esmporium.query import (
+    CANONICAL_FACETS,
     FacetNotExpressibleError,
     QueryCanonical,
     QueryProtocol,
@@ -511,6 +512,129 @@ class SearchAPIFacade:
 
         # Established by the check above, which the type system cannot see.
         return cast("SolrSearchAPI", self.search_api)
+
+    def build_parent_dataset_search_request(
+        self, canonical: QueryCanonical, limit: int
+    ) -> Request:
+        """
+        Build a request for the datasets of a parent simulation
+
+        The facade owns this for the same reason it owns
+        [build_search_request][(c).build_search_request]: the facets come in named
+        canonically and go out named the way this project is spelled on this API. It is
+        a method of its own rather than a use of `build_search_request` because of the
+        line below about dropping facets, which is a decision only this facade can make
+        and only this search wants made.
+
+        **What the caller is expected not to set, and why.** A parent is identified by a
+        simulation -- a model, an experiment and a variant -- and nothing else:
+
+        - **institution**, because no source publishes the parent's. It genuinely
+          differs from the child's: `E3SM-1-0 historical` is published by `UCSB` while
+          the `piControl` it branches from is published by `E3SM-Project`. The
+          institution is discovered from whatever comes back.
+        - **activity**, which *is* published on a parent declaration and is recorded,
+          but which a model, an experiment and a variant already pin. Narrowing by it
+          could only buy a way for a publisher's mistake to hide a parent that exists.
+        - **reporting interval, processing id and grid**, which are deliberately left to
+          [esmporium.db.parent_matching][] to compare against the child afterwards.
+          Narrowing by them here would make a parent published on another grid read as
+          "not published at all", which is the one failure that looks like missing data.
+
+        Nothing stops a caller setting them; this says what the search is for.
+
+        **A facet this project cannot express is dropped, not refused.** That is the
+        opposite of [build_file_search_request][(c).build_file_search_request], and
+        deliberately: CMIP5 has no `grid_label`, `activity` or `nominal_resolution` at
+        all, and a parent search is made on a caller's behalf rather than at their
+        request, so there is nothing for them to do about a refusal. A caller who needs
+        to know what was asked can read it back with
+        [askable_facets][(c).askable_facets].
+
+        Parameters
+        ----------
+        canonical
+            The parent simulation to look for, as a canonical query
+
+            Usually from
+            [ParentSearchPlanItem.to_canonical_query][esmporium.db.ParentSearchPlanItem.to_canonical_query].
+
+        limit
+            The page size to ask for,
+            i.e. the maximum number of records in one response.
+
+        Returns
+        -------
+        :
+            The request to send to `search_api`
+
+        Raises
+        ------
+        LimitOutOfRangeError
+            `limit` is outside the range `search_api` accepts
+
+        OneProjectRequiredError
+            `self.parameters` needs exactly one project
+            and `canonical` specifies zero or more than one
+
+        ProjectPrefixMismatchError
+            The facade parameters were given a project
+            whose prefix disagrees with the one they write
+        """
+        facet_values = self.parameters.get_search_request_facet_values(
+            self.drop_unaskable_facets(canonical)
+        )
+
+        return self.search_api.build_search_request(facet_values, limit)
+
+    def drop_unaskable_facets(self, canonical: QueryCanonical) -> QueryCanonical:
+        """
+        Blank out the facets of a query this facade has no name for
+
+        For a search this facade is asked to make on someone's behalf, where a facet it
+        cannot express is a narrowing to skip rather than an error to report. The
+        caller-facing counterpart is
+        [askable_facets][(c).askable_facets], which answers the same question without
+        changing anything.
+
+        `project` is never dropped, even though the ESGF-NG parameters have no field for
+        it: they turn it into the STAC collection instead
+        (see
+        [STACFacadeParameters.get_collection][esmporium.search.STACFacadeParameters.get_collection]),
+        so removing it would lose the one facet those facades cannot do without.
+
+        Parameters
+        ----------
+        canonical
+            The query to narrow
+
+        Returns
+        -------
+        :
+            `canonical`, or a copy of it with the unaskable facets set to `()`
+
+            The same object when there is nothing to drop, so the common case copies
+            nothing.
+        """
+        asked = {
+            facet for facet in CANONICAL_FACETS if getattr(canonical, facet)
+        } | set(canonical.query_specific_facets)
+        unaskable = (asked - self.askable_facets(asked)) - {"project"}
+        if not unaskable:
+            return canonical
+
+        blanked: dict[str, Any] = {
+            facet: () for facet in unaskable if facet in CANONICAL_FACETS
+        }
+        query_specific = {
+            facet: values
+            for facet, values in canonical.query_specific_facets.items()
+            if facet not in unaskable
+        }
+        if query_specific != canonical.query_specific_facets:
+            blanked["query_specific_facets"] = query_specific
+
+        return canonical.model_copy(update=blanked)
 
     def build_file_search_request(
         self,

@@ -178,7 +178,12 @@ def get_default_facade_definition(project: str, host: str) -> FacadeDefinition: 
 
         elif host in esgfng_hosts:
             facade_parameters = ESGFNG_CMIP7_FACADE_PARAMETERS
-            result_parser = ESGFNGResultParser()
+            # CMIP7 is the one project so far which publishes its parent facts in the
+            # index, so this is the one facade which reads them. ESGF-1 Solr publishes
+            # them for CMIP7 too (and `branch_time_in_parent`, which STAC does not),
+            # but reading that is a second API's worth of work and is not done yet, so
+            # the Solr branches above are left reading none.
+            result_parser = ESGFNGResultParser(reads_parent_metadata=True)
             search_api_type = SearchAPIESGFNGSTAC
 
         else:

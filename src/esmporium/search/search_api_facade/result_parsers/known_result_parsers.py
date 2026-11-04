@@ -9,7 +9,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from esmporium.search.apis.esgf1 import extract_one_element_list
-from esmporium.search.apis.esgfng import stac_data_access, stac_nodes
+from esmporium.search.apis.esgfng import (
+    stac_data_access,
+    stac_nodes,
+    stac_parent_info,
+)
 from esmporium.search.apis.protocol import (
     describe_search_api,
     read_response_path,
@@ -433,6 +437,7 @@ def stac_parsed_document(
     api: SearchAPI,
     id_project_specific: str,
     datasets: tuple[DatasetFacets, ...],
+    read_parent: bool = False,
 ) -> ParsedDocument:
     """
     Build the parsed document for a STAC feature
@@ -450,6 +455,16 @@ def stac_parsed_document(
 
     datasets
         The dataset rows this feature maps to
+
+    read_parent
+        Whether this feature's project publishes parent facts in its index
+
+        `False`, the default, leaves
+        [ParsedDocument.parent][esmporium.search.ParsedDocument.parent] as `None`,
+        i.e. "nothing looked". Only pass `True` for a project which really does
+        publish them, because for one which does not, reading would find nothing and
+        so claim the document declared no parent. See
+        [ESGFNGResultParser.reads_parent_metadata][esmporium.search.ESGFNGResultParser.reads_parent_metadata].
 
     Returns
     -------
@@ -485,6 +500,7 @@ def stac_parsed_document(
         raw_docs_format_tag=api.raw_docs_format_tag,
         files=found.files,
         accesses=found.accesses,
+        parent=stac_parent_info(feature, api=api) if read_parent else None,
     )
 
 
@@ -492,6 +508,23 @@ def stac_parsed_document(
 class ESGFNGResultParser:
     """
     Read results from the ESGF-NG STAC API
+    """
+
+    reads_parent_metadata: bool = False
+    """
+    Whether this project publishes parent facts in the index, so they can be read
+
+    Off by default, and set per project where the facades are built
+    (see [esmporium.search.search_api_facade.store][]), because which parent facts a
+    project publishes is a fact about the project and not about STAC. CMIP7 publishes
+    all of them; CMIP6 publishes none, and for it the facts live in file headers
+    instead.
+
+    It has to be said rather than discovered, because a project which publishes none
+    looks exactly like a simulation which *has* no parent: CMIP7 announces a root of
+    the tree by carrying none of the keys. Reading a CMIP6 item would therefore record
+    "this declares no parent" for every CMIP6 dataset in existence, which is a much
+    worse answer than recording nothing.
     """
 
     @property
@@ -526,6 +559,7 @@ class ESGFNGResultParser:
                 datasets=self.get_dataset_rows(
                     feature, api=api, facade_parameters=facade_parameters
                 ),
+                read_parent=self.reads_parent_metadata,
             )
             for feature in api.extract_result_documents(raw)
         )
