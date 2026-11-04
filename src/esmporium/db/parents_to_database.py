@@ -206,12 +206,12 @@ class ParentSimulation:
       here. It is discovered from whatever the search returns.
     """
 
-    mip_era: str
+    project: str
     """
-    The MIP era the parent belongs to, as published, e.g. `CMIP7`
+    The project the parent belongs to, e.g. `CMIP7`
 
     See
-    [DatasetVersionParent.parent_mip_era][esmporium.db.schema.DatasetVersionParent.parent_mip_era].
+    [DatasetVersionParent.parent_project][esmporium.db.schema.DatasetVersionParent.parent_project].
     """
 
     model: str
@@ -231,7 +231,7 @@ class ParentSimulation:
 
     def __str__(self) -> str:
         """Render as a space-separated identity, for error messages."""
-        return f"{self.mip_era} {self.model} {self.experiment} {self.variant_label}"
+        return f"{self.project} {self.model} {self.experiment} {self.variant_label}"
 
 
 class IncompleteParentError(ValueError):
@@ -250,7 +250,7 @@ class IncompleteParentError(ValueError):
         """The row we could not read a simulation out of"""
 
         named = {
-            "parent_mip_era": parent_info.parent_mip_era,
+            "parent_project": parent_info.parent_project,
             "parent_model": parent_info.parent_model,
             "parent_experiment": parent_info.parent_experiment,
             "parent_variant_label": parent_info.parent_variant_label,
@@ -259,7 +259,7 @@ class IncompleteParentError(ValueError):
         super().__init__(
             f"Dataset version {parent_info.dataset_version_id} declares a parent but "
             f"does not say {', '.join(missing)}, so there is nothing to search for. "
-            f"It said {named!r}. A parent needs a mip era, a model, an experiment and "
+            f"It said {named!r}. A parent needs a project, a model, an experiment and "
             f"a variant to be findable, and the missing ones cannot be filled in from "
             f"the child without guessing which run it came from. Please raise an issue "
             f"at https://github.com/esmporium/esmporium/issues, quoting the version "
@@ -267,16 +267,22 @@ class IncompleteParentError(ValueError):
         )
 
 
-class CrossMipEraParentError(ValueError):
+class CrossProjectParentError(ValueError):
     """
-    Raised when a dataset declares a parent in a different MIP era from its own project
+    Raised when a dataset declares a parent in a different project from its own
 
     Searching for it would mean asking a different project's API, through a different
-    facade and a different parser, and working out which project a MIP era corresponds
-    to -- which is a guess, because the two are not the same concept (see
-    [Dataset.project][esmporium.db.schema.Dataset.project]). Nothing published today
-    does this: every CMIP7 record's declared parent era is CMIP7. The assertion is
-    recorded either way, so nothing is lost by refusing to chase it.
+    facade and a different parser. It would also mean deciding which project the
+    parent's published *MIP era* corresponds to, which is a guess: the two are not the
+    same concept (see [Dataset.project][esmporium.db.schema.Dataset.project]). Refusing
+    is how
+    [DatasetVersionParent.parent_project][esmporium.db.schema.DatasetVersionParent.parent_project]
+    gets to be named for the column it is matched against without that naming hiding
+    anything.
+
+    Nothing published today does this: every CMIP7 record's declared parent era is
+    CMIP7. The assertion is recorded either way, so nothing is lost by refusing to
+    chase it.
     """
 
     def __init__(self, parent_info: DatasetVersionParent, project: str) -> None:
@@ -288,11 +294,12 @@ class CrossMipEraParentError(ValueError):
 
         super().__init__(
             f"Dataset version {parent_info.dataset_version_id} is in project "
-            f"{project!r} but declares a parent in MIP era "
-            f"{parent_info.parent_mip_era!r}. Finding it would mean searching another "
-            f"project, which means knowing which project that era is published under, "
-            f"and a MIP era and a project are not the same thing. Nothing published "
-            f"today crosses eras this way. Please raise an issue at "
+            f"{project!r} but declares a parent in "
+            f"{parent_info.parent_project!r}. Finding it would mean searching another "
+            f"project, and deciding which project that published MIP era is served "
+            f"under, which is a guess because a MIP era and a project are not the same "
+            f"concept. Nothing published today crosses projects this way. "
+            f"Please raise an issue at "
             f"https://github.com/esmporium/esmporium/issues so we can see a real case "
             f"before deciding what to do with it."
         )
@@ -527,16 +534,16 @@ class ParentSearchPlanItem:
             A single-project query naming the parent's model, experiment and variant,
             and the variables wanted of it.
 
-            The MIP era is used as the project, which is sound only because
-            [parent_simulation][(m).parent_simulation] has already refused any parent
-            whose era differs from the declaring dataset's project (see
-            [CrossMipEraParentError][(m).CrossMipEraParentError]).
+            The parent's project is the declaring dataset's, which
+            [parent_simulation][(m).parent_simulation] has already established by
+            refusing any parent whose published era differs from it (see
+            [CrossProjectParentError][(m).CrossProjectParentError]).
 
             Neither activity nor institution is constrained; see
             [ParentSimulation][(m).ParentSimulation] for why.
         """
         return QueryCanonical(
-            project=(self.parent.mip_era,),
+            project=(self.parent.project,),
             model=(self.parent.model,),
             experiment=(self.parent.experiment,),
             variant_label=(self.parent.variant_label,),
@@ -651,11 +658,12 @@ def plan_parent_searches(
     Raises
     ------
     IncompleteParentError
-        A row declares a parent but does not name a model, experiment, era and variant.
+        A row declares a parent but does not name a project, model, experiment and
+        variant.
 
-    CrossMipEraParentError
-        A row declares a parent in a different MIP era from the project of the dataset
-        which declared it.
+    CrossProjectParentError
+        A row declares a parent in a different project from the dataset which
+        declared it.
     """
     statement = (
         select(DatasetVersionParent, Dataset)
@@ -704,8 +712,8 @@ def parent_simulation(
         The assertion row to read
 
     project
-        The project of the dataset which declared it, which the declared MIP era has to
-        agree with
+        The project of the dataset which declared it, which the parent's declared
+        project has to agree with
 
     Returns
     -------
@@ -715,24 +723,24 @@ def parent_simulation(
     Raises
     ------
     IncompleteParentError
-        The row does not name all four of era, model, experiment and variant.
+        The row does not name all four of project, model, experiment and variant.
 
-    CrossMipEraParentError
-        The declared era is not `project`.
+    CrossProjectParentError
+        The declared project is not `project`.
     """
     if (
-        parent_info.parent_mip_era is None
+        parent_info.parent_project is None
         or parent_info.parent_model is None
         or parent_info.parent_experiment is None
         or parent_info.parent_variant_label is None
     ):
         raise IncompleteParentError(parent_info)
 
-    if parent_info.parent_mip_era != project:
-        raise CrossMipEraParentError(parent_info, project)
+    if parent_info.parent_project != project:
+        raise CrossProjectParentError(parent_info, project)
 
     return ParentSimulation(
-        mip_era=parent_info.parent_mip_era,
+        project=parent_info.parent_project,
         model=parent_info.parent_model,
         experiment=parent_info.parent_experiment,
         variant_label=parent_info.parent_variant_label,
@@ -791,8 +799,8 @@ def resolve_parent_links(
     IncompleteParentError
         A row declares a parent but does not name enough of it.
 
-    CrossMipEraParentError
-        A row declares a parent in another MIP era.
+    CrossProjectParentError
+        A row declares a parent in another project.
 
     UnconfiguredSQLiteEngineError
         `session` is bound to a SQLite engine that has not been configured with
@@ -932,7 +940,7 @@ def candidate_parent_datasets(
         session.exec(
             select(Dataset)
             .where(
-                Dataset.project == parent.mip_era,
+                Dataset.project == parent.project,
                 Dataset.model == parent.model,
                 Dataset.experiment == parent.experiment,
                 Dataset.variant_label == parent.variant_label,
@@ -970,7 +978,7 @@ def _variable_known_unpublished(
             .where(
                 DatasetVersionParent.resolution
                 == ParentResolution.VARIABLE_NOT_PUBLISHED,
-                DatasetVersionParent.parent_mip_era == parent.mip_era,
+                DatasetVersionParent.parent_project == parent.project,
                 DatasetVersionParent.parent_model == parent.model,
                 DatasetVersionParent.parent_experiment == parent.experiment,
                 DatasetVersionParent.parent_variant_label == parent.variant_label,
@@ -1184,7 +1192,7 @@ def find_parents(  # noqa: PLR0913 - one argument per thing a walk has to be tol
     TooManyParentHopsError
         The walk climbed `max_hops` times and was still finding new ancestors.
 
-    IncompleteParentError, CrossMipEraParentError
+    IncompleteParentError, CrossProjectParentError
         A declared parent that cannot be searched for. See those errors.
 
     UnconfiguredSQLiteEngineError
@@ -1499,8 +1507,7 @@ def _simulation_of(session: Session, dataset_version_id: int) -> ParentSimulatio
     Describe a stored version as a simulation, so it can be named in a failure
 
     The same four facets a declared parent carries, read off the dataset instead, so
-    that a message about a chain names both ends of it the same way. `project` stands in
-    for the MIP era, which is what a declared parent is checked against anyway.
+    that a message about a chain names both ends of it the same way.
     """
     dataset = session.exec(
         select(Dataset)
@@ -1509,7 +1516,7 @@ def _simulation_of(session: Session, dataset_version_id: int) -> ParentSimulatio
     ).one()
 
     return ParentSimulation(
-        mip_era=dataset.project,
+        project=dataset.project,
         model=dataset.model,
         experiment=dataset.experiment,
         variant_label=dataset.variant_label,
@@ -1560,11 +1567,20 @@ def _search_for_parent(
     api_call_observer: SearchAPICallObserver | None,
 ) -> None:
     """
-    Search for one parent simulation and ingest whatever comes back
+    Search for one parent simulation and ingest what comes back
 
-    Everything found is saved, not only the variables asked for, because that is what
-    the saving processor does everywhere else -- working out what a question adds up to
-    is the reader's job, against the stored data.
+    **The request is narrowed to the variables wanted**, which
+    [ParentSearchPlanItem.variables][(m).ParentSearchPlanItem.variables] carries: the
+    union of what the children declaring this parent need, not everything the simulation
+    published. One CMIP7 simulation can publish several hundred datasets, so asking for
+    all of them would ingest -- and store the raw document of -- hundreds of datasets
+    nobody asked about.
+
+    What is *not* narrowed is the grid, the reporting interval and the processing id.
+    Those are left to [esmporium.db.parent_matching][] to compare against the child
+    afterwards, so that a parent published on another grid is found and then rejected
+    rather than looking as though it was never published. Searching broad and matching
+    narrow is why the matcher exists.
 
     The ingested records carry their *own* parent assertions for a project which
     publishes them in the index, so for CMIP7 a hop pays for the next hop's reading as a

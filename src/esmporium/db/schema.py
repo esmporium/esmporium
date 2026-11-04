@@ -1817,23 +1817,32 @@ class DatasetVersionParent(EsmporiumBase, table=True):
     as [Download.status][esmporium.db.schema.Download.status] is for files.
     """
 
-    parent_mip_era: str | None = None
+    parent_project: str | None = None
     """
-    The MIP era the parent belongs to, as published, e.g. `CMIP7`
+    The project the parent belongs to, e.g. `CMIP7`
 
-    Stored verbatim and **not** translated into
-    [Dataset.project][esmporium.db.schema.Dataset.project], whose own docstring warns
-    that the two are different concepts. Mapping one to the other is a guess which
-    only resolution is in a position to make, and only for the projects it knows.
+    Read from what the sources call the parent's *MIP era*
+    (`cmip7:parent_mip_era` on STAC, `parent_mip_era` on Solr), and named for
+    [Dataset.project][esmporium.db.schema.Dataset.project] because that is the column it
+    is matched against. Those two are not the same concept in general -- see that
+    column's own docstring -- so the gap is closed by refusing the case where they
+    disagree rather than by translating: a parent whose era is not the declaring
+    dataset's project raises
+    [CrossProjectParentError][esmporium.db.CrossProjectParentError] instead of being
+    guessed at. Nothing published does that today.
 
     `None` for a record which declared no parent.
     """
 
-    parent_activity_id: str | None = None
+    parent_activity: str | None = None
     """
-    The parent's activity (its MIP), as published, e.g. `CMIP`
+    The parent's activity, i.e. its MIP, e.g. `CMIP`
 
-    Kept under ESGF's own name because no `Dataset` column corresponds to it.
+    Published as `activity_id`, and named here for
+    [activity][esmporium.query.canonical_query.CANONICAL_FACETS], which is what a query
+    calls it. No `Dataset` column holds it -- an activity is not part of what makes a
+    dataset unique -- but the canonical name is still the one to use, the same way
+    `parent_model` and `parent_project` take theirs.
 
     **Recorded but never searched on.** A model, an experiment and a variant already
     pin a simulation, so adding this to a parent query could only narrow it further --

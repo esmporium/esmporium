@@ -34,10 +34,8 @@ def upgrade() -> None:
         sa.Column("dataset_version_id", sa.Integer(), nullable=False),
         sa.Column("source", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
         sa.Column("resolution", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
-        sa.Column("parent_mip_era", sqlmodel.sql.sqltypes.AutoString(), nullable=True),
-        sa.Column(
-            "parent_activity_id", sqlmodel.sql.sqltypes.AutoString(), nullable=True
-        ),
+        sa.Column("parent_project", sqlmodel.sql.sqltypes.AutoString(), nullable=True),
+        sa.Column("parent_activity", sqlmodel.sql.sqltypes.AutoString(), nullable=True),
         sa.Column("parent_model", sqlmodel.sql.sqltypes.AutoString(), nullable=True),
         sa.Column(
             "parent_experiment", sqlmodel.sql.sqltypes.AutoString(), nullable=True

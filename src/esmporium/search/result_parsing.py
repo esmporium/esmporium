@@ -168,16 +168,16 @@ class ParentInfo:
     [Dataset][esmporium.db.schema.Dataset] identity would like it.
     """
 
-    parent_mip_era: str | None
+    parent_project: str | None
     """
     See
-    [DatasetVersionParent.parent_mip_era][esmporium.db.schema.DatasetVersionParent.parent_mip_era].
+    [DatasetVersionParent.parent_project][esmporium.db.schema.DatasetVersionParent.parent_project].
     """
 
-    parent_activity_id: str | None
+    parent_activity: str | None
     """
     See
-    [DatasetVersionParent.parent_activity_id][esmporium.db.schema.DatasetVersionParent.parent_activity_id].
+    [DatasetVersionParent.parent_activity][esmporium.db.schema.DatasetVersionParent.parent_activity].
     """
 
     parent_model: str | None
@@ -217,8 +217,8 @@ class ParentInfo:
         return any(
             value is not None
             for value in (
-                self.parent_mip_era,
-                self.parent_activity_id,
+                self.parent_project,
+                self.parent_activity,
                 self.parent_model,
                 self.parent_experiment,
                 self.parent_variant_label,

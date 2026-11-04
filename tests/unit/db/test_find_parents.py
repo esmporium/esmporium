@@ -52,8 +52,8 @@ def no_search(session, item) -> None:
 def a_parent(experiment: str, variant_label: str = "r1i1p1f1") -> ParentInfo:
     """Build what a CMIP7 record declares, for a parent of the usual model."""
     return ParentInfo(
-        parent_mip_era="CMIP7",
-        parent_activity_id="CMIP",
+        parent_project="CMIP7",
+        parent_activity="CMIP",
         parent_model="UKESM1-3-LL",
         parent_experiment=experiment,
         parent_variant_label=variant_label,
@@ -62,8 +62,8 @@ def a_parent(experiment: str, variant_label: str = "r1i1p1f1") -> ParentInfo:
 
 
 NO_PARENT = ParentInfo(
-    parent_mip_era=None,
-    parent_activity_id=None,
+    parent_project=None,
+    parent_activity=None,
     parent_model=None,
     parent_experiment=None,
     parent_variant_label=None,
@@ -103,7 +103,7 @@ def test_many_children_of_one_control_run_are_one_search(engine, a_dataset_versi
 
         assert len(plan) == 1
         assert plan[0].parent == ParentSimulation(
-            mip_era="CMIP7",
+            project="CMIP7",
             model="UKESM1-3-LL",
             experiment="piControl",
             variant_label="r1i1p1f1",
@@ -183,8 +183,8 @@ def test_a_parent_missing_facets_is_refused(engine, a_dataset_version):
             session,
             version_id,
             ParentInfo(
-                parent_mip_era="CMIP7",
-                parent_activity_id="CMIP",
+                parent_project="CMIP7",
+                parent_activity="CMIP",
                 parent_model=None,
                 parent_experiment="piControl",
                 parent_variant_label=None,
@@ -646,8 +646,8 @@ def test_a_broken_chain_keeps_being_reported(engine, a_dataset_version):
 def header_facts(experiment: str, variant_label: str = "r1i1p1f1") -> ParentInfo:
     """What a header read will produce, once there is one to do the reading."""
     return ParentInfo(
-        parent_mip_era="CMIP6",
-        parent_activity_id=None,
+        parent_project="CMIP6",
+        parent_activity=None,
         parent_model="UKESM1-0-LL",
         parent_experiment=experiment,
         parent_variant_label=variant_label,
@@ -679,8 +679,8 @@ def build_facts_provider(chain: dict[str, str], project: str = "CMIP6"):
                 session,
                 version_id,
                 ParentInfo(
-                    parent_mip_era=project,
-                    parent_activity_id=None,
+                    parent_project=project,
+                    parent_activity=None,
                     parent_model=dataset.model,
                     parent_experiment=parent_experiment,
                     parent_variant_label=dataset.variant_label,
@@ -827,8 +827,8 @@ def test_a_header_fact_beats_what_the_index_published(engine, a_dataset_version)
             session,
             child,
             ParentInfo(
-                parent_mip_era="CMIP6",
-                parent_activity_id=None,
+                parent_project="CMIP6",
+                parent_activity=None,
                 parent_model="UKESM1-0-LL",
                 parent_experiment="amip",
                 parent_variant_label="r1i1p1f1",

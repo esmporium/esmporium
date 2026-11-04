@@ -657,8 +657,8 @@ def stac_asset_is_one_file(name: str, asset: Mapping[str, Any]) -> bool:
 
 
 STAC_PARENT_SUFFIXES: dict[str, str] = {
-    "parent_mip_era": ":parent_mip_era",
-    "parent_activity_id": ":parent_activity_id",
+    "parent_project": ":parent_mip_era",
+    "parent_activity": ":parent_activity_id",
     "parent_model": ":parent_source_id",
     "parent_experiment": ":parent_experiment_id",
     "parent_variant_label": ":parent_variant_label",
@@ -669,8 +669,11 @@ Which project-prefixed STAC property carries each
 [ParentInfo][esmporium.search.ParentInfo] field
 
 The keys are our names and the values are the suffix of ESGF's, which is where the two
-vocabularies meet: `parent_model` is published as `parent_source_id`, the same rename
-[Dataset.model][esmporium.db.schema.Dataset.model] already makes.
+vocabularies meet. Three of the six are renamed on the way in -- `parent_source_id`
+becomes `parent_model`, `parent_mip_era` becomes `parent_project` and
+`parent_activity_id` becomes `parent_activity` -- each taking the name
+[esmporium.query][] already uses for that facet. `parent_time_units` has no such name,
+so it keeps ESGF's.
 
 Suffixes rather than whole names because STAC prefixes these with the project in lower
 case (`cmip7:parent_source_id`), so matching the tail is what lets a project we have not

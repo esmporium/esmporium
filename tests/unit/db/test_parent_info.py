@@ -46,8 +46,8 @@ def recorded_documents(name: str, project: str, host: str):
 
 
 A_PARENT = ParentInfo(
-    parent_mip_era="CMIP7",
-    parent_activity_id="CMIP",
+    parent_project="CMIP7",
+    parent_activity="CMIP",
     parent_model="UKESM1-3-LL",
     parent_experiment="piControl",
     parent_variant_label="r1i1p1f1",
@@ -55,8 +55,8 @@ A_PARENT = ParentInfo(
 )
 
 NO_PARENT = ParentInfo(
-    parent_mip_era=None,
-    parent_activity_id=None,
+    parent_project=None,
+    parent_activity=None,
     parent_model=None,
     parent_experiment=None,
     parent_variant_label=None,
@@ -95,7 +95,7 @@ def test_cmip7_stac_declares_its_parent(
         assert document.parent.declares_a_parent
         assert document.parent.parent_experiment == expected_experiment
         assert document.parent.parent_model == expected_model
-        assert document.parent.parent_mip_era == "CMIP7"
+        assert document.parent.parent_project == "CMIP7"
 
 
 @pytest.mark.parametrize(
@@ -218,8 +218,8 @@ def test_a_silent_source_does_not_erase_what_we_hold(engine, a_dataset_version):
         session.commit()
 
         partial = ParentInfo(
-            parent_mip_era="CMIP7",
-            parent_activity_id=None,
+            parent_project="CMIP7",
+            parent_activity=None,
             parent_model="UKESM1-3-LL",
             parent_experiment="piControl",
             parent_variant_label="r1i1p1f1",
@@ -232,7 +232,7 @@ def test_a_silent_source_does_not_erase_what_we_hold(engine, a_dataset_version):
             )
         session.commit()
 
-        assert stored.parent_activity_id == "CMIP"
+        assert stored.parent_activity == "CMIP"
         assert stored.parent_time_units == "days since 1850-01-01"
 
 
@@ -248,8 +248,8 @@ def test_a_disagreeing_source_warns_and_keeps_the_newer_value(
         session.commit()
 
         moved = ParentInfo(
-            parent_mip_era="CMIP7",
-            parent_activity_id="CMIP",
+            parent_project="CMIP7",
+            parent_activity="CMIP",
             parent_model="UKESM1-3-LL",
             parent_experiment="esm-piControl",
             parent_variant_label="r1i1p1f1",
@@ -277,8 +277,8 @@ def test_two_sources_each_get_their_own_row(engine, a_dataset_version):
             session, version_id, A_PARENT, ParentInfoSource.SEARCH_METADATA
         )
         corrected = ParentInfo(
-            parent_mip_era="CMIP7",
-            parent_activity_id="CMIP",
+            parent_project="CMIP7",
+            parent_activity="CMIP",
             parent_model="UKESM1-3-LL",
             parent_experiment="esm-piControl",
             parent_variant_label="r9i1p1f1",
@@ -329,8 +329,8 @@ def test_parent_fact_differences_ignores_silence():
     assert parent_fact_differences(
         held,
         ParentInfo(
-            parent_mip_era=None,
-            parent_activity_id=None,
+            parent_project=None,
+            parent_activity=None,
             parent_model=None,
             parent_experiment="amip",
             parent_variant_label=None,

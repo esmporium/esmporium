@@ -809,8 +809,8 @@ def check_file_facts_agree(
 
 
 PARENT_FACT_COLUMNS: tuple[str, ...] = (
-    "parent_mip_era",
-    "parent_activity_id",
+    "parent_project",
+    "parent_activity",
     "parent_model",
     "parent_experiment",
     "parent_variant_label",
