@@ -37,6 +37,7 @@ from esmporium.db import (
     DatasetVersionParent,
     HeaderReadCallRecord,
     ParentInfoSource,
+    ParentVersionChoice,
     aggregate_header_read_health,
     build_header_facts_provider,
     build_parent_searcher_with_file_access,
@@ -213,6 +214,17 @@ def main() -> None:
             print(f"  reached {terminal}")
         for gap in sorted({str(each) for each in result.variable_gaps}):
             print(f"  variable gap: {gap}")
+        # Deduplicated the same way and for the same reason: a republished parent is
+        # decided once per child dataset, and a simulation's datasets all declare the
+        # same parent. Printed because for CMIP6 this is the ordinary outcome rather
+        # than an edge -- a chain that climbs through a release we picked looks exactly
+        # like one that climbed through a published answer unless it says so.
+        for decision in sorted({str(each) for each in result.version_decisions}):
+            print(f"  version decided: {decision}")
+        for unchosen in sorted({str(each) for each in result.ambiguous}):
+            print(f"  ambiguous parent: {unchosen}")
+        for unchosen in sorted({str(each) for each in result.ambiguous_versions}):
+            print(f"  ambiguous parent version: {unchosen}")
 
     report(engine, file_bytes=file_bytes)
 
@@ -256,6 +268,21 @@ def report(engine, *, file_bytes: int) -> None:
 
         links = session.exec(select(DatasetParentLink)).all()
         print(f"\n{len(links)} resolved link(s) to a parent dataset we hold")
+
+        # The breakdown the `version_choice` column exists for: which dataset a child
+        # branched from is a fact, which release of it to use is not, and this is where
+        # that difference becomes visible instead of staying in a docstring.
+        by_choice: dict[str, int] = {}
+        for link in links:
+            by_choice[link.version_choice] = by_choice.get(link.version_choice, 0) + 1
+
+        for choice, count in sorted(by_choice.items()):
+            decided = choice in {
+                ParentVersionChoice.CHILD_VERSION,
+                ParentVersionChoice.DEFAULTED,
+            }
+            marker = " <-- a release we picked" if decided else ""
+            print(f"  x{count:<4} version_choice={choice}{marker}")
 
         heading("5. what the headers cost")
         calls = session.exec(select(HeaderReadCallRecord)).all()

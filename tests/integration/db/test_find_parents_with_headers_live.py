@@ -34,6 +34,7 @@ from esmporium.db import (
     HeaderReadCallRecord,
     ParentInfoSource,
     ParentResolution,
+    ParentVersionChoice,
     build_header_facts_provider,
     build_parent_searcher_with_file_access,
     build_result_processor_with_file_access,
@@ -194,7 +195,61 @@ def test_a_cmip6_chain_is_walked_from_a_header(migrated_engine):
             # And the provenance: a fact read out of bytes names the bytes.
             assert row.file_id is not None
 
-        assert session.exec(select(DatasetParentLink)).all()
+        links = session.exec(select(DatasetParentLink)).all()
+        assert links
+
+        # UKESM1-0-LL `piControl` is published several times over, which is why this
+        # test is the one that pins the version choice: offline the candidates are
+        # whatever a fixture made, and here they are whatever ESGF really holds. The
+        # child predates every release of its parent, so the choice is a rule of ours
+        # and the link has to say so.
+        for link in links:
+            parent_version = session.get(DatasetVersion, link.parent_dataset_version_id)
+            assert parent_version is not None
+            # The invariant `DatasetParentLink` says holds by construction, checked
+            # where real data flows through it: nothing in the database enforces that
+            # the version belongs to the dataset beside it.
+            assert parent_version.dataset_id == link.parent_dataset_id
+
+        decided = [
+            one
+            for one in result.version_decisions
+            if one.choice != ParentVersionChoice.ONLY_VERSION
+        ]
+        assert decided, (
+            "no version decision was reported, so either UKESM1-0-LL piControl is "
+            "down to one release or the choice stopped being reported"
+        )
+
+        for decision in decided:
+            # Not a hardcoded datestamp: UKESM republishes, so what is pinned is the
+            # rule -- the release used is the newest of the ones considered -- rather
+            # than today's answer to it.
+            considered = (
+                decision.chosen_dataset_version_id,
+                *decision.passed_over_dataset_version_ids,
+            )
+            versions = [session.get(DatasetVersion, one) for one in considered]
+            assert all(one is not None for one in versions)
+            chosen = session.get(DatasetVersion, decision.chosen_dataset_version_id)
+            assert chosen is not None
+
+            if decision.choice == ParentVersionChoice.DEFAULTED:
+                assert chosen.version == max(
+                    one.version
+                    for one in versions
+                    if one is not None and not one.retracted
+                )
+
+            # The link carries the same verdict the report does; a reader querying the
+            # column and a reader reading the walk's return value get one answer.
+            matching = [
+                one
+                for one in links
+                if one.child_dataset_version_id == decision.child_dataset_version_id
+            ]
+            assert matching
+            assert all(one.version_choice == decision.choice for one in matching)
 
 
 def test_a_cmip5_chain_is_walked_from_a_header(migrated_engine):
