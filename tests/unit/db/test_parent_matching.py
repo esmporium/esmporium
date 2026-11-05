@@ -10,11 +10,11 @@ from __future__ import annotations
 import pytest
 
 from esmporium.db import (
-    GRIDDED_REPORTING_FACETS,
-    REPORTING_FACETS,
     Dataset,
+    DatasetVersion,
     MatchOutcome,
     UnknownProjectMatcherError,
+    choose_parent_version,
     match_cmip5_parent,
     match_cmip6_parent,
     match_on_facets,
@@ -63,7 +63,7 @@ def test_the_parents_experiment_and_variant_are_never_compared():
     child = dataset("abrupt-4xCO2", variant_label="r2i1p1f2")
     parent = dataset("piControl", variant_label="r1i1p1f1")
 
-    assert match_cmip6_parent(child, [parent]).parent is parent
+    assert match_cmip6_parent(child, [parent]).parent_dataset is parent
 
 
 def test_the_interval_and_table_decide_between_two_of_one_variable():
@@ -79,7 +79,7 @@ def test_the_interval_and_table_decide_between_two_of_one_variable():
 
     outcome = match_cmip6_parent(child, [daily, monthly])
 
-    assert outcome.parent is monthly
+    assert outcome.parent_dataset is monthly
     assert not outcome.is_ambiguous
 
 
@@ -90,7 +90,7 @@ def test_a_different_grid_is_not_the_same_dataset():
 
     outcome = match_cmip6_parent(child, [other_grid])
 
-    assert outcome.parent is None
+    assert outcome.parent_dataset is None
     assert not outcome.is_ambiguous
     assert "grid_label" in (outcome.reason or "")
 
@@ -109,9 +109,22 @@ def test_a_cmip5_match_works_with_no_grid_on_either_side():
         "piControl", project="CMIP5", grid_label=None, variant_label="r1i1p1"
     )
 
-    assert match_cmip5_parent(child, [parent]).parent is parent
-    assert "grid_label" not in REPORTING_FACETS
-    assert "grid_label" in GRIDDED_REPORTING_FACETS
+    assert match_cmip5_parent(child, [parent]).parent_dataset is parent
+
+
+def test_only_the_cmip5_matcher_ignores_the_grid():
+    """
+    The facets are spelled out per project, so the difference is in the matchers
+
+    Asserted through what they decide rather than against a shared constant: a
+    candidate differing only in grid label is the same dataset to CMIP5, which has no
+    grids, and a different one to CMIP6, which does.
+    """
+    child = dataset("abrupt-4xCO2", project="CMIP5", grid_label="gn")
+    other_grid = dataset("piControl", project="CMIP5", grid_label="gr")
+
+    assert match_cmip5_parent(child, [other_grid]).parent_dataset is other_grid
+    assert match_cmip6_parent(child, [other_grid]).parent_dataset is None
 
 
 def test_a_parent_in_another_institution_is_still_the_parent():
@@ -124,7 +137,7 @@ def test_a_parent_in_another_institution_is_still_the_parent():
     child = dataset("historical", institution="UCSB")
     parent = dataset("piControl", institution="E3SM-Project")
 
-    assert match_cmip6_parent(child, [parent]).parent is parent
+    assert match_cmip6_parent(child, [parent]).parent_dataset is parent
 
 
 def test_the_childs_institution_breaks_a_tie():
@@ -133,7 +146,7 @@ def test_the_childs_institution_breaks_a_tie():
     same = dataset("piControl", institution="E3SM-Project", dataset_id=1)
     other = dataset("piControl", institution="UCSB", dataset_id=2)
 
-    assert match_cmip6_parent(child, [other, same]).parent is same
+    assert match_cmip6_parent(child, [other, same]).parent_dataset is same
 
 
 def test_two_indistinguishable_candidates_are_reported_not_picked():
@@ -149,7 +162,7 @@ def test_two_indistinguishable_candidates_are_reported_not_picked():
 
     outcome = match_cmip6_parent(child, [first, second])
 
-    assert outcome.parent is None
+    assert outcome.parent_dataset is None
     assert outcome.is_ambiguous
     assert list(outcome.candidates) == [first, second]
     assert "UCSB" in (outcome.reason or "") and "LLNL" in (outcome.reason or "")
@@ -167,7 +180,7 @@ def test_nothing_matching_is_not_the_same_as_ambiguous():
 
     outcome = match_cmip6_parent(child, [only_tas])
 
-    assert outcome.parent is None
+    assert outcome.parent_dataset is None
     assert not outcome.is_ambiguous
     assert outcome.candidates == ()
 
@@ -176,7 +189,7 @@ def test_no_candidates_at_all_says_so():
     """An empty candidate list is the commonest no-match, and must not raise."""
     outcome = match_cmip6_parent(dataset("abrupt-4xCO2"), [])
 
-    assert outcome.parent is None
+    assert outcome.parent_dataset is None
     assert not outcome.is_ambiguous
     assert "0 dataset(s)" in (outcome.reason or "")
 
@@ -187,9 +200,7 @@ def test_the_institution_tie_break_can_be_turned_off():
     same = dataset("piControl", institution="E3SM-Project", dataset_id=1)
     other = dataset("piControl", institution="UCSB", dataset_id=2)
 
-    outcome = match_on_facets(
-        child, [same, other], GRIDDED_REPORTING_FACETS, prefer_same_institution=False
-    )
+    outcome = match_on_facets(child, [same, other], prefer_same_institution=False)
 
     assert outcome.is_ambiguous
 
@@ -218,8 +229,80 @@ def test_an_injected_matcher_overrides_a_shipped_one():
     """The whole point of the mapping being a parameter."""
 
     def always_first(child, candidates):
-        return MatchOutcome(parent=candidates[0] if candidates else None)
+        return MatchOutcome(parent_dataset=candidates[0] if candidates else None)
 
     found = matcher_for_project("CMIP6", {"CMIP6": always_first})
 
     assert found is always_first
+
+
+def a_version(version: str, dataset_id: int = 1) -> DatasetVersion:
+    """Build an unsaved version row; the chooser never touches a session."""
+    return DatasetVersion(
+        dataset_id=dataset_id, version=version, is_latest=False, retracted=False
+    )
+
+
+def test_the_childs_own_version_is_the_one_chosen():
+    """
+    The only signal in the data, so it is the one used
+
+    A version string is a publication datestamp, so a parent published in the same
+    batch as its child is the one that generation of the child was produced against.
+    """
+    child = a_version("20261008")
+    candidates = [a_version("20200101"), a_version("20261008"), a_version("20300101")]
+
+    outcome = choose_parent_version(child, candidates)
+
+    assert outcome.parent_version is candidates[1]
+    assert not outcome.is_ambiguous
+
+
+def test_one_version_is_the_answer_whatever_it_is_called():
+    """
+    A parent published once is the parent, matching string or not
+
+    The commonest case by far, and the one that would wrongly be reported as a choice
+    if the version string had to agree.
+    """
+    child = a_version("20261008")
+    only = a_version("20110615")
+
+    outcome = choose_parent_version(child, [only])
+
+    assert outcome.parent_version is only
+    assert not outcome.is_ambiguous
+
+
+def test_several_versions_and_none_the_childs_is_handed_back():
+    """
+    Nothing published says which version a child branched from
+
+    So the rule stops rather than picking the newest, which would record our default
+    as though it were the published answer.
+    """
+    child = a_version("20261008")
+    candidates = [a_version("20110615"), a_version("20300101")]
+
+    outcome = choose_parent_version(child, candidates)
+
+    assert outcome.parent_version is None
+    assert outcome.is_ambiguous
+    assert list(outcome.candidates) == candidates
+    reason = outcome.reason or ""
+    assert "20110615" in reason and "20300101" in reason and "20261008" in reason
+
+
+def test_no_versions_at_all_is_not_an_ambiguity():
+    """
+    Holding none of a dataset's versions is a different answer from holding several
+
+    One is "nothing to choose from" and the other is "a choice nobody can make", and
+    only the second is worth putting in front of a person.
+    """
+    outcome = choose_parent_version(a_version("20261008"), [])
+
+    assert outcome.parent_version is None
+    assert not outcome.is_ambiguous
+    assert outcome.candidates == ()

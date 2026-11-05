@@ -584,11 +584,17 @@ def _ingest_document(
             session, flushed_id(raw_doc), flushed_id(version)
         )
 
-    # Against *every* version, not just the first. A parent belongs to the simulation
-    # a document's dataset rows share, so a document which bundles several of them
-    # (one per variable) says the same thing about all of them -- which is why this is
-    # not subject to the attribution rule that files and routes are, and why there is
-    # no `AmbiguousDataAccessError` equivalent here.
+    # One assertion per dataset row this document maps to -- all of them at *this*
+    # document's single version, never across the versions of a dataset. A CMIP5 Solr
+    # document is one version of one simulation carrying several variables, and a parent
+    # belongs to the simulation, so the same declaration is true of every variable in
+    # it. That is why this is not subject to the attribution rule files and routes
+    # follow, and why there is no `AmbiguousDataAccessError` equivalent here.
+    #
+    # Each version of a dataset still gets its own assertion, because each arrives as
+    # its own document: a republication which corrects what it says about its parent is
+    # recorded against the version that corrected it and changes nothing about the
+    # others.
     parent_info = (
         tuple(
             save_parent_info(
@@ -825,9 +831,19 @@ i.e. everything a source *asserts*, as opposed to the columns which identify the
 it came from. These are the ones [save_parent_info][(m).save_parent_info] refreshes, and
 so the ones [check_parent_facts_agree][(m).check_parent_facts_agree] compares.
 
-The same idea as [FILE_FACT_COLUMNS][(m).FILE_FACT_COLUMNS], and it matters more here:
-the two search APIs do not publish the same set of parent facts for the same project, so
-one being silent where the other speaks is routine rather than exotic.
+The same idea as [FILE_FACT_COLUMNS][(m).FILE_FACT_COLUMNS]. What makes it matter is
+that **two documents of one source can describe the same version and one of them say
+less**, so a merge has to treat silence as silence:
+
+- two STAC mirrors describe a version each, and east and west are known to disagree
+  about other things;
+- a header-derived answer is read from whichever file of the version could be fetched,
+  and the global attributes are not reliably complete -- CMIP5's `inmcm4` carries no
+  `parent_experiment_rip` at all and `CMCC-CM` carries the literal `"N/A"`.
+
+Reading the second document's `None` as "this is nothing now" would throw away what the
+first one told us. Which column each source can speak to is the source's business, not
+this list's.
 """
 
 
@@ -850,10 +866,11 @@ def parent_fact_differences(
     Find the parent facts a source asserts which disagree with what we hold
 
     A fact the source is silent about (`None`) is not a disagreement, exactly as in
-    [file_fact_differences][(m).file_fact_differences]. That rule does real work here:
-    ESGF-NG publishes no branch information where ESGF-1 Solr does, so reading a `None`
-    as "this is now nothing" would let whichever API answered last erase what the other
-    one told us.
+    [file_fact_differences][(m).file_fact_differences]. That rule does real work here,
+    because two documents of one source can say different amounts about the same
+    version: see [PARENT_FACT_COLUMNS][(m).PARENT_FACT_COLUMNS]. Reading a `None` as
+    "this is now nothing" would let whichever document arrived last erase what an
+    earlier one told us.
 
     Parameters
     ----------
@@ -931,7 +948,9 @@ def save_parent_info(  # noqa: PLR0913 - a fact, its provenance and where it cam
     file_id: int | None = None,
 ) -> DatasetVersionParent:
     """
-    Write one source's answer about a version's parent, reusing anything already stored
+    Write one source's answer about which simulation a version branched from
+
+    Reuses anything already stored.
 
     Idempotent, the way the rest of ingestion is: re-recording the same answer reuses
     the row rather than duplicating it. A row is matched on
@@ -957,7 +976,7 @@ def save_parent_info(  # noqa: PLR0913 - a fact, its provenance and where it cam
         Session to write with
 
     dataset_version_id
-        The version this is the parent of
+        The version whose parent simulation this is
 
     info
         What the source said. Every field `None` means it declared no parent, which is

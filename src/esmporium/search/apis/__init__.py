@@ -17,7 +17,7 @@ from esmporium.search.apis.esgf1 import (
 )
 from esmporium.search.apis.esgf15_bridge import SearchAPIESGF15BridgeSolr
 from esmporium.search.apis.esgfng import (
-    STAC_PARENT_SUFFIXES,
+    DEFAULT_STAC_PARENT_SUFFIXES,
     SearchAPIESGFNGSTAC,
     stac_n_matches,
     stac_next_page_request,
@@ -40,7 +40,7 @@ from esmporium.search.apis.protocol import (
 from esmporium.search.apis.request import Request
 
 __all__ = [
-    "STAC_PARENT_SUFFIXES",
+    "DEFAULT_STAC_PARENT_SUFFIXES",
     "LimitOutOfRangeError",
     "MultipleFacetValuesError",
     "NoFacetValuesReturnedError",

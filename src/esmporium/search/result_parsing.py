@@ -207,7 +207,7 @@ class ParentInfo:
     @property
     def declares_a_parent(self) -> bool:
         """
-        Whether this names a parent at all
+        Whether this names a parent simulation at all
 
         Returns
         -------

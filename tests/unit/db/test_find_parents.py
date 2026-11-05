@@ -28,7 +28,9 @@ from esmporium.db import (
     ParentResolutionError,
     ParentSimulation,
     TooManyParentHopsError,
+    VersionMatchOutcome,
     find_parents,
+    flushed_id,
     plan_parent_searches,
     preferred_parent_info,
     resolve_parent_links,
@@ -37,6 +39,37 @@ from esmporium.db import (
 from esmporium.search import ParentInfo
 
 PICONTROL = ("piControl",)
+
+
+def parent_dataset_of(session, link) -> Dataset:
+    """
+    Read the dataset a link's parent version belongs to
+
+    The link names a version, so which dataset that is takes one hop. See
+    [DatasetParentLink][esmporium.db.DatasetParentLink].
+    """
+    version = session.get(DatasetVersion, link.parent_dataset_version_id)
+    assert version is not None
+    dataset = session.get(Dataset, version.dataset_id)
+    assert dataset is not None
+
+    return dataset
+
+
+def another_version(session, version_id: int, version: str) -> int:
+    """Publish a second version of the dataset `version_id` belongs to."""
+    existing = session.get(DatasetVersion, version_id)
+    assert existing is not None
+    added = DatasetVersion(
+        dataset_id=existing.dataset_id,
+        version=version,
+        is_latest=False,
+        retracted=False,
+    )
+    session.add(added)
+    session.flush()
+
+    return flushed_id(added)
 
 
 def no_search(session, item) -> None:
@@ -773,9 +806,7 @@ def test_cmip6_walks_a_whole_chain_once_facts_are_provided(engine, a_dataset_ver
         assert result.ambiguous == []
 
         # The matcher, not the search, is what avoided the daily decoy.
-        chosen = [
-            session.get(Dataset, link.parent_dataset_id) for link in result.linked
-        ]
+        chosen = [parent_dataset_of(session, link) for link in result.linked]
         assert {one.processing_id for one in chosen} == {"Amon"}
 
         # The facts came from a header, and say so.
@@ -848,8 +879,7 @@ def test_a_header_fact_beats_what_the_index_published(engine, a_dataset_version)
         session.commit()
 
         assert len(result.linked) == 1
-        parent = session.get(Dataset, result.linked[0].parent_dataset_id)
-        assert parent is not None
+        parent = parent_dataset_of(session, result.linked[0])
         assert parent.experiment == "piControl"
 
 
@@ -927,7 +957,7 @@ def test_an_injected_matcher_resolves_an_ambiguity(engine, a_dataset_version):
         def prefer_llnl(child_dataset, candidates):
             for candidate in candidates:
                 if candidate.institution == "LLNL":
-                    return MatchOutcome(parent=candidate)
+                    return MatchOutcome(parent_dataset=candidate)
 
             return MatchOutcome(reason="no LLNL candidate")
 
@@ -935,6 +965,148 @@ def test_an_injected_matcher_resolves_an_ambiguity(engine, a_dataset_version):
         session.commit()
 
         assert len(result.linked) == 1
-        parent = session.get(Dataset, result.linked[0].parent_dataset_id)
-        assert parent is not None
+        parent = parent_dataset_of(session, result.linked[0])
         assert parent.institution == "LLNL"
+
+
+def test_the_parent_version_matching_the_childs_is_the_one_linked(
+    engine, a_dataset_version
+):
+    """
+    A republished parent does not make its lineage ambiguous if one version fits
+
+    The child declares a simulation, the simulation's dataset is published twice, and
+    one of those publications carries the child's own version string.
+    """
+    with Session(engine) as session:
+        child = store(
+            session,
+            a_dataset_version,
+            "abrupt-4xCO2",
+            parent=a_parent("piControl"),
+            version="20261008",
+        )
+        parent_version = a_dataset_version(
+            session, experiment="piControl", version="20200101"
+        )
+        matching = another_version(session, parent_version, "20261008")
+        session.commit()
+
+        result = resolve_parent_links(session, [child])
+        session.commit()
+
+        assert result.ambiguous_versions == ()
+        assert len(result.linked) == 1
+        assert result.linked[0].parent_dataset_version_id == matching
+
+
+def test_two_parent_versions_and_neither_the_childs_is_handed_back(
+    engine, a_dataset_version
+):
+    """
+    Which version a child branched from is not published, so it is not invented
+
+    The dataset is matched -- it is the right variable of the right simulation -- and
+    the row is left unresolved with the candidates named, so a person or an injected
+    chooser can settle it with nothing to undo.
+    """
+    with Session(engine) as session:
+        child = store(
+            session,
+            a_dataset_version,
+            "abrupt-4xCO2",
+            parent=a_parent("piControl"),
+            version="20261008",
+        )
+        first = a_dataset_version(session, experiment="piControl", version="20200101")
+        second = another_version(session, first, "20300101")
+        session.commit()
+
+        result = resolve_parent_links(session, [child])
+        session.commit()
+
+        assert result.linked == ()
+        assert len(result.ambiguous_versions) == 1
+        reported = result.ambiguous_versions[0]
+        assert reported.child_dataset_version_id == child
+        assert sorted(reported.candidate_dataset_version_ids) == sorted([first, second])
+        assert str(reported.parent) == "CMIP7 UKESM1-3-LL piControl r1i1p1f1"
+
+        (held,) = session.exec(select(DatasetVersionParent)).all()
+        assert held.resolution == ParentResolution.UNRESOLVED
+        assert session.exec(select(DatasetParentLink)).all() == []
+
+
+def test_an_injected_chooser_resolves_a_version_ambiguity(engine, a_dataset_version):
+    """
+    Which is why the chooser is a parameter: only a person can answer this one
+
+    Nothing published says which version was branched from, so a caller who knows
+    their own data says so and the resolve goes through.
+    """
+    with Session(engine) as session:
+        child = store(
+            session,
+            a_dataset_version,
+            "abrupt-4xCO2",
+            parent=a_parent("piControl"),
+            version="20261008",
+        )
+        first = a_dataset_version(session, experiment="piControl", version="20200101")
+        another_version(session, first, "20300101")
+        session.commit()
+
+        def newest(child_version, candidates):
+            return VersionMatchOutcome(
+                parent_version=max(candidates, key=lambda one: one.version)
+            )
+
+        result = resolve_parent_links(session, [child], version_chooser=newest)
+        session.commit()
+
+        assert result.ambiguous_versions == ()
+        assert len(result.linked) == 1
+        chosen = session.get(DatasetVersion, result.linked[0].parent_dataset_version_id)
+        assert chosen is not None
+        assert chosen.version == "20300101"
+
+
+def test_a_walk_does_not_climb_through_a_version_it_could_not_choose(
+    engine, a_dataset_version
+):
+    """
+    An unchosen version stops a chain, and says so rather than looking like a top
+
+    The walk reports the ambiguity and the chain simply does not go further, which is
+    the honest answer: it cannot know which lineage to follow.
+    """
+    with Session(engine) as session:
+        child = store(
+            session,
+            a_dataset_version,
+            "abrupt-4xCO2",
+            parent=a_parent("historical"),
+            version="20261008",
+        )
+        middle = store(
+            session,
+            a_dataset_version,
+            "historical",
+            parent=a_parent("piControl"),
+            version="20200101",
+        )
+        another_version(session, middle, "20300101")
+        session.commit()
+
+        result = find_parents(
+            session,
+            [child],
+            until_experiment=PICONTROL,
+            check_until_exists=False,
+            searcher=no_search,
+        )
+
+        assert len(result.ambiguous_versions) == 1
+        assert result.ambiguous_versions[0].child_dataset_version_id == child
+        assert result.linked == []
+        assert result.hops == 0

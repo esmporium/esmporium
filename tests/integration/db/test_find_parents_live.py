@@ -110,7 +110,9 @@ def test_gregory_children_reach_their_control_runs(migrated_engine):
         links = session.exec(select(DatasetParentLink)).all()
         assert len(links) == len(result.linked)
         for link in links:
-            parent = session.get(Dataset, link.parent_dataset_id)
+            parent_version = session.get(DatasetVersion, link.parent_dataset_version_id)
+            assert parent_version is not None
+            parent = session.get(Dataset, parent_version.dataset_id)
             assert parent is not None
             assert parent.experiment in UNTIL_PICONTROL
 

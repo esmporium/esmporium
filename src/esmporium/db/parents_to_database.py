@@ -7,9 +7,10 @@ a model, an experiment and a variant -- and naming one is not the same as holdin
 This module closes that gap, in two steps which are deliberately separate:
 
 - **resolving**, which asks only what is already in the database. No requests, so it
-  is both the cheap path and the one which makes a second analysis free: a parent found
-  while chasing `tas` is the parent of `tos` as well, because a parent belongs to the
-  simulation and not to the variable.
+  is both the cheap path and the one which makes a second analysis free: a parent
+  simulation found while chasing `tas` is the parent of `tos` as well, because a parent
+  belongs to the simulation and not to the variable. Turning that simulation into one
+  stored dataset *version* is [esmporium.db.parent_matching][]'s two-step decision.
 - **searching**, which is the only part that costs anything. One search per *distinct*
   parent simulation, so many children pointing at one control run are one request
   between them.
@@ -23,6 +24,7 @@ sit three or four branches below its control run.
 from __future__ import annotations
 
 import datetime
+from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
 
@@ -30,6 +32,7 @@ import httpx
 from sqlmodel import Session, col, select
 
 from esmporium.db.parent_matching import (
+    DEFAULT_PARENT_VERSION_CHOOSER,
     PARENT_MATCHERS_BY_PROJECT,
     matcher_for_project,
 )
@@ -62,7 +65,7 @@ from esmporium.search.search_api_facade.selectors import DEFAULT_SEARCH_API_SELE
 if TYPE_CHECKING:
     from collections.abc import Collection, Mapping, Sequence
 
-    from esmporium.db.parent_matching import ParentMatcher
+    from esmporium.db.parent_matching import ParentMatcher, ParentVersionChooser
     from esmporium.search.check_query_values import CloseMatcher
     from esmporium.search.health import SearchAPICallObserver
     from esmporium.search.search_api_facade.selectors import SearchAPIFacadeSelector
@@ -469,6 +472,55 @@ class AmbiguousParent:
         )
 
 
+@dataclass(frozen=True)
+class AmbiguousParentVersion:
+    """
+    The parent dataset was found, and which *version* of it was branched from is unclear
+
+    The second stage's version of [AmbiguousParent][(m).AmbiguousParent], and reported
+    for the same reason: a child branched from exactly one version of its parent, no
+    source says which, and several versions of the right dataset are held. Guessing
+    would record our default as though it were the published answer.
+
+    Nothing published can settle this, so unlike an
+    [AmbiguousParent][(m).AmbiguousParent] it is not something a better search can fix.
+    The remedy is to decide: inject a
+    [ParentVersionChooser][esmporium.db.ParentVersionChooser] into
+    [resolve_parent_links][(m).resolve_parent_links] or
+    [find_parents][(m).find_parents]. See
+    [choose_parent_version][esmporium.db.choose_parent_version] for the rule which
+    could not decide.
+
+    The assertion is left [UNRESOLVED][esmporium.db.schema.ParentResolution.UNRESOLVED]
+    and no link is written, so re-running with a chooser resolves it with nothing to
+    undo.
+    """
+
+    child_dataset_version_id: int
+    """The version whose parent version could not be chosen"""
+
+    parent: ParentSimulation
+    """The simulation it declared"""
+
+    parent_dataset_id: int
+    """The parent dataset which *was* matched, as its id"""
+
+    candidate_dataset_version_ids: tuple[int, ...]
+    """The versions of that dataset which could not be told apart, as their ids"""
+
+    reason: str
+    """What the chooser said about why it could not choose"""
+
+    def __str__(self) -> str:
+        """Render as the message shown to the caller."""
+        return (
+            f"dataset version {self.child_dataset_version_id} declares parent "
+            f"({self.parent}), which matched dataset {self.parent_dataset_id}, but "
+            f"{self.reason}; candidate versions are "
+            f"{list(self.candidate_dataset_version_ids)}"
+        )
+
+
 class ParentResolutionError(RuntimeError):
     """
     One or more chains could not be walked back to the target
@@ -567,10 +619,18 @@ class ParentResolutionResult:
 
     ambiguous: tuple[AmbiguousParent, ...] = ()
     """
-    Children whose parent the matcher could not choose
+    Children whose parent *dataset* the matcher could not choose
 
     Informational here, and left unresolved so a better matcher can be injected and the
     resolve re-run. See [AmbiguousParent][(m).AmbiguousParent].
+    """
+
+    ambiguous_versions: tuple[AmbiguousParentVersion, ...] = ()
+    """
+    Children whose parent dataset was matched but whose parent *version* was not
+
+    Informational here, and left unresolved so a chooser can be injected and the resolve
+    re-run. See [AmbiguousParentVersion][(m).AmbiguousParentVersion].
     """
 
     still_unresolved: tuple[int, ...] = ()
@@ -603,10 +663,18 @@ class ParentWalkResult:
 
     ambiguous: list[AmbiguousParent] = field(default_factory=list)
     """
-    Every parent the matcher could not choose
+    Every parent *dataset* the matcher could not choose
 
     See [AmbiguousParent][(m).AmbiguousParent]. Not a failure: the walk carries on and
     simply does not climb through an ambiguous link.
+    """
+
+    ambiguous_versions: list[AmbiguousParentVersion] = field(default_factory=list)
+    """
+    Every parent *version* the chooser could not choose
+
+    See [AmbiguousParentVersion][(m).AmbiguousParentVersion]. Not a failure either, and
+    not climbed through for the same reason.
     """
 
     searched: list[ParentSimulation] = field(default_factory=list)
@@ -752,9 +820,10 @@ def resolve_parent_links(
     dataset_version_ids: Collection[int] | None = None,
     *,
     matchers: Mapping[str, ParentMatcher] = PARENT_MATCHERS_BY_PROJECT,
+    version_chooser: ParentVersionChooser = DEFAULT_PARENT_VERSION_CHOOSER,
 ) -> ParentResolutionResult:
     """
-    Match every declared parent against the datasets we already hold, and link them
+    Match every declared parent simulation against what we hold, and link them
 
     **This asks nothing of the network.** It is both the cheap first move of a walk and
     the whole of the fast path: a parent belongs to a simulation rather than to a
@@ -762,14 +831,22 @@ def resolve_parent_links(
     request at all -- including a `tos` searched weeks later, because the link is read
     out of the stored datasets rather than out of anything the earlier run remembered.
 
-    Which of a parent simulation's datasets is *this* child's parent is decided by
-    [esmporium.db.parent_matching][], not here: this function finds the candidates and
-    the matcher chooses. That division is what keeps one rule for both situations -- a
-    parent fetched a moment ago and a parent stored weeks ago go through the same
-    matcher, because it is a pure function of the child and the candidates.
+    A declared parent names a simulation, and this turns that into one stored dataset
+    **version**, in the two steps [esmporium.db.parent_matching][] owns:
 
-    A matcher which cannot choose is reported rather than resolved. See
-    [ParentResolutionResult.ambiguous][(m).ParentResolutionResult.ambiguous].
+    1. the project's [ParentMatcher][esmporium.db.ParentMatcher] picks which *dataset*
+       of the simulation continues the child's own series;
+    2. the `version_chooser` picks which *version* of that dataset the child branched
+       from.
+
+    Neither decision is made here: this function finds the candidates and they choose.
+    That division is what keeps one rule for both situations -- a parent fetched a
+    moment ago and a parent stored weeks ago go through the same matcher, because it is
+    a pure function of the child and the candidates.
+
+    Either step being unable to choose is reported rather than resolved. See
+    [ParentResolutionResult.ambiguous][(m).ParentResolutionResult.ambiguous] and
+    [ambiguous_versions][(m).ParentResolutionResult.ambiguous_versions].
 
     Does not commit: the caller owns the transaction boundary.
 
@@ -783,16 +860,25 @@ def resolve_parent_links(
         unresolved assertion in the database.
 
     matchers
-        Which matcher to use per project. Defaults to the pre-built ones; pass a
-        mapping of your own to override one, e.g.
+        Which parent-dataset matcher to use per project. Defaults to the pre-built
+        ones; pass a mapping of your own to override one, e.g.
         `{**PARENT_MATCHERS_BY_PROJECT, "CMIP6": my_matcher}`. See
         [esmporium.db.parent_matching][].
+
+    version_chooser
+        How to pick which version of the matched parent dataset was branched from.
+
+        Defaults to [choose_parent_version][esmporium.db.choose_parent_version], which
+        prefers the child's own version string and otherwise resolves only where there
+        is a single version. Pass one of your own to decide the cases it leaves
+        ambiguous -- which is the only way they can be decided, because nothing
+        published says which version a child branched from.
 
     Returns
     -------
     :
         What was linked, what is still waiting, which variables an ancestor we do hold
-        turned out not to publish, and anything the matcher could not choose between.
+        turned out not to publish, and anything neither step could choose between.
 
     Raises
     ------
@@ -809,7 +895,7 @@ def resolve_parent_links(
     check_engine_is_configured(session)
 
     statement = (
-        select(DatasetVersionParent, Dataset)
+        select(DatasetVersionParent, DatasetVersion, Dataset)
         .join(
             DatasetVersion,
             col(DatasetVersion.id) == col(DatasetVersionParent.dataset_version_id),
@@ -829,81 +915,52 @@ def resolve_parent_links(
     linked: list[DatasetParentLink] = []
     variable_gaps: list[VariableGap] = []
     ambiguous: list[AmbiguousParent] = []
+    ambiguous_versions: list[AmbiguousParentVersion] = []
     still_unresolved: list[int] = []
 
-    # Grouped by version and run through precedence, so a version described by two
-    # sources is resolved once, from the one we believe.
-    unresolved: dict[int, tuple[list[DatasetVersionParent], Dataset]] = {}
-    for parent_info, child in session.exec(statement).all():
-        held, _ = unresolved.setdefault(parent_info.dataset_version_id, ([], child))
-        held.append(parent_info)
+    # Grouped by child version and run through precedence, so a version described by
+    # two sources is resolved once, from the one we believe. One dict per thing being
+    # collected rather than one dict of tuples, so each says what it holds.
+    assertions: defaultdict[int, list[DatasetVersionParent]] = defaultdict(list)
+    child_versions: dict[int, DatasetVersion] = {}
+    child_datasets: dict[int, Dataset] = {}
+    for parent_info, child_version, child_dataset in session.exec(statement).all():
+        version_id = parent_info.dataset_version_id
+        assertions[version_id].append(parent_info)
+        # Both are joined off `version_id`, so every assertion of one version brings
+        # the same two rows back and re-assigning them changes nothing.
+        child_versions[version_id] = child_version
+        child_datasets[version_id] = child_dataset
 
-    for _, (held, child) in sorted(unresolved.items()):
+    for version_id, held in sorted(assertions.items()):
         preferred = preferred_parent_info(held)
         if preferred is None:  # pragma: no cover - a version with rows has a winner
             continue
 
-        parent_info = preferred
-        parent = parent_simulation(parent_info, child.project)
-        matcher = matcher_for_project(child.project, matchers)
-        outcome = matcher(child, candidate_parent_datasets(session, parent))
-        if outcome.is_ambiguous:
-            # Several datasets fit equally well. Reported and left unresolved rather
-            # than settled by picking one, because picking would be a guess that no
-            # reader could later tell from a real answer.
-            still_unresolved.append(flushed_id(parent_info))
-            ambiguous.append(
-                AmbiguousParent(
-                    child_dataset_version_id=parent_info.dataset_version_id,
-                    parent=parent,
-                    candidate_dataset_ids=tuple(
-                        flushed_id(one) for one in outcome.candidates
-                    ),
-                    reason=outcome.reason or "the matcher could not choose",
-                )
-            )
-            continue
-
-        parent_dataset = outcome.parent
-        if parent_dataset is None:
-            gap = VariableGap(
-                child_dataset_version_id=parent_info.dataset_version_id,
-                parent=parent,
-                variable=child.variable,
-            )
-            if _variable_known_unpublished(session, parent, child.variable):
-                # Already settled for a sibling: that this simulation does not publish
-                # this variable is a fact about the simulation, so a new dataset of the
-                # same variable inherits it instead of firing the same fruitless search
-                # again. This is the cross-dataset reuse, applied to the gaps.
-                parent_info.resolution = ParentResolution.VARIABLE_NOT_PUBLISHED
-                parent_info.resolved_at = _utcnow()
-                session.add(parent_info)
-                session.flush()
-                variable_gaps.append(gap)
-                continue
-
-            still_unresolved.append(flushed_id(parent_info))
-            if _parent_simulation_is_held(session, parent):
-                variable_gaps.append(gap)
-            continue
-
-        link = DatasetParentLink(
-            parent_info_id=flushed_id(parent_info),
-            child_dataset_version_id=parent_info.dataset_version_id,
-            parent_dataset_id=flushed_id(parent_dataset),
+        resolved = _resolve_one_assertion(
+            session,
+            preferred,
+            child_version=child_versions[version_id],
+            child=child_datasets[version_id],
+            matchers=matchers,
+            version_chooser=version_chooser,
         )
-        session.add(link)
-        parent_info.resolution = ParentResolution.RESOLVED
-        parent_info.resolved_at = _utcnow()
-        session.add(parent_info)
-        session.flush()
-        linked.append(link)
+        if resolved.link is not None:
+            linked.append(resolved.link)
+        if resolved.variable_gap is not None:
+            variable_gaps.append(resolved.variable_gap)
+        if resolved.ambiguous is not None:
+            ambiguous.append(resolved.ambiguous)
+        if resolved.ambiguous_version is not None:
+            ambiguous_versions.append(resolved.ambiguous_version)
+        if resolved.still_unresolved:
+            still_unresolved.append(flushed_id(preferred))
 
     return ParentResolutionResult(
         linked=tuple(linked),
         variable_gaps=tuple(variable_gaps),
         ambiguous=tuple(ambiguous),
+        ambiguous_versions=tuple(ambiguous_versions),
         still_unresolved=tuple(sorted(still_unresolved)),
     )
 
@@ -946,6 +1003,182 @@ def candidate_parent_datasets(
                 Dataset.variant_label == parent.variant_label,
             )
             .order_by(col(Dataset.id))
+        ).all()
+    )
+
+
+@dataclass(frozen=True)
+class _ResolvedChild:
+    """
+    What resolving one child version's declared parent produced
+
+    Internal to [resolve_parent_links][(m).resolve_parent_links], which collects these
+    into a [ParentResolutionResult][(m).ParentResolutionResult]. At most one of the four
+    reports is set.
+
+    `still_unresolved` is separate from them rather than implied by them, because the
+    two are not the same question: a variable gap already settled for a sibling is
+    reported *and* taken out of the queue, where one found for the first time is
+    reported and left in it.
+    """
+
+    link: DatasetParentLink | None = None
+    """The link written, when the parent resolved to one stored version"""
+
+    variable_gap: VariableGap | None = None
+    """The gap to report, when the parent simulation does not publish the variable"""
+
+    ambiguous: AmbiguousParent | None = None
+    """The ambiguity to report, when several datasets of the simulation fitted"""
+
+    ambiguous_version: AmbiguousParentVersion | None = None
+    """The ambiguity to report, when several versions of the right dataset fitted"""
+
+    still_unresolved: bool = False
+    """Whether the assertion stays in the queue for a later search or chooser"""
+
+
+def _resolve_one_assertion(  # noqa: PLR0913 - one argument per thing the two decisions need
+    session: Session,
+    parent_info: DatasetVersionParent,
+    *,
+    child_version: DatasetVersion,
+    child: Dataset,
+    matchers: Mapping[str, ParentMatcher],
+    version_chooser: ParentVersionChooser,
+) -> _ResolvedChild:
+    """
+    Turn one version's declared parent into one stored version, or say why not
+
+    The two steps [esmporium.db.parent_matching][] owns, run in order, with the row
+    updates each outcome implies. Split out of
+    [resolve_parent_links][(m).resolve_parent_links] so that the loop which collects the
+    answers is readable beside the function which decides them.
+
+    Writes to `session` but never commits; the caller owns the boundary.
+    """
+    parent = parent_simulation(parent_info, child.project)
+    matcher = matcher_for_project(child.project, matchers)
+    outcome = matcher(child, candidate_parent_datasets(session, parent))
+    if outcome.is_ambiguous:
+        # Several datasets fit equally well. Reported and left unresolved rather than
+        # settled by picking one, because picking would be a guess that no reader could
+        # later tell from a real answer.
+        return _ResolvedChild(
+            still_unresolved=True,
+            ambiguous=AmbiguousParent(
+                child_dataset_version_id=parent_info.dataset_version_id,
+                parent=parent,
+                candidate_dataset_ids=tuple(
+                    flushed_id(one) for one in outcome.candidates
+                ),
+                reason=outcome.reason or "the matcher could not choose",
+            ),
+        )
+
+    parent_dataset = outcome.parent_dataset
+    if parent_dataset is None:
+        gap = VariableGap(
+            child_dataset_version_id=parent_info.dataset_version_id,
+            parent=parent,
+            variable=child.variable,
+        )
+        if _variable_known_unpublished(session, parent, child.variable):
+            # Already settled for a sibling: that this simulation does not publish this
+            # variable is a fact about the simulation, so a new dataset of the same
+            # variable inherits it instead of firing the same fruitless search again.
+            # This is the cross-dataset reuse, applied to the gaps.
+            parent_info.resolution = ParentResolution.VARIABLE_NOT_PUBLISHED
+            parent_info.resolved_at = _utcnow()
+            session.add(parent_info)
+            session.flush()
+            return _ResolvedChild(variable_gap=gap)
+
+        return _ResolvedChild(
+            still_unresolved=True,
+            variable_gap=gap if _parent_simulation_is_held(session, parent) else None,
+        )
+
+    # The dataset is settled; which version of it was branched from is the second
+    # question, and the one nothing published answers.
+    parent_dataset_id = flushed_id(parent_dataset)
+    version_outcome = version_chooser(
+        child_version, candidate_parent_versions(session, parent_dataset_id)
+    )
+    parent_version = version_outcome.parent_version
+    if parent_version is None:
+        # Either several versions fit (the ordinary case: nothing published says which)
+        # or we hold none at all, which ingestion cannot produce but is not worth
+        # guessing past either. Left unresolved so injecting a chooser is all it takes.
+        if not version_outcome.is_ambiguous:
+            return _ResolvedChild(still_unresolved=True)
+
+        return _ResolvedChild(
+            still_unresolved=True,
+            ambiguous_version=AmbiguousParentVersion(
+                child_dataset_version_id=parent_info.dataset_version_id,
+                parent=parent,
+                parent_dataset_id=parent_dataset_id,
+                candidate_dataset_version_ids=tuple(
+                    flushed_id(one) for one in version_outcome.candidates
+                ),
+                reason=version_outcome.reason
+                or "the chooser could not choose a version",
+            ),
+        )
+
+    link = DatasetParentLink(
+        parent_info_id=flushed_id(parent_info),
+        child_dataset_version_id=parent_info.dataset_version_id,
+        parent_dataset_version_id=flushed_id(parent_version),
+    )
+    session.add(link)
+    parent_info.resolution = ParentResolution.RESOLVED
+    parent_info.resolved_at = _utcnow()
+    session.add(parent_info)
+    session.flush()
+
+    return _ResolvedChild(link=link)
+
+
+def candidate_parent_versions(
+    session: Session, parent_dataset_id: int
+) -> tuple[DatasetVersion, ...]:
+    """
+    Find every version we hold of one already-matched parent dataset
+
+    The **query**, with no policy in it, exactly as
+    [candidate_parent_datasets][(m).candidate_parent_datasets] is: which of these the
+    child branched from is
+    [choose_parent_version][esmporium.db.choose_parent_version]'s decision.
+
+    Deliberately unfiltered -- not narrowed to the latest, and retracted versions left
+    in. `is_latest` and `retracted` are snapshots which change under us, so resolving by
+    them would make the answer depend on when the resolve happened to run. A version the
+    child really did branch from does not stop being its parent by being superseded.
+
+    Parameters
+    ----------
+    session
+        The session to read from
+
+    parent_dataset_id
+        The parent dataset to find the versions of, as its
+        [Dataset.id][esmporium.db.schema.Dataset]
+
+    Returns
+    -------
+    :
+        Every version of that dataset, ordered by id so the answer is stable
+
+        Empty only if we hold the dataset and none of its versions, which ingestion
+        cannot produce.
+    """
+    return tuple(
+        session.exec(
+            select(DatasetVersion)
+            .where(DatasetVersion.dataset_id == parent_dataset_id)
+            .order_by(col(DatasetVersion.id))
         ).all()
     )
 
@@ -1089,6 +1322,7 @@ def find_parents(  # noqa: PLR0913 - one argument per thing a walk has to be tol
     searcher: ParentSearcher | None = None,
     facts_provider: ParentFactsProvider | None = None,
     matchers: Mapping[str, ParentMatcher] = PARENT_MATCHERS_BY_PROJECT,
+    version_chooser: ParentVersionChooser = DEFAULT_PARENT_VERSION_CHOOSER,
 ) -> ParentWalkResult:
     """
     Walk back up the parent chain of some datasets, searching for what is missing
@@ -1166,14 +1400,24 @@ def find_parents(  # noqa: PLR0913 - one argument per thing a walk has to be tol
         [ParentFactsProvider][(m).ParentFactsProvider].
 
     matchers
-        Which matcher to use per project, passed through to
+        Which parent-dataset matcher to use per project, passed through to
         [resolve_parent_links][(m).resolve_parent_links].
+
+    version_chooser
+        How to pick which version of a matched parent dataset was branched from, passed
+        through to [resolve_parent_links][(m).resolve_parent_links].
+
+        A chain does not climb through a version the chooser could not pick, so a walk
+        over data with several versions per parent may stop earlier than expected with
+        [ParentWalkResult.ambiguous_versions][(m).ParentWalkResult.ambiguous_versions]
+        populated. That is the honest answer: the walk cannot know which lineage to
+        follow.
 
     Returns
     -------
     :
-        What was linked, where each chain stopped, which searches were fired and how
-        many times the walk climbed.
+        What was linked, where each chain stopped, anything neither matching step could
+        choose, which searches were fired and how many times the walk climbed.
 
     Raises
     ------
@@ -1228,6 +1472,7 @@ def find_parents(  # noqa: PLR0913 - one argument per thing a walk has to be tol
             searcher=search if searcher is None else searcher,
             facts_provider=facts_provider,
             matchers=matchers,
+            version_chooser=version_chooser,
         )
     finally:
         if owns_client:
@@ -1534,28 +1779,17 @@ def _simulations_of(
     )
 
 
-def _versions_of_parents(
-    session: Session, links: Sequence[DatasetParentLink]
-) -> tuple[int, ...]:
+def _versions_of_parents(links: Sequence[DatasetParentLink]) -> tuple[int, ...]:
     """
-    Find the versions of the parent datasets some links point at
+    Read the parent versions some links point at, which is the walk's next frontier
 
-    Every version we hold, not just the newest. A parent's assertions are per version
-    and they agree in practice, so this is about not quietly dropping one rather than
-    about needing them all -- and the search plan deduplicates by simulation anyway, so
-    two versions of one parent do not cost two requests.
+    One version per link and no query at all: resolving has already chosen which
+    version of the parent dataset was branched from, so climbing is reading that choice
+    back rather than re-opening it. Before the choice was recorded this had to take
+    *every* version of the parent dataset and climb from all of them, which fanned a
+    chain out across republications of one simulation.
     """
-    parent_dataset_ids = {link.parent_dataset_id for link in links}
-    if not parent_dataset_ids:
-        return ()
-
-    versions = session.exec(
-        select(DatasetVersion)
-        .where(col(DatasetVersion.dataset_id).in_(tuple(parent_dataset_ids)))
-        .order_by(col(DatasetVersion.id))
-    ).all()
-
-    return tuple(flushed_id(version) for version in versions)
+    return tuple(sorted({link.parent_dataset_version_id for link in links}))
 
 
 def _search_for_parent(
@@ -1750,7 +1984,7 @@ def _frontier_needing_facts(
     )
 
 
-def _walk(  # noqa: PLR0913, PLR0912 - every argument is one `find_parents` was given, and every branch is one state a frontier can be in
+def _walk(  # noqa: PLR0913, PLR0912, PLR0915 - every argument is one `find_parents` was given, every branch is one state a frontier can be in, and every statement is one step of a turn
     session: Session,
     dataset_version_ids: Collection[int] | None,
     *,
@@ -1764,6 +1998,7 @@ def _walk(  # noqa: PLR0913, PLR0912 - every argument is one `find_parents` was 
     searcher: ParentSearcher,
     facts_provider: ParentFactsProvider | None,
     matchers: Mapping[str, ParentMatcher],
+    version_chooser: ParentVersionChooser,
 ) -> ParentWalkResult:
     """
     Do the climbing, with the client already open
@@ -1774,17 +2009,30 @@ def _walk(  # noqa: PLR0913, PLR0912 - every argument is one `find_parents` was 
     result = ParentWalkResult()
     failures: list[ParentNotFound | ParentNotAncestor] = []
     searched: set[ParentSimulation] = set()
-    # Resolving runs twice per turn -- once before the searches and once after -- so a
-    # gap found by the first pass would otherwise be reported again by the second.
+    # Resolving runs twice per turn -- once before the searches and once after -- so
+    # anything found by the first pass would otherwise be reported again by the second.
     seen_gaps: set[VariableGap] = set()
+    seen_ambiguous: set[AmbiguousParent] = set()
+    seen_ambiguous_versions: set[AmbiguousParentVersion] = set()
 
     def record(resolution: ParentResolutionResult) -> None:
-        """Fold one resolve's outcome into the walk's, without repeating a gap."""
+        """Fold one resolve's outcome into the walk's, without repeating anything."""
         result.linked.extend(resolution.linked)
         for gap in resolution.variable_gaps:
             if gap not in seen_gaps:
                 seen_gaps.add(gap)
                 result.variable_gaps.append(gap)
+        # Both ambiguities are carried up too. A walk which dropped them would report
+        # a chain as simply having stopped, when what happened is that a choice was
+        # waiting to be made.
+        for unchosen in resolution.ambiguous:
+            if unchosen not in seen_ambiguous:
+                seen_ambiguous.add(unchosen)
+                result.ambiguous.append(unchosen)
+        for unchosen_version in resolution.ambiguous_versions:
+            if unchosen_version not in seen_ambiguous_versions:
+                seen_ambiguous_versions.add(unchosen_version)
+                result.ambiguous_versions.append(unchosen_version)
 
     if check_until_exists and until_experiment:
         for project in _projects_to_check(session, dataset_version_ids):
@@ -1818,7 +2066,14 @@ def _walk(  # noqa: PLR0913, PLR0912 - every argument is one `find_parents` was 
         # Free before expensive: everything the database can already answer is linked
         # before a single request. On a second analysis over data a first one fetched,
         # this is the whole walk.
-        record(resolve_parent_links(session, frontier, matchers=matchers))
+        record(
+            resolve_parent_links(
+                session,
+                frontier,
+                matchers=matchers,
+                version_chooser=version_chooser,
+            )
+        )
 
         classified = _classify_frontier(session, frontier, until_experiment)
         for version_id in classified.reached_target:
@@ -1856,7 +2111,12 @@ def _walk(  # noqa: PLR0913, PLR0912 - every argument is one `find_parents` was 
 
             # The ancestors are stored now, so what was waiting on them can be linked.
             record(
-                resolve_parent_links(session, classified.to_climb, matchers=matchers)
+                resolve_parent_links(
+                    session,
+                    classified.to_climb,
+                    matchers=matchers,
+                    version_chooser=version_chooser,
+                )
             )
             _record_search_outcomes(session, plan, failures)
             session.commit()
@@ -1867,7 +2127,7 @@ def _walk(  # noqa: PLR0913, PLR0912 - every argument is one `find_parents` was 
         links = _links_from(session, classified.to_climb)
         frontier = tuple(
             version_id
-            for version_id in _versions_of_parents(session, links)
+            for version_id in _versions_of_parents(links)
             if version_id not in climbed
         )
         if not frontier:

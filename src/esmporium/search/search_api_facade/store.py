@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from tenacity import Retrying
 
 from esmporium.search.apis import (
+    DEFAULT_STAC_PARENT_SUFFIXES,
     SearchAPI,
     SearchAPIESGF1Solr,
     SearchAPIESGF15BridgeSolr,
@@ -178,12 +179,13 @@ def get_default_facade_definition(project: str, host: str) -> FacadeDefinition: 
 
         elif host in esgfng_hosts:
             facade_parameters = ESGFNG_CMIP7_FACADE_PARAMETERS
-            # CMIP7 is the one project so far which publishes its parent facts in the
-            # index, so this is the one facade which reads them. ESGF-1 Solr publishes
-            # them for CMIP7 too (and `branch_time_in_parent`, which STAC does not),
-            # but reading that is a second API's worth of work and is not done yet, so
-            # the Solr branches above are left reading none.
-            result_parser = ESGFNGResultParser(reads_parent_metadata=True)
+            # CMIP7 is the one project so far which publishes its parent facts in
+            # the index, so this is the one facade which reads them. The Solr branches
+            # above read none: CMIP7 is not being published to ESGF-1 or the 1.5
+            # bridge, so there is no second index to reconcile with.
+            result_parser = ESGFNGResultParser(
+                parent_property_suffixes=DEFAULT_STAC_PARENT_SUFFIXES
+            )
             search_api_type = SearchAPIESGFNGSTAC
 
         else:

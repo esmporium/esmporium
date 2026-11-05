@@ -1765,8 +1765,9 @@ class DatasetVersionParent(EsmporiumBase, table=True):
     [ParentInfoSource][esmporium.db.schema.ParentInfoSource]. Within one source,
     repeated ingests merge per column -- asserted wins, silence changes nothing -- the
     same rule [File][esmporium.db.schema.File] facts follow, and for the same reason:
-    the two search APIs do not publish the same set of parent facts, so a document
-    being silent about one is not a claim that it is nothing.
+    two documents of one source can describe the same version and one of them say less,
+    so being silent about a column is not a claim that it is nothing. See
+    [PARENT_FACT_COLUMNS][esmporium.db.PARENT_FACT_COLUMNS].
     """
 
     # See the note on `Dataset.model_config`: this catches a bad *value* at
@@ -1896,10 +1897,11 @@ class DatasetVersionParent(EsmporiumBase, table=True):
     Kept under ESGF's own name because no `Dataset` column corresponds to it.
 
     Recorded because it is published, though on its own it does nothing: it is the
-    units of a branch time, and no ESGF-NG record publishes a branch time. There is
-    therefore no `branch_time_in_parent` column yet -- ESGF-1 Solr publishes one for
-    CMIP7 and a file header will give one for CMIP5 and CMIP6, and the column can be
-    added when there is something to put in it.
+    units of a branch time, and nothing we read publishes a branch time. There is
+    therefore no `branch_time_in_parent` column, and nothing here needs one -- a parent
+    is found from the simulation it names, not from where in that simulation the branch
+    happened. A file header does carry a branch time, so the column can be added when
+    there is both something to put in it and something to do with it.
 
     `None` for a record which declared no parent.
     """
@@ -1960,16 +1962,22 @@ class DatasetParentLink(EsmporiumBase, table=True):
     processing id, because a simulation publishes many datasets and only the child
     says which of them continues *its* series.
 
-    **Points at a `Dataset` and not a `DatasetVersion`, deliberately.** Which version
-    of the parent to use is a question with a different answer tomorrow, and it is one
-    the read side already answers: a lookup picks versions through
-    [VersionFilter][esmporium.requirements.VersionFilter]. Pinning a version here
-    would be recording an answer that goes stale the moment the parent is
-    republished.
+    **Points at a `DatasetVersion`, not at a `Dataset`.** A child version branched from
+    exactly one version of its parent -- that is a fact about what was run -- so this
+    records which one. Nothing published says it: the parent vocabulary names a
+    simulation and, where it is published at all, a branch time, never a version. So
+    the version is *chosen*, by
+    [choose_parent_version][esmporium.db.choose_parent_version], and a case it cannot
+    decide is reported back instead of being settled here. Storing a dataset and
+    leaving the version to a read-time
+    [VersionFilter][esmporium.requirements.VersionFilter] would answer that question
+    silently, with a default, every time anybody asked.
 
     One row per resolved assertion. A declared parent which exists but does not publish
     the child's variable gets **no** row -- the lineage is intact and only that one
-    variable has a hole in it, which is reported rather than stored.
+    variable has a hole in it, which is reported rather than stored. Nor does one whose
+    version could not be chosen; that too is reported, and the assertion is left
+    unresolved so a chooser can be injected and the resolve re-run.
     """
 
     # See the note on `Dataset.model_config`.
@@ -2010,11 +2018,17 @@ class DatasetParentLink(EsmporiumBase, table=True):
     [esmporium.db.parents_to_database][].
     """
 
-    parent_dataset_id: int = Field(foreign_key="dataset.id", index=True)
+    parent_dataset_version_id: int = Field(foreign_key="datasetversion.id", index=True)
     """
-    The parent dataset
+    The version of the parent dataset this child version branched from
 
-    See [Dataset][esmporium.db.schema.Dataset]. Indexed so that "what branched from
-    this" is as cheap as "what did this branch from" -- a control run has many
-    children, and finding them is the direction a chain is usually walked in reverse.
+    See [DatasetVersion][esmporium.db.schema.DatasetVersion]. Indexed so that "what
+    branched from this" is as cheap as "what did this branch from" -- a control run has
+    many children, and finding them is the direction a chain is usually walked in
+    reverse.
+
+    Which *dataset* the parent is, as opposed to which version of it, is one join away
+    through [DatasetVersion.dataset_id][esmporium.db.schema.DatasetVersion.dataset_id].
+    It is not stored again here: two columns for one answer can disagree, and nothing
+    in the database as we configure it could stop them.
     """
