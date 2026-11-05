@@ -13,6 +13,7 @@ from esmporium.db import (
     Dataset,
     DatasetVersion,
     MatchOutcome,
+    ParentVersionChoice,
     UnknownProjectMatcherError,
     choose_parent_version,
     match_cmip5_parent,
@@ -236,70 +237,144 @@ def test_an_injected_matcher_overrides_a_shipped_one():
     assert found is always_first
 
 
-def a_version(version: str, dataset_id: int = 1) -> DatasetVersion:
+def a_version(
+    version: str, dataset_id: int = 1, *, retracted: bool = False
+) -> DatasetVersion:
     """Build an unsaved version row; the chooser never touches a session."""
     return DatasetVersion(
-        dataset_id=dataset_id, version=version, is_latest=False, retracted=False
+        dataset_id=dataset_id,
+        version=version,
+        is_latest=False,
+        retracted=retracted,
     )
 
 
-def test_the_childs_own_version_is_the_one_chosen():
+def test_one_version_is_taken_and_not_called_a_decision():
     """
-    The only signal in the data, so it is the one used
+    The commonest case, and the one where nothing was chosen
 
-    A version string is a publication datestamp, so a parent published in the same
-    batch as its child is the one that generation of the child was produced against.
+    Labelled `ONLY_VERSION` so a reader can tell it from a default, which is the whole
+    reason the label exists.
     """
-    child = a_version("20261008")
-    candidates = [a_version("20200101"), a_version("20261008"), a_version("20300101")]
+    only = a_version("20110615")
+
+    outcome = choose_parent_version(a_version("20261008"), [only])
+
+    assert outcome.parent_version is only
+    assert outcome.choice == ParentVersionChoice.ONLY_VERSION
+    assert outcome.passed_over == ()
+    assert not outcome.is_ambiguous
+
+
+def test_several_versions_with_no_match_take_the_newest_and_say_so():
+    """
+    A republished parent does not stop a chain, and does not pretend either
+
+    The newest is a rule of ours, so the link is labelled `DEFAULTED` and what it
+    passed over is carried for whoever wants to disagree.
+    """
+    candidates = [a_version("20110615"), a_version("20300101"), a_version("20200630")]
+
+    outcome = choose_parent_version(a_version("20261008"), candidates)
+
+    assert outcome.parent_version is candidates[1]
+    assert outcome.choice == ParentVersionChoice.DEFAULTED
+    assert {one.version for one in outcome.passed_over} == {"20110615", "20200630"}
+    assert not outcome.is_ambiguous
+
+
+def test_the_childs_own_version_wins_even_though_it_is_older():
+    """
+    Two datasets sharing a publication date is one publication batch
+
+    So that release of the parent is the one which belongs with the child -- same CMOR
+    tables, same fixes -- and a contemporaneous pair is worth more than the newest
+    bytes. Labelled `CHILD_VERSION`, not `DEFAULTED`, because it rests on something in
+    the data rather than on a rule alone.
+    """
+    child = a_version("20190406")
+    candidates = [a_version("20190406"), a_version("20200828")]
+
+    outcome = choose_parent_version(child, candidates)
+
+    assert outcome.parent_version is candidates[0]
+    assert outcome.choice == ParentVersionChoice.CHILD_VERSION
+    assert {one.version for one in outcome.passed_over} == {"20200828"}
+
+
+def test_a_retracted_match_does_not_beat_a_live_newer_release():
+    """
+    The match is checked after retracted releases are dropped, and that order matters
+
+    A retracted release is upstream saying do not use this, which outranks the weak
+    evidence of a shared publication date.
+    """
+    child = a_version("20190406")
+    candidates = [a_version("20190406", retracted=True), a_version("20200828")]
 
     outcome = choose_parent_version(child, candidates)
 
     assert outcome.parent_version is candidates[1]
-    assert not outcome.is_ambiguous
+    assert outcome.choice == ParentVersionChoice.DEFAULTED
 
 
-def test_one_version_is_the_answer_whatever_it_is_called():
+def test_every_release_being_newer_than_the_child_is_not_a_problem():
     """
-    A parent published once is the parent, matching string or not
+    The live CMIP6 case, and the one that looks wrong until the dates are explained
 
-    The commonest case by far, and the one that would wrongly be reported as a choice
-    if the version string had to agree.
+    UKESM1-0-LL `historical` `v20190406` has a `piControl` published at `20190410`,
+    `20200630` and `20200828` -- every release newer than the child. The branch
+    happened on MOHC's disks before either end of it was published, so all three
+    publish the run it branched from, and the chain must not stop here.
     """
-    child = a_version("20261008")
-    only = a_version("20110615")
-
-    outcome = choose_parent_version(child, [only])
-
-    assert outcome.parent_version is only
-    assert not outcome.is_ambiguous
-
-
-def test_several_versions_and_none_the_childs_is_handed_back():
-    """
-    Nothing published says which version a child branched from
-
-    So the rule stops rather than picking the newest, which would record our default
-    as though it were the published answer.
-    """
-    child = a_version("20261008")
-    candidates = [a_version("20110615"), a_version("20300101")]
+    child = a_version("20190406")
+    candidates = [
+        a_version("20190410"),
+        a_version("20200630"),
+        a_version("20200828"),
+    ]
 
     outcome = choose_parent_version(child, candidates)
 
-    assert outcome.parent_version is None
-    assert outcome.is_ambiguous
-    assert list(outcome.candidates) == candidates
-    reason = outcome.reason or ""
-    assert "20110615" in reason and "20300101" in reason and "20261008" in reason
+    assert outcome.parent_version is candidates[2]
+    assert outcome.choice == ParentVersionChoice.DEFAULTED
+    assert not outcome.is_ambiguous
 
 
-def test_no_versions_at_all_is_not_an_ambiguity():
+def test_a_retracted_version_loses_to_a_live_one():
+    """Dropping retracted releases is most of what makes the default defensible."""
+    candidates = [a_version("20300101", retracted=True), a_version("20200630")]
+
+    outcome = choose_parent_version(a_version("20261008"), candidates)
+
+    assert outcome.parent_version is candidates[1]
+    assert outcome.choice == ParentVersionChoice.DEFAULTED
+
+
+def test_an_all_retracted_parent_is_still_the_parent():
     """
-    Holding none of a dataset's versions is a different answer from holding several
+    Abandoning a chain because every release was retracted would be the wrong answer
 
-    One is "nothing to choose from" and the other is "a choice nobody can make", and
-    only the second is worth putting in front of a person.
+    The retraction is upstream's statement about the data, not about the lineage, so
+    the newest is used and the chain carries on.
+    """
+    candidates = [
+        a_version("20110615", retracted=True),
+        a_version("20300101", retracted=True),
+    ]
+
+    outcome = choose_parent_version(a_version("20261008"), candidates)
+
+    assert outcome.parent_version is candidates[1]
+    assert outcome.choice == ParentVersionChoice.DEFAULTED
+
+
+def test_no_versions_at_all_is_the_one_case_with_no_answer():
+    """
+    Holding none of a dataset's versions is different from holding several
+
+    One has nothing to choose from; the other has a choice, which this rule always
+    makes. Neither is an ambiguity -- only an injected chooser can produce one of those.
     """
     outcome = choose_parent_version(a_version("20261008"), [])
 

@@ -1742,6 +1742,82 @@ class ParentResolution(str, Enum):
     """
 
 
+class ParentVersionChoice(str, Enum):
+    """
+    How the version of a resolved parent came to be the one on the link
+
+    `str`-valued, for the same reason as every other enum stored here.
+
+    This exists because the two halves of a resolved parent are not equally certain,
+    and the database would otherwise look as though they were. *Which dataset* a child
+    branched from is a fact, decided by comparing facets. *Which published version of
+    that dataset to use* is **not** a fact and cannot be made one.
+
+    **Why a parent's versions are often all newer than the child's, which looks wrong
+    and is not.** A version string is the date a dataset was *published*, not the date
+    the model ran. Branching happens inside a modelling centre: the control run is
+    integrated, the child is started from a point in it, and both sit on the centre's
+    own disks long before either reaches ESGF. Publication order afterwards is
+    administrative. So a child dated `20190406` whose parent's releases are `20190410`,
+    `20200630` and `20200828` -- a real case, UKESM1-0-LL `historical` and its
+    `piControl` -- has not branched from something that did not exist yet. It branched
+    from the *run*, and every one of those releases is a publication of that same run.
+    A later release usually means corrected metadata or an extended time range, not a
+    different experiment.
+
+    So a version is chosen, and this says who chose it and on what basis. Without it a
+    confident link and a default are the same row, which is the one thing
+    [DatasetVersionParent][esmporium.db.schema.DatasetVersionParent] was built to avoid;
+    with it, "show me every lineage resting on a default" is one indexed query.
+    """
+
+    ONLY_VERSION = "only_version"
+    """
+    We hold exactly one version of the parent dataset, so there was nothing to choose
+
+    The strongest of the four, and not a decision at all.
+    """
+
+    CHILD_VERSION = "child_version"
+    """
+    Several versions were held and one of them carries the child's own version string
+
+    Weak evidence, but the only evidence in the data, so it is used. Two datasets
+    sharing a publication date is usually one publication event: a centre running CMOR
+    over an experiment family writes it all out together, so the release that shares the
+    child's date is the release of the parent that belongs with it -- the same CMOR
+    tables, the same fixes applied, the same generation of the data.
+
+    Preferred over the newest release even when it is older, because a contemporaneous
+    pair is internally consistent where a 2019 child against a 2021 parent may not be.
+    Checked *after* retracted releases are dropped, so a retracted match never beats a
+    live newer release.
+
+    Reported like a [DEFAULTED][(c).DEFAULTED] one, because it is still a decision.
+    """
+
+    DEFAULTED = "defaulted"
+    """
+    Several versions were held, none of them the child's, so the newest one was taken
+
+    **The commonest of the decisions, and the weakest.** It rests on a rule of ours
+    rather than on anything published, and it is reported as it is made -- see
+    [ParentWalkResult.version_decisions][esmporium.db.ParentWalkResult.version_decisions].
+    A caller who knows better replaces it by injecting a
+    [ParentVersionChooser][esmporium.db.ParentVersionChooser], and these are exactly the
+    rows to re-resolve when they do.
+    """
+
+    CHOSEN = "chosen"
+    """
+    Something other than our own rules decided, i.e. an injected chooser
+
+    Recorded separately from [DEFAULTED][(c).DEFAULTED] because it is a different kind
+    of answer: somebody who knows the data said so, rather than a rule picking in the
+    absence of information.
+    """
+
+
 class DatasetVersionParent(EsmporiumBase, table=True):
     """
     The parent simulation one source says a dataset version branched from
@@ -1962,22 +2038,27 @@ class DatasetParentLink(EsmporiumBase, table=True):
     processing id, because a simulation publishes many datasets and only the child
     says which of them continues *its* series.
 
-    **Points at a `DatasetVersion`, not at a `Dataset`.** A child version branched from
-    exactly one version of its parent -- that is a fact about what was run -- so this
-    records which one. Nothing published says it: the parent vocabulary names a
-    simulation and, where it is published at all, a branch time, never a version. So
-    the version is *chosen*, by
-    [choose_parent_version][esmporium.db.choose_parent_version], and a case it cannot
-    decide is reported back instead of being settled here. Storing a dataset and
-    leaving the version to a read-time
-    [VersionFilter][esmporium.requirements.VersionFilter] would answer that question
-    silently, with a default, every time anybody asked.
+    **Two answers of different certainty, held separately on purpose.**
+    `parent_dataset_id` is a *fact*: the child's own variable, reporting interval, grid
+    and processing id pick exactly one dataset out of the declared simulation.
+    `parent_dataset_version_id` is a *selection*: which published version of that
+    dataset to use when the parent's data is needed. Nothing published says which
+    version was branched from, and nothing could -- a branch happens inside a modelling
+    centre before any of it is published, so a child routinely predates every version
+    of its parent. `version_choice` says how the selection was made.
+
+    They are not two spellings of one answer, which is why both are stored even though
+    the dataset is one join from the version. **Invariant:** the version belongs to that
+    dataset. As with `child_dataset_version_id`, the database as we configure it cannot
+    enforce that, so it holds by construction at the only place these rows are written,
+    in [esmporium.db.parents_to_database][].
 
     One row per resolved assertion. A declared parent which exists but does not publish
     the child's variable gets **no** row -- the lineage is intact and only that one
     variable has a hole in it, which is reported rather than stored. Nor does one whose
-    version could not be chosen; that too is reported, and the assertion is left
-    unresolved so a chooser can be injected and the resolve re-run.
+    version an injected chooser declined to pick; that too is reported, and the
+    assertion is left unresolved so the resolve can be re-run. The shipped default never
+    declines.
     """
 
     # See the note on `Dataset.model_config`.
@@ -2018,17 +2099,42 @@ class DatasetParentLink(EsmporiumBase, table=True):
     [esmporium.db.parents_to_database][].
     """
 
+    parent_dataset_id: int = Field(foreign_key="dataset.id", index=True)
+    """
+    The parent dataset, which is the part of a resolved parent that is a fact
+
+    See [Dataset][esmporium.db.schema.Dataset]. Decided by comparing the child's own
+    reporting facets against the datasets of the declared simulation, so it is as
+    certain as the declaration itself.
+
+    Indexed so that "what branched from this" is as cheap as "what did this branch
+    from" -- a control run has many children, and finding them is the direction a chain
+    is usually walked in reverse.
+    """
+
     parent_dataset_version_id: int = Field(foreign_key="datasetversion.id", index=True)
     """
-    The version of the parent dataset this child version branched from
+    The version of the parent dataset to use, which is a selection and not a fact
 
-    See [DatasetVersion][esmporium.db.schema.DatasetVersion]. Indexed so that "what
-    branched from this" is as cheap as "what did this branch from" -- a control run has
-    many children, and finding them is the direction a chain is usually walked in
-    reverse.
+    See [DatasetVersion][esmporium.db.schema.DatasetVersion]. How it was selected is
+    `version_choice`, and whether that was a real decision depends on its value.
 
-    Which *dataset* the parent is, as opposed to which version of it, is one join away
-    through [DatasetVersion.dataset_id][esmporium.db.schema.DatasetVersion.dataset_id].
-    It is not stored again here: two columns for one answer can disagree, and nothing
-    in the database as we configure it could stop them.
+    It is recorded rather than left to a read-time
+    [VersionFilter][esmporium.requirements.VersionFilter] because the walk has to pick
+    one anyway: the parent's *own* parent is asserted per version, so the version chosen
+    here is the one whose metadata is read to climb the next hop. Leaving it open would
+    mean climbing from every republication of one simulation at once.
+    """
+
+    version_choice: ParentVersionChoice = Field(sa_type=AutoString, index=True)
+    """
+    How `parent_dataset_version_id` was arrived at
+
+    See [ParentVersionChoice][esmporium.db.schema.ParentVersionChoice]. Stored as its
+    value, so compare with `==` and not `is`.
+
+    Indexed because the query it exists for is "which of these links rest on a default",
+    the same reason
+    [DatasetVersionParent.resolution][esmporium.db.schema.DatasetVersionParent.resolution]
+    is indexed.
     """

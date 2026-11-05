@@ -277,18 +277,25 @@ CREATE TABLE datasetparentlink (
 	id INTEGER NOT NULL,
 	parent_info_id INTEGER NOT NULL,
 	child_dataset_version_id INTEGER NOT NULL,
+	parent_dataset_id INTEGER NOT NULL,
 	parent_dataset_version_id INTEGER NOT NULL,
+	version_choice VARCHAR NOT NULL,
 	CONSTRAINT pk_datasetparentlink PRIMARY KEY (id),
 	CONSTRAINT fk_datasetparentlink_parent_info_id_datasetversionparent FOREIGN KEY(parent_info_id) REFERENCES datasetversionparent (id),
 	CONSTRAINT fk_datasetparentlink_child_dataset_version_id_datasetversion FOREIGN KEY(child_dataset_version_id) REFERENCES datasetversion (id),
+	CONSTRAINT fk_datasetparentlink_parent_dataset_id_dataset FOREIGN KEY(parent_dataset_id) REFERENCES dataset (id),
 	CONSTRAINT fk_datasetparentlink_parent_dataset_version_id_datasetversion FOREIGN KEY(parent_dataset_version_id) REFERENCES datasetversion (id)
 );
 
 CREATE INDEX ix_datasetparentlink_child_dataset_version_id ON datasetparentlink (child_dataset_version_id);
 
+CREATE INDEX ix_datasetparentlink_parent_dataset_id ON datasetparentlink (parent_dataset_id);
+
 CREATE INDEX ix_datasetparentlink_parent_dataset_version_id ON datasetparentlink (parent_dataset_version_id);
 
 CREATE UNIQUE INDEX ix_datasetparentlink_parent_info_id ON datasetparentlink (parent_info_id);
+
+CREATE INDEX ix_datasetparentlink_version_choice ON datasetparentlink (version_choice);
 
 CREATE TABLE download (
 	id INTEGER NOT NULL,

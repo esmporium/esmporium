@@ -9,8 +9,20 @@ and this module makes both:
 1. **which dataset** of the simulation, decided by the child's own variable and the
    facets which say how that variable was reported. See
    [match_on_facets][(m).match_on_facets].
-2. **which version of that dataset**, decided by the child's own version, because
-   nothing published says which. See [choose_parent_version][(m).choose_parent_version].
+2. **which version of that dataset** to use, which nothing published decides and
+   nothing could. See [choose_parent_version][(m).choose_parent_version].
+
+Only the first of those is a fact. A version string is a *publication* date and a
+branch happens inside a modelling centre, long before either end of it reaches ESGF, so
+a child is routinely published before any release of its parent exists -- UKESM1-0-LL
+`historical` `v20190406` declares a `piControl` whose releases are `20190410`,
+`20200630` and `20200828`, every one of them newer than the child. That is not a
+contradiction: it branched from the *run*, which all three releases publish. There is
+simply no published version that *is* the one branched from, so the honest question is
+not "which one was it" but "which one should be used". That is answered by a rule, the
+answer is labelled with
+[ParentVersionChoice][esmporium.db.schema.ParentVersionChoice], and a caller who knows
+better replaces the rule.
 
 The facets which identify the *simulation* -- project, model, experiment and variant --
 are **compared by nothing here**, and that is the important part: those are the child's
@@ -48,7 +60,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
-from esmporium.db.schema import Dataset, DatasetVersion
+from esmporium.db.schema import Dataset, DatasetVersion, ParentVersionChoice
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Mapping, Sequence
@@ -461,31 +473,59 @@ class VersionMatchOutcome:
 
     The same three answers as [MatchOutcome][(m).MatchOutcome], one step further down:
     `parent_version` when there is one, nothing at all when the dataset has no versions,
-    and `candidates` populated when there are several and the rule could not choose.
+    and `candidates` populated when there are several and the chooser declined.
 
-    A separate type rather than a reuse of `MatchOutcome`, because the two stages fail
-    for different reasons and are fixed in different ways: a dataset-stage ambiguity is
-    answered by a [ParentMatcher][(m).ParentMatcher] of your own, a version-stage one by
-    a [ParentVersionChooser][(m).ParentVersionChooser].
+    A separate type rather than a reuse of `MatchOutcome`, because the two stages mean
+    different things: the dataset stage reaches a fact and can genuinely fail to, where
+    this one makes a selection and says how confident it is.
     """
 
     parent_version: DatasetVersion | None = None
     """The version chosen, or `None` if none was"""
 
+    choice: ParentVersionChoice = ParentVersionChoice.CHOSEN
+    """
+    How `parent_version` was arrived at, and so how much of a decision it was
+
+    See [ParentVersionChoice][esmporium.db.schema.ParentVersionChoice]. Meaningless when
+    `parent_version` is `None`.
+
+    Defaults to [CHOSEN][esmporium.db.schema.ParentVersionChoice.CHOSEN], which is what
+    an injected [ParentVersionChooser][(m).ParentVersionChooser] gets for free: anything
+    that is not our own rule speaking is somebody who knows the data speaking.
+    [choose_parent_version][(m).choose_parent_version] sets the other two itself.
+    """
+
     candidates: tuple[DatasetVersion, ...] = ()
     """
-    The versions which could not be told apart
+    The versions an injected chooser was given and declined to choose between
 
     Empty when `parent_version` is set, and empty when there were no versions at all.
+    The shipped default never leaves this populated; it has a rule for every case.
+    """
+
+    passed_over: tuple[DatasetVersion, ...] = ()
+    """
+    The versions that lost, when `parent_version` was reached by a real decision
+
+    Empty unless `choice` is
+    [DEFAULTED][esmporium.db.schema.ParentVersionChoice.DEFAULTED]. Carried so that what
+    is reported to a caller names what it did not pick, which is the part they would
+    need in order to disagree.
     """
 
     reason: str | None = None
-    """Why no single version was chosen, in words, or `None` when one was"""
+    """
+    Why no version was chosen, in words, or `None` when one was
+
+    Covers both no-answer cases: no versions were held at all, or a chooser was given
+    several and declined. Written for a person reading the report it ends up in.
+    """
 
     @property
     def is_ambiguous(self) -> bool:
         """
-        Whether there were several versions the rule could not choose between
+        Whether a chooser was given several versions and declined to pick
 
         Returns
         -------
@@ -497,25 +537,30 @@ class VersionMatchOutcome:
 
 class ParentVersionChooser(Protocol):
     """
-    Picks which version of a parent dataset a child version branched from
+    Picks which version of a matched parent dataset to use
 
     Pure, for the same reason [ParentMatcher][(m).ParentMatcher] is: an implementation
     must not query, fetch or commit.
 
-    This is the second of the two steps, and the one where there is **nothing published
-    to read**. A child dataset version branched from exactly one version of its parent
-    dataset -- that is a fact about what was run -- but no source says which: the parent
-    vocabulary names a simulation and, where it is published at all, a branch time.
-    Never a version. So the answer has to be decided, and a decision nobody can see is
-    worse than no decision, which is why an unresolvable case is reported instead of
-    settled.
+    This is the second of the two steps, and the one with **nothing published to read**.
+    The parent vocabulary names a simulation and, where it is published at all, a branch
+    time -- never a version -- and a branch predates publication anyway, so there is no
+    version to discover. Every answer here is therefore a decision, which is why each
+    one is labelled with a
+    [ParentVersionChoice][esmporium.db.schema.ParentVersionChoice] rather than recorded
+    as though it had been read.
+
+    An implementation which does not want to decide can say so, by returning the
+    candidates with no version: that is reported to the caller and the assertion is left
+    unresolved. [choose_parent_version][(m).choose_parent_version] never does, because a
+    walk which stops at a republished parent stops at most CMIP6 parents.
     """
 
     def __call__(
         self, child: DatasetVersion, candidates: Sequence[DatasetVersion]
     ) -> VersionMatchOutcome:
         """
-        Choose the version of the parent dataset this child version branched from
+        Choose which version of the matched parent dataset to use
 
         Parameters
         ----------
@@ -525,7 +570,8 @@ class ParentVersionChooser(Protocol):
         candidates
             The versions of the already-matched parent dataset to choose between
 
-            Every version of it that we hold. May be empty, and may contain several.
+            Every version of it that we hold, unfiltered: retracted ones included, and
+            not narrowed to the latest. Judging those is the chooser's business.
 
         Returns
         -------
@@ -538,30 +584,56 @@ def choose_parent_version(
     child: DatasetVersion, candidates: Sequence[DatasetVersion]
 ) -> VersionMatchOutcome:
     """
-    Choose a parent version by preferring the child's own, then by there being only one
+    Choose a parent version: the child's own if it is published, else the newest
 
-    Three cases, in order:
+    Three cases, and it always answers:
 
-    1. **one candidate carries the child's own version string** -- that one. A version
-       string is a publication datestamp, so a parent published in the same batch as its
-       child is the one that generation of the child was produced against. It is also
-       the only signal in the data at all, which matters more than it being a strong
-       one.
-    2. **the parent dataset has exactly one version** -- that one, whether or not its
-       string matches. There is no choice to make, so there is nothing to report.
-    3. **several versions and none of them the child's** -- ambiguous. Which one a child
-       branched from is then a question only a person can answer, so it is handed back
-       rather than guessed at. Inject a
-       [ParentVersionChooser][(m).ParentVersionChooser] of your own to answer it in
-       code.
+    1. **one version held** -- that one, labelled
+       [ONLY_VERSION][esmporium.db.schema.ParentVersionChoice.ONLY_VERSION]. No decision
+       was made, so there is nothing to report.
+    2. **several, one of them carrying the child's own version string** -- that one,
+       labelled [CHILD_VERSION][esmporium.db.schema.ParentVersionChoice.CHILD_VERSION].
+       Two datasets sharing a publication date is usually one publication event, so that
+       release is the one which belongs with the child: same CMOR tables, same fixes,
+       same generation. Preferred **even when it is older** than other releases, because
+       a contemporaneous pair is internally consistent where a 2019 child against a 2021
+       parent may not be.
+    3. **several, none of them the child's** -- the highest `version` string, labelled
+       [DEFAULTED][esmporium.db.schema.ParentVersionChoice.DEFAULTED].
 
-    Not split per project, unlike the dataset-stage matchers: a version string is a
-    DRS-wide concept and means the same thing in every project.
+    Retracted releases are dropped before 2 and 3, so a retracted match never beats a
+    live newer release. If *every* release is retracted the filter is skipped rather
+    than the chain being abandoned: a retracted parent is still the parent.
+
+    **Why case 3 is the common one, and why a parent whose every release is newer than
+    the child is not a contradiction.** A version string is the date a dataset was
+    *published*, not the date the model ran. A branch happens inside a modelling centre
+    -- the control run is integrated, the child is started from a point in it, and both
+    sit on the centre's own disks long before either reaches ESGF -- so publication
+    order afterwards is administrative. A child published in April 2019 whose parent's
+    releases are April 2019, June 2020 and August 2020 did not branch from data that did
+    not exist yet: it branched from the *run*, and all three releases publish that same
+    run. Which is also why there is no question of preferring a release dated before the
+    child; being older would mean nothing.
+
+    **Why the newest in case 3, and not
+    [is_latest][esmporium.db.schema.DatasetVersion.is_latest].** That flag is a snapshot
+    refreshed last-write-wins from whichever document arrived last, so it can be true
+    for two versions of one dataset or for none, depending on ingest order. The
+    `version` string is local, total and deterministic, and in every project we have met
+    it is a `YYYYMMDD` date, so ordering it as text is ordering it by time. The newest
+    release is also the one whose own parent attributes have had the most corrections
+    applied, which matters because it is the metadata the next hop of a walk reads.
+
+    One rule for every project, unlike the dataset-stage matchers: a version string
+    means the same thing in all of them.
 
     Parameters
     ----------
     child
         The version whose parent is wanted
+
+        Read only for its `version` string, in case 2.
 
     candidates
         The versions of the already-matched parent dataset to choose between
@@ -570,28 +642,45 @@ def choose_parent_version(
     -------
     :
         The choice. See [VersionMatchOutcome][(m).VersionMatchOutcome].
+
+        Never ambiguous, and `parent_version` is `None` only when `candidates` is empty.
+
+    Notes
+    -----
+    A CMIP5 parent can look as though it has several versions when it has one.
+    [DatasetVersion.version][esmporium.db.schema.DatasetVersion.version] notes that
+    CMIP5 replicas carry inconsistent version strings across nodes (a date on one, `1`
+    on another), and a version row's identity is `(dataset_id, version)`, so one
+    publication seen two ways is two rows. Taking the highest string picks the date over
+    the bare integer, which is the informative one -- but it is reported as a decision
+    all the same, so CMIP5 slightly over-reports having made one.
     """
     if not candidates:
         return VersionMatchOutcome(
             reason="we hold no versions of the matched parent dataset"
         )
 
-    # At most one can match: a version string is unique within a dataset.
-    for candidate in candidates:
-        if candidate.version == child.version:
-            return VersionMatchOutcome(parent_version=candidate)
-
     if len(candidates) == 1:
-        return VersionMatchOutcome(parent_version=candidates[0])
+        return VersionMatchOutcome(
+            parent_version=candidates[0],
+            choice=ParentVersionChoice.ONLY_VERSION,
+        )
+
+    # A retracted parent is still the parent, so a dataset whose every release is
+    # retracted falls back to the whole list rather than to no answer at all.
+    live = [one for one in candidates if not one.retracted] or list(candidates)
+
+    # At most one can match: a version string is unique within a dataset.
+    chosen = next((one for one in live if one.version == child.version), None)
+    choice = ParentVersionChoice.CHILD_VERSION
+    if chosen is None:
+        chosen = max(live, key=lambda one: one.version)
+        choice = ParentVersionChoice.DEFAULTED
 
     return VersionMatchOutcome(
-        candidates=tuple(candidates),
-        reason=(
-            f"the parent dataset has {len(candidates)} versions "
-            f"({', '.join(sorted(one.version for one in candidates))}) and none of "
-            f"them is the child's own ({child.version!r}), so which one it branched "
-            f"from cannot be decided from the metadata"
-        ),
+        parent_version=chosen,
+        choice=choice,
+        passed_over=tuple(one for one in candidates if one is not chosen),
     )
 
 
@@ -599,6 +688,7 @@ DEFAULT_PARENT_VERSION_CHOOSER: ParentVersionChooser = choose_parent_version
 """
 The version chooser used when none is injected
 
-See [choose_parent_version][(m).choose_parent_version]. One rule for every project,
-because a version string means the same thing in all of them.
+See [choose_parent_version][(m).choose_parent_version]. It always answers, so no chain
+stops for want of a version; wherever it had more than one release to pick from, it
+says which rule picked and what it passed over.
 """

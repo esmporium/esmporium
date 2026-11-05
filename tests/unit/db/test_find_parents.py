@@ -10,6 +10,7 @@ also the fast path the design rests on.
 from __future__ import annotations
 
 import itertools
+import warnings
 
 import pytest
 from sqlmodel import Session, col, select
@@ -27,6 +28,8 @@ from esmporium.db import (
     ParentResolution,
     ParentResolutionError,
     ParentSimulation,
+    ParentVersionChoice,
+    ParentVersionDecidedWarning,
     TooManyParentHopsError,
     VersionMatchOutcome,
     find_parents,
@@ -42,21 +45,16 @@ PICONTROL = ("piControl",)
 
 
 def parent_dataset_of(session, link) -> Dataset:
-    """
-    Read the dataset a link's parent version belongs to
-
-    The link names a version, so which dataset that is takes one hop. See
-    [DatasetParentLink][esmporium.db.DatasetParentLink].
-    """
-    version = session.get(DatasetVersion, link.parent_dataset_version_id)
-    assert version is not None
-    dataset = session.get(Dataset, version.dataset_id)
+    """Read the dataset a link points at, which is the certain half of the answer."""
+    dataset = session.get(Dataset, link.parent_dataset_id)
     assert dataset is not None
 
     return dataset
 
 
-def another_version(session, version_id: int, version: str) -> int:
+def another_version(
+    session, version_id: int, version: str, *, retracted: bool = False
+) -> int:
     """Publish a second version of the dataset `version_id` belongs to."""
     existing = session.get(DatasetVersion, version_id)
     assert existing is not None
@@ -64,7 +62,7 @@ def another_version(session, version_id: int, version: str) -> int:
         dataset_id=existing.dataset_id,
         version=version,
         is_latest=False,
-        retracted=False,
+        retracted=retracted,
     )
     session.add(added)
     session.flush()
@@ -969,15 +967,8 @@ def test_an_injected_matcher_resolves_an_ambiguity(engine, a_dataset_version):
         assert parent.institution == "LLNL"
 
 
-def test_the_parent_version_matching_the_childs_is_the_one_linked(
-    engine, a_dataset_version
-):
-    """
-    A republished parent does not make its lineage ambiguous if one version fits
-
-    The child declares a simulation, the simulation's dataset is published twice, and
-    one of those publications carries the child's own version string.
-    """
+def test_one_version_of_a_parent_is_linked_without_a_word(engine, a_dataset_version):
+    """A parent published once leaves nothing to decide, so nothing is reported."""
     with Session(engine) as session:
         child = store(
             session,
@@ -986,29 +977,27 @@ def test_the_parent_version_matching_the_childs_is_the_one_linked(
             parent=a_parent("piControl"),
             version="20261008",
         )
-        parent_version = a_dataset_version(
-            session, experiment="piControl", version="20200101"
-        )
-        matching = another_version(session, parent_version, "20261008")
+        only = a_dataset_version(session, experiment="piControl", version="20200101")
         session.commit()
 
         result = resolve_parent_links(session, [child])
         session.commit()
 
-        assert result.ambiguous_versions == ()
+        assert result.version_decisions == ()
         assert len(result.linked) == 1
-        assert result.linked[0].parent_dataset_version_id == matching
+        assert result.linked[0].parent_dataset_version_id == only
+        assert result.linked[0].version_choice == ParentVersionChoice.ONLY_VERSION
 
 
-def test_two_parent_versions_and_neither_the_childs_is_handed_back(
+def test_a_republished_parent_is_linked_at_its_newest_and_reported(
     engine, a_dataset_version
 ):
     """
-    Which version a child branched from is not published, so it is not invented
+    The live CMIP6 case: every release of the parent is newer than the child
 
-    The dataset is matched -- it is the right variable of the right simulation -- and
-    the row is left unresolved with the candidates named, so a person or an injected
-    chooser can settle it with nothing to undo.
+    So none of them carries the child's version string and nothing published says which
+    was branched from. The chain is linked and climbs -- stopping here would stop at
+    most CMIP6 parents -- and the link says the release was ours to pick.
     """
     with Session(engine) as session:
         child = store(
@@ -1016,33 +1005,134 @@ def test_two_parent_versions_and_neither_the_childs_is_handed_back(
             a_dataset_version,
             "abrupt-4xCO2",
             parent=a_parent("piControl"),
-            version="20261008",
+            version="20190406",
         )
-        first = a_dataset_version(session, experiment="piControl", version="20200101")
-        second = another_version(session, first, "20300101")
+        first = a_dataset_version(session, experiment="piControl", version="20190410")
+        middle = another_version(session, first, "20200630")
+        newest = another_version(session, first, "20200828")
         session.commit()
 
         result = resolve_parent_links(session, [child])
         session.commit()
 
-        assert result.linked == ()
-        assert len(result.ambiguous_versions) == 1
-        reported = result.ambiguous_versions[0]
+        assert len(result.linked) == 1
+        link = result.linked[0]
+        assert link.parent_dataset_version_id == newest
+        assert link.version_choice == ParentVersionChoice.DEFAULTED
+
+        (reported,) = result.version_decisions
         assert reported.child_dataset_version_id == child
-        assert sorted(reported.candidate_dataset_version_ids) == sorted([first, second])
+        assert reported.chosen_dataset_version_id == newest
+        assert reported.choice == ParentVersionChoice.DEFAULTED
+        assert sorted(reported.passed_over_dataset_version_ids) == sorted(
+            [first, middle]
+        )
         assert str(reported.parent) == "CMIP7 UKESM1-3-LL piControl r1i1p1f1"
 
         (held,) = session.exec(select(DatasetVersionParent)).all()
-        assert held.resolution == ParentResolution.UNRESOLVED
-        assert session.exec(select(DatasetParentLink)).all() == []
+        assert held.resolution == ParentResolution.RESOLVED
 
 
-def test_an_injected_chooser_resolves_a_version_ambiguity(engine, a_dataset_version):
+def test_a_parent_release_sharing_the_childs_version_is_the_one_linked(
+    engine, a_dataset_version
+):
     """
-    Which is why the chooser is a parameter: only a person can answer this one
+    A shared publication date is a publication batch, so that release belongs together
 
-    Nothing published says which version was branched from, so a caller who knows
-    their own data says so and the resolve goes through.
+    Taken even though a newer release of the same parent is held, and still reported:
+    it is better evidence than the newest-release default but it is a decision all the
+    same.
+    """
+    with Session(engine) as session:
+        child = store(
+            session,
+            a_dataset_version,
+            "abrupt-4xCO2",
+            parent=a_parent("piControl"),
+            version="20190710",
+        )
+        matching = a_dataset_version(
+            session, experiment="piControl", version="20190710"
+        )
+        newer = another_version(session, matching, "20210901")
+        session.commit()
+
+        result = resolve_parent_links(session, [child])
+        session.commit()
+
+        link = result.linked[0]
+        assert link.parent_dataset_version_id == matching
+        assert link.version_choice == ParentVersionChoice.CHILD_VERSION
+
+        (reported,) = result.version_decisions
+        assert reported.choice == ParentVersionChoice.CHILD_VERSION
+        assert reported.chosen_dataset_version_id == matching
+        assert reported.passed_over_dataset_version_ids == (newer,)
+
+
+def test_a_retracted_matching_release_loses_to_a_live_newer_one(
+    engine, a_dataset_version
+):
+    """Upstream saying do not use this outranks a shared publication date."""
+    with Session(engine) as session:
+        child = store(
+            session,
+            a_dataset_version,
+            "abrupt-4xCO2",
+            parent=a_parent("piControl"),
+            version="20190710",
+        )
+        matching = a_dataset_version(
+            session, experiment="piControl", version="20190710"
+        )
+        retracted = session.get(DatasetVersion, matching)
+        assert retracted is not None
+        retracted.retracted = True
+        newer = another_version(session, matching, "20210901")
+        session.commit()
+
+        result = resolve_parent_links(session, [child])
+        session.commit()
+
+        link = result.linked[0]
+        assert link.parent_dataset_version_id == newer
+        assert link.version_choice == ParentVersionChoice.DEFAULTED
+
+
+def test_the_link_holds_the_dataset_as_well_as_the_version(engine, a_dataset_version):
+    """
+    The dataset is a fact and the version is a choice, so both are stored
+
+    The invariant that one belongs to the other holds by construction here, which is
+    the only place links are written.
+    """
+    with Session(engine) as session:
+        child = store(
+            session,
+            a_dataset_version,
+            "abrupt-4xCO2",
+            parent=a_parent("piControl"),
+            version="20190406",
+        )
+        first = a_dataset_version(session, experiment="piControl", version="20190410")
+        another_version(session, first, "20200828")
+        session.commit()
+
+        result = resolve_parent_links(session, [child])
+        session.commit()
+
+        link = result.linked[0]
+        chosen = session.get(DatasetVersion, link.parent_dataset_version_id)
+        assert chosen is not None
+        assert chosen.dataset_id == link.parent_dataset_id
+
+
+def test_an_injected_chooser_overrides_the_default(engine, a_dataset_version):
+    """
+    Which is why the chooser is a parameter: our rule is a rule, not a reading
+
+    A caller who knows which release their analysis rests on says so, and the link is
+    labelled as theirs rather than as a default.
     """
     with Session(engine) as session:
         child = store(
@@ -1056,57 +1146,146 @@ def test_an_injected_chooser_resolves_a_version_ambiguity(engine, a_dataset_vers
         another_version(session, first, "20300101")
         session.commit()
 
-        def newest(child_version, candidates):
+        def oldest(child_version, candidates):
             return VersionMatchOutcome(
-                parent_version=max(candidates, key=lambda one: one.version)
+                parent_version=min(candidates, key=lambda one: one.version)
             )
 
-        result = resolve_parent_links(session, [child], version_chooser=newest)
+        result = resolve_parent_links(session, [child], version_chooser=oldest)
         session.commit()
 
-        assert result.ambiguous_versions == ()
+        assert result.version_decisions == ()
         assert len(result.linked) == 1
-        chosen = session.get(DatasetVersion, result.linked[0].parent_dataset_version_id)
-        assert chosen is not None
-        assert chosen.version == "20300101"
+        assert result.linked[0].parent_dataset_version_id == first
+        assert result.linked[0].version_choice == ParentVersionChoice.CHOSEN
 
 
-def test_a_walk_does_not_climb_through_a_version_it_could_not_choose(
-    engine, a_dataset_version
-):
+def test_a_chooser_which_declines_leaves_the_row_unresolved(engine, a_dataset_version):
     """
-    An unchosen version stops a chain, and says so rather than looking like a top
+    A chooser of your own may refuse where ours will not
 
-    The walk reports the ambiguity and the chain simply does not go further, which is
-    the honest answer: it cannot know which lineage to follow.
+    If which release an analysis rests on matters, "I cannot tell" beats any rule. The
+    chain stops and says why, with nothing written to undo.
     """
     with Session(engine) as session:
         child = store(
             session,
             a_dataset_version,
             "abrupt-4xCO2",
-            parent=a_parent("historical"),
+            parent=a_parent("piControl"),
             version="20261008",
         )
-        middle = store(
-            session,
-            a_dataset_version,
-            "historical",
-            parent=a_parent("piControl"),
-            version="20200101",
-        )
-        another_version(session, middle, "20300101")
+        first = a_dataset_version(session, experiment="piControl", version="20200101")
+        second = another_version(session, first, "20300101")
         session.commit()
 
-        result = find_parents(
-            session,
-            [child],
-            until_experiment=PICONTROL,
-            check_until_exists=False,
-            searcher=no_search,
-        )
+        def refuse(child_version, candidates):
+            return VersionMatchOutcome(
+                candidates=tuple(candidates), reason="I will not guess"
+            )
 
-        assert len(result.ambiguous_versions) == 1
-        assert result.ambiguous_versions[0].child_dataset_version_id == child
-        assert result.linked == []
-        assert result.hops == 0
+        result = resolve_parent_links(session, [child], version_chooser=refuse)
+        session.commit()
+
+        assert result.linked == ()
+        assert result.version_decisions == ()
+        (reported,) = result.ambiguous_versions
+        assert sorted(reported.candidate_dataset_version_ids) == sorted([first, second])
+        assert "I will not guess" in reported.reason
+
+        (held,) = session.exec(select(DatasetVersionParent)).all()
+        assert held.resolution == ParentResolution.UNRESOLVED
+        assert session.exec(select(DatasetParentLink)).all() == []
+
+
+def test_a_walk_climbs_through_a_defaulted_version_and_warns_once(
+    engine, a_dataset_version
+):
+    """
+    The regression for the live CMIP6 failure: a republished parent stopped the walk
+
+    It has to climb instead. And a walk over one simulation's many datasets has to say
+    so once rather than once per link, or the warning gets silenced.
+    """
+    with Session(engine) as session:
+        children = [
+            store(
+                session,
+                a_dataset_version,
+                "abrupt-4xCO2",
+                parent=a_parent("piControl"),
+                variable=variable,
+                version="20190406",
+            )
+            for variable in ("tas", "rsdt")
+        ]
+        for variable in ("tas", "rsdt"):
+            first = a_dataset_version(
+                session,
+                experiment="piControl",
+                variable=variable,
+                version="20190410",
+            )
+            another_version(session, first, "20200828")
+        session.commit()
+
+        with pytest.warns(ParentVersionDecidedWarning) as warned:
+            result = find_parents(
+                session,
+                children,
+                until_experiment=PICONTROL,
+                check_until_exists=False,
+                searcher=no_search,
+            )
+
+        assert result.hops >= 1
+        assert len(result.linked) == 2
+        assert len(warned) == 1
+        message = str(warned[0].message)
+        assert "piControl" in message
+        # Both counts, and the sentence that stops the dates reading as nonsense.
+        assert "0 matched the child's own version string" in message
+        assert "2 fell back to the newest release" in message
+        assert "publication date" in message
+
+        assert len(result.version_decisions) == 2
+        assert {one.child_dataset_version_id for one in result.version_decisions} == {
+            *children
+        }
+        chosen = {
+            session.get(DatasetVersion, link.parent_dataset_version_id).version
+            for link in result.linked
+        }
+        assert chosen == {"20200828"}
+        # One terminal per chain, and both chains stopped at the same simulation.
+        assert {str(one) for one in result.terminals} == {
+            "CMIP7 UKESM1-3-LL piControl r1i1p1f1"
+        }
+        assert len(result.terminals) == len(children)
+
+
+def test_a_walk_with_nothing_to_choose_does_not_warn(engine, a_dataset_version):
+    """The warning has to stay rare enough to mean something."""
+    with Session(engine) as session:
+        child = store(
+            session,
+            a_dataset_version,
+            "abrupt-4xCO2",
+            parent=a_parent("piControl"),
+            version="20190406",
+        )
+        a_dataset_version(session, experiment="piControl", version="20200101")
+        session.commit()
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", ParentVersionDecidedWarning)
+            result = find_parents(
+                session,
+                [child],
+                until_experiment=PICONTROL,
+                check_until_exists=False,
+                searcher=no_search,
+            )
+
+        assert len(result.linked) == 1
+        assert result.version_decisions == []

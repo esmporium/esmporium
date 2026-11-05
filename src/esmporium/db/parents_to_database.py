@@ -24,6 +24,7 @@ sit three or four branches below its control run.
 from __future__ import annotations
 
 import datetime
+import warnings
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
@@ -48,6 +49,7 @@ from esmporium.db.schema import (
     DatasetVersionParent,
     ParentInfoSource,
     ParentResolution,
+    ParentVersionChoice,
 )
 from esmporium.query.canonical_query import QueryCanonical
 from esmporium.query.translate import translate_canonical_to_projects
@@ -477,19 +479,17 @@ class AmbiguousParentVersion:
     """
     The parent dataset was found, and which *version* of it was branched from is unclear
 
-    The second stage's version of [AmbiguousParent][(m).AmbiguousParent], and reported
-    for the same reason: a child branched from exactly one version of its parent, no
-    source says which, and several versions of the right dataset are held. Guessing
-    would record our default as though it were the published answer.
+    **Only an injected [ParentVersionChooser][esmporium.db.ParentVersionChooser] can
+    produce this.** The shipped
+    [choose_parent_version][esmporium.db.choose_parent_version] has an answer for every
+    case -- it takes the newest non-retracted version and labels the link
+    [DEFAULTED][esmporium.db.schema.ParentVersionChoice.DEFAULTED], reported as a
+    [ParentVersionDecision][(m).ParentVersionDecision] -- because a chain which stops
+    at a republished parent stops at most CMIP6 parents.
 
-    Nothing published can settle this, so unlike an
-    [AmbiguousParent][(m).AmbiguousParent] it is not something a better search can fix.
-    The remedy is to decide: inject a
-    [ParentVersionChooser][esmporium.db.ParentVersionChooser] into
-    [resolve_parent_links][(m).resolve_parent_links] or
-    [find_parents][(m).find_parents]. See
-    [choose_parent_version][esmporium.db.choose_parent_version] for the rule which
-    could not decide.
+    A chooser of your own may legitimately refuse, though: if which release an analysis
+    rests on matters, "I cannot tell, and will not pretend" is a better answer than any
+    rule. This is how that refusal reaches the caller.
 
     The assertion is left [UNRESOLVED][esmporium.db.schema.ParentResolution.UNRESOLVED]
     and no link is written, so re-running with a chooser resolves it with nothing to
@@ -519,6 +519,111 @@ class AmbiguousParentVersion:
             f"{self.reason}; candidate versions are "
             f"{list(self.candidate_dataset_version_ids)}"
         )
+
+
+_DECIDED_VERSION_CHOICES = frozenset(
+    {ParentVersionChoice.CHILD_VERSION, ParentVersionChoice.DEFAULTED}
+)
+"""
+The [ParentVersionChoice][esmporium.db.schema.ParentVersionChoice]s that are decisions
+
+i.e. the ones where more than one release was held and a rule of ours picked. The other
+two are not: `ONLY_VERSION` had nothing to pick from, and `CHOSEN` means the caller
+picked, so neither is something to report back to them.
+"""
+
+
+@dataclass(frozen=True)
+class ParentVersionDecision:
+    """
+    A parent dataset was published more than once and we picked which release to use
+
+    **Not a failure and not an ambiguity**: the parent is found, the lineage is intact
+    and the chain climbs through it. What is being reported is that more than one
+    release of the right dataset was held, so which one the link points at came from a
+    rule rather than from anything published. `choice` says which rule.
+
+    Reported whenever there was something to choose, including when the parent carried
+    the child's own version string
+    ([CHILD_VERSION][esmporium.db.schema.ParentVersionChoice.CHILD_VERSION]) -- that is
+    better evidence than the newest-release default, but it is still a decision, and a
+    caller cannot weigh it if nobody tells them it happened. A parent held in a single
+    version produces no row here, because nothing was decided.
+
+    **A note on the dates, which look wrong the first time.** The releases passed over
+    are often *all newer* than the child, so it can read as though a child branched from
+    data that did not exist yet. A version string is a publication date, not a run date:
+    the branch happened on the modelling centre's own disks before either end of it was
+    published, and every release publishes that same run. See
+    [ParentVersionChoice][esmporium.db.schema.ParentVersionChoice].
+
+    To decide it yourself, inject a
+    [ParentVersionChooser][esmporium.db.ParentVersionChooser].
+    """
+
+    child_dataset_version_id: int
+    """The version whose parent release was decided"""
+
+    parent: ParentSimulation
+    """The simulation it declared"""
+
+    parent_dataset_id: int
+    """The parent dataset that was matched, as its id"""
+
+    chosen_dataset_version_id: int
+    """The release we used, as its id"""
+
+    choice: ParentVersionChoice
+    """
+    Which rule picked it
+
+    See [ParentVersionChoice][esmporium.db.schema.ParentVersionChoice]. Only ever
+    [CHILD_VERSION][esmporium.db.schema.ParentVersionChoice.CHILD_VERSION] or
+    [DEFAULTED][esmporium.db.schema.ParentVersionChoice.DEFAULTED] here; the other two
+    values are not decisions, so they are not recorded as any.
+    """
+
+    passed_over_dataset_version_ids: tuple[int, ...]
+    """
+    The releases we did not use, as their ids
+
+    Carried because it is the part a caller would need in order to disagree.
+    """
+
+    def __str__(self) -> str:
+        """Render as the message shown to the caller."""
+        if self.choice == ParentVersionChoice.CHILD_VERSION:
+            why = (
+                "one of them carries the child's own version string, so that release "
+                "was used"
+            )
+        else:
+            why = (
+                "none of them carries the child's own version string, so the newest "
+                "was used"
+            )
+
+        return (
+            f"dataset version {self.child_dataset_version_id} declares parent "
+            f"({self.parent}), which matched dataset {self.parent_dataset_id}; it is "
+            f"published more than once and {why} "
+            f"({self.chosen_dataset_version_id}), passing over "
+            f"{list(self.passed_over_dataset_version_ids)}."
+        )
+
+
+class ParentVersionDecidedWarning(UserWarning):
+    """
+    Warned once per walk when any parent was held in more than one release
+
+    Once per walk and not once per link, deliberately. A parent fact is recorded per
+    dataset version and one simulation can be hundreds of datasets, so a per-link
+    warning would fire hundreds of times for one republished control run and teach
+    everybody to silence the category. The detail is on
+    [ParentWalkResult.version_decisions][(m).ParentWalkResult.version_decisions],
+    which is structured and can be acted on; this exists so that somebody who ignores
+    the return value still hears that a choice was made on their behalf.
+    """
 
 
 class ParentResolutionError(RuntimeError):
@@ -629,8 +734,18 @@ class ParentResolutionResult:
     """
     Children whose parent dataset was matched but whose parent *version* was not
 
-    Informational here, and left unresolved so a chooser can be injected and the resolve
-    re-run. See [AmbiguousParentVersion][(m).AmbiguousParentVersion].
+    Only ever populated by an injected chooser which declined to pick; the shipped
+    default always answers. Left unresolved so the resolve can be re-run. See
+    [AmbiguousParentVersion][(m).AmbiguousParentVersion].
+    """
+
+    version_decisions: tuple[ParentVersionDecision, ...] = ()
+    """
+    Children whose parent was held in several releases, so which one to use was decided
+
+    Resolved and linked, so this is informational -- but it is the normal case for a
+    republished parent, not an edge. See
+    [ParentVersionDecision][(m).ParentVersionDecision].
     """
 
     still_unresolved: tuple[int, ...] = ()
@@ -671,10 +786,21 @@ class ParentWalkResult:
 
     ambiguous_versions: list[AmbiguousParentVersion] = field(default_factory=list)
     """
-    Every parent *version* the chooser could not choose
+    Every parent *version* an injected chooser declined to pick
 
     See [AmbiguousParentVersion][(m).AmbiguousParentVersion]. Not a failure either, and
-    not climbed through for the same reason.
+    not climbed through for the same reason. Empty unless a chooser was injected.
+    """
+
+    version_decisions: list[ParentVersionDecision] = field(default_factory=list)
+    """
+    Every parent release our own rules picked, out of several they were given
+
+    See [ParentVersionDecision][(m).ParentVersionDecision]. These chains *are* climbed
+    -- the link is written and the walk carries on through it -- so this is the record
+    of which parts of the answer rest on a choice of ours, and `choice` says how strong
+    each one is. A [ParentVersionDecidedWarning][(m).ParentVersionDecidedWarning] is
+    raised once if this is non-empty.
     """
 
     searched: list[ParentSimulation] = field(default_factory=list)
@@ -866,19 +992,21 @@ def resolve_parent_links(
         [esmporium.db.parent_matching][].
 
     version_chooser
-        How to pick which version of the matched parent dataset was branched from.
+        How to pick which version of the matched parent dataset to use.
 
         Defaults to [choose_parent_version][esmporium.db.choose_parent_version], which
-        prefers the child's own version string and otherwise resolves only where there
-        is a single version. Pass one of your own to decide the cases it leaves
-        ambiguous -- which is the only way they can be decided, because nothing
-        published says which version a child branched from.
+        prefers the release carrying the child's own version string and otherwise takes
+        the newest that has not been retracted -- and says which, rather than pretending
+        either was published as the answer. Pass one of your own to decide it
+        differently; nothing published can decide it, so a rule is all that either of
+        you has.
 
     Returns
     -------
     :
         What was linked, what is still waiting, which variables an ancestor we do hold
-        turned out not to publish, and anything neither step could choose between.
+        turned out not to publish, and which parent releases were picked by us rather
+        than read.
 
     Raises
     ------
@@ -916,6 +1044,7 @@ def resolve_parent_links(
     variable_gaps: list[VariableGap] = []
     ambiguous: list[AmbiguousParent] = []
     ambiguous_versions: list[AmbiguousParentVersion] = []
+    version_decisions: list[ParentVersionDecision] = []
     still_unresolved: list[int] = []
 
     # Grouped by child version and run through precedence, so a version described by
@@ -953,6 +1082,8 @@ def resolve_parent_links(
             ambiguous.append(resolved.ambiguous)
         if resolved.ambiguous_version is not None:
             ambiguous_versions.append(resolved.ambiguous_version)
+        if resolved.version_decision is not None:
+            version_decisions.append(resolved.version_decision)
         if resolved.still_unresolved:
             still_unresolved.append(flushed_id(preferred))
 
@@ -961,6 +1092,7 @@ def resolve_parent_links(
         variable_gaps=tuple(variable_gaps),
         ambiguous=tuple(ambiguous),
         ambiguous_versions=tuple(ambiguous_versions),
+        version_decisions=tuple(version_decisions),
         still_unresolved=tuple(sorted(still_unresolved)),
     )
 
@@ -1032,7 +1164,15 @@ class _ResolvedChild:
     """The ambiguity to report, when several datasets of the simulation fitted"""
 
     ambiguous_version: AmbiguousParentVersion | None = None
-    """The ambiguity to report, when several versions of the right dataset fitted"""
+    """The ambiguity to report, when a chooser declined to pick between versions"""
+
+    version_decision: ParentVersionDecision | None = None
+    """
+    The decision to report, when several releases of the parent dataset were held
+
+    Set *alongside* `link`, unlike the other three: the parent resolved and the chain
+    climbs, and this says the release it climbed through was picked by us.
+    """
 
     still_unresolved: bool = False
     """Whether the assertion stays in the queue for a later search or chooser"""
@@ -1130,7 +1270,9 @@ def _resolve_one_assertion(  # noqa: PLR0913 - one argument per thing the two de
     link = DatasetParentLink(
         parent_info_id=flushed_id(parent_info),
         child_dataset_version_id=parent_info.dataset_version_id,
+        parent_dataset_id=parent_dataset_id,
         parent_dataset_version_id=flushed_id(parent_version),
+        version_choice=version_outcome.choice,
     )
     session.add(link)
     parent_info.resolution = ParentResolution.RESOLVED
@@ -1138,7 +1280,22 @@ def _resolve_one_assertion(  # noqa: PLR0913 - one argument per thing the two de
     session.add(parent_info)
     session.flush()
 
-    return _ResolvedChild(link=link)
+    decision = None
+    if version_outcome.choice in _DECIDED_VERSION_CHOICES:
+        # Linked and climbable, and still worth saying: more than one release of the
+        # right dataset was held, so which one this points at is ours, not theirs.
+        decision = ParentVersionDecision(
+            child_dataset_version_id=parent_info.dataset_version_id,
+            parent=parent,
+            parent_dataset_id=parent_dataset_id,
+            chosen_dataset_version_id=flushed_id(parent_version),
+            choice=version_outcome.choice,
+            passed_over_dataset_version_ids=tuple(
+                flushed_id(one) for one in version_outcome.passed_over
+            ),
+        )
+
+    return _ResolvedChild(link=link, version_decision=decision)
 
 
 def candidate_parent_versions(
@@ -1404,20 +1561,26 @@ def find_parents(  # noqa: PLR0913 - one argument per thing a walk has to be tol
         [resolve_parent_links][(m).resolve_parent_links].
 
     version_chooser
-        How to pick which version of a matched parent dataset was branched from, passed
-        through to [resolve_parent_links][(m).resolve_parent_links].
+        How to pick which version of a matched parent dataset to use, passed through to
+        [resolve_parent_links][(m).resolve_parent_links].
 
-        A chain does not climb through a version the chooser could not pick, so a walk
-        over data with several versions per parent may stop earlier than expected with
-        [ParentWalkResult.ambiguous_versions][(m).ParentWalkResult.ambiguous_versions]
-        populated. That is the honest answer: the walk cannot know which lineage to
-        follow.
+        The default always answers, so a republished parent never stops a chain. Where
+        it had more than one release to pick from, the link carries which rule picked
+        (see [ParentVersionChoice][esmporium.db.schema.ParentVersionChoice]), the choice
+        is listed in
+        [ParentWalkResult.version_decisions][(m).ParentWalkResult.version_decisions],
+        and one [ParentVersionDecidedWarning][(m).ParentVersionDecidedWarning] is raised
+        for the whole walk.
+
+        A chooser of your own may refuse instead, which stops that chain and reports it
+        on [ambiguous_versions][(m).ParentWalkResult.ambiguous_versions].
 
     Returns
     -------
     :
-        What was linked, where each chain stopped, anything neither matching step could
-        choose, which searches were fired and how many times the walk climbed.
+        What was linked, where each chain stopped, which parent releases were picked by
+        us, anything neither matching step could choose, which searches were fired and
+        how many times the walk climbed.
 
     Raises
     ------
@@ -1442,6 +1605,13 @@ def find_parents(  # noqa: PLR0913 - one argument per thing a walk has to be tol
     UnconfiguredSQLiteEngineError
         `session` is bound to a SQLite engine that has not been configured with
         [esmporium.db.configure_sqlite_for_concurrency][].
+
+    Warns
+    -----
+    ParentVersionDecidedWarning
+        At least one parent is published more than once, so which release to use was
+        picked by a rule rather than read. Raised once for the whole walk, however many
+        links it covers.
     """
     check_engine_is_configured(session)
 
@@ -2014,6 +2184,7 @@ def _walk(  # noqa: PLR0913, PLR0912, PLR0915 - every argument is one `find_pare
     seen_gaps: set[VariableGap] = set()
     seen_ambiguous: set[AmbiguousParent] = set()
     seen_ambiguous_versions: set[AmbiguousParentVersion] = set()
+    seen_version_decisions: set[ParentVersionDecision] = set()
 
     def record(resolution: ParentResolutionResult) -> None:
         """Fold one resolve's outcome into the walk's, without repeating anything."""
@@ -2033,6 +2204,10 @@ def _walk(  # noqa: PLR0913, PLR0912, PLR0915 - every argument is one `find_pare
             if unchosen_version not in seen_ambiguous_versions:
                 seen_ambiguous_versions.add(unchosen_version)
                 result.ambiguous_versions.append(unchosen_version)
+        for decision in resolution.version_decisions:
+            if decision not in seen_version_decisions:
+                seen_version_decisions.add(decision)
+                result.version_decisions.append(decision)
 
     if check_until_exists and until_experiment:
         for project in _projects_to_check(session, dataset_version_ids):
@@ -2140,10 +2315,55 @@ def _walk(  # noqa: PLR0913, PLR0912, PLR0915 - every argument is one `find_pare
         if result.hops > max_hops:
             raise TooManyParentHopsError(max_hops, _simulations_of(session, frontier))
 
+    # Before the failures are raised, so a walk which ends in one still says what its
+    # successful chains were resting on.
+    _warn_if_a_version_was_decided(result.version_decisions)
+
     if failures:
         raise ParentResolutionError(failures)
 
     return result
+
+
+def _warn_if_a_version_was_decided(
+    decisions: Sequence[ParentVersionDecision],
+) -> None:
+    """
+    Say once that some parent releases were picked by us, or say nothing
+
+    See [ParentVersionDecidedWarning][(m).ParentVersionDecidedWarning] for why this is
+    one warning and not one per link.
+    """
+    if not decisions:
+        return
+
+    matched = sum(
+        1 for one in decisions if one.choice == ParentVersionChoice.CHILD_VERSION
+    )
+    defaulted = len(decisions) - matched
+    simulations = sorted({str(one.parent) for one in decisions})
+    named = ", ".join(simulations[:3])
+    if len(simulations) > 3:  # noqa: PLR2004 - three is just how many fit in a message
+        named += f", and {len(simulations) - 3} more"
+
+    warnings.warn(
+        f"{len(decisions)} parent link(s) point at a release we picked, because the "
+        f"parent dataset is published more than once. Across "
+        f"{len(simulations)} parent simulation(s): {named}. Of those links: {matched} "
+        f"matched the child's own version string (usually the same publication batch, "
+        f"so the release that belongs with the child); {defaulted} fell back to the "
+        f"newest release that has not been retracted. "
+        "Nothing published says which release was branched from, so this is a rule of "
+        "ours rather than something read. If the releases look too new to be the "
+        "parent -- they are often all dated after the child -- that is expected: a "
+        "version string is a publication date, the branch happened on the modelling "
+        "centre's own disks before either end of it reached ESGF, and every release "
+        "publishes that same run. Each link carries its ParentVersionChoice, and the "
+        "details are on ParentWalkResult.version_decisions. To decide it yourself, "
+        "pass a version_chooser to find_parents.",
+        ParentVersionDecidedWarning,
+        stacklevel=2,
+    )
 
 
 def _links_from(
