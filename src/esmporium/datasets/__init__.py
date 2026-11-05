@@ -6,6 +6,7 @@ from esmporium.datasets.data_access import (
     AccessService,
     ContainerFormat,
     DownloadOutcome,
+    HeaderReadOutcome,
 )
 from esmporium.datasets.facets import DATASET_FACET_COLUMNS
 
@@ -14,4 +15,5 @@ __all__ = [
     "AccessService",
     "ContainerFormat",
     "DownloadOutcome",
+    "HeaderReadOutcome",
 ]

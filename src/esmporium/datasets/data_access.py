@@ -347,3 +347,247 @@ class DownloadOutcome(str, Enum):
             # See the note on SIZE_MISMATCH for why this matters so much here.
             DownloadOutcome.SIZE_MISMATCH,
         }
+
+
+class HeaderReadOutcome(str, Enum):
+    """
+    How one attempt to read a file's header over a route turned out
+
+    The twin of [DownloadOutcome][(m).DownloadOutcome], and here for the same reason:
+    [esmporium.headers][] produces one of these per attempt and
+    [HeaderReadCallRecord.outcome][esmporium.db.schema.HeaderReadCallRecord.outcome]
+    stores it, so it can belong to neither.
+
+    `str`-valued so the stored column reads as the name rather than an integer nobody
+    can interpret.
+
+    **A separate enum rather than reusing `DownloadOutcome`**, because the two measure
+    different things and sharing one would make both vaguer. Three of that enum's
+    members cannot happen here -- a 64 KiB prefix has no digest to check, no promised
+    length to fall short of, and no published size to contradict -- and three of this
+    one's cannot happen there: a download never finds the bytes unparseable, because
+    it never opens them. Keeping them apart is what lets
+    [is_worth_retrying][(c).is_worth_retrying] mean something precise on each.
+    """
+
+    SUCCESS = "success"
+    """
+    The bytes arrived and a header was read out of them
+
+    Reported whether or not the data node honoured our range request: a node which
+    ignored it and started sending the whole file still gave us a usable prefix, and
+    what it cost us is recorded on
+    [HeaderReadCallRecord.range_honoured][esmporium.db.schema.HeaderReadCallRecord.range_honoured]
+    rather than by calling a usable answer a failure.
+    """
+
+    MISSING = "missing"
+    """
+    The data node answered that there is nothing at this URL (404 or 410)
+
+    Not the node's fault, and excluded from its failure rate, exactly as
+    [DownloadOutcome.MISSING][(m).DownloadOutcome.MISSING] is.
+    """
+
+    NEEDS_CREDENTIALS = "needs_credentials"
+    """
+    The data node asked us to authenticate (401)
+
+    Worth saying out loud that this has never been seen: header reads go to public
+    THREDDS `fileServer` endpoints anonymously, and the prototype that did this before
+    us needed no credentials anywhere. Recorded because a node could start asking, not
+    because one does.
+    """
+
+    BLOCKED = "blocked"
+    """
+    The data node is refusing us for now (403, 429 or 503)
+
+    The one failure here worth retrying against the same route. A header read is a
+    small, cheap request, so a node that is rate limiting us is a node we are asking
+    too fast rather than one that is broken.
+    """
+
+    TIMEOUT = "timeout"
+    """
+    The data node connected and then stopped sending
+
+    **Not retried against the same route**, which is the opposite of what
+    [DownloadOutcome.TIMEOUT][(m).DownloadOutcome.TIMEOUT] does, and deliberately so.
+    A download retries because finishing a large transfer is worth another go; a
+    header is a few KB, so a node that cannot send that much has something wrong with
+    it and the next mirror is a better bet than the same one again.
+    """
+
+    HOST_FAULT = "host_fault"
+    """
+    We never reached the data node: DNS, TLS, or a connection that timed out
+
+    Nothing answered, so there is no response code to record. **Never retried, and it
+    stops us trying this node's other routes too** -- see
+    [stops_this_data_node][(c).stops_this_data_node].
+
+    Note what is *not* here: a connection the node actively *refused* is a
+    [TRANSPORT_ERROR][(c).TRANSPORT_ERROR], because a refusal can be momentary
+    overload where a DNS or TLS failure cannot.
+    """
+
+    TRANSPORT_ERROR = "transport_error"
+    """
+    Any other transient failure: a 5xx that is not 503, or a refused connection
+
+    The catch-all for "worth trying again", and the home of a plain connection
+    refusal. Telling a refusal apart from a DNS or TLS failure matters enough to be
+    worth the trouble, because treating them the same either hammers dead nodes or
+    abandons recoverable ones.
+    """
+
+    TRUNCATED_HEADER = "truncated_header"
+    """
+    The bytes are a file we understand, but we did not fetch enough of them
+
+    The header reader needs more than it asked for -- a netCDF-4 file whose root
+    object header sits late in the file, say. The fix is to ask for more, not to try
+    another mirror: every replica of a file has this same layout. So this is not
+    counted against the data node, which served exactly what we asked for.
+    """
+
+    UNREADABLE_BYTES = "unreadable_bytes"
+    """
+    The bytes claim a format we understand and then do not parse as it
+
+    A corrupt or mangled header. **Counted against the node**, because unlike
+    [TRUNCATED_HEADER][(c).TRUNCATED_HEADER] this is bad data rather than too little
+    of it, and another mirror of the same file may well be fine -- which is the same
+    argument [DownloadOutcome.CHECKSUM_FAILED][(m).DownloadOutcome.CHECKSUM_FAILED]
+    makes.
+    """
+
+    UNSUPPORTED_FORMAT = "unsupported_format"
+    """
+    The bytes are not a format this package can read a header out of
+
+    Either the magic bytes are nothing we recognise, or they are netCDF-4/HDF5 and the
+    optional `headers` extra is not installed. Not the node's fault, and not worth
+    retrying anywhere: every mirror of the file has the same first four bytes.
+    """
+
+    @property
+    def is_worth_retrying(self) -> bool:
+        """
+        Whether this outcome is worth trying again against the *same* route
+
+        Lives on the enum for the same reason
+        [DownloadOutcome.is_worth_retrying][(m).DownloadOutcome.is_worth_retrying]
+        does: one answer to the question, and adding a member forces a decision here.
+
+        **Far more restrictive than the download policy**, and that is the single
+        most expensive lesson the prototype learned. It retried every unclassified
+        failure three times across both of a node's URLs, so one dead data node cost
+        roughly `2 URLs x 3 attempts x 75 s` -- about seven and a half minutes -- for
+        one simulation, before anything else was tried. Here only a node that is up
+        and asking us to slow down, or a connection that broke in a way that might not
+        recur, gets a second attempt.
+
+        Returns
+        -------
+        :
+            `True` if retrying the same route might work
+
+        Examples
+        --------
+        >>> HeaderReadOutcome.BLOCKED.is_worth_retrying
+        True
+
+        A node we never reached will not be reached by asking again:
+
+        >>> HeaderReadOutcome.HOST_FAULT.is_worth_retrying
+        False
+
+        Nor will asking again make a short prefix longer:
+
+        >>> HeaderReadOutcome.TRUNCATED_HEADER.is_worth_retrying
+        False
+        """
+        return self in {
+            # The node is up and pacing us; a `Retry-After` says how long to wait.
+            HeaderReadOutcome.BLOCKED,
+            # Includes a refused connection, which can be momentary overload.
+            HeaderReadOutcome.TRANSPORT_ERROR,
+        }
+
+    @property
+    def stops_this_data_node(self) -> bool:
+        """
+        Whether to give up on this data node's remaining routes, not just this one
+
+        The prototype's hardest-won routing lesson. A node that is unreachable or
+        hanging fails its *other* URLs identically, so walking them only burns the
+        time that should have gone on the next mirror -- the "death spiral" its
+        post-mortem is named after. A file-level answer (a 404) says nothing about the
+        node and must not stop it.
+
+        Distinct from [is_worth_retrying][(c).is_worth_retrying], which is about the
+        same route rather than the same node: a failure can be worth neither, either,
+        or -- for [BLOCKED][(c).BLOCKED] -- worth retrying once and then abandoning
+        the node.
+
+        Returns
+        -------
+        :
+            `True` if this node's other routes should be skipped
+
+        Examples
+        --------
+        >>> HeaderReadOutcome.HOST_FAULT.stops_this_data_node
+        True
+
+        A missing file is about the file, not the node:
+
+        >>> HeaderReadOutcome.MISSING.stops_this_data_node
+        False
+        """
+        return self in {
+            # Unreachable: DNS, TLS, or a connect timeout. Its other URLs are too.
+            HeaderReadOutcome.HOST_FAULT,
+            # Connected and then hung. Its other URLs will hang the same way.
+            HeaderReadOutcome.TIMEOUT,
+            # Still refusing us after its retries; stop asking this node for now.
+            HeaderReadOutcome.BLOCKED,
+        }
+
+    @property
+    def counts_against_data_node(self) -> bool:
+        """
+        Whether this outcome should count against the data node's health
+
+        Four of these say nothing about the node: a 404 means the route is gone, a 401
+        means we presented no credentials, and
+        [TRUNCATED_HEADER][(c).TRUNCATED_HEADER] and
+        [UNSUPPORTED_FORMAT][(c).UNSUPPORTED_FORMAT] are both facts about the *file*
+        -- it served us exactly the bytes we asked for and we could not use them.
+        Counting any of them would retire a data node for behaving correctly.
+
+        Returns
+        -------
+        :
+            `True` if this outcome belongs in the node's failure rate
+
+        Examples
+        --------
+        >>> HeaderReadOutcome.TIMEOUT.counts_against_data_node
+        True
+
+        Asking for too few bytes is our mistake, not the node's:
+
+        >>> HeaderReadOutcome.TRUNCATED_HEADER.counts_against_data_node
+        False
+        """
+        return self not in {
+            HeaderReadOutcome.SUCCESS,
+            HeaderReadOutcome.MISSING,
+            HeaderReadOutcome.NEEDS_CREDENTIALS,
+            # Both are about the file and its layout, which every mirror shares.
+            HeaderReadOutcome.TRUNCATED_HEADER,
+            HeaderReadOutcome.UNSUPPORTED_FORMAT,
+        }

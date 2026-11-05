@@ -17,6 +17,7 @@ from esmporium.datasets.data_access import (
     AccessService,
     ContainerFormat,
     DownloadOutcome,
+    HeaderReadOutcome,
 )
 
 if TYPE_CHECKING:
@@ -1406,6 +1407,169 @@ class DataNodeCallRecord(EsmporiumBase, table=True):
     """
 
 
+class HeaderReadCallRecord(EsmporiumBase, table=True):
+    """
+    One recorded attempt to read a file's header from one data node
+
+    The twin of [DataNodeCallRecord][esmporium.db.schema.DataNodeCallRecord], one row
+    per *attempt* rather than per file, with the same meaning of `attempt_number` and
+    `data_node_id`.
+
+    **A separate table, and the reason is a measurement rather than a preference.**
+    [aggregate_data_node_health][esmporium.db.download_health.aggregate_data_node_health]
+    ranks a data node partly on the median throughput of its successful calls. A
+    header read moves about 64 KiB and spends most of its time on the connection, so
+    it looks like a fraction of a megabyte per second; and because one header serves a
+    whole simulation while a download is per file, header calls still outnumber
+    download calls across a run. Recording them together would drag every node's
+    measured throughput down towards the speed of its handshake and steer downloads
+    away from the fastest replicas -- the same way
+    [SIZE_MISMATCH][esmporium.datasets.DownloadOutcome.SIZE_MISMATCH] would retire a
+    working replica if it were charged to the node.
+
+    What the two tables *do* share is [DataNode][esmporium.db.schema.DataNode], so
+    "does this node answer at all" is a question either can be asked, and asking both
+    is a join rather than a merge.
+    """
+
+    # See the note on `Dataset.model_config`: this catches a bad *value* at
+    # construction rather than at commit time.
+    model_config = {"validate_assignment": True}
+
+    id: int | None = Field(default=None, primary_key=True)
+    """Surrogate key; assigned by the database"""
+
+    created_at: datetime.datetime = Field(default_factory=_utcnow, index=True)
+    """
+    When the attempt was recorded (UTC)
+
+    Indexed for the same reason as
+    [DataNodeCallRecord.created_at][esmporium.db.schema.DataNodeCallRecord.created_at]:
+    node health is read over a window, so lifetime totals would let one good
+    afternoon last forever.
+    """
+
+    data_node_id: int = Field(foreign_key="datanode.id", index=True)
+    """
+    The data node we read from
+
+    See [DataNode][esmporium.db.schema.DataNode]. The node's *name*, resolved to a
+    row -- **not the host in [url][(c).url]**, which can differ (`ceda.ac.uk` serves
+    over `dap.ceda.ac.uk`). Health belongs to the thing that is up or down.
+    """
+
+    file_id: int | None = Field(default=None, foreign_key="file.id", index=True)
+    """
+    The file whose header was being read, when we know which
+
+    See [File][esmporium.db.schema.File]. `None` for a read driven by something that
+    has no `File` row to point at, e.g. a route handed in by hand.
+    """
+
+    data_access_id: int | None = Field(
+        default=None, foreign_key="dataaccess.id", index=True
+    )
+    """
+    The stored route this attempt used, when it used a stored one
+
+    See [DataAccess][esmporium.db.schema.DataAccess]. `None` for a route we *derived*
+    rather than read, which today means an `https://` twin of an `http://`-only route:
+    the URL really requested is not the URL that row holds.
+    """
+
+    url: str
+    """The full URL the attempt went to"""
+
+    http_method: str
+    """The HTTP method used, which is always `GET` today"""
+
+    response_code: int | None = None
+    """
+    The HTTP status code the data node answered with
+
+    `None` when nothing answered at all, which is how "the node said no" is told apart
+    from "the node never spoke". A successful read is normally `206`; a `200` means
+    the node ignored our range (see [range_honoured][(c).range_honoured]).
+    """
+
+    outcome: HeaderReadOutcome = Field(sa_type=AutoString, index=True)
+    """
+    How the attempt turned out
+
+    See [HeaderReadOutcome][esmporium.datasets.HeaderReadOutcome]. Stored as its
+    value, so a row read back carries a plain `str` -- it compares equal to the enum
+    member but is not it, so compare with `==` and not `is`.
+
+    Indexed because every health question filters on it, and because several of its
+    members must be *excluded* when judging a node: a 404, a 401, a truncated header
+    and an unreadable format are all facts about the file rather than the node.
+
+    There is deliberately no `success` boolean beside this, for the reason
+    [DataNodeCallRecord.outcome][esmporium.db.schema.DataNodeCallRecord.outcome]
+    gives.
+    """
+
+    error: str | None = None
+    """The failure's type and message, or `None` on success"""
+
+    bytes_requested: int
+    """
+    How many bytes from the start of the file this attempt asked for
+
+    Recorded because it is not constant: a header that does not fit in the first ask
+    is retried with a larger one, so a row with an unusually large value here is a
+    file whose header sits deep inside it. Comparing this with
+    [bytes_transferred][(c).bytes_transferred] also shows a node serving a short file
+    in full rather than a range of a long one.
+    """
+
+    bytes_transferred: int = Field(default=0, sa_type=BigInteger)
+    """
+    How many bytes this attempt actually read
+
+    `BigInteger` for consistency with
+    [DataNodeCallRecord.bytes_transferred][esmporium.db.schema.DataNodeCallRecord.bytes_transferred]
+    rather than from need: a header read is bounded to about a megabyte. `0` on an
+    attempt that failed before any body arrived.
+
+    **Not a throughput measurement.** Dividing this by
+    [seconds][(c).seconds] gives the speed of a handshake, not of the node. See the
+    note on this table.
+    """
+
+    seconds: float
+    """
+    How long the attempt took, in wall-clock seconds
+
+    **The measurement that matters here**, in the way throughput is the one that
+    matters for a download: reading a few kilobytes is almost entirely connection
+    setup and one round trip, so this is latency, and a node's typical latency is what
+    should decide whether to ask it first.
+    """
+
+    attempt_number: int
+    """
+    Which attempt at this route this row is, 1-based
+
+    Counted per route, so moving to another route starts again at 1 -- which route is
+    in [url][(c).url], and which node in [data_node_id][(c).data_node_id].
+    """
+
+    range_honoured: bool = True
+    """
+    Whether the data node answered our range request with a range
+
+    `False` means it answered `200` and began sending the whole file; we read our
+    prefix and abandoned the connection, so the read still worked. Recorded rather
+    than ignored because such a node makes us open a connection it is about to pour a
+    multi-gigabyte file down, and that is a property of the node worth being able to
+    count -- a CMIP5 file can be most of a gigabyte.
+
+    `True` on a failed attempt too, where nothing was served: a failure should never
+    read as evidence about a node's range handling.
+    """
+
+
 class DownloadStatus(str, Enum):
     """
     Where a file has got to in being downloaded
@@ -1647,12 +1811,28 @@ class ParentInfoSource(str, Enum):
     It was read out of a data file's global attributes
 
     The only source for CMIP5 and CMIP6, neither of which publishes parent facts in
-    any index.
+    any index. Written by
+    [build_header_facts_provider][esmporium.db.build_header_facts_provider], which
+    fetches a few kilobytes of a file and reads its global attributes, and which
+    records the file it read on
+    [DatasetVersionParent.file_id][esmporium.db.schema.DatasetVersionParent.file_id].
+
+    One row per *simulation's worth* of datasets, in effect: a parent belongs to the
+    run rather than to the variable, so one header read is written against every
+    version it answers for.
     """
 
     FIX = "fix"
     """
     We supplied it ourselves, because what was published is wrong
+
+    It is the reason this column exists at all: a correction has to be able to outlive
+    every re-ingest of the record it corrects, and every re-read of the header it
+    corrects, which it cannot do if there is only one row to hold both.
+
+    CMIP5 supplies the first customers. `inmcm4` publishes no parent variant label at
+    all and `CMCC-CM` publishes the string `"N/A"` for one, so neither can name the
+    run it branched from however carefully its header is read.
     """
 
 
@@ -1868,9 +2048,56 @@ class DatasetVersionParent(EsmporiumBase, table=True):
 
     Kept under ESGF's own name because no `Dataset` column corresponds to it.
 
-    Recorded because it is published, though on its own it does nothing.
+    **What makes [branch_time_in_parent][(c).branch_time_in_parent] mean anything**, and
+    the reason that column was not worth having until headers were read: a branch time
+    is a number of time units since an origin, so without the units it is just a
+    number. CMIP6 headers publish both. CMIP5 headers publish *neither* -- see the
+    warning on `branch_time_in_parent`.
 
-    `None` for a record which declared no parent.
+    `None` for a record which declared no parent, or for a source which did not say.
+    """
+
+    branch_time_in_parent: float | None = None
+    """
+    When the child branched off, in the **parent's** time coordinate
+
+    Published as `branch_time_in_parent` by CMIP6 and CMIP7 file headers, and as
+    `branch_time_in_parent` by ESGF-1 Solr for CMIP7. Measured in
+    [parent_time_units][(c).parent_time_units], which is the only thing that makes it
+    interpretable.
+
+    **Stored exactly as published and never interpreted**, which matters most for
+    CMIP5. A CMIP5 header calls this plain `branch_time`, publishes no
+    `parent_time_units` to go with it, and the values are not in one another's units.
+    Sampled across 47 models on 2026-11-04, the same attribute carried at least five
+    incompatible encodings: `0.0` where nothing was recorded (BNU-ESM, GFDL-CM3,
+    HadGEM2-ES, MPI-ESM-MR); a small count of years (`2.0` for CCSM4, `160.0` for
+    bcc-csm1-1); a calendar year (`1850.0` for IPSL-CM5A-MR, `2006.0` for bcc-csm1-1
+    under rcp85); `YYYYMM` (`185001.0` for IPSL-CM5A-LR); `YYYYMMDD` (`20060101.0`
+    for FIO-ESM); and days since an unstated origin (`56940.0`, `732311.0`).
+
+    So this column is a record of what a file said, not a usable time. Turning a
+    CMIP5 value into one needs per-model knowledge, which is a
+    [FIX][esmporium.db.schema.ParentInfoSource.FIX]'s job rather than a parser's.
+
+    `None` for a record which declared no parent, or for a source which did not say --
+    which is every search document on ESGF-NG, since STAC publishes no branch time at
+    all.
+    """
+
+    branch_time_in_child: float | None = None
+    """
+    When the child branched off, in the **child's own** time coordinate
+
+    Published by CMIP6 and CMIP7 file headers, and almost always `0.0` -- a run
+    usually starts at its own time zero. Recorded anyway, because a non-zero value
+    says the child's series begins part way in, and that is exactly the kind of thing
+    worth having stored before someone needs it.
+
+    No CMIP5 header publishes this, and neither search API publishes it for any
+    project.
+
+    `None` for a record which declared no parent, or for a source which did not say.
     """
 
     raw_doc_id: int | None = Field(
@@ -1893,7 +2120,20 @@ class DatasetVersionParent(EsmporiumBase, table=True):
     """
     The file whose header this was read out of, when it was read from one
 
-    See [File][esmporium.db.schema.File].
+    See [File][esmporium.db.schema.File]. Set on every
+    [FILE_HEADER][esmporium.db.schema.ParentInfoSource.FILE_HEADER] row and `None` on
+    every other source, since a search document is not a file.
+
+    **Including on the sibling datasets whose own files were never read.** One header
+    answers a whole simulation, so a simulation's other datasets get their facts from
+    the same file, and this names that file rather than one of theirs. That is the
+    honest record -- the fact really did come from those bytes -- and it is what makes
+    the answer recoverable if the file turns out not to be the one the index describes.
+
+    It is here now because linking a fact to the file it came from is the only thing
+    that makes a header-derived fact recoverable: what a node serves and what the
+    index says about it can differ, so a fact read out of bytes may not describe the
+    file the index thinks it describes.
     """
 
     recorded_at: datetime.datetime = Field(default_factory=_utcnow)

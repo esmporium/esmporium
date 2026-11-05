@@ -21,10 +21,11 @@ import httpx
 from esmporium.db.results_to_database import (
     IngestedDocument,
     flushed_id,
+    ingest_parsed_documents,
     save_data_access_payload,
 )
 from esmporium.db.schema import DataAccess
-from esmporium.search import collect_all_file_pages
+from esmporium.search import SOLR_FORMAT_TAG, collect_all_file_pages
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
@@ -34,7 +35,9 @@ if TYPE_CHECKING:
     from esmporium.search import (
         DatasetFacets,
         FileResultProcessor,
+        ParsedDocument,
         ParsedFileDocument,
+        ResultProcessor,
         SearchAPICallObserver,
         SearchAPIFacade,
     )
@@ -459,3 +462,89 @@ def record_solr_file_access(  # noqa: PLR0913 - one parameter per injection seam
             client.close()
 
     return tuple(written)
+
+
+def build_result_processor_with_file_access(  # noqa: PLR0913 - one parameter per injection seam
+    session: Session,
+    *,
+    client: httpx.Client | None = None,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    limit: int = DEFAULT_LIMIT,
+    max_results: int | None = None,
+    api_call_observer: SearchAPICallObserver | None = None,
+) -> ResultProcessor:
+    """
+    Build a result processor which also fetches per-file URLs when the API is Solr
+
+    [build_result_processor][esmporium.db.build_result_processor] records the datasets a
+    search found and stops there, which is right for most work: a dataset's facets are
+    what a search is *for*, and its files are a second request nobody should pay for
+    unless they want them.
+
+    **Anything that needs to open a file does want them**, and on Solr it will not get
+    them any other way. That is the case this exists for. Reading a dataset's parent out
+    of a file header, for instance, needs a file and a route to it, and a Solr dataset
+    document carries neither -- so a walk driven by the plain processor finds datasets
+    it cannot read, and reports every one of them as a simulation whose parent could not
+    be obtained.
+
+    This is the one place where the facade and that page's ingested documents are both
+    in scope, which is why the extra request belongs here rather than in a later pass:
+    a `type=File` request has to name the node-specific dataset ids the documents
+    carried.
+
+    ESGF-NG needs none of this -- a STAC item's `assets` are its files, so
+    [ingest_parsed_documents][esmporium.db.ingest_parsed_documents] has already stored
+    its routes -- so for a non-Solr facade this behaves exactly like the plain
+    processor, and costs nothing.
+
+    Parameters
+    ----------
+    session
+        The session to write and commit into
+
+    client
+        The client to make the file requests with, or `None` to build one per page
+
+    batch_size
+        How many datasets to ask about per `type=File` request
+
+    limit
+        Page size for the file requests
+
+    max_results
+        The most file documents to accept per batch, or `None` for no cap
+
+    api_call_observer
+        Told about each file request, as for a dataset search
+
+    Returns
+    -------
+    :
+        A processor of the shape
+        [ResultProcessor][esmporium.search.result_parsing.ResultProcessor]
+
+        Commits per page, as the plain processor does, so a search killed part way
+        keeps the pages it had already stored -- files and all.
+    """
+
+    def processor(
+        facade: SearchAPIFacade, parsed_documents: tuple[ParsedDocument, ...]
+    ) -> None:
+        ingested = ingest_parsed_documents(session, parsed_documents)
+
+        if facade.search_api.raw_docs_format_tag == SOLR_FORMAT_TAG:
+            record_solr_file_access(
+                session,
+                facade,
+                ingested,
+                client=client,
+                batch_size=batch_size,
+                limit=limit,
+                max_results=max_results,
+                api_call_observer=api_call_observer,
+            )
+
+        session.commit()
+
+    return processor

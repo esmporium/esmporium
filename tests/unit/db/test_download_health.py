@@ -461,3 +461,45 @@ def test_the_refreshing_selector_does_not_query_until_it_needs_to(engine):
 
     # The clock is consulted per selection, but only to decide whether to re-read.
     assert reads["n"] == 2
+
+
+def test_a_failure_rate_is_a_rate_over_every_attempt_that_is_evidence(engine):
+    """
+    A regression: a node that mostly works must not report a failure rate of 1.0
+
+    `judged` is the denominator of the failure rate, so a success belongs in it.
+    `counts_against_data_node` answers a narrower question -- "is this failure the
+    node's fault" -- and excludes `SUCCESS`, so building the denominator from it alone
+    made `n_failed` the whole of `judged` and every node with one counting failure
+    report 1.0. A node succeeding nine times in ten then ranked level with a dead one,
+    and throughput became the only thing separating them.
+    """
+    observer = record_data_node_calls(engine)
+    for _ in range(9):
+        observer(make_call(outcome=DownloadOutcome.SUCCESS))
+    observer(make_call(outcome=DownloadOutcome.TIMEOUT))
+
+    health = aggregate_data_node_health(engine)[FAST]
+
+    assert health.n_calls == 10
+    assert health.n_success == 9
+    assert health.n_judged == 10
+    assert health.failure_rate == pytest.approx(0.1)
+
+
+def test_outcomes_that_say_nothing_about_the_node_stay_out_of_the_rate(engine):
+    """
+    The exclusions the rate is supposed to have, still excluded after the fix above
+    """
+    observer = record_data_node_calls(engine)
+    observer(make_call(outcome=DownloadOutcome.SUCCESS))
+    observer(make_call(outcome=DownloadOutcome.MISSING, response_code=404))
+    observer(make_call(outcome=DownloadOutcome.NEEDS_CREDENTIALS, response_code=401))
+    observer(make_call(outcome=DownloadOutcome.SIZE_MISMATCH))
+
+    health = aggregate_data_node_health(engine)[FAST]
+
+    assert health.n_calls == 4
+    # Only the success is evidence about this node; the other three are not its fault.
+    assert health.n_judged == 1
+    assert health.failure_rate == 0.0

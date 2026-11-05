@@ -223,6 +223,8 @@ CREATE TABLE datasetversionparent (
 	parent_experiment VARCHAR,
 	parent_variant_label VARCHAR,
 	parent_time_units VARCHAR,
+	branch_time_in_parent FLOAT,
+	branch_time_in_child FLOAT,
 	raw_doc_id INTEGER,
 	file_id INTEGER,
 	recorded_at DATETIME NOT NULL,
@@ -321,3 +323,35 @@ CREATE UNIQUE INDEX ix_download_file_id ON download (file_id);
 CREATE INDEX ix_download_served_by_data_access_id ON download (served_by_data_access_id);
 
 CREATE INDEX ix_download_status ON download (status);
+
+CREATE TABLE headerreadcallrecord (
+	id INTEGER NOT NULL,
+	created_at DATETIME NOT NULL,
+	data_node_id INTEGER NOT NULL,
+	file_id INTEGER,
+	data_access_id INTEGER,
+	url VARCHAR NOT NULL,
+	http_method VARCHAR NOT NULL,
+	response_code INTEGER,
+	outcome VARCHAR NOT NULL,
+	error VARCHAR,
+	bytes_requested INTEGER NOT NULL,
+	bytes_transferred BIGINT NOT NULL,
+	seconds FLOAT NOT NULL,
+	attempt_number INTEGER NOT NULL,
+	range_honoured BOOLEAN NOT NULL,
+	CONSTRAINT pk_headerreadcallrecord PRIMARY KEY (id),
+	CONSTRAINT fk_headerreadcallrecord_data_node_id_datanode FOREIGN KEY(data_node_id) REFERENCES datanode (id),
+	CONSTRAINT fk_headerreadcallrecord_file_id_file FOREIGN KEY(file_id) REFERENCES file (id),
+	CONSTRAINT fk_headerreadcallrecord_data_access_id_dataaccess FOREIGN KEY(data_access_id) REFERENCES dataaccess (id)
+);
+
+CREATE INDEX ix_headerreadcallrecord_created_at ON headerreadcallrecord (created_at);
+
+CREATE INDEX ix_headerreadcallrecord_data_access_id ON headerreadcallrecord (data_access_id);
+
+CREATE INDEX ix_headerreadcallrecord_data_node_id ON headerreadcallrecord (data_node_id);
+
+CREATE INDEX ix_headerreadcallrecord_file_id ON headerreadcallrecord (file_id);
+
+CREATE INDEX ix_headerreadcallrecord_outcome ON headerreadcallrecord (outcome);
