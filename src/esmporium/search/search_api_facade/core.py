@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 from esmporium.query import (
+    CANONICAL_FACETS,
     FacetNotExpressibleError,
     QueryCanonical,
     QueryProtocol,
@@ -511,6 +512,97 @@ class SearchAPIFacade:
 
         # Established by the check above, which the type system cannot see.
         return cast("SolrSearchAPI", self.search_api)
+
+    def build_parent_dataset_search_request(
+        self, canonical: QueryCanonical, limit: int
+    ) -> Request:
+        """
+        Build a request for the datasets of a parent simulation
+
+        Parameters
+        ----------
+        canonical
+            The parent simulation to look for, as a canonical query
+
+            Usually from
+            [ParentSearchPlanItem.to_canonical_query][esmporium.db.ParentSearchPlanItem.to_canonical_query].
+
+        limit
+            The page size to ask for,
+            i.e. the maximum number of records in one response.
+
+        Returns
+        -------
+        :
+            The request to send to `search_api`
+
+        Raises
+        ------
+        LimitOutOfRangeError
+            `limit` is outside the range `search_api` accepts
+
+        OneProjectRequiredError
+            `self.parameters` needs exactly one project
+            and `canonical` specifies zero or more than one
+
+        ProjectPrefixMismatchError
+            The facade parameters were given a project
+            whose prefix disagrees with the one they write
+        """
+        facet_values = self.parameters.get_search_request_facet_values(
+            self.drop_unaskable_facets(canonical)
+        )
+
+        return self.search_api.build_search_request(facet_values, limit)
+
+    def drop_unaskable_facets(self, canonical: QueryCanonical) -> QueryCanonical:
+        """
+        Blank out the facets of a query this facade has no name for
+
+        For a search this facade is asked to make on someone's behalf, where a facet it
+        cannot express is a narrowing to skip rather than an error to report. The
+        caller-facing counterpart is
+        [askable_facets][(c).askable_facets], which answers the same question without
+        changing anything.
+
+        `project` is never dropped, even though the ESGF-NG parameters have no field for
+        it: they turn it into the STAC collection instead
+        (see
+        [STACFacadeParameters.get_collection][esmporium.search.STACFacadeParameters.get_collection]),
+        so removing it would lose the one facet those facades cannot do without.
+
+        Parameters
+        ----------
+        canonical
+            The query to narrow
+
+        Returns
+        -------
+        :
+            `canonical`, or a copy of it with the unaskable facets set to `()`
+
+            The same object when there is nothing to drop, so the common case copies
+            nothing.
+        """
+        asked = {
+            facet for facet in CANONICAL_FACETS if getattr(canonical, facet)
+        } | set(canonical.query_specific_facets)
+        unaskable = (asked - self.askable_facets(asked)) - {"project"}
+        if not unaskable:
+            return canonical
+
+        blanked: dict[str, Any] = {
+            facet: () for facet in unaskable if facet in CANONICAL_FACETS
+        }
+        query_specific = {
+            facet: values
+            for facet, values in canonical.query_specific_facets.items()
+            if facet not in unaskable
+        }
+        if query_specific != canonical.query_specific_facets:
+            blanked["query_specific_facets"] = query_specific
+
+        return canonical.model_copy(update=blanked)
 
     def build_file_search_request(
         self,

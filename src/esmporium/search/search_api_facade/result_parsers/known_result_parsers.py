@@ -9,7 +9,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from esmporium.search.apis.esgf1 import extract_one_element_list
-from esmporium.search.apis.esgfng import stac_data_access, stac_nodes
+from esmporium.search.apis.esgfng import (
+    stac_data_access,
+    stac_nodes,
+    stac_parent_info,
+)
 from esmporium.search.apis.protocol import (
     describe_search_api,
     read_response_path,
@@ -24,6 +28,8 @@ from esmporium.search.search_api_facade.result_parsers.protocol import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from esmporium.search.apis import SearchAPI
     from esmporium.search.search_api_facade.parameters import (
         FacadeParametersProtocol,
@@ -433,6 +439,7 @@ def stac_parsed_document(
     api: SearchAPI,
     id_project_specific: str,
     datasets: tuple[DatasetFacets, ...],
+    parent_suffixes: Mapping[str, str] | None = None,
 ) -> ParsedDocument:
     """
     Build the parsed document for a STAC feature
@@ -450,6 +457,16 @@ def stac_parsed_document(
 
     datasets
         The dataset rows this feature maps to
+
+    parent_suffixes
+        Which property suffix carries each parent fact, for this feature's project
+
+        `None`, the default, reads no parent facts at all and leaves
+        [ParsedDocument.parent][esmporium.search.ParsedDocument.parent] as `None`, i.e.
+        "nothing looked". Only pass a mapping for a project which really does publish
+        them, because for one which does not, reading would find nothing and so claim
+        the document declared no parent. See
+        [ESGFNGResultParser.parent_property_suffixes][esmporium.search.ESGFNGResultParser.parent_property_suffixes].
 
     Returns
     -------
@@ -485,6 +502,11 @@ def stac_parsed_document(
         raw_docs_format_tag=api.raw_docs_format_tag,
         files=found.files,
         accesses=found.accesses,
+        parent=(
+            None
+            if parent_suffixes is None
+            else stac_parent_info(feature, api=api, suffixes=parent_suffixes)
+        ),
     )
 
 
@@ -492,6 +514,19 @@ def stac_parsed_document(
 class ESGFNGResultParser:
     """
     Read results from the ESGF-NG STAC API
+    """
+
+    parent_property_suffixes: Mapping[str, str] | None = None
+    """
+    Which parent facts this project publishes in the index, and under what property
+
+    `None` by default, meaning **this project publishes none, so do not look**. Set per
+    project where the facades are built (see
+    [esmporium.search.search_api_facade.store][]), because which parent facts exist is
+    a fact about the project and not about STAC: CMIP7 publishes all of them, CMIP6
+    publishes none and keeps them in file headers instead.
+    [DEFAULT_STAC_PARENT_SUFFIXES][esmporium.search.DEFAULT_STAC_PARENT_SUFFIXES] is
+    what every project we have met publishes, so it is what to pass.
     """
 
     @property
@@ -526,6 +561,7 @@ class ESGFNGResultParser:
                 datasets=self.get_dataset_rows(
                     feature, api=api, facade_parameters=facade_parameters
                 ),
+                parent_suffixes=self.parent_property_suffixes,
             )
             for feature in api.extract_result_documents(raw)
         )

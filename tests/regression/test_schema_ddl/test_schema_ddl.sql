@@ -212,6 +212,36 @@ CREATE INDEX ix_dataaccess_dataset_version_id ON dataaccess (dataset_version_id)
 
 CREATE INDEX ix_dataaccess_file_id ON dataaccess (file_id);
 
+CREATE TABLE datasetversionparent (
+	id INTEGER NOT NULL,
+	dataset_version_id INTEGER NOT NULL,
+	source VARCHAR NOT NULL,
+	resolution VARCHAR NOT NULL,
+	parent_project VARCHAR,
+	parent_activity VARCHAR,
+	parent_model VARCHAR,
+	parent_experiment VARCHAR,
+	parent_variant_label VARCHAR,
+	parent_time_units VARCHAR,
+	raw_doc_id INTEGER,
+	file_id INTEGER,
+	recorded_at DATETIME NOT NULL,
+	resolved_at DATETIME,
+	CONSTRAINT pk_datasetversionparent PRIMARY KEY (id),
+	CONSTRAINT uq_datasetversionparent_dataset_version_id_source UNIQUE (dataset_version_id, source),
+	CONSTRAINT fk_datasetversionparent_dataset_version_id_datasetversion FOREIGN KEY(dataset_version_id) REFERENCES datasetversion (id),
+	CONSTRAINT fk_datasetversionparent_raw_doc_id_datasetrawdoc FOREIGN KEY(raw_doc_id) REFERENCES datasetrawdoc (id),
+	CONSTRAINT fk_datasetversionparent_file_id_file FOREIGN KEY(file_id) REFERENCES file (id)
+);
+
+CREATE INDEX ix_datasetversionparent_dataset_version_id ON datasetversionparent (dataset_version_id);
+
+CREATE INDEX ix_datasetversionparent_file_id ON datasetversionparent (file_id);
+
+CREATE INDEX ix_datasetversionparent_raw_doc_id ON datasetversionparent (raw_doc_id);
+
+CREATE INDEX ix_datasetversionparent_resolution ON datasetversionparent (resolution);
+
 CREATE TABLE datanodecallrecord (
 	id INTEGER NOT NULL,
 	created_at DATETIME NOT NULL,
@@ -242,6 +272,30 @@ CREATE INDEX ix_datanodecallrecord_data_node_id ON datanodecallrecord (data_node
 CREATE INDEX ix_datanodecallrecord_file_id ON datanodecallrecord (file_id);
 
 CREATE INDEX ix_datanodecallrecord_outcome ON datanodecallrecord (outcome);
+
+CREATE TABLE datasetparentlink (
+	id INTEGER NOT NULL,
+	parent_info_id INTEGER NOT NULL,
+	child_dataset_version_id INTEGER NOT NULL,
+	parent_dataset_id INTEGER NOT NULL,
+	parent_dataset_version_id INTEGER NOT NULL,
+	version_choice VARCHAR NOT NULL,
+	CONSTRAINT pk_datasetparentlink PRIMARY KEY (id),
+	CONSTRAINT fk_datasetparentlink_parent_info_id_datasetversionparent FOREIGN KEY(parent_info_id) REFERENCES datasetversionparent (id),
+	CONSTRAINT fk_datasetparentlink_child_dataset_version_id_datasetversion FOREIGN KEY(child_dataset_version_id) REFERENCES datasetversion (id),
+	CONSTRAINT fk_datasetparentlink_parent_dataset_id_dataset FOREIGN KEY(parent_dataset_id) REFERENCES dataset (id),
+	CONSTRAINT fk_datasetparentlink_parent_dataset_version_id_datasetversion FOREIGN KEY(parent_dataset_version_id) REFERENCES datasetversion (id)
+);
+
+CREATE INDEX ix_datasetparentlink_child_dataset_version_id ON datasetparentlink (child_dataset_version_id);
+
+CREATE INDEX ix_datasetparentlink_parent_dataset_id ON datasetparentlink (parent_dataset_id);
+
+CREATE INDEX ix_datasetparentlink_parent_dataset_version_id ON datasetparentlink (parent_dataset_version_id);
+
+CREATE UNIQUE INDEX ix_datasetparentlink_parent_info_id ON datasetparentlink (parent_info_id);
+
+CREATE INDEX ix_datasetparentlink_version_choice ON datasetparentlink (version_choice);
 
 CREATE TABLE download (
 	id INTEGER NOT NULL,

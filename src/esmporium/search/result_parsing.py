@@ -142,6 +142,81 @@ class DataAccessInfo:
 
 
 @dataclass(frozen=True)
+class ParentInfo:
+    """
+    The parent simulation one search document declared
+
+    The search-layer mirror of
+    [DatasetVersionParent][esmporium.db.schema.DatasetVersionParent].
+
+    Every field is optional because what identifies a parent is a *simulation* --
+    a model, an experiment and a variant -- and a document can name all of that, or
+    none of it. **An instance whose every field is `None` means the document was read
+    for parent information and declared none**, which is how a root of the tree says
+    so: CMIP7 announces "no parent" by carrying none of the keys rather than by
+    publishing a sentinel value.
+    """
+
+    parent_project: str | None
+    """
+    See
+    [DatasetVersionParent.parent_project][esmporium.db.schema.DatasetVersionParent.parent_project].
+    """
+
+    parent_activity: str | None
+    """
+    See
+    [DatasetVersionParent.parent_activity][esmporium.db.schema.DatasetVersionParent.parent_activity].
+    """
+
+    parent_model: str | None
+    """
+    See
+    [DatasetVersionParent.parent_model][esmporium.db.schema.DatasetVersionParent.parent_model].
+    """
+
+    parent_experiment: str | None
+    """
+    See
+    [DatasetVersionParent.parent_experiment][esmporium.db.schema.DatasetVersionParent.parent_experiment].
+    """
+
+    parent_variant_label: str | None
+    """
+    See
+    [DatasetVersionParent.parent_variant_label][esmporium.db.schema.DatasetVersionParent.parent_variant_label].
+    """
+
+    parent_time_units: str | None
+    """
+    See
+    [DatasetVersionParent.parent_time_units][esmporium.db.schema.DatasetVersionParent.parent_time_units].
+    """
+
+    @property
+    def declares_a_parent(self) -> bool:
+        """
+        Whether this names a parent simulation at all
+
+        Returns
+        -------
+        :
+            `True` if any field is set, `False` if the document declared no parent.
+        """
+        return any(
+            value is not None
+            for value in (
+                self.parent_project,
+                self.parent_activity,
+                self.parent_model,
+                self.parent_experiment,
+                self.parent_variant_label,
+                self.parent_time_units,
+            )
+        )
+
+
+@dataclass(frozen=True)
 class DataAccessPayload:
     """
     Every file and route one search document described, for one dataset version
@@ -228,6 +303,16 @@ class ParsedDocument:
 
     Each names one of `files`, or the whole version with `filename=None`. Same
     attribution rule as `files`.
+    """
+
+    parent: ParentInfo | None = None
+    """
+    The parent simulation this document declared, if it was read for one
+
+    `None` means **nothing looked**: this document came from a parser which does not
+    read parent information, because the project does not publish any in its index
+    (CMIP5 and CMIP6 publish none on either API; for those the facts live in file
+    headers). No parent row is written for such a document.
     """
 
 

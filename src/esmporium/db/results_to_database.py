@@ -22,10 +22,14 @@ from esmporium.db.schema import (
     DataAccess,
     DataNode,
     Dataset,
+    DatasetParentLink,
     DatasetRawDoc,
     DatasetVersion,
     DatasetVersionDataNodeLink,
+    DatasetVersionParent,
     File,
+    ParentInfoSource,
+    ParentResolution,
     RawDocVersionLink,
 )
 from esmporium.search.result_normalisation import (
@@ -39,6 +43,7 @@ from esmporium.search.result_parsing import (
     DataAccessPayload,
     DatasetFacets,
     FileInfo,
+    ParentInfo,
     ParsedDocument,
     ResultProcessor,
 )
@@ -346,6 +351,19 @@ class IngestedDocument:
     Empty for the same documents as `files`.
     """
 
+    parent_info: tuple[DatasetVersionParent, ...] = ()
+    """
+    The parent assertion rows written for this document, flushed
+
+    One per dataset the document described, so **index-aligned with
+    `parsed.datasets`** in the same way `versions` is. Unlike `files`, every version a
+    document maps to gets one, because a parent belongs to the simulation they share
+    rather than to one of them.
+
+    Empty for a document which was not read for parent facts at all, which is every
+    document from a project that publishes none.
+    """
+
 
 def ingest_parsed_documents(
     session: Session,
@@ -544,7 +562,7 @@ def _ingest_document(
     parsed: ParsedDocument,
     normalisers: Mapping[str, NormaliseFunc],
 ) -> IngestedDocument:
-    """Write one parsed document: its datasets, versions, nodes, raw doc and links."""
+    """Write one document: its datasets, versions, nodes, raw doc, parent and links."""
     datasets = [
         _get_or_create_dataset(session, facets, parsed, normalisers)
         for facets in parsed.datasets
@@ -566,6 +584,32 @@ def _ingest_document(
             session, flushed_id(raw_doc), flushed_id(version)
         )
 
+    # One assertion per dataset row this document maps to -- all of them at *this*
+    # document's single version, never across the versions of a dataset. A CMIP5 Solr
+    # document is one version of one simulation carrying several variables, and a parent
+    # belongs to the simulation, so the same declaration is true of every variable in
+    # it. That is why this is not subject to the attribution rule files and routes
+    # follow, and why there is no `AmbiguousDataAccessError` equivalent here.
+    #
+    # Each version of a dataset still gets its own assertion, because each arrives as
+    # its own document: a republication which corrects what it says about its parent is
+    # recorded against the version that corrected it and changes nothing about the
+    # others.
+    parent_info = (
+        tuple(
+            save_parent_info(
+                session,
+                flushed_id(version),
+                parsed.parent,
+                ParentInfoSource.SEARCH_METADATA,
+                raw_doc_id=flushed_id(raw_doc),
+            )
+            for version in dataset_versions
+        )
+        if parsed.parent is not None
+        else ()
+    )
+
     # Files and routes come last, because a route is the most derived thing here: it
     # needs its version, its file and its node to exist first.
     check_access_payload_is_attributable(parsed)
@@ -584,6 +628,7 @@ def _ingest_document(
         versions=tuple(dataset_versions),
         files=saved.files,
         accesses=saved.accesses,
+        parent_info=parent_info,
     )
 
 
@@ -767,6 +812,239 @@ def check_file_facts_agree(
         FileFactsChangedWarning,
         stacklevel=2,
     )
+
+
+PARENT_FACT_COLUMNS: tuple[str, ...] = (
+    "parent_project",
+    "parent_activity",
+    "parent_model",
+    "parent_experiment",
+    "parent_variant_label",
+    "parent_time_units",
+)
+"""
+The columns of [DatasetVersionParent][esmporium.db.schema.DatasetVersionParent] which
+describe the parent
+
+i.e. everything a source *asserts*, as opposed to the columns which identify the row
+(`dataset_version_id` and `source`), say how far it has got (`resolution`) or say where
+it came from. These are the ones [save_parent_info][(m).save_parent_info] refreshes, and
+so the ones [check_parent_facts_agree][(m).check_parent_facts_agree] compares.
+"""
+
+
+class ParentFactsChangedWarning(UserWarning):
+    """
+    Warned when one source describes a version's parent two different ways
+
+    Same version, same source, a different parent. Either two index nodes disagree, or
+    the record was republished with its parent corrected. The second is a legitimate
+    fix and the first is an upstream problem, and nothing here can tell them apart --
+    so the newer answer is kept and this says so, rather than a correction being
+    silently refused or a disagreement silently applied.
+    """
+
+
+def parent_fact_differences(
+    stored: DatasetVersionParent, info: ParentInfo
+) -> dict[str, tuple[Any, Any]]:
+    """
+    Find the parent facts a source asserts which disagree with what we hold
+
+    A fact the source is silent about (`None`) is not a disagreement.
+    Two documents of one source can say different amounts about the same
+    version: see [PARENT_FACT_COLUMNS][(m).PARENT_FACT_COLUMNS]. Reading a `None` as
+    "this is now nothing" would let whichever document arrived last erase what an
+    earlier one told us.
+
+    Parameters
+    ----------
+    stored
+        The assertion row we already hold
+
+    info
+        What this source says about the same version's parent
+
+    Returns
+    -------
+    :
+        The held and asserted value of each of
+        [PARENT_FACT_COLUMNS][(m).PARENT_FACT_COLUMNS] on which the two disagree, keyed
+        by column. Empty when they agree, or when one of the two is silent.
+    """
+    differences: dict[str, tuple[Any, Any]] = {}
+    for column in PARENT_FACT_COLUMNS:
+        held = getattr(stored, column)
+        asserted = getattr(info, column)
+        if held is None or asserted is None or held == asserted:
+            continue
+
+        differences[column] = (held, asserted)
+
+    return differences
+
+
+def check_parent_facts_agree(stored: DatasetVersionParent, info: ParentInfo) -> None:
+    """
+    Check a source describes a parent we already hold the same way, and say so if not
+
+    Parameters
+    ----------
+    stored
+        The assertion row we already hold
+
+    info
+        What this source says about the same version's parent
+
+    Warns
+    -----
+    ParentFactsChangedWarning
+        The source asserts a different value for something we already hold
+    """
+    differences = parent_fact_differences(stored, info)
+    if not differences:
+        return
+
+    changes = "; ".join(
+        f"{column}: we hold {held!r}, this source says {asserted!r}"
+        for column, (held, asserted) in sorted(differences.items())
+    )
+    warnings.warn(
+        f"The parent of dataset version {stored.dataset_version_id} is described "
+        f"differently by two {stored.source} sources. {changes}. The newer value is "
+        f"kept, and any link already resolved from the old one is dropped, because it "
+        f"pointed at a dataset this version no longer claims to have come from. Either "
+        f"two index nodes disagree or the record was republished with its parent "
+        f"changed; the second is a fix and the first is ESGF's to sort out, and we "
+        f"cannot tell which from here. If you hit this, please raise an issue at "
+        f"https://github.com/esmporium/esmporium/issues, quoting the version and both "
+        f"values.",
+        ParentFactsChangedWarning,
+        stacklevel=2,
+    )
+
+
+def save_parent_info(  # noqa: PLR0913 - a fact, its provenance and where it came from
+    session: Session,
+    dataset_version_id: int,
+    info: ParentInfo,
+    source: ParentInfoSource,
+    raw_doc_id: int | None = None,
+    file_id: int | None = None,
+) -> DatasetVersionParent:
+    """
+    Write one source's answer about which simulation a version branched from
+
+    Reuses anything already stored.
+
+    Parameters
+    ----------
+    session
+        Session to write with
+
+    dataset_version_id
+        The version whose parent simulation this is
+
+    info
+        What the source said. Every field `None` means it declared no parent, which is
+        recorded as
+        [NO_PARENT_DECLARED][esmporium.db.schema.ParentResolution.NO_PARENT_DECLARED].
+
+    source
+        Where the answer came from.
+        See [ParentInfoSource][esmporium.db.schema.ParentInfoSource].
+
+    raw_doc_id
+        The search document it was read out of, if it was read from one
+
+    file_id
+        The file whose header it was read out of, if it was read from one
+
+    Returns
+    -------
+    :
+        The row written or reused, flushed
+    """
+    declares = info.declares_a_parent
+    stored = get_or_create(
+        session,
+        lambda: _find_parent_info(session, dataset_version_id, source),
+        lambda: DatasetVersionParent(
+            dataset_version_id=dataset_version_id,
+            source=source,
+            resolution=(
+                ParentResolution.UNRESOLVED
+                if declares
+                else ParentResolution.NO_PARENT_DECLARED
+            ),
+            raw_doc_id=raw_doc_id,
+            file_id=file_id,
+            **{column: getattr(info, column) for column in PARENT_FACT_COLUMNS},
+        ),
+    )
+
+    # On a row we just built these all agree, so this says nothing; on one we already
+    # held, it is the only place a disagreement is visible, because the refresh below
+    # is about to overwrite what we held with what this source says.
+    differences = parent_fact_differences(stored, info)
+    check_parent_facts_agree(stored, info)
+
+    # Asserted wins, silence changes nothing: see this function's docstring.
+    for column in PARENT_FACT_COLUMNS:
+        asserted = getattr(info, column)
+        if asserted is not None:
+            setattr(stored, column, asserted)
+
+    if differences:
+        # The parent moved, so anything resolved from the old answer is wrong. Drop the
+        # link and put the row back in the queue rather than leaving a link that points
+        # somewhere this version no longer claims to have come from.
+        _delete_parent_links(session, flushed_id(stored))
+        stored.resolution = ParentResolution.UNRESOLVED
+        stored.resolved_at = None
+
+    # A source which has stopped declaring a parent, or started, changes which terminal
+    # state the row is in; one which has not says nothing about resolution at all.
+    if not declares:
+        stored.resolution = ParentResolution.NO_PARENT_DECLARED
+    elif stored.resolution == ParentResolution.NO_PARENT_DECLARED:
+        stored.resolution = ParentResolution.UNRESOLVED
+
+    if raw_doc_id is not None:
+        stored.raw_doc_id = raw_doc_id
+    if file_id is not None:
+        stored.file_id = file_id
+
+    session.add(stored)
+    session.flush()
+
+    return stored
+
+
+def _find_parent_info(
+    session: Session, dataset_version_id: int, source: ParentInfoSource
+) -> DatasetVersionParent | None:
+    """Find this source's answer about this version's parent, if we hold one."""
+    return session.exec(
+        select(DatasetVersionParent).where(
+            DatasetVersionParent.dataset_version_id == dataset_version_id,
+            DatasetVersionParent.source == source,
+        )
+    ).one_or_none()
+
+
+def _delete_parent_links(session: Session, parent_info_id: int) -> None:
+    """Drop every link resolved from one assertion."""
+    links = session.exec(
+        select(DatasetParentLink).where(
+            DatasetParentLink.parent_info_id == parent_info_id
+        )
+    ).all()
+    for link in links:
+        session.delete(link)
+
+    if links:
+        session.flush()
 
 
 @dataclass(frozen=True)

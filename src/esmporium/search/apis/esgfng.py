@@ -8,6 +8,7 @@ import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -33,6 +34,7 @@ from esmporium.search.result_parsing import (
     DataAccessPayload,
     DataNodeInfo,
     FileInfo,
+    ParentInfo,
 )
 
 
@@ -655,6 +657,95 @@ def stac_asset_is_one_file(name: str, asset: Mapping[str, Any]) -> bool:
     return str(local_path).rsplit("/", maxsplit=1)[-1] == name
 
 
+DEFAULT_STAC_PARENT_SUFFIXES: Mapping[str, str] = MappingProxyType(
+    {
+        "parent_project": ":parent_mip_era",
+        "parent_activity": ":parent_activity_id",
+        "parent_model": ":parent_source_id",
+        "parent_experiment": ":parent_experiment_id",
+        "parent_variant_label": ":parent_variant_label",
+        "parent_time_units": ":parent_time_units",
+    }
+)
+"""
+Which project-prefixed STAC property carries each
+[ParentInfo][esmporium.search.ParentInfo] field, for the projects we have met
+
+The keys are our names and the values are the suffix of ESGF's, which is where the two
+vocabularies meet.
+"""
+
+
+def stac_parent_info(
+    feature: dict[str, Any],
+    api: SearchAPI | None = None,
+    suffixes: Mapping[str, str] = DEFAULT_STAC_PARENT_SUFFIXES,
+) -> ParentInfo:
+    """
+    Read the parent simulation a STAC feature declares out of its properties
+
+    ESGF-NG needs no second request and no file read for this: for a project which
+    publishes them, the parent facts are ordinary properties of the item.
+
+    Parameters
+    ----------
+    feature
+        Feature (i.e. document) to read
+
+    api
+        The search API the feature came from
+
+        Only used to say who answered if a property cannot be read.
+
+    suffixes
+        Which property suffix carries each [ParentInfo][esmporium.search.ParentInfo]
+        field, for this feature's project
+
+        Defaults to
+        [DEFAULT_STAC_PARENT_SUFFIXES][(m).DEFAULT_STAC_PARENT_SUFFIXES], which is what
+        every project we have met publishes.
+
+    Returns
+    -------
+    :
+        The parent simulation the feature declared
+
+        **Every field is `None` when the feature carries none of the properties**,
+        which is how CMIP7 says a simulation has no parent (`amip` carries not one of
+        them). Call this only for a project which publishes parent facts at all --
+        otherwise an all-`None` result would claim the document declared no parent when
+        really nothing publishes any. Which projects those are is
+        [ESGFNGResultParser.parent_property_suffixes][esmporium.search.ESGFNGResultParser.parent_property_suffixes]'s
+        to know.
+
+    Raises
+    ------
+    UnreadableResponseError
+        `feature` carries no `properties` at all
+
+    MultipleFacetValuesError
+        One of the parent properties maps to more than one value
+    """
+    context = describe_search_api(api) if api is not None else None
+    properties = read_response_path(
+        feature, "properties", what="the parent facts", context=context
+    )
+    api_fields = {
+        column: _suffixed_key(properties, suffix) for column, suffix in suffixes.items()
+    }
+
+    return ParentInfo(
+        **{
+            column: (
+                None
+                if api_field is None
+                else stac_read_facet_as_string(feature, api_field, context)
+            )
+            for column, api_field in api_fields.items()
+        }
+    )
+
+
 def stac_data_access(
     feature: dict[str, Any], api: SearchAPI | None = None
 ) -> DataAccessPayload:
@@ -819,6 +910,21 @@ def _stac_file(name: str, asset: Mapping[str, Any]) -> FileInfo:
         checksum_type=checksum.checksum_type if checksum is not None else None,
         tracking_id=_suffixed_value(asset, ":tracking_id"),
     )
+
+
+def _suffixed_key(properties: Mapping[str, Any], suffix: str) -> str | None:
+    """
+    Find the one key of `properties` ending in `suffix`, or `None` if there is none
+
+    The name rather than the value, because the readers which cast and check a facet
+    (`stac_read_facet_as_string` and friends) are told which field to read, not what it
+    held.
+    """
+    for key in properties:
+        if key.endswith(suffix):
+            return key
+
+    return None
 
 
 def _suffixed_value(asset: Mapping[str, Any], suffix: str) -> Any:

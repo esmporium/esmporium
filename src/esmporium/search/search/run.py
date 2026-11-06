@@ -9,11 +9,12 @@ from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, TypeAlias, cast
+from typing import TYPE_CHECKING, Protocol, TypeAlias, cast
 
 import httpx
 
-from esmporium.query import QueryProtocol, to_canonical
+from esmporium.query import QueryCanonical, QueryProtocol, to_canonical
+from esmporium.search.apis import Request
 from esmporium.search.health import SearchAPICallObserver
 from esmporium.search.result_parsing import ParsedDocument, ResultProcessor
 from esmporium.search.search.errors import (
@@ -28,6 +29,7 @@ from esmporium.search.search.planning import SubSearch, plan_sub_searches
 from esmporium.search.search_api_facade import (
     DEFAULT_SEARCH_API_SELECTOR,
     ClashingFacetsError,
+    SearchAPIFacade,
     SearchAPIFacadeSelector,
     SelectorOfferedNoAPIFacadeError,
 )
@@ -81,6 +83,103 @@ class SearchOutcome:
         return bool(self.parsed_docs)
 
 
+class RequestBuilder(Protocol):
+    """
+    Turns a canonical query into the request one facade should be sent
+
+    The seam which lets a search ask a facade for something other than its ordinary
+    dataset search. The default is exactly that ordinary search; a parent search passes
+    [build_parent_dataset_request][(m).build_parent_dataset_request] instead and
+    inherits the endpoint selection, failover and failure handling around it.
+    """
+
+    def __call__(
+        self, facade: SearchAPIFacade, canonical: QueryCanonical, limit: int
+    ) -> Request:
+        """
+        Build the request to send to one facade
+
+        Parameters
+        ----------
+        facade
+            The facade the request will go to, which names the project and the API
+
+        canonical
+            The query to render
+
+        limit
+            The page size to ask for
+
+        Returns
+        -------
+        :
+            The request to send
+        """
+
+
+def build_dataset_request(
+    facade: SearchAPIFacade, canonical: QueryCanonical, limit: int
+) -> Request:
+    """
+    Ask a facade for its ordinary dataset search request
+
+    The default [RequestBuilder][(m).RequestBuilder], i.e. what
+    [search_single_project][(m).search_single_project] does unless told otherwise.
+
+    Parameters
+    ----------
+    facade
+        The facade to ask
+
+    canonical
+        The query to render
+
+    limit
+        The page size to ask for
+
+    Returns
+    -------
+    :
+        The request to send
+    """
+    return facade.build_search_request(canonical, limit)
+
+
+def build_parent_dataset_request(
+    facade: SearchAPIFacade, canonical: QueryCanonical, limit: int
+) -> Request:
+    """
+    Ask a facade for a parent simulation's dataset search request
+
+    The [RequestBuilder][(m).RequestBuilder] a parent search passes, so that looking
+    for an ancestor gets the same endpoint selection and failover as any other search.
+    Failover matters more here than for most searches: a parent is a dataset we have
+    never seen, and it can be published on a node which never answered the search that
+    found its child.
+
+    Parameters
+    ----------
+    facade
+        The facade to ask
+
+    canonical
+        The parent simulation to look for
+
+    limit
+        The page size to ask for
+
+    Returns
+    -------
+    :
+        The request to send
+
+    See Also
+    --------
+    [SearchAPIFacade.build_parent_dataset_search_request][esmporium.search.SearchAPIFacade.build_parent_dataset_search_request]
+    """
+    return facade.build_parent_dataset_search_request(canonical, limit)
+
+
 def search_single_project(  # noqa: PLR0913 - the keyword-only extras are deliberate injection seams
     query: QueryProtocol,
     selector: SearchAPIFacadeSelector = DEFAULT_SEARCH_API_SELECTOR,
@@ -92,6 +191,7 @@ def search_single_project(  # noqa: PLR0913 - the keyword-only extras are delibe
     client: httpx.Client | None = None,
     api_call_observer: SearchAPICallObserver | None = None,
     processor: ResultProcessor | None = None,
+    build_request: RequestBuilder = build_dataset_request,
 ) -> SearchOutcome:
     """
     Search the facades the selector yields, and parse their answers into datasets
@@ -106,6 +206,10 @@ def search_single_project(  # noqa: PLR0913 - the keyword-only extras are delibe
     ----------
     query
         The query to use for the search
+
+        A project-specific query, or an already-canonical
+        [QueryCanonical][esmporium.query.QueryCanonical] -- which is what a search built
+        from stored facts rather than from user input has, e.g. a parent search.
 
     selector
         Chooses which facade to try at each attempt, and when to stop.
@@ -173,6 +277,16 @@ def search_single_project(  # noqa: PLR0913 - the keyword-only extras are delibe
         Called with `(facade, parsed_documents)` as soon as each page is parsed,
         so its results can be acted on (e.g. saved) the moment they arrive
         rather than at the end.
+
+    build_request
+        What to ask each facade for.
+
+        Defaults to [build_dataset_request][(m).build_dataset_request], the ordinary
+        dataset search. Pass
+        [build_parent_dataset_request][(m).build_parent_dataset_request] to look for a
+        parent simulation instead, which keeps everything around the request --
+        endpoint selection, failover, failure collection, call recording -- and changes
+        only what is asked. See [RequestBuilder][(m).RequestBuilder].
         If `None` (the default),
         the parsed documents are still collected into the returned outcome,
         they are just not handed anywhere.
@@ -197,7 +311,11 @@ def search_single_project(  # noqa: PLR0913 - the keyword-only extras are delibe
         us to re-request a page we had already requested. Pages fetched before this
         have already been handed to `processor`.
     """
-    canonical = to_canonical(query)
+    # An already-canonical query is taken as-is. `QueryCanonical` declares no
+    # `QueryFacet` annotations -- it is what those annotations point at -- so
+    # `to_canonical` has nothing to read and raises. The same idiom as
+    # `esmporium.requirements.tree._canonical`.
+    canonical = query if isinstance(query, QueryCanonical) else to_canonical(query)
 
     parsed_docs: dict[FacadeKey, tuple[ParsedDocument, ...]] = {}
     n_matches: dict[FacadeKey, int | None] = {}
@@ -215,7 +333,7 @@ def search_single_project(  # noqa: PLR0913 - the keyword-only extras are delibe
             facade_key = get_facade_key(facade)
 
             try:
-                request = facade.build_search_request(canonical, limit)
+                request = build_request(facade, canonical, limit)
             except ClashingFacetsError as exc:
                 # Explain the clash in terms of the query the user actually wrote.
                 # When `search` split a multi-project query, `query` here is the
