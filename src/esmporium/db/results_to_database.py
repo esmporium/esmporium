@@ -830,20 +830,6 @@ i.e. everything a source *asserts*, as opposed to the columns which identify the
 (`dataset_version_id` and `source`), say how far it has got (`resolution`) or say where
 it came from. These are the ones [save_parent_info][(m).save_parent_info] refreshes, and
 so the ones [check_parent_facts_agree][(m).check_parent_facts_agree] compares.
-
-The same idea as [FILE_FACT_COLUMNS][(m).FILE_FACT_COLUMNS]. What makes it matter is
-that **two documents of one source can describe the same version and one of them say
-less**, so a merge has to treat silence as silence:
-
-- two STAC mirrors describe a version each, and east and west are known to disagree
-  about other things;
-- a header-derived answer is read from whichever file of the version could be fetched,
-  and the global attributes are not reliably complete -- CMIP5's `inmcm4` carries no
-  `parent_experiment_rip` at all and `CMCC-CM` carries the literal `"N/A"`.
-
-Reading the second document's `None` as "this is nothing now" would throw away what the
-first one told us. Which column each source can speak to is the source's business, not
-this list's.
 """
 
 
@@ -865,9 +851,8 @@ def parent_fact_differences(
     """
     Find the parent facts a source asserts which disagree with what we hold
 
-    A fact the source is silent about (`None`) is not a disagreement, exactly as in
-    [file_fact_differences][(m).file_fact_differences]. That rule does real work here,
-    because two documents of one source can say different amounts about the same
+    A fact the source is silent about (`None`) is not a disagreement.
+    Two documents of one source can say different amounts about the same
     version: see [PARENT_FACT_COLUMNS][(m).PARENT_FACT_COLUMNS]. Reading a `None` as
     "this is now nothing" would let whichever document arrived last erase what an
     earlier one told us.
@@ -951,24 +936,6 @@ def save_parent_info(  # noqa: PLR0913 - a fact, its provenance and where it cam
     Write one source's answer about which simulation a version branched from
 
     Reuses anything already stored.
-
-    Idempotent, the way the rest of ingestion is: re-recording the same answer reuses
-    the row rather than duplicating it. A row is matched on
-    `(dataset_version_id, source)` -- see the identity note on
-    [DatasetVersionParent][esmporium.db.schema.DatasetVersionParent].
-
-    On a row we already hold, [PARENT_FACT_COLUMNS][(m).PARENT_FACT_COLUMNS] are
-    refreshed from what the source asserts, and left alone where it says nothing: a
-    `None` means the source did not say, not that the value is nothing. A source which
-    says something *different* warns
-    ([ParentFactsChangedWarning][(m).ParentFactsChangedWarning]) **and invalidates any
-    link already resolved from the row**, because that link points at a dataset this
-    version no longer claims to descend from.
-
-    `resolution` is otherwise left exactly as it was, so a re-ingest never undoes work
-    the resolver has already done.
-
-    Does not commit: the caller owns the transaction boundary.
 
     Parameters
     ----------

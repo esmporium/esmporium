@@ -1,6 +1,7 @@
 """
 Choosing which dataset version is a child's parent, out of the ones we hold
 
+The definitions used in this module:
 A parent declaration names a *simulation* -- a model, an experiment and a variant --
 and a simulation is published as many datasets, each of which can be published more
 than once. Turning that declaration into one dataset version is therefore two choices,
@@ -11,48 +12,6 @@ and this module makes both:
    [match_on_facets][(m).match_on_facets].
 2. **which version of that dataset** to use, which nothing published decides and
    nothing could. See [choose_parent_version][(m).choose_parent_version].
-
-Only the first of those is a fact. A version string is a *publication* date and a
-branch happens inside a modelling centre, long before either end of it reaches ESGF, so
-a child is routinely published before any release of its parent exists -- UKESM1-0-LL
-`historical` `v20190406` declares a `piControl` whose releases are `20190410`,
-`20200630` and `20200828`, every one of them newer than the child. That is not a
-contradiction: it branched from the *run*, which all three releases publish. There is
-simply no published version that *is* the one branched from, so the honest question is
-not "which one was it" but "which one should be used". That is answered by a rule, the
-answer is labelled with
-[ParentVersionChoice][esmporium.db.schema.ParentVersionChoice], and a caller who knows
-better replaces the rule.
-
-The facets which identify the *simulation* -- project, model, experiment and variant --
-are **compared by nothing here**, and that is the important part: those are the child's
-*parent's* values, not the child's own. A parent is in a different experiment from its
-child, usually under a different variant, so comparing them child-to-candidate would
-reject every real parent. Finding the right simulation is
-[candidate_parent_datasets][esmporium.db.candidate_parent_datasets]' job; choosing
-within it is this module's.
-
-`institution` is not part of even that, and cannot be: no source publishes the parent's
-institution and it really does differ from the child's. `E3SM-1-0 historical` is
-published by `UCSB` where the `piControl` it branches from is published by
-`E3SM-Project`. So institution is a tie-break here and never a requirement.
-
-Everything here is a **pure function over candidates**: no session, no network, no
-lookup. That is what lets the same rule serve two situations which would otherwise drift
-apart -- a parent just fetched by a search, and a parent fetched weeks ago that is
-already stored. The candidates come from somewhere else; the decision is made here.
-
-The matchers are split **by project and not by search API**. By the time anything
-reaches this module the results are [Dataset][esmporium.db.schema.Dataset] rows, so the
-difference between a Solr document and a STAC item has already been spent. What is left
-is genuinely per project: CMIP5 has no concept of a grid at all, and `processing_id`
-means a CMOR table for CMIP5 and CMIP6 but a variable branding suffix for CMIP7. Each
-project's matcher therefore spells its own facets out rather than sharing a constant
-with another project, so that one changing cannot quietly change the other.
-
-The version choice, by contrast, is **not** per project: a version string is a DRS-wide
-concept and means the same thing everywhere. There is one rule, and a seam to replace
-it.
 """
 
 from __future__ import annotations
@@ -69,7 +28,7 @@ if TYPE_CHECKING:
 @dataclass(frozen=True)
 class MatchOutcome:
     """
-    What matching a parent *dataset* decided, which is one of three answers and not two
+    What matching a parent *dataset* decided, which is one of three answers
 
     `parent_dataset` is the answer when there is one. The other two are both "no
     parent", and they are not the same thing:
@@ -77,8 +36,7 @@ class MatchOutcome:
     - **nothing matched**, with `candidates` empty: the simulation does not publish
       what the child needs. The lineage is intact and this one variable has a hole.
     - **several matched**, with `parent_dataset` unset and `candidates` populated: the
-      rule could not choose. That is worth reporting rather than resolving by picking
-      the lowest id, which is what hid it before this module existed.
+      rule could not choose.
 
     The version of the chosen dataset is a second question, answered separately by
     [VersionMatchOutcome][(m).VersionMatchOutcome].
@@ -87,12 +45,6 @@ class MatchOutcome:
     parent_dataset: Dataset | None = None
     """
     The parent dataset chosen, or `None` if none was
-
-    Named for its type, because the word "parent" alone is ambiguous in this codebase:
-    a [DatasetVersionParent][esmporium.db.schema.DatasetVersionParent] names a
-    simulation, and the `parent` field of every failure in
-    [esmporium.db.parents_to_database][] is a
-    [ParentSimulation][esmporium.db.ParentSimulation]. This one is a dataset.
     """
 
     candidates: tuple[Dataset, ...] = ()
@@ -125,10 +77,6 @@ class MatchOutcome:
 class ParentMatcher(Protocol):
     """
     Picks the one dataset which is a child's parent, out of some candidates
-
-    Pure: given the same child and the same candidates it returns the same answer,
-    whether those candidates came out of a search a moment ago or out of the database.
-    An implementation must not query, fetch or commit.
 
     Picks a *dataset*, not a version of one: see
     [ParentVersionChooser][(m).ParentVersionChooser] for the second step.
@@ -199,21 +147,6 @@ def match_on_facets(
     """
     Choose a parent dataset by requiring some facets to agree
 
-    The engine every project's matcher calls, in two passes:
-
-    1. keep candidates which agree with the child on `facets`;
-    2. if more than one survives and `prefer_same_institution`, keep those whose
-       institution matches the child's -- but only if that leaves any, because the
-       parent's institution genuinely can differ.
-
-    Institution is a tie-break and never a requirement. Were it required, a `UCSB`
-    `E3SM-1-0 historical` would never find its `E3SM-Project` `piControl`.
-
-    **`candidates` are assumed to be datasets of the declared parent simulation
-    already.** Nothing here re-checks the project, model, experiment or variant, because
-    those are the *parent's* and differ from the child's by definition -- see this
-    module's docstring.
-
     Parameters
     ----------
     child
@@ -233,11 +166,6 @@ def match_on_facets(
         its grid -- are what turn "the simulation publishes this variable" into "this
         is the dataset which continues the child's own series".
 
-        Every project's matcher passes its own, so the default here is only ever what
-        a project we have never met gets: see
-        [DEFAULT_PARENT_MATCHER][(m).DEFAULT_PARENT_MATCHER]. It compares the grid,
-        which is right for every project that has one and harmless for a project where
-        both sides are `NULL`.
 
     prefer_same_institution
         Whether to break a tie by preferring the child's own institution
@@ -350,9 +278,6 @@ def match_cmip7_parent(child: Dataset, candidates: Sequence[Dataset]) -> MatchOu
     The same facets as CMIP6, written out again on purpose rather than shared:
     `processing_id` is a variable branding suffix here rather than a CMOR table, so the
     two agreeing today is a coincidence of CMIP7's design and not something to rely on.
-    Spelling them out separately is what lets one change without the other, the way
-    [esmporium.search.search_api_facade.store][] names each project's facade parameters
-    even where two projects share them.
 
     Parameters
     ----------
@@ -374,6 +299,10 @@ def match_cmip7_parent(child: Dataset, candidates: Sequence[Dataset]) -> MatchOu
     )
 
 
+# Note for developers:
+# Pre-built so that nothing has to be injected for the projects we support, and
+# injectable so that a user who knows better about their own data can replace
+# one.
 PARENT_MATCHERS_BY_PROJECT: Mapping[str, ParentMatcher] = {
     "CMIP5": match_cmip5_parent,
     "CMIP6": match_cmip6_parent,
@@ -382,29 +311,17 @@ PARENT_MATCHERS_BY_PROJECT: Mapping[str, ParentMatcher] = {
 """
 The matcher to use for each project we know, keyed by
 [Dataset.project][esmporium.db.schema.Dataset.project]
-
-Pre-built so that nothing has to be injected for the projects we support, and injectable
-so that a user who knows better about their own data can replace one.
 """
 
 DEFAULT_PARENT_MATCHER: ParentMatcher = match_on_facets
 """
 The matcher for a project with no entry of its own
-
-[match_on_facets][(m).match_on_facets] with its own facets left at their default, which
-includes the grid: right for every project that has one and harmless for a project where
-both sides are `NULL`. It is a default rather than a refusal because a project we have
-not met is more likely to be CMIP6-shaped than to be unmatchable, and
-[matcher_for_project][(m).matcher_for_project] can be told to refuse instead.
 """
 
 
 class UnknownProjectMatcherError(KeyError):
     """
     Raised when a project has no matcher and no default was allowed
-
-    Worth being able to ask for: matching the wrong way round is silent, where a refusal
-    is not.
     """
 
     def __init__(self, project: str, known: Collection[str]) -> None:
@@ -474,10 +391,6 @@ class VersionMatchOutcome:
     The same three answers as [MatchOutcome][(m).MatchOutcome], one step further down:
     `parent_version` when there is one, nothing at all when the dataset has no versions,
     and `candidates` populated when there are several and the chooser declined.
-
-    A separate type rather than a reuse of `MatchOutcome`, because the two stages mean
-    different things: the dataset stage reaches a fact and can genuinely fail to, where
-    this one makes a selection and says how confident it is.
     """
 
     parent_version: DatasetVersion | None = None
@@ -538,22 +451,6 @@ class VersionMatchOutcome:
 class ParentVersionChooser(Protocol):
     """
     Picks which version of a matched parent dataset to use
-
-    Pure, for the same reason [ParentMatcher][(m).ParentMatcher] is: an implementation
-    must not query, fetch or commit.
-
-    This is the second of the two steps, and the one with **nothing published to read**.
-    The parent vocabulary names a simulation and, where it is published at all, a branch
-    time -- never a version -- and a branch predates publication anyway, so there is no
-    version to discover. Every answer here is therefore a decision, which is why each
-    one is labelled with a
-    [ParentVersionChoice][esmporium.db.schema.ParentVersionChoice] rather than recorded
-    as though it had been read.
-
-    An implementation which does not want to decide can say so, by returning the
-    candidates with no version: that is reported to the caller and the assertion is left
-    unresolved. [choose_parent_version][(m).choose_parent_version] never does, because a
-    walk which stops at a republished parent stops at most CMIP6 parents.
     """
 
     def __call__(
@@ -604,29 +501,6 @@ def choose_parent_version(
     Retracted releases are dropped before 2 and 3, so a retracted match never beats a
     live newer release. If *every* release is retracted the filter is skipped rather
     than the chain being abandoned: a retracted parent is still the parent.
-
-    **Why case 3 is the common one, and why a parent whose every release is newer than
-    the child is not a contradiction.** A version string is the date a dataset was
-    *published*, not the date the model ran. A branch happens inside a modelling centre
-    -- the control run is integrated, the child is started from a point in it, and both
-    sit on the centre's own disks long before either reaches ESGF -- so publication
-    order afterwards is administrative. A child published in April 2019 whose parent's
-    releases are April 2019, June 2020 and August 2020 did not branch from data that did
-    not exist yet: it branched from the *run*, and all three releases publish that same
-    run. Which is also why there is no question of preferring a release dated before the
-    child; being older would mean nothing.
-
-    **Why the newest in case 3, and not
-    [is_latest][esmporium.db.schema.DatasetVersion.is_latest].** That flag is a snapshot
-    refreshed last-write-wins from whichever document arrived last, so it can be true
-    for two versions of one dataset or for none, depending on ingest order. The
-    `version` string is local, total and deterministic, and in every project we have met
-    it is a `YYYYMMDD` date, so ordering it as text is ordering it by time. The newest
-    release is also the one whose own parent attributes have had the most corrections
-    applied, which matters because it is the metadata the next hop of a walk reads.
-
-    One rule for every project, unlike the dataset-stage matchers: a version string
-    means the same thing in all of them.
 
     Parameters
     ----------
@@ -687,8 +561,4 @@ def choose_parent_version(
 DEFAULT_PARENT_VERSION_CHOOSER: ParentVersionChooser = choose_parent_version
 """
 The version chooser used when none is injected
-
-See [choose_parent_version][(m).choose_parent_version]. It always answers, so no chain
-stops for want of a version; wherever it had more than one release to pick from, it
-says which rule picked and what it passed over.
 """

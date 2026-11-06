@@ -15,10 +15,12 @@ This module closes that gap, in two steps which are deliberately separate:
   parent simulation, so many children pointing at one control run are one request
   between them.
 
-Walking back up a chain is those two in a loop. Where to stop is named by experiment
-(`until_experiment`) rather than counted in hops, because how deep a chain runs is a
-property of the science and not something a caller should have to know: a scenario can
-sit three or four branches below its control run.
+Both steps start from a **parent fact**: one source's assertion about where a version
+branched from, i.e. the `parent_*` columns of
+[DatasetVersionParent][esmporium.db.schema.DatasetVersionParent], listed in
+[PARENT_FACT_COLUMNS][esmporium.db.PARENT_FACT_COLUMNS]. A version *has* facts once any
+source has spoken, which is not the same as our knowing its parent: a row whose
+`parent_*` columns are all `None` declared no parent, and that counts.
 """
 
 from __future__ import annotations
@@ -78,45 +80,9 @@ def _utcnow() -> datetime.datetime:
     return datetime.datetime.now(datetime.timezone.utc)
 
 
-DEFAULT_MAX_HOPS = 16
-"""
-How many times [find_parents][(m).find_parents] will climb before giving up
-
-Not the stopping rule -- `until_experiment` is (see this module's docstring). This is
-insurance against a chain which never ends, and it is set well above any real lineage so
-that reaching it means something is wrong rather than that a chain was simply long.
-
-A cycle cannot get here: the walk refuses to revisit a simulation. What can is published
-metadata that walks forever through simulations which are each new, so exceeding this
-raises rather than quietly returning a truncated answer.
-"""
-
-
 class ParentFactsProvider(Protocol):
     """
     Makes sure some dataset versions have parent facts recorded, or says it cannot
-
-    The second of the two ways parent facts reach the database, and the one which is not
-    free. They arrive either:
-
-    - **at ingest**, on
-      [ParsedDocument.parent][esmporium.search.ParsedDocument.parent], for a project
-      whose search index publishes them -- CMIP7, where a parent costs no extra request
-      at all; or
-    - **afterwards**, through something like this, for a project whose facts live in a
-      file's header. CMIP5 and CMIP6 publish no parent facts on either API, so for them
-      this is the only way.
-
-    Called **once per hop**, on that hop's newly-ingested datasets, which is what keeps
-    the walk uniform: an ancestor is an ordinary dataset and getting *its* parent facts
-    is the same step that ran on the datasets the walk started from. There is
-    deliberately no "read the parent's header" operation.
-
-    An implementation writes through
-    [save_parent_info][esmporium.db.save_parent_info] with
-    [FILE_HEADER][esmporium.db.schema.ParentInfoSource.FILE_HEADER] and the
-    `file_id` the fact came from, so a fact read out of bytes stays traceable to the
-    bytes.
     """
 
     def __call__(self, session: Session, dataset_version_ids: Collection[int]) -> None:
@@ -137,15 +103,6 @@ class ParentFactsProvider(Protocol):
 class NoParentFactsProviderError(RuntimeError):
     """
     Raised when a dataset's parent facts cannot be obtained and nothing was offered
-
-    The version carries no assertion, and its project publishes none in the search
-    index, so there is nothing to walk from. This is an error rather than an empty
-    answer because the two look identical from outside and only one of them is a
-    finished job: a walk that quietly returned nothing would read as "this data has no
-    ancestry" when it means "nobody has looked".
-
-    For CMIP5 and CMIP6 the answer is a file header, which nothing here reads yet. Pass
-    a [ParentFactsProvider][(m).ParentFactsProvider] to `find_parents` to supply them.
     """
 
     def __init__(self, missing: Mapping[str, int]) -> None:
@@ -169,12 +126,6 @@ class NoParentFactsProviderError(RuntimeError):
 class ParentSearcher(Protocol):
     """
     Something which finds one parent simulation's datasets and stores them
-
-    The seam [find_parents][(m).find_parents] fires its searches through. The default
-    is a real search, so a test can walk a whole chain without a network by handing in
-    one which does nothing -- which is how the stopping rules, the failures and the
-    reuse are covered at all, since every one of them is about what the walk *decides*
-    rather than about what ESGF answers.
     """
 
     def __call__(self, session: Session, item: ParentSearchPlanItem) -> None:
@@ -199,16 +150,6 @@ class ParentSimulation:
     The unit a parent search is planned in, and so the unit children are deduplicated
     into: every dataset of one simulation declares the same parent, so one of these can
     stand for hundreds of rows.
-
-    Note what is *not* a field, because both are deliberate:
-
-    - **no activity.** It is published and it is recorded on the row, but it is not part
-      of identity and is never searched on. A model, an experiment and a variant already
-      pin a simulation, so including it could only narrow a query further -- and the one
-      thing that buys is a way for a publisher's mistake to hide a parent that does
-      exist.
-    - **no institution.** No source publishes the parent's, so there is nothing to put
-      here. It is discovered from whatever the search returns.
     """
 
     project: str
@@ -242,12 +183,6 @@ class ParentSimulation:
 class IncompleteParentError(ValueError):
     """
     Raised when a declared parent names too little to be searched for
-
-    A parent can only be looked for if it says which model, which experiment and which
-    variant. A record which names some of those but not all of them is not a root of the
-    tree -- it does declare a parent -- but it does not say enough to find one, and
-    filling in the gaps by assuming the child's own values is the kind of guess which
-    silently links a dataset to the wrong control run.
     """
 
     def __init__(self, parent_info: DatasetVersionParent) -> None:
@@ -276,18 +211,10 @@ class CrossProjectParentError(ValueError):
     """
     Raised when a dataset declares a parent in a different project from its own
 
-    Searching for it would mean asking a different project's API, through a different
-    facade and a different parser. It would also mean deciding which project the
-    parent's published *MIP era* corresponds to, which is a guess: the two are not the
-    same concept (see [Dataset.project][esmporium.db.schema.Dataset.project]). Refusing
-    is how
-    [DatasetVersionParent.parent_project][esmporium.db.schema.DatasetVersionParent.parent_project]
-    gets to be named for the column it is matched against without that naming hiding
-    anything.
-
-    Nothing published today does this: every CMIP7 record's declared parent era is
-    CMIP7. The assertion is recorded either way, so nothing is lost by refusing to
-    chase it.
+    No project we search does this: CMIP7 records declare a CMIP7 era, and CMIP5 infers
+    the era from the child. CMIP6Plus does -- MOHC's LESFMIP runs declare a CMIP6
+    `piControl` -- so registering it makes this reachable. The assertion is recorded
+    either way, so nothing is lost by refusing to chase it.
     """
 
     def __init__(self, parent_info: DatasetVersionParent, project: str) -> None:
@@ -303,10 +230,9 @@ class CrossProjectParentError(ValueError):
             f"{parent_info.parent_project!r}. Finding it would mean searching another "
             f"project, and deciding which project that published MIP era is served "
             f"under, which is a guess because a MIP era and a project are not the same "
-            f"concept. Nothing published today crosses projects this way. "
-            f"Please raise an issue at "
-            f"https://github.com/esmporium/esmporium/issues so we can see a real case "
-            f"before deciding what to do with it."
+            f"concept. CMIP6Plus is known to declare a CMIP6 parent; chasing one "
+            f"needs a facade registered for the other project, which nothing wires up "
+            f"yet."
         )
 
 
@@ -344,15 +270,6 @@ class UnknownUntilExperimentError(ValueError):
 class ParentNotFound:
     """
     A dataset declared a parent which the search index has nothing for
-
-    Not a defensive case: CMIP7 `piControl` declares its parent as `piControl-spinup`,
-    and `piControl-spinup` is not published. So a chain can end at a parent which is
-    named and does not exist.
-
-    The row is left at
-    [NOT_ON_ESGF][esmporium.db.schema.ParentResolution.NOT_ON_ESGF] and stamped with
-    when we looked, so the data being published later is something a future run can
-    pick up by age without anything having to force every row to be searched again.
     """
 
     child: ParentSimulation
@@ -373,11 +290,6 @@ class ParentNotFound:
 class ParentNotAncestor:
     """
     A chain reached a dataset which declares no parent without passing the target
-
-    i.e. it climbed to a root of the tree and the experiment the walk was told to stop
-    at was never one of the steps. The lineage is complete and simply does not go
-    through that experiment, which for an analysis that needs the control run is the
-    same as not having the data.
     """
 
     reached: ParentSimulation
@@ -407,11 +319,6 @@ class VariableGap:
     """
     A parent simulation exists but does not publish one of its children's variables
 
-    The lineage is intact and only this one variable has a hole in it at this ancestor,
-    which is why it is reported rather than raised: a Gregory calculation missing
-    `rsdt` from the control run is a different problem from one whose control run was
-    never found, and collapsing the two would hide which it was.
-
     No [DatasetParentLink][esmporium.db.schema.DatasetParentLink] is written, so a
     later search which does find that variable can resolve the row then.
     """
@@ -437,20 +344,6 @@ class VariableGap:
 class AmbiguousParent:
     """
     Several datasets fit a declared parent equally well and the matcher could not choose
-
-    Reported rather than resolved, and left
-    [UNRESOLVED][esmporium.db.schema.ParentResolution.UNRESOLVED], because any choice
-    here would be a guess that no later reader could tell apart from a real answer.
-    Picking the lowest id is what the first version of this did, silently.
-
-    Rare in the data we have looked at: a model, an experiment and a variant pin a
-    simulation even where one model is published by several institutions, because the
-    institutions publish disjoint variants. It is representable under our dataset model
-    though, so it is answered rather than assumed away.
-
-    The fix is a matcher of your own, injected into
-    [resolve_parent_links][(m).resolve_parent_links] or
-    [find_parents][(m).find_parents]. See [esmporium.db.parent_matching][].
     """
 
     child_dataset_version_id: int
@@ -478,22 +371,6 @@ class AmbiguousParent:
 class AmbiguousParentVersion:
     """
     The parent dataset was found, and which *version* of it was branched from is unclear
-
-    **Only an injected [ParentVersionChooser][esmporium.db.ParentVersionChooser] can
-    produce this.** The shipped
-    [choose_parent_version][esmporium.db.choose_parent_version] has an answer for every
-    case -- it takes the newest non-retracted version and labels the link
-    [DEFAULTED][esmporium.db.schema.ParentVersionChoice.DEFAULTED], reported as a
-    [ParentVersionDecision][(m).ParentVersionDecision] -- because a chain which stops
-    at a republished parent stops at most CMIP6 parents.
-
-    A chooser of your own may legitimately refuse, though: if which release an analysis
-    rests on matters, "I cannot tell, and will not pretend" is a better answer than any
-    rule. This is how that refusal reaches the caller.
-
-    The assertion is left [UNRESOLVED][esmporium.db.schema.ParentResolution.UNRESOLVED]
-    and no link is written, so re-running with a chooser resolves it with nothing to
-    undo.
     """
 
     child_dataset_version_id: int
@@ -538,19 +415,7 @@ class ParentVersionDecision:
     """
     A parent dataset was published more than once and we picked which release to use
 
-    **Not a failure and not an ambiguity**: the parent is found, the lineage is intact
-    and the chain climbs through it. What is being reported is that more than one
-    release of the right dataset was held, so which one the link points at came from a
-    rule rather than from anything published. `choice` says which rule.
-
-    Reported whenever there was something to choose, including when the parent carried
-    the child's own version string
-    ([CHILD_VERSION][esmporium.db.schema.ParentVersionChoice.CHILD_VERSION]) -- that is
-    better evidence than the newest-release default, but it is still a decision, and a
-    caller cannot weigh it if nobody tells them it happened. A parent held in a single
-    version produces no row here, because nothing was decided.
-
-    **A note on the dates, which look wrong the first time.** The releases passed over
+    A note on the dates: The releases passed over
     are often *all newer* than the child, so it can read as though a child branched from
     data that did not exist yet. A version string is a publication date, not a run date:
     the branch happened on the modelling centre's own disks before either end of it was
@@ -615,14 +480,6 @@ class ParentVersionDecision:
 class ParentVersionDecidedWarning(UserWarning):
     """
     Warned once per walk when any parent was held in more than one release
-
-    Once per walk and not once per link, deliberately. A parent fact is recorded per
-    dataset version and one simulation can be hundreds of datasets, so a per-link
-    warning would fire hundreds of times for one republished control run and teach
-    everybody to silence the category. The detail is on
-    [ParentWalkResult.version_decisions][(m).ParentWalkResult.version_decisions],
-    which is structured and can be acted on; this exists so that somebody who ignores
-    the return value still hears that a choice was made on their behalf.
     """
 
 
@@ -632,15 +489,6 @@ class ParentResolutionError(RuntimeError):
 
     Every failure is gathered into one error rather than the first one stopping the
     walk, so a run over many datasets reports everything wrong with it at once.
-
-    **Raised after the work is committed.** Everything the walk learned before failing
-    -- every assertion, every link, every recorded API call -- is in the database, so a
-    failed walk is still progress and running again does not start over.
-
-    The failures are kept as objects on `failures` and not only rendered into the
-    message, so that a caller can act on them. That is what lets this become "the
-    requirement is not satisfied, and here is which lineage was missing" once
-    requirements can ask for ancestry.
     """
 
     def __init__(self, failures: Sequence[ParentNotFound | ParentNotAncestor]) -> None:
@@ -665,12 +513,6 @@ class ParentSearchPlanItem:
     variables: tuple[str, ...]
     """
     The variables to ask for, sorted
-
-    The union of the variables of the children which declared this parent, rather than
-    everything the simulation published. A Gregory calculation needs the control run's
-    `tas`, `rsdt`, `rlut` and `rsut` because that is what it needs of the child; asking
-    for the whole simulation would ingest hundreds of datasets nobody asked about. Pass
-    `()` to [find_parents][(m).find_parents]' `extra_variables` to widen it.
     """
 
     child_dataset_version_ids: tuple[int, ...]
@@ -690,14 +532,6 @@ class ParentSearchPlanItem:
         :
             A single-project query naming the parent's model, experiment and variant,
             and the variables wanted of it.
-
-            The parent's project is the declaring dataset's, which
-            [parent_simulation][(m).parent_simulation] has already established by
-            refusing any parent whose published era differs from it (see
-            [CrossProjectParentError][(m).CrossProjectParentError]).
-
-            Neither activity nor institution is constrained; see
-            [ParentSimulation][(m).ParentSimulation] for why.
         """
         return QueryCanonical(
             project=(self.parent.project,),
@@ -795,12 +629,6 @@ class ParentWalkResult:
     version_decisions: list[ParentVersionDecision] = field(default_factory=list)
     """
     Every parent release our own rules picked, out of several they were given
-
-    See [ParentVersionDecision][(m).ParentVersionDecision]. These chains *are* climbed
-    -- the link is written and the walk carries on through it -- so this is the record
-    of which parts of the answer rest on a choice of ours, and `choice` says how strong
-    each one is. A [ParentVersionDecidedWarning][(m).ParentVersionDecidedWarning] is
-    raised once if this is non-empty.
     """
 
     searched: list[ParentSimulation] = field(default_factory=list)
@@ -930,6 +758,15 @@ def parent_simulation(
     ):
         raise IncompleteParentError(parent_info)
 
+    # TODO: this equality is what would have to go if a caller ever has facades for
+    # both projects. Three things would need settling, and only the first is here:
+    # `find_parents` takes one `selector` and uses it for every search, so a parent in
+    # another project would need one that covers that project too; a published MIP era
+    # would need mapping to a project, which is the identity for CMIP6Plus -> CMIP6 but
+    # not in general; and the opposite mistake -- a record asserting its own era for a
+    # parent published under another -- is invisible here, and surfaces as a parent the
+    # index has nothing for. `candidate_parent_datasets` and `matcher_for_project`
+    # already work off whatever project the parent names, so neither would change.
     if parent_info.parent_project != project:
         raise CrossProjectParentError(parent_info, project)
 
@@ -951,31 +788,6 @@ def resolve_parent_links(
     """
     Match every declared parent simulation against what we hold, and link them
 
-    **This asks nothing of the network.** It is both the cheap first move of a walk and
-    the whole of the fast path: a parent belongs to a simulation rather than to a
-    variable, so a control run fetched while chasing `tas` resolves `tos` with no
-    request at all -- including a `tos` searched weeks later, because the link is read
-    out of the stored datasets rather than out of anything the earlier run remembered.
-
-    A declared parent names a simulation, and this turns that into one stored dataset
-    **version**, in the two steps [esmporium.db.parent_matching][] owns:
-
-    1. the project's [ParentMatcher][esmporium.db.ParentMatcher] picks which *dataset*
-       of the simulation continues the child's own series;
-    2. the `version_chooser` picks which *version* of that dataset the child branched
-       from.
-
-    Neither decision is made here: this function finds the candidates and they choose.
-    That division is what keeps one rule for both situations -- a parent fetched a
-    moment ago and a parent stored weeks ago go through the same matcher, because it is
-    a pure function of the child and the candidates.
-
-    Either step being unable to choose is reported rather than resolved. See
-    [ParentResolutionResult.ambiguous][(m).ParentResolutionResult.ambiguous] and
-    [ambiguous_versions][(m).ParentResolutionResult.ambiguous_versions].
-
-    Does not commit: the caller owns the transaction boundary.
-
     Parameters
     ----------
     session
@@ -994,10 +806,8 @@ def resolve_parent_links(
     version_chooser
         How to pick which version of the matched parent dataset to use.
 
-        Defaults to [choose_parent_version][esmporium.db.choose_parent_version], which
-        prefers the release carrying the child's own version string and otherwise takes
-        the newest that has not been retracted -- and says which, rather than pretending
-        either was published as the answer. Pass one of your own to decide it
+        Defaults to [choose_parent_version][esmporium.db.choose_parent_version].
+        Pass one of your own to decide it
         differently; nothing published can decide it, so a rule is all that either of
         you has.
 
@@ -1122,8 +932,7 @@ def candidate_parent_datasets(
     :
         Every dataset of that simulation, ordered by id so the answer is stable
 
-        Empty when we hold none, which is what a search is for. Institution is not
-        filtered on, because no source publishes the parent's.
+        Empty when we hold none, which is what a search is for.
     """
     return tuple(
         session.exec(
@@ -1143,15 +952,6 @@ def candidate_parent_datasets(
 class _ResolvedChild:
     """
     What resolving one child version's declared parent produced
-
-    Internal to [resolve_parent_links][(m).resolve_parent_links], which collects these
-    into a [ParentResolutionResult][(m).ParentResolutionResult]. At most one of the four
-    reports is set.
-
-    `still_unresolved` is separate from them rather than implied by them, because the
-    two are not the same question: a variable gap already settled for a sibling is
-    reported *and* taken out of the queue, where one found for the first time is
-    reported and left in it.
     """
 
     link: DatasetParentLink | None = None
@@ -1189,13 +989,6 @@ def _resolve_one_assertion(  # noqa: PLR0913 - one argument per thing the two de
 ) -> _ResolvedChild:
     """
     Turn one version's declared parent into one stored version, or say why not
-
-    The two steps [esmporium.db.parent_matching][] owns, run in order, with the row
-    updates each outcome implies. Split out of
-    [resolve_parent_links][(m).resolve_parent_links] so that the loop which collects the
-    answers is readable beside the function which decides them.
-
-    Writes to `session` but never commits; the caller owns the boundary.
     """
     parent = parent_simulation(parent_info, child.project)
     matcher = matcher_for_project(child.project, matchers)
@@ -1304,16 +1097,6 @@ def candidate_parent_versions(
     """
     Find every version we hold of one already-matched parent dataset
 
-    The **query**, with no policy in it, exactly as
-    [candidate_parent_datasets][(m).candidate_parent_datasets] is: which of these the
-    child branched from is
-    [choose_parent_version][esmporium.db.choose_parent_version]'s decision.
-
-    Deliberately unfiltered -- not narrowed to the latest, and retracted versions left
-    in. `is_latest` and `retracted` are snapshots which change under us, so resolving by
-    them would make the answer depend on when the resolve happened to run. A version the
-    child really did branch from does not stop being its parent by being superseded.
-
     Parameters
     ----------
     session
@@ -1345,17 +1128,6 @@ def _variable_known_unpublished(
 ) -> bool:
     """
     Whether a sibling has already established this simulation lacks this variable
-
-    i.e. whether some other dataset's assertion names the same parent simulation, wants
-    the same variable, and is recorded as
-    [VARIABLE_NOT_PUBLISHED][esmporium.db.schema.ParentResolution.VARIABLE_NOT_PUBLISHED].
-    That is only ever written after a search really asked for it (see
-    [_record_search_outcomes][(m)._record_search_outcomes]), so this reuses an answer
-    rather than guessing one.
-
-    What makes the reuse sound is the same thing the whole fast path rests on: which
-    variables a simulation publishes is a property of the simulation, not of whichever
-    dataset happened to ask first.
     """
     return (
         session.exec(
@@ -1382,9 +1154,6 @@ def _variable_known_unpublished(
 def _parent_simulation_is_held(session: Session, parent: ParentSimulation) -> bool:
     """
     Whether we hold any dataset of `parent` at all, whatever its variable
-
-    What tells a [VariableGap][(m).VariableGap] -- the ancestor is here, this one
-    variable of it is not -- from a parent we simply have not searched for yet.
     """
     return bool(candidate_parent_datasets(session, parent))
 
@@ -1405,11 +1174,6 @@ def check_until_experiments_exist(  # noqa: PLR0913 - the keyword-only extras ar
     looks like an ordinary negative result: the walk never matches it, climbs every
     chain to its top and reports that none of them got there. One request up front
     turns that into a typo report.
-
-    This asks the same machinery a user gets for a mistyped search
-    ([esmporium.search.check_query_values][]), so the suggestions are the same ones,
-    and an API which will not answer is not treated as a failed check -- it is simply
-    not checked, and the walk goes ahead.
 
     Parameters
     ----------
@@ -1473,7 +1237,7 @@ def find_parents(  # noqa: PLR0913 - one argument per thing a walk has to be tol
     extra_variables: Collection[str] = (),
     selector: SearchAPIFacadeSelector = DEFAULT_SEARCH_API_SELECTOR,
     check_until_exists: bool = True,
-    max_hops: int = DEFAULT_MAX_HOPS,
+    max_hops: int = 16,
     client: httpx.Client | None = None,
     api_call_observer: SearchAPICallObserver | None = None,
     searcher: ParentSearcher | None = None,
@@ -1489,10 +1253,6 @@ def find_parents(  # noqa: PLR0913 - one argument per thing a walk has to be tol
     reaches one of `until_experiment`; a chain which reaches a record declaring no
     parent without having passed through one of them is a failure, as is a declared
     parent the index has nothing for.
-
-    Commits as it goes, once per hop, so a walk which fails part-way keeps everything it
-    learned. The aggregated [ParentResolutionError][(m).ParentResolutionError] is raised
-    after the last commit for exactly that reason.
 
     Parameters
     ----------
@@ -1532,8 +1292,12 @@ def find_parents(  # noqa: PLR0913 - one argument per thing a walk has to be tol
         e.g. when offline or when the values are already known good.
 
     max_hops
-        How many times to climb before giving up. A guard, not the stopping rule; see
-        [DEFAULT_MAX_HOPS][(m).DEFAULT_MAX_HOPS].
+        How many times to climb before giving up
+
+        A guard, not the stopping rule -- `until_experiment` is (see this module's
+        docstring). This is insurance against a chain which never ends, and the default
+        is set well above any real lineage so that reaching it means something is wrong
+        rather than that a chain was simply long.
 
     client
         The HTTP client to search with, shared across every hop. If `None`, one is
@@ -1563,17 +1327,6 @@ def find_parents(  # noqa: PLR0913 - one argument per thing a walk has to be tol
     version_chooser
         How to pick which version of a matched parent dataset to use, passed through to
         [resolve_parent_links][(m).resolve_parent_links].
-
-        The default always answers, so a republished parent never stops a chain. Where
-        it had more than one release to pick from, the link carries which rule picked
-        (see [ParentVersionChoice][esmporium.db.schema.ParentVersionChoice]), the choice
-        is listed in
-        [ParentWalkResult.version_decisions][(m).ParentWalkResult.version_decisions],
-        and one [ParentVersionDecidedWarning][(m).ParentVersionDecidedWarning] is raised
-        for the whole walk.
-
-        A chooser of your own may refuse instead, which stops that chain and reports it
-        on [ambiguous_versions][(m).ParentWalkResult.ambiguous_versions].
 
     Returns
     -------
@@ -1652,11 +1405,6 @@ def find_parents(  # noqa: PLR0913 - one argument per thing a walk has to be tol
 class TooManyParentHopsError(RuntimeError):
     """
     Raised when a walk climbed its hop limit and was still finding new ancestors
-
-    A guard going off, not an ordinary outcome. A cycle cannot cause it -- the walk
-    refuses to revisit a simulation -- so this means published metadata describes a
-    chain longer than any real lineage, and returning a truncated answer would be
-    presenting a partial lineage as a complete one.
     """
 
     def __init__(self, max_hops: int, outstanding: Sequence[ParentSimulation]) -> None:
@@ -1729,9 +1477,8 @@ resolves that with:
 - a **file header** beats the index, because the header is what the data itself says;
 - the **index** is the fallback, and is all CMIP7 has.
 
-Not quite the whole story for CMIP5, where the published parent is widely untrustworthy
-and a fix may deserve to win over a header -- which it already does here. If a project
-ever needs a different order, this is the thing to pass round rather than a new column.
+If a project ever needs a different order, this is the thing to pass round rather
+than a new column.
 """
 
 
@@ -1741,11 +1488,6 @@ def preferred_parent_info(
 ) -> DatasetVersionParent | None:
     """
     Pick the one answer to believe, out of a version's rows
-
-    Every reader of this table goes through here rather than taking whichever row a
-    query happened to return first. With one source stored that is the same thing; with
-    three it is the difference between a correction being applied and being ignored
-    depending on row order.
 
     Parameters
     ----------
@@ -1849,18 +1591,6 @@ def _classify_frontier(
 ) -> _Classified:
     """
     Sort a frontier into what the walk should do with each of its versions
-
-    The stopping rule is applied to the version's **own** experiment, not to the parent
-    it declares. Having fetched `piControl` is what stops the walk, and it is what stops
-    `piControl`'s own declaration of `piControl-spinup` -- which nobody publishes --
-    from being chased.
-
-    Driven from the frontier's *datasets* rather than from its assertions, so that a
-    version at the target is reported as reached even though its parent facts were
-    deliberately never obtained (see
-    [_frontier_needing_facts][(m)._frontier_needing_facts]). Any version which is *not*
-    at the target has facts by now, because
-    [ensure_parent_facts][(m).ensure_parent_facts] has already refused otherwise.
     """
     if not frontier:
         return _Classified()
@@ -1952,12 +1682,6 @@ def _simulations_of(
 def _versions_of_parents(links: Sequence[DatasetParentLink]) -> tuple[int, ...]:
     """
     Read the parent versions some links point at, which is the walk's next frontier
-
-    One version per link and no query at all: resolving has already chosen which
-    version of the parent dataset was branched from, so climbing is reading that choice
-    back rather than re-opening it. Before the choice was recorded this had to take
-    *every* version of the parent dataset and climb from all of them, which fanned a
-    chain out across republications of one simulation.
     """
     return tuple(sorted({link.parent_dataset_version_id for link in links}))
 
@@ -1976,28 +1700,7 @@ def _search_for_parent(
     **The request is narrowed to the variables wanted**, which
     [ParentSearchPlanItem.variables][(m).ParentSearchPlanItem.variables] carries: the
     union of what the children declaring this parent need, not everything the simulation
-    published. One CMIP7 simulation can publish several hundred datasets, so asking for
-    all of them would ingest -- and store the raw document of -- hundreds of datasets
-    nobody asked about.
-
-    What is *not* narrowed is the grid, the reporting interval and the processing id.
-    Those are left to [esmporium.db.parent_matching][] to compare against the child
-    afterwards, so that a parent published on another grid is found and then rejected
-    rather than looking as though it was never published. Searching broad and matching
-    narrow is why the matcher exists.
-
-    The ingested records carry their *own* parent assertions for a project which
-    publishes them in the index, so for CMIP7 a hop pays for the next hop's reading as a
-    side effect. For a project whose facts come from a header,
-    [ensure_parent_facts][(m).ensure_parent_facts] does that at the top of the next
-    turn instead.
-
-    The request is built by the facade through
-    [build_parent_dataset_request][esmporium.search.build_parent_dataset_request], so
-    that each project's own facet spelling is used and a facet the project cannot
-    express is dropped rather than refused. Everything around the request -- which
-    endpoint, failover to the next one, recording the call -- is
-    `search_single_project`'s, unchanged.
+    published.
     """
     search_single_project(
         item.to_canonical_query(),
@@ -2016,21 +1719,6 @@ def _record_search_outcomes(
 ) -> None:
     """
     Record what each hop's searches settled, so nothing is asked for twice
-
-    Called after a hop's searches and the resolve which follows them, so a row still
-    [UNRESOLVED][esmporium.db.schema.ParentResolution.UNRESOLVED] here means the index
-    answered and did not have what was asked for -- not that we have not looked. Which
-    of the two it is decides the state, and only one of them is a failure:
-
-    - the simulation is nowhere in the index →
-      [NOT_ON_ESGF][esmporium.db.schema.ParentResolution.NOT_ON_ESGF], and a
-      [ParentNotFound][(m).ParentNotFound].
-    - the simulation is here but was asked for this variable and does not publish it →
-      [VARIABLE_NOT_PUBLISHED][esmporium.db.schema.ParentResolution.VARIABLE_NOT_PUBLISHED],
-      and no failure.
-
-    Leaving either as `UNRESOLVED` would make the next run fire the same search again,
-    and the one after that, forever.
     """
     for item in plan:
         simulation_is_held = _parent_simulation_is_held(session, item.parent)
@@ -2130,11 +1818,6 @@ def _frontier_needing_facts(
 ) -> tuple[int, ...]:
     """
     Narrow a frontier to the versions whose parent facts the walk actually needs
-
-    A version whose own experiment is one the walk stops at is never climbed, so its
-    parent facts are never read. Demanding them would be a request nobody needs and, for
-    a project whose facts cost a header read, a failure where there is no problem: the
-    walk reached exactly where it was asked to reach.
     """
     if not frontier:
         return ()

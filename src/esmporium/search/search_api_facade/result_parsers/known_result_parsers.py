@@ -527,16 +527,6 @@ class ESGFNGResultParser:
     publishes none and keeps them in file headers instead.
     [DEFAULT_STAC_PARENT_SUFFIXES][esmporium.search.DEFAULT_STAC_PARENT_SUFFIXES] is
     what every project we have met publishes, so it is what to pass.
-
-    One field rather than a flag beside a mapping, so the two cannot disagree: a flag
-    saying "read them" next to a mapping naming properties this project does not have
-    would read six `None`s and record them as a declaration of no parent.
-
-    Whether to read has to be *said* rather than discovered, for that same reason. A
-    project which publishes no parent facts looks exactly like a simulation which *has*
-    no parent, because CMIP7 announces a root of the tree by carrying none of the keys.
-    Reading a CMIP6 item would therefore record "this declares no parent" for every
-    CMIP6 dataset in existence, which is a much worse answer than recording nothing.
     """
 
     @property

@@ -519,38 +519,6 @@ class SearchAPIFacade:
         """
         Build a request for the datasets of a parent simulation
 
-        The facade owns this for the same reason it owns
-        [build_search_request][(c).build_search_request]: the facets come in named
-        canonically and go out named the way this project is spelled on this API. It is
-        a method of its own rather than a use of `build_search_request` because of the
-        line below about dropping facets, which is a decision only this facade can make
-        and only this search wants made.
-
-        **What the caller is expected not to set, and why.** A parent is identified by a
-        simulation -- a model, an experiment and a variant -- and nothing else:
-
-        - **institution**, because no source publishes the parent's. It genuinely
-          differs from the child's: `E3SM-1-0 historical` is published by `UCSB` while
-          the `piControl` it branches from is published by `E3SM-Project`. The
-          institution is discovered from whatever comes back.
-        - **activity**, which *is* published on a parent declaration and is recorded,
-          but which a model, an experiment and a variant already pin. Narrowing by it
-          could only buy a way for a publisher's mistake to hide a parent that exists.
-        - **reporting interval, processing id and grid**, which are deliberately left to
-          [esmporium.db.parent_matching][] to compare against the child afterwards.
-          Narrowing by them here would make a parent published on another grid read as
-          "not published at all", which is the one failure that looks like missing data.
-
-        Nothing stops a caller setting them; this says what the search is for.
-
-        **A facet this project cannot express is dropped, not refused.** That is the
-        opposite of [build_file_search_request][(c).build_file_search_request], and
-        deliberately: CMIP5 has no `grid_label`, `activity` or `nominal_resolution` at
-        all, and a parent search is made on a caller's behalf rather than at their
-        request, so there is nothing for them to do about a refusal. A caller who needs
-        to know what was asked can read it back with
-        [askable_facets][(c).askable_facets].
-
         Parameters
         ----------
         canonical

@@ -155,17 +155,6 @@ class ParentInfo:
     for parent information and declared none**, which is how a root of the tree says
     so: CMIP7 announces "no parent" by carrying none of the keys rather than by
     publishing a sentinel value.
-
-    That is a different statement from
-    [ParsedDocument.parent][(m).ParsedDocument.parent] being `None`, which means
-    nothing looked. See that field.
-
-    Note what is *not* here, because it shapes what can be done with this: there is no
-    parent variable, grid or processing id, because a simulation has none -- it is
-    published as many datasets and this names the run they share. There is also no
-    parent institution, because neither API publishes one, so a parent cannot be
-    searched for or matched by institution however much
-    [Dataset][esmporium.db.schema.Dataset] identity would like it.
     """
 
     parent_project: str | None
@@ -324,19 +313,6 @@ class ParsedDocument:
     read parent information, because the project does not publish any in its index
     (CMIP5 and CMIP6 publish none on either API; for those the facts live in file
     headers). No parent row is written for such a document.
-
-    A [ParentInfo][(m).ParentInfo] means the document *was* read, and it then says
-    either which simulation the parent is or -- with every field `None` -- that there
-    is no parent. Keeping those two apart is what lets a resolver tell "this is a root
-    of the tree" from "we have not looked yet", so that a root is not re-examined
-    forever.
-
-    **Unlike `files` and `accesses`, this applies to every dataset row the document
-    maps to.** A parent is a property of the simulation, and a document which bundles
-    several of our dataset rows (a CMIP5 Solr document, one row per variable) bundles
-    one simulation's variables, so there is no ambiguity about which row it belongs
-    to -- it belongs to all of them. That is why this is not subject to the
-    attribution rule above.
     """
 
 

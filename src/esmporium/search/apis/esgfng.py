@@ -672,28 +672,7 @@ Which project-prefixed STAC property carries each
 [ParentInfo][esmporium.search.ParentInfo] field, for the projects we have met
 
 The keys are our names and the values are the suffix of ESGF's, which is where the two
-vocabularies meet. Three of the six are renamed on the way in -- `parent_source_id`
-becomes `parent_model`, `parent_mip_era` becomes `parent_project` and
-`parent_activity_id` becomes `parent_activity` -- each taking the name
-[esmporium.query][] already uses for that facet. `parent_time_units` has no such name,
-so it keeps ESGF's.
-
-Suffixes rather than whole names because STAC prefixes these with the project in lower
-case (`cmip7:parent_source_id`), so matching the tail is what lets a project we have not
-met yet work with no code change -- the same reason
-[File.tracking_id][esmporium.db.schema.File.tracking_id] is read that way.
-
-**A default, not a fact about STAC.** Which parent properties exist is a fact about the
-project, so a facade carries its own copy: see
-[ESGFNGResultParser.parent_property_suffixes][esmporium.search.ESGFNGResultParser.parent_property_suffixes].
-Immutable, so that a parser holding the default cannot have it changed underneath it.
-
-Note what no project publishes, because it is the obvious thing to look for and it is
-not here: **the parent's version.** A parent declaration names a simulation and, where
-it is published at all, a point in that simulation's time axis -- never a published
-version of it. The `version` property on a STAC item is the item's *own*. So which
-version of a parent a child branched from has to be chosen rather than read; see
-[choose_parent_version][esmporium.db.choose_parent_version].
+vocabularies meet.
 """
 
 

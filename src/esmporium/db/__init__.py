@@ -74,7 +74,6 @@ from esmporium.db.parent_matching import (
     matcher_for_project,
 )
 from esmporium.db.parents_to_database import (
-    DEFAULT_MAX_HOPS,
     SOURCE_PRECEDENCE,
     AmbiguousParent,
     AmbiguousParentVersion,
@@ -208,7 +207,6 @@ __all__ = [
     "DEFAULT_BATCH_SIZE",
     "DEFAULT_HEALTH_WINDOW",
     "DEFAULT_LIMIT",
-    "DEFAULT_MAX_HOPS",
     "DEFAULT_PARENT_MATCHER",
     "DEFAULT_PARENT_VERSION_CHOOSER",
     "DEFAULT_REFRESH_AFTER",
