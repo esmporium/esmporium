@@ -243,7 +243,7 @@ class UnknownUntilExperimentError(ValueError):
     Checked before anything is searched for, because a misspelled target is the one
     failure which looks exactly like success: the walk simply never matches it, climbs
     to the top of every chain and reports that none of them got there. Finding out at
-    the start costs one request and turns that into a typo report.
+    the start costs one request and turns that into a named failure.
     """
 
     def __init__(self, experiment: str, suggestions: tuple[str, ...]) -> None:
@@ -251,18 +251,21 @@ class UnknownUntilExperimentError(ValueError):
         """The experiment we were told to stop at"""
 
         self.suggestions = suggestions
-        """Experiments the API does publish which look close to it"""
+        """
+        Experiments the API does publish which look close to it
 
-        suggestion_msg = (
-            f" Did you mean {', '.join(repr(s) for s in suggestions)}?"
-            if suggestions
-            else ""
-        )
+        Carried but deliberately not put in the message: a guess rendered into an error
+        reads as advice, and `difflib`'s notion of close is a default rather than a
+        judgement about experiment names. Every other reader of a
+        [FacetFinding][esmporium.search.FacetFinding] treats these as data too.
+        """
+
         super().__init__(
             f"The experiment to walk back to, {experiment!r}, is not one the search "
-            f"API publishes.{suggestion_msg} Nothing was searched for: a target which "
-            f"does not exist can never be reached, so every chain would have climbed "
-            f"to its top and reported that it never got there."
+            f"API publishes -- it is either misspelled or not a name this project "
+            f"uses. Nothing was searched for: a target which does not exist can never "
+            f"be reached, so every chain would have climbed to its top and reported "
+            f"that it never got there."
         )
 
 
