@@ -23,18 +23,22 @@ from typing import TYPE_CHECKING, Protocol
 
 from esmporium.headers.errors import UnsupportedHeaderFormatError
 from esmporium.headers.hdf5 import HDF5_MAGIC, read_hdf5_global_attributes
-from esmporium.headers.netcdf3 import NETCDF3_MAGICS, read_netcdf3_global_attributes
+from esmporium.headers.netcdf3 import (
+    NETCDF3_MAGIC_CLASSIC,
+    NETCDF3_MAGICS,
+    read_netcdf3_global_attributes,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-MAGIC_BYTES_NEEDED = 8
+MAGIC_BYTES_NEEDED = max(len(HDF5_MAGIC), *(len(each) for each in NETCDF3_MAGICS))
 """
-How many bytes from the start of a file are enough to tell its layout
+How many of a file's first bytes to quote when its layout is not one we read
 
-The longest magic number this recognises, HDF5's eight bytes. Named so that a caller
-fetching a prefix knows the floor, although in practice every prefix is thousands of
-times this.
+The longest magic number this recognises, so an unrecognised file start is reported in
+full rather than cut off part way through. Derived rather than stated, so adding a
+layout cannot leave it behind.
 """
 
 
@@ -157,7 +161,8 @@ def sniff_layout(prefix: bytes) -> HeaderLayout:
     prefix
         The first bytes of the file, starting at byte zero
 
-        Only the first [MAGIC_BYTES_NEEDED][(m).MAGIC_BYTES_NEEDED] are looked at.
+        Only the first few are looked at -- at most
+        [MAGIC_BYTES_NEEDED][(m).MAGIC_BYTES_NEEDED], the longest magic number here.
 
     Returns
     -------
@@ -190,7 +195,9 @@ def sniff_layout(prefix: bytes) -> HeaderLayout:
     if prefix[: len(HDF5_MAGIC)] == HDF5_MAGIC:
         return HeaderLayout.NETCDF4_HDF5
 
-    if prefix[:4] in NETCDF3_MAGICS:
+    # Both classic magics are the same four bytes long, so either one's length
+    # will do to slice what the membership test needs.
+    if prefix[: len(NETCDF3_MAGIC_CLASSIC)] in NETCDF3_MAGICS:
         return HeaderLayout.NETCDF3
 
     raise UnsupportedHeaderFormatError(prefix[:MAGIC_BYTES_NEEDED])

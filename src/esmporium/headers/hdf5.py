@@ -52,7 +52,7 @@ if TYPE_CHECKING:
     from _typeshed import WriteableBuffer
 
 HDF5_MAGIC = b"\x89HDF\r\n\x1a\n"
-r"""The first eight bytes of an HDF5 file, and so of a netCDF-4 one"""
+"""The first eight bytes of an HDF5 file, and so of a netCDF-4 one"""
 
 
 class _NeedMoreBytes(Exception):

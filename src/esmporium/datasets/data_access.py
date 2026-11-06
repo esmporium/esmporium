@@ -352,22 +352,6 @@ class DownloadOutcome(str, Enum):
 class HeaderReadOutcome(str, Enum):
     """
     How one attempt to read a file's header over a route turned out
-
-    The twin of [DownloadOutcome][(m).DownloadOutcome], and here for the same reason:
-    [esmporium.headers][] produces one of these per attempt and
-    [HeaderReadCallRecord.outcome][esmporium.db.schema.HeaderReadCallRecord.outcome]
-    stores it, so it can belong to neither.
-
-    `str`-valued so the stored column reads as the name rather than an integer nobody
-    can interpret.
-
-    **A separate enum rather than reusing `DownloadOutcome`**, because the two measure
-    different things and sharing one would make both vaguer. Three of that enum's
-    members cannot happen here -- a 64 KiB prefix has no digest to check, no promised
-    length to fall short of, and no published size to contradict -- and three of this
-    one's cannot happen there: a download never finds the bytes unparseable, because
-    it never opens them. Keeping them apart is what lets
-    [is_worth_retrying][(c).is_worth_retrying] mean something precise on each.
     """
 
     SUCCESS = "success"
@@ -385,18 +369,12 @@ class HeaderReadOutcome(str, Enum):
     """
     The data node answered that there is nothing at this URL (404 or 410)
 
-    Not the node's fault, and excluded from its failure rate, exactly as
-    [DownloadOutcome.MISSING][(m).DownloadOutcome.MISSING] is.
+    Not the node's fault, and excluded from its failure rate.
     """
 
     NEEDS_CREDENTIALS = "needs_credentials"
     """
     The data node asked us to authenticate (401)
-
-    Worth saying out loud that this has never been seen: header reads go to public
-    THREDDS `fileServer` endpoints anonymously, and the prototype that did this before
-    us needed no credentials anywhere. Recorded because a node could start asking, not
-    because one does.
     """
 
     BLOCKED = "blocked"
@@ -412,8 +390,7 @@ class HeaderReadOutcome(str, Enum):
     """
     The data node connected and then stopped sending
 
-    **Not retried against the same route**, which is the opposite of what
-    [DownloadOutcome.TIMEOUT][(m).DownloadOutcome.TIMEOUT] does, and deliberately so.
+    **Not retried against the same route**.
     A download retries because finishing a large transfer is worth another go; a
     header is a few KB, so a node that cannot send that much has something wrong with
     it and the next mirror is a better bet than the same one again.
@@ -477,18 +454,6 @@ class HeaderReadOutcome(str, Enum):
         """
         Whether this outcome is worth trying again against the *same* route
 
-        Lives on the enum for the same reason
-        [DownloadOutcome.is_worth_retrying][(m).DownloadOutcome.is_worth_retrying]
-        does: one answer to the question, and adding a member forces a decision here.
-
-        **Far more restrictive than the download policy**, and that is the single
-        most expensive lesson the prototype learned. It retried every unclassified
-        failure three times across both of a node's URLs, so one dead data node cost
-        roughly `2 URLs x 3 attempts x 75 s` -- about seven and a half minutes -- for
-        one simulation, before anything else was tried. Here only a node that is up
-        and asking us to slow down, or a connection that broke in a way that might not
-        recur, gets a second attempt.
-
         Returns
         -------
         :
@@ -520,12 +485,6 @@ class HeaderReadOutcome(str, Enum):
     def stops_this_data_node(self) -> bool:
         """
         Whether to give up on this data node's remaining routes, not just this one
-
-        The prototype's hardest-won routing lesson. A node that is unreachable or
-        hanging fails its *other* URLs identically, so walking them only burns the
-        time that should have gone on the next mirror -- the "death spiral" its
-        post-mortem is named after. A file-level answer (a 404) says nothing about the
-        node and must not stop it.
 
         Distinct from [is_worth_retrying][(c).is_worth_retrying], which is about the
         same route rather than the same node: a failure can be worth neither, either,
