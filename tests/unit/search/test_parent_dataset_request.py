@@ -159,10 +159,6 @@ def test_cmip7_processing_id_goes_out_as_variable_branding_suffix(host):
 def test_cmip5_drops_facets_it_cannot_express_rather_than_refusing():
     """
     CMIP5 has no grid, activity or resolution at all
-
-    A parent search is made on a caller's behalf, not at their request, so there is
-    nothing for them to do about a refusal. The ordinary search refuses, which is the
-    right answer when a user asked for the narrowing themselves.
     """
     canonical = a_parent("CMIP5", grid_label=("gn",), activity=("CMIP",))
     cmip5 = facade("CMIP5", SOLR_HOST)

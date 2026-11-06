@@ -1,10 +1,5 @@
 """
 Reading a CMIP7 record's declared parent, and recording it
-
-The parsing tests go through the real recorded ESGF-NG responses rather than
-hand-built features, because the shape of those responses is the thing most likely to
-be misread. The one hand-built feature is the case ESGF gives us no recording of: a
-record which declares no parent by carrying none of the keys.
 """
 
 from __future__ import annotations

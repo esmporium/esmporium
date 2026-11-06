@@ -1,8 +1,5 @@
 """
 Choosing which of a parent simulation's datasets is a given child's parent
-
-A table of cases with no database in sight, which is the point of the matchers being
-pure: what they decide is a function of the child and the candidates and nothing else.
 """
 
 from __future__ import annotations
@@ -99,9 +96,6 @@ def test_a_different_grid_is_not_the_same_dataset():
 def test_a_cmip5_match_works_with_no_grid_on_either_side():
     """
     CMIP5 has no concept of a grid, so both sides are `None`
-
-    Two absences are an agreement. The CMIP5 matcher leaves the facet out entirely
-    rather than relying on that, so the rule says what it means.
     """
     child = dataset(
         "abrupt4xCO2", project="CMIP5", grid_label=None, variant_label="r1i1p1"
@@ -116,10 +110,6 @@ def test_a_cmip5_match_works_with_no_grid_on_either_side():
 def test_only_the_cmip5_matcher_ignores_the_grid():
     """
     The facets are spelled out per project, so the difference is in the matchers
-
-    Asserted through what they decide rather than against a shared constant: a
-    candidate differing only in grid label is the same dataset to CMIP5, which has no
-    grids, and a different one to CMIP6, which does.
     """
     child = dataset("abrupt-4xCO2", project="CMIP5", grid_label="gn")
     other_grid = dataset("piControl", project="CMIP5", grid_label="gr")
@@ -153,9 +143,6 @@ def test_the_childs_institution_breaks_a_tie():
 def test_two_indistinguishable_candidates_are_reported_not_picked():
     """
     Picking the lowest id is what the first version of this did, silently
-
-    An answer nobody could later tell from a real one is worse than a reported
-    ambiguity, which is something an injected matcher can then resolve.
     """
     child = dataset("historical", institution="MOHC")
     first = dataset("piControl", institution="UCSB", dataset_id=1)
@@ -252,9 +239,6 @@ def a_version(
 def test_one_version_is_taken_and_not_called_a_decision():
     """
     The commonest case, and the one where nothing was chosen
-
-    Labelled `ONLY_VERSION` so a reader can tell it from a default, which is the whole
-    reason the label exists.
     """
     only = a_version("20110615")
 
@@ -269,9 +253,6 @@ def test_one_version_is_taken_and_not_called_a_decision():
 def test_several_versions_with_no_match_take_the_newest_and_say_so():
     """
     A republished parent does not stop a chain, and does not pretend either
-
-    The newest is a rule of ours, so the link is labelled `DEFAULTED` and what it
-    passed over is carried for whoever wants to disagree.
     """
     candidates = [a_version("20110615"), a_version("20300101"), a_version("20200630")]
 
@@ -286,11 +267,6 @@ def test_several_versions_with_no_match_take_the_newest_and_say_so():
 def test_the_childs_own_version_wins_even_though_it_is_older():
     """
     Two datasets sharing a publication date is one publication batch
-
-    So that release of the parent is the one which belongs with the child -- same CMOR
-    tables, same fixes -- and a contemporaneous pair is worth more than the newest
-    bytes. Labelled `CHILD_VERSION`, not `DEFAULTED`, because it rests on something in
-    the data rather than on a rule alone.
     """
     child = a_version("20190406")
     candidates = [a_version("20190406"), a_version("20200828")]
@@ -305,9 +281,6 @@ def test_the_childs_own_version_wins_even_though_it_is_older():
 def test_a_retracted_match_does_not_beat_a_live_newer_release():
     """
     The match is checked after retracted releases are dropped, and that order matters
-
-    A retracted release is upstream saying do not use this, which outranks the weak
-    evidence of a shared publication date.
     """
     child = a_version("20190406")
     candidates = [a_version("20190406", retracted=True), a_version("20200828")]
@@ -354,9 +327,6 @@ def test_a_retracted_version_loses_to_a_live_one():
 def test_an_all_retracted_parent_is_still_the_parent():
     """
     Abandoning a chain because every release was retracted would be the wrong answer
-
-    The retraction is upstream's statement about the data, not about the lineage, so
-    the newest is used and the chain carries on.
     """
     candidates = [
         a_version("20110615", retracted=True),
@@ -372,9 +342,6 @@ def test_an_all_retracted_parent_is_still_the_parent():
 def test_no_versions_at_all_is_the_one_case_with_no_answer():
     """
     Holding none of a dataset's versions is different from holding several
-
-    One has nothing to choose from; the other has a choice, which this rule always
-    makes. Neither is an ambiguity -- only an injected chooser can produce one of those.
     """
     outcome = choose_parent_version(a_version("20261008"), [])
 

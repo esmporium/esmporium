@@ -1,10 +1,5 @@
 """
 Walking CMIP7 ancestry end to end against the live ESGF-NG search API
-
-The unit tests in `tests/unit/db/test_find_parents.py` pin the planning, the stopping
-and the failures with everything stored up front, so if those pass and these fail, the
-thing that changed is on the other end of the wire -- what CMIP7 publishes about its
-own parents.
 """
 
 from __future__ import annotations
@@ -35,9 +30,6 @@ pytestmark = pytest.mark.hits_esgf_search_api
 GREGORY_VARIABLES = ("tas", "rsdt", "rlut", "rsut")
 """
 The variables a Gregory-method ECS needs
-
-Temperature and the three top-of-atmosphere radiation terms. There is no `rndt`, so
-radiation is these three; `rtmt` is top of *model*, which is a different thing.
 """
 
 UNTIL_PICONTROL = ("piControl", "esm-piControl")
@@ -166,17 +158,6 @@ def test_a_control_run_fetched_for_one_variable_serves_another(migrated_engine):
     and `extra_variables` exists to widen it. Here the first walk is widened to bring
     back the control runs' `rlut` as well, and a later analysis asking for `rlut` then
     resolves against those instead of searching again.
-
-    It does not go to zero, and that is honest rather than a shortcoming: a control run
-    which *does not publish* `rlut` cannot be resolved from what is stored, and nothing
-    recorded during the first walk says so, because no dataset in it wanted `rlut`. So
-    one search per such model remains, once, and
-    [VARIABLE_NOT_PUBLISHED][esmporium.db.ParentResolution.VARIABLE_NOT_PUBLISHED] then
-    stops it happening a third time.
-
-    Note what is *not* being reused: the parent facts themselves. For CMIP7 those
-    arrive on every document for free, so there is nothing to carry over. That changes
-    for CMIP5 and CMIP6, where each one costs a file header read.
     """
     with Session(migrated_engine) as session:
         with warnings.catch_warnings():
@@ -242,10 +223,6 @@ def test_a_control_run_fetched_for_one_variable_serves_another(migrated_engine):
 def test_a_misspelled_target_is_caught_before_anything_is_searched(migrated_engine):
     """
     A target that does not exist can never be reached
-
-    Without this check the walk would climb every chain to its top and report that
-    none of them got there, which looks exactly like a lineage that really does not
-    go through the control run.
     """
     with pytest.raises(UnknownUntilExperimentError) as caught:
         check_until_experiments_exist(("piContorl",), "CMIP7")
@@ -263,14 +240,7 @@ def test_cmip6_refuses_because_nothing_reads_a_header_yet(migrated_engine):
     Where this step deliberately stops, pinned against the live API
 
     CMIP6 publishes no parent facts on either API, so a real CMIP6 search leaves
-    datasets with no assertions and the walk refuses. Everything downstream of the facts
-    -- the parent query, the matching, the linking, the hop reset -- is already covered
-    for CMIP6 in `tests/unit/db/test_find_parents.py` by injecting them, so what is
-    missing is only the reading.
-
-    Asserts the *shape of the gap* rather than a count, so it keeps meaning the same
-    thing if ESGF starts publishing CMIP6 parent facts: this would then fail, which is
-    the right way round.
+    datasets with no assertions and the walk refuses.
     """
     with Session(migrated_engine) as session:
         with warnings.catch_warnings():

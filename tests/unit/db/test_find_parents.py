@@ -1,10 +1,5 @@
 """
 Planning parent searches, resolving them against stored datasets, and walking a chain
-
-Every test here is offline. The walk only fires a search for a parent it cannot find
-in the database, so a chain whose ancestors are already stored exercises the whole of
-the climbing, the stopping and the failures without touching the network -- which is
-also the fast path the design rests on.
 """
 
 from __future__ import annotations
@@ -16,6 +11,7 @@ import pytest
 from sqlmodel import Session, col, select
 
 from esmporium.db import (
+    CrossProjectParentError,
     Dataset,
     DatasetParentLink,
     DatasetVersion,
@@ -113,9 +109,6 @@ def store(session, a_dataset_version, experiment, *, parent, **facets) -> int:
 def test_many_children_of_one_control_run_are_one_search(engine, a_dataset_version):
     """
     The plan is per parent simulation, not per child
-
-    This is the saving the whole step turns on: a Gregory calculation over three
-    variants of four variables declares the same parent twelve times.
     """
     with Session(engine) as session:
         for variant in ("r1i1p1f1", "r2i1p1f1", "r3i1p1f1"):
@@ -147,18 +140,6 @@ def test_many_children_of_one_control_run_are_one_search(engine, a_dataset_versi
 def test_the_parent_query_names_only_the_simulation_and_the_variables(
     engine, a_dataset_version
 ):
-    """
-    Neither institution nor activity is constrained, and for different reasons
-
-    The activity is published and recorded, but narrowing by it could only make a parent
-    that exists unfindable if a publisher got it wrong. The institution is never
-    published at all, and really does differ: a `UCSB` CMIP6 `historical` branches from
-    an `E3SM-Project` `piControl`.
-
-    Grid, interval and processing id are left out too -- they are
-    [esmporium.db.parent_matching][]'s to compare, so that a parent published on another
-    grid is still found rather than reading as absent.
-    """
     with Session(engine) as session:
         store(session, a_dataset_version, "abrupt-4xCO2", parent=a_parent("piControl"))
         session.commit()
@@ -205,8 +186,6 @@ def test_extra_variables_widen_the_search(engine, a_dataset_version):
 def test_a_parent_missing_facets_is_refused(engine, a_dataset_version):
     """
     Filling the gaps in from the child would be guessing which run it came from
-
-    Which is the kind of guess that silently links a dataset to the wrong control.
     """
     with Session(engine) as session:
         version_id = a_dataset_version(session)
@@ -225,8 +204,58 @@ def test_a_parent_missing_facets_is_refused(engine, a_dataset_version):
         )
         session.commit()
 
-        with pytest.raises(IncompleteParentError, match="parent_model"):
+        with pytest.raises(
+            IncompleteParentError,
+            match="does not say parent_model, parent_variant_label",
+        ):
             plan_parent_searches(session)
+
+
+def test_a_parent_in_another_project_is_refused(engine, a_dataset_version):
+    """
+    Published data really does this, so the refusal is reachable rather than theoretical
+
+    MOHC's LESFMIP runs are published under CMIP6Plus and their headers declare a
+    CMIP6 `piControl`. Chasing it would mean searching a project this walk was given
+    no facade for, so it is refused with the assertion kept.
+    """
+    with Session(engine) as session:
+        version_id = a_dataset_version(
+            session,
+            experiment="hist-piAer",
+            project="CMIP6Plus",
+            model="HadGEM3-GC31-LL",
+        )
+        save_parent_info(
+            session,
+            version_id,
+            ParentInfo(
+                parent_project="CMIP6",
+                parent_activity="CMIP",
+                parent_model="HadGEM3-GC31-LL",
+                parent_experiment="piControl",
+                parent_variant_label="r1i1p1f1",
+                parent_time_units="days since 1850-01-01",
+            ),
+            ParentInfoSource.FILE_HEADER,
+        )
+        session.commit()
+
+        with pytest.raises(CrossProjectParentError) as caught:
+            plan_parent_searches(session)
+
+        assert caught.value.project == "CMIP6Plus"
+        assert caught.value.parent_info.parent_project == "CMIP6"
+        assert "is in project 'CMIP6Plus' but declares a parent in 'CMIP6'" in str(
+            caught.value
+        )
+        # Refusing to chase it does not throw it away.
+        kept = session.exec(
+            select(DatasetVersionParent).where(
+                DatasetVersionParent.dataset_version_id == version_id
+            )
+        ).one()
+        assert kept.parent_experiment == "piControl"
 
 
 def test_resolving_links_a_child_to_the_parent_of_its_own_variable(
@@ -234,9 +263,6 @@ def test_resolving_links_a_child_to_the_parent_of_its_own_variable(
 ):
     """
     A simulation publishes many datasets; the child's variable picks one
-
-    And the link points at the `Dataset`, not a version, so which version to use stays
-    a question answered at read time.
     """
     with Session(engine) as session:
         child = store(
@@ -264,10 +290,6 @@ def test_resolving_links_a_child_to_the_parent_of_its_own_variable(
 def test_resolving_a_second_variable_needs_no_search(engine, a_dataset_version):
     """
     The cross-dataset fast path: a control run found for `tas` resolves `tos` for free
-
-    A parent belongs to a simulation and not to a variable, so this works for a
-    variable searched for long after the control run was fetched -- the answer is read
-    out of the stored datasets rather than out of anything the earlier run remembered.
     """
     with Session(engine) as session:
         store(
@@ -336,10 +358,6 @@ def test_a_walk_stops_at_the_target_without_chasing_its_parent(
 ):
     """
     Reaching `piControl` ends the chain, which is what keeps `piControl-spinup` alone
-
-    CMIP7 `piControl` declares a parent of `piControl-spinup`, and nobody publishes it.
-    Stopping on the experiment we have *reached* is what stops that being searched for
-    on every run.
     """
     with Session(engine) as session:
         child = store(
@@ -404,9 +422,6 @@ def test_a_walk_climbs_as_far_as_it_needs_to(engine, a_dataset_version):
 def test_a_chain_that_never_reaches_the_target_raises(engine, a_dataset_version):
     """
     A lineage which is complete and does not go through the control run
-
-    For an analysis that needs the control run, that is the same as not having the
-    data -- which is what this becomes once a requirement can ask for ancestry.
     """
     with Session(engine) as session:
         child = store(
@@ -434,9 +449,6 @@ def test_a_chain_that_never_reaches_the_target_raises(engine, a_dataset_version)
 def test_a_failed_walk_keeps_everything_it_learned(engine, a_dataset_version):
     """
     The raise comes after the commit, so running again does not start over
-
-    The failures are also kept as objects rather than only rendered into the message,
-    so a caller can act on them.
     """
     with Session(engine) as session:
         child = store(
@@ -511,8 +523,6 @@ def test_a_cycle_does_not_loop_forever(engine, a_dataset_version):
 def test_the_hop_guard_raises_rather_than_truncating(engine, a_dataset_version):
     """
     A partial lineage presented as a complete one would be the worse answer
-
-    So the guard going off is an error, and it names what was still outstanding.
     """
     with Session(engine) as session:
         chain = [f"exp-{index}" for index in range(6)]
@@ -522,7 +532,7 @@ def test_the_hop_guard_raises_rather_than_truncating(engine, a_dataset_version):
         store(session, a_dataset_version, chain[-1], parent=NO_PARENT)
         session.commit()
 
-        with pytest.raises(TooManyParentHopsError, match="exp-"):
+        with pytest.raises(TooManyParentHopsError) as caught:
             find_parents(
                 session,
                 [first],
@@ -532,15 +542,18 @@ def test_the_hop_guard_raises_rather_than_truncating(engine, a_dataset_version):
                 max_hops=1,
             )
 
+        assert caught.value.max_hops == 1
+        # The ancestors still to go, which is what a caller would raise `max_hops` for.
+        assert len(caught.value.outstanding) == 1
+        assert caught.value.outstanding[0].experiment == "exp-2"
+        assert "Climbed 1 parent hops" in str(caught.value)
+
 
 def test_a_variable_a_parent_does_not_publish_is_settled_once(
     engine, a_dataset_version
 ):
     """
     A search that asks for a variable and does not get it is not fired again
-
-    Leaving the row unresolved would make every later run ask the same control run for
-    the same variable it has already said it does not have.
     """
     with Session(engine) as session:
         child = store(
@@ -586,9 +599,6 @@ def test_a_variable_a_parent_does_not_publish_is_settled_once(
 def test_a_sibling_inherits_a_known_variable_gap(engine, a_dataset_version):
     """
     Which variables a simulation publishes is a fact about the simulation
-
-    So a new dataset of a variable a control run has already been asked for, and did
-    not have, inherits that answer rather than firing the same fruitless search.
     """
     with Session(engine) as session:
         first = store(
@@ -637,9 +647,6 @@ def test_a_sibling_inherits_a_known_variable_gap(engine, a_dataset_version):
 def test_a_broken_chain_keeps_being_reported(engine, a_dataset_version):
     """
     Recording that a parent is not published stops the *search*, not the failure
-
-    A second run must still say the lineage is broken; going quiet because the answer
-    was cached would be the worst of both.
     """
     with Session(engine) as session:
         child = store(
@@ -765,7 +772,7 @@ def test_a_project_with_no_published_facts_refuses_rather_than_doing_nothing(
 
 def test_cmip6_walks_a_whole_chain_once_facts_are_provided(engine, a_dataset_version):
     """
-    The test that makes the header PR small
+    The test that makes the header separate to having parent info
 
     Everything downstream of reading a header -- the parent query, the search, the
     matching, the linking, the hop reset -- is exercised here for CMIP6 with the facts
@@ -817,10 +824,6 @@ def test_cmip6_walks_a_whole_chain_once_facts_are_provided(engine, a_dataset_ver
 def test_a_dataset_at_the_target_needs_no_facts(engine, a_dataset_version):
     """
     Reaching where you were asked to reach is not a failure
-
-    A version whose own experiment is the target is never climbed, so its parent facts
-    are never read. Demanding them would make a successful walk raise -- and for CMIP6
-    would mean a header read nobody needs.
     """
     with Session(engine) as session:
         child = a_cmip6_dataset(session, a_dataset_version, "abrupt-4xCO2")
@@ -909,9 +912,6 @@ def test_precedence_puts_a_fix_above_everything():
 def test_ambiguity_is_reported_and_left_unresolved(engine, a_dataset_version):
     """
     Two parents fitting equally well leaves the row for a better matcher
-
-    Unresolved rather than settled, so injecting a matcher and running again can finish
-    the job without anything having to be deleted first.
     """
     with Session(engine) as session:
         child = a_cmip6_dataset(session, a_dataset_version, "abrupt-4xCO2")
@@ -1038,10 +1038,6 @@ def test_a_parent_release_sharing_the_childs_version_is_the_one_linked(
 ):
     """
     A shared publication date is a publication batch, so that release belongs together
-
-    Taken even though a newer release of the same parent is held, and still reported:
-    it is better evidence than the newest-release default but it is a decision all the
-    same.
     """
     with Session(engine) as session:
         child = store(
@@ -1102,9 +1098,6 @@ def test_a_retracted_matching_release_loses_to_a_live_newer_one(
 def test_the_link_holds_the_dataset_as_well_as_the_version(engine, a_dataset_version):
     """
     The dataset is a fact and the version is a choice, so both are stored
-
-    The invariant that one belongs to the other holds by construction here, which is
-    the only place links are written.
     """
     with Session(engine) as session:
         child = store(
@@ -1130,9 +1123,6 @@ def test_the_link_holds_the_dataset_as_well_as_the_version(engine, a_dataset_ver
 def test_an_injected_chooser_overrides_the_default(engine, a_dataset_version):
     """
     Which is why the chooser is a parameter: our rule is a rule, not a reading
-
-    A caller who knows which release their analysis rests on says so, and the link is
-    labelled as theirs rather than as a default.
     """
     with Session(engine) as session:
         child = store(
@@ -1163,9 +1153,6 @@ def test_an_injected_chooser_overrides_the_default(engine, a_dataset_version):
 def test_a_chooser_which_declines_leaves_the_row_unresolved(engine, a_dataset_version):
     """
     A chooser of your own may refuse where ours will not
-
-    If which release an analysis rests on matters, "I cannot tell" beats any rule. The
-    chain stops and says why, with nothing written to undo.
     """
     with Session(engine) as session:
         child = store(
