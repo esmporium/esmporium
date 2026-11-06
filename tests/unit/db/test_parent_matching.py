@@ -140,6 +140,24 @@ def test_the_childs_institution_breaks_a_tie():
     assert match_cmip6_parent(child, [other, same]).parent_dataset is same
 
 
+def test_the_institution_tie_break_narrows_without_always_deciding():
+    """
+    Two candidates in the child's own institution leave an ambiguity, not an answer
+
+    The tie-break drops the candidates it can and reports what is left, rather than
+    reaching for a second rule to separate what the first one could not.
+    """
+    child = dataset("historical", institution="E3SM-Project")
+    same = dataset("piControl", institution="E3SM-Project", dataset_id=1)
+    also_same = dataset("piControl", institution="E3SM-Project", dataset_id=2)
+    other = dataset("piControl", institution="UCSB", dataset_id=3)
+
+    outcome = match_cmip6_parent(child, [same, also_same, other])
+
+    assert outcome.is_ambiguous
+    assert list(outcome.candidates) == [same, also_same]
+
+
 def test_two_indistinguishable_candidates_are_reported_not_picked():
     """
     Picking the lowest id is what the first version of this did, silently

@@ -11,6 +11,8 @@ import pytest
 from sqlmodel import Session, col, select
 
 from esmporium.db import (
+    AmbiguousParent,
+    AmbiguousParentVersion,
     CrossProjectParentError,
     Dataset,
     DatasetParentLink,
@@ -26,7 +28,9 @@ from esmporium.db import (
     ParentSimulation,
     ParentVersionChoice,
     ParentVersionDecidedWarning,
+    ParentVersionDecision,
     TooManyParentHopsError,
+    VariableGap,
     VersionMatchOutcome,
     find_parents,
     flushed_id,
@@ -1276,3 +1280,259 @@ def test_a_walk_with_nothing_to_choose_does_not_warn(engine, a_dataset_version):
 
         assert len(result.linked) == 1
         assert result.version_decisions == []
+
+
+def a_simulation(experiment: str = "piControl") -> ParentSimulation:
+    """The simulation the report types below are all about."""
+    return ParentSimulation(
+        project="CMIP7",
+        model="UKESM1-3-LL",
+        experiment=experiment,
+        variant_label="r1i1p1f1",
+    )
+
+
+def test_a_variable_gap_reads_as_a_sentence():
+    """
+    The report types are rendered into the messages a caller is shown
+
+    So what they say is as much part of the answer as the ids they carry.
+    """
+    gap = VariableGap(child_dataset_version_id=7, parent=a_simulation(), variable="tos")
+
+    assert str(gap) == (
+        "CMIP7 UKESM1-3-LL piControl r1i1p1f1 does not publish 'tos', which dataset "
+        "version 7 needs from it."
+    )
+
+
+def test_an_ambiguous_parent_names_its_candidates():
+    unchosen = AmbiguousParent(
+        child_dataset_version_id=7,
+        parent=a_simulation(),
+        candidate_dataset_ids=(3, 4),
+        reason="2 datasets match equally well",
+    )
+
+    assert str(unchosen) == (
+        "dataset version 7 declares parent (CMIP7 UKESM1-3-LL piControl r1i1p1f1) and "
+        "2 datasets match equally well; candidates are datasets [3, 4]"
+    )
+
+
+def test_an_ambiguous_parent_version_names_the_dataset_it_did_match():
+    """The dataset is settled and only the release is not, which the message says."""
+    unchosen = AmbiguousParentVersion(
+        child_dataset_version_id=7,
+        parent=a_simulation(),
+        parent_dataset_id=3,
+        candidate_dataset_version_ids=(11, 12),
+        reason="the chooser declined",
+    )
+
+    assert str(unchosen) == (
+        "dataset version 7 declares parent (CMIP7 UKESM1-3-LL piControl r1i1p1f1), "
+        "which matched dataset 3, but the chooser declined; candidate versions are "
+        "[11, 12]"
+    )
+
+
+@pytest.mark.parametrize(
+    ("choice", "why"),
+    (
+        pytest.param(
+            ParentVersionChoice.CHILD_VERSION,
+            "one of them carries the child's own version string, so that release "
+            "was used",
+            id="child_version",
+        ),
+        pytest.param(
+            ParentVersionChoice.DEFAULTED,
+            "none of them carries the child's own version string, so the newest "
+            "was used",
+            id="defaulted",
+        ),
+    ),
+)
+def test_a_version_decision_says_which_rule_picked(choice, why):
+    """Both rules are reported, and they are not the same evidence."""
+    decision = ParentVersionDecision(
+        child_dataset_version_id=7,
+        parent=a_simulation(),
+        parent_dataset_id=3,
+        chosen_dataset_version_id=12,
+        choice=choice,
+        passed_over_dataset_version_ids=(11,),
+    )
+
+    assert str(decision) == (
+        "dataset version 7 declares parent (CMIP7 UKESM1-3-LL piControl r1i1p1f1), "
+        f"which matched dataset 3; it is published more than once and {why} (12), "
+        "passing over [11]."
+    )
+
+
+def test_planning_for_no_versions_asks_nothing(engine, a_dataset_version):
+    """
+    An empty collection is not the same as `None`
+
+    `None` means "every unresolved assertion"; empty means "these ones", of which there
+    are none, so the answer is nothing rather than everything.
+    """
+    with Session(engine) as session:
+        store(session, a_dataset_version, "abrupt-4xCO2", parent=a_parent("piControl"))
+        session.commit()
+
+        assert plan_parent_searches(session, ()) == ()
+        assert resolve_parent_links(session, ()).linked == ()
+
+
+def test_a_walk_over_no_versions_does_nothing(engine, a_dataset_version):
+    """And does not raise: there is no chain to fail to climb."""
+    with Session(engine) as session:
+        store(session, a_dataset_version, "abrupt-4xCO2", parent=a_parent("piControl"))
+        session.commit()
+
+        result = find_parents(
+            session,
+            [],
+            until_experiment=PICONTROL,
+            check_until_exists=False,
+            searcher=no_search,
+        )
+
+        assert result.linked == []
+        assert result.hops == 0
+
+
+def test_a_walk_given_no_versions_at_all_starts_from_every_assertion(
+    engine, a_dataset_version
+):
+    """`None` is the default, and it means the whole work queue."""
+    with Session(engine) as session:
+        child = store(
+            session, a_dataset_version, "abrupt-4xCO2", parent=a_parent("piControl")
+        )
+        store(session, a_dataset_version, "piControl", parent=NO_PARENT)
+        session.commit()
+
+        result = find_parents(
+            session,
+            until_experiment=PICONTROL,
+            check_until_exists=False,
+            searcher=no_search,
+        )
+
+        assert [link.child_dataset_version_id for link in result.linked] == [child]
+
+
+def test_a_walk_reports_an_ambiguity_it_could_not_resolve(engine, a_dataset_version):
+    """
+    Reported once, not once per resolve
+
+    A walk resolves twice per hop, before and after its searches, so an ambiguity found
+    by the first pass would otherwise be reported again by the second.
+    """
+    with Session(engine) as session:
+        child = a_cmip6_dataset(session, a_dataset_version, "abrupt-4xCO2")
+        save_parent_info(
+            session, child, header_facts("piControl"), ParentInfoSource.FILE_HEADER
+        )
+        for institution in ("UCSB", "LLNL"):
+            a_cmip6_dataset(
+                session, a_dataset_version, "piControl", institution=institution
+            )
+        session.commit()
+
+        result = find_parents(
+            session,
+            [child],
+            until_experiment=PICONTROL,
+            check_until_exists=False,
+            searcher=no_search,
+            facts_provider=lambda session, version_ids: None,
+        )
+
+        assert len(result.ambiguous) == 1
+        assert result.ambiguous[0].child_dataset_version_id == child
+        assert result.linked == []
+
+
+def test_a_walk_reports_a_version_ambiguity_it_could_not_resolve(
+    engine, a_dataset_version
+):
+    """A declining chooser stops the chain, and the walk says which releases it saw."""
+    with Session(engine) as session:
+        child = store(
+            session,
+            a_dataset_version,
+            "abrupt-4xCO2",
+            parent=a_parent("piControl"),
+            version="20261008",
+        )
+        first = a_dataset_version(session, experiment="piControl", version="20200101")
+        another_version(session, first, "20300101")
+        session.commit()
+
+        def refuse(child_version, candidates):
+            return VersionMatchOutcome(
+                candidates=tuple(candidates), reason="I will not guess"
+            )
+
+        result = find_parents(
+            session,
+            [child],
+            until_experiment=PICONTROL,
+            check_until_exists=False,
+            searcher=no_search,
+            version_chooser=refuse,
+        )
+
+        assert len(result.ambiguous_versions) == 1
+        assert result.ambiguous_versions[0].child_dataset_version_id == child
+        assert result.linked == []
+
+
+def test_the_decision_warning_summarises_more_simulations_than_it_names(
+    engine, a_dataset_version
+):
+    """
+    Four parent simulations is more than a readable message can list
+
+    So the message names three and counts the rest, rather than growing without limit
+    on a walk over a whole ensemble.
+    """
+    with Session(engine) as session:
+        children = []
+        for index in range(4):
+            variant = f"r{index + 1}i1p1f1"
+            children.append(
+                store(
+                    session,
+                    a_dataset_version,
+                    "abrupt-4xCO2",
+                    parent=a_parent("piControl", variant),
+                    variant_label=variant,
+                    version="20190406",
+                )
+            )
+            first = a_dataset_version(
+                session,
+                experiment="piControl",
+                variant_label=variant,
+                version="20200101",
+            )
+            another_version(session, first, "20300101")
+        session.commit()
+
+        with pytest.warns(ParentVersionDecidedWarning) as warned:
+            result = find_parents(
+                session,
+                children,
+                until_experiment=PICONTROL,
+                check_until_exists=False,
+                searcher=no_search,
+            )
+
+        assert len(result.version_decisions) == 4
+        assert "and 1 more" in str(warned[0].message)

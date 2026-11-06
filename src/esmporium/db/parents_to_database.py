@@ -1592,7 +1592,7 @@ def _classify_frontier(
     """
     Sort a frontier into what the walk should do with each of its versions
     """
-    if not frontier:
+    if not frontier:  # pragma: no cover - the walk loop only runs on a full frontier
         return _Classified()
 
     datasets = {
@@ -1819,7 +1819,7 @@ def _frontier_needing_facts(
     """
     Narrow a frontier to the versions whose parent facts the walk actually needs
     """
-    if not frontier:
+    if not frontier:  # pragma: no cover - the walk loop only runs on a full frontier
         return ()
 
     rows = session.exec(
@@ -2053,7 +2053,7 @@ def _links_from(
     session: Session, dataset_version_ids: Collection[int]
 ) -> tuple[DatasetParentLink, ...]:
     """Find every link hanging off some child versions."""
-    if not dataset_version_ids:
+    if not dataset_version_ids:  # pragma: no cover - nothing to climb breaks first
         return ()
 
     return tuple(

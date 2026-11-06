@@ -173,6 +173,22 @@ def test_cmip5_drops_facets_it_cannot_express_rather_than_refusing():
         cmip5.build_search_request(canonical, 100)
 
 
+def test_a_query_specific_facet_a_facade_cannot_express_is_dropped_too():
+    """
+    Dropping is not limited to the facets we model
+
+    A query carries its project's own un-canonical facets under their published names
+    (CMIP5's `product`), and one of those is as unaskable on another project's facade
+    as a canonical facet would be.
+    """
+    canonical = a_parent("CMIP6", query_specific_facets={"product": ("output1",)})
+
+    narrowed = facade("CMIP6", SOLR_HOST).drop_unaskable_facets(canonical)
+
+    assert narrowed.query_specific_facets == {}
+    assert narrowed.model == ("UKESM1-0-LL",)
+
+
 def test_the_stac_facades_send_the_project_as_a_collection():
     """
     Project is not a facet for ESGF-NG, it is the collection
