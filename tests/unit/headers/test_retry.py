@@ -1,8 +1,5 @@
 """
 Tests of the header-read retry policy
-
-The policy is deliberately far more reluctant than the download layer's, and these
-tests are mostly about pinning that difference down so it cannot drift back.
 """
 
 from __future__ import annotations

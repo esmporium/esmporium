@@ -1,10 +1,5 @@
 """
 Tests of getting parent facts out of file headers
-
-Two halves, and they are tested quite differently. Reading the attributes is pure, so
-those tests are a table of what each project publishes. Planning and recording touch
-the database and the network, so those use an in-memory database and a client whose
-answers the test writes -- nothing here reaches ESGF.
 """
 
 from __future__ import annotations
@@ -45,7 +40,7 @@ NODE = "esgf.example.org"
 
 class TestReadingWhatCmip6Publishes:
     """
-    CMIP6 and CMIP7 publish the parent completely, so nothing is inferred
+    CMIP6 publishes the parent completely, so nothing is inferred
     """
 
     ATTRIBUTES: ClassVar[dict[str, object]] = {
@@ -238,9 +233,20 @@ class TestChoosingAReader:
     def test_each_project_gets_its_own(self):
         assert header_reader_for_project("CMIP5") is read_cmip5_parent_header
         assert header_reader_for_project("CMIP6") is read_cmip6_parent_header
-        # CMIP7 publishes its parent in the index, so this is a cross-check rather
-        # than a need -- but the attributes are CMIP6's.
-        assert header_reader_for_project("CMIP7") is read_cmip6_parent_header
+
+    def test_cmip7_refuses_although_we_search_it(self):
+        """
+        A project we search is not therefore a project whose headers we read
+
+        CMIP7 publishes its parent in the index, so nothing asks for its header, and
+        no CMIP7 file has been read to find out what its attributes are called.
+        Lending it CMIP6's reader would be the guess the test below rules out.
+        """
+        with pytest.raises(UnknownProjectHeaderReaderError) as caught:
+            header_reader_for_project("CMIP7")
+
+        assert caught.value.project == "CMIP7"
+        assert caught.value.known == ("CMIP5", "CMIP6")
 
     def test_an_unknown_project_refuses_rather_than_guessing(self):
         """
@@ -344,9 +350,7 @@ class TestPlanningWhatToRead:
         The death-spiral fix, as a plan
 
         A simulation is published as many datasets and they all have the same parent,
-        so reading one file answers for all of them. The prototype pooled every file
-        of every variable instead, and a single dead data node then cost about 36
-        minutes for one simulation.
+        so reading one file answers for all of them.
         """
         with Session(engine) as session:
             version_ids = _cmip5_simulation(
@@ -625,9 +629,6 @@ class TestTheProvider:
     ):
         """
         The other half of the same judgement: bounded, or it is the death spiral
-
-        The prototype pooled every file of every variable -- 660 to 1162 URLs -- and
-        spent about 36 minutes against one dead node for one simulation.
         """
         asked: list[str] = []
 

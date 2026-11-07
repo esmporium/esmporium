@@ -466,13 +466,6 @@ def test_the_refreshing_selector_does_not_query_until_it_needs_to(engine):
 def test_a_failure_rate_is_a_rate_over_every_attempt_that_is_evidence(engine):
     """
     A regression: a node that mostly works must not report a failure rate of 1.0
-
-    `judged` is the denominator of the failure rate, so a success belongs in it.
-    `counts_against_data_node` answers a narrower question -- "is this failure the
-    node's fault" -- and excludes `SUCCESS`, so building the denominator from it alone
-    made `n_failed` the whole of `judged` and every node with one counting failure
-    report 1.0. A node succeeding nine times in ten then ranked level with a dead one,
-    and throughput became the only thing separating them.
     """
     observer = record_data_node_calls(engine)
     for _ in range(9):

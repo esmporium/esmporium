@@ -1,23 +1,5 @@
 """
 Walking CMIP5 and CMIP6 ancestry end to end, reading real file headers
-
-Opt-in: `--run-reads-file-headers`, or `make test-headers`. These hit the search API
-*and* the data nodes, and they carry the data-node marker because that is the part that
-is new and the part that breaks -- a search that fails here fails in
-`test_find_parents_live.py` too.
-
-What the unit tests cannot cover is whether the two ends actually meet. The planning,
-the stopping, the matching and the linking are pinned offline in
-`tests/unit/db/test_find_parents.py` with facts injected, and the parsers are pinned
-against recorded bytes in `tests/unit/headers/`. These tests are the join: that a
-header really read off a live node produces facts a live search can then find the
-parent from.
-
-**The CMIP5 case is the hard one**, and the reason it is worth the minutes it takes:
-its headers name the parent's experiment and variant but no model, so the model is
-inferred from the child -- and it has to be inferred in the *index's* spelling, which
-differs from the file's. Nothing offline can catch that, because only a live search
-rejects the wrong one.
 """
 
 from __future__ import annotations

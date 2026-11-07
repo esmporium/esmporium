@@ -1,17 +1,5 @@
 """
 Really reading file headers from the live ESGF data nodes
-
-Opt-in, because it needs somebody else's server to be up: run it with
-`--run-reads-file-headers`, or `make test-headers`.
-
-Much cheaper than the download tests beside it -- about 64 KiB per file over a range
-request, written nowhere -- but it does depend on a data node answering, and some do
-not. Sampled on 2026-11-04, 3 of 47 CMIP5 models timed out. So these tests assert the
-*shape* of what comes back and skip when nothing answers, rather than pinning a
-particular node.
-
-The point of the unit tests is that the parsers are right against recorded bytes. The
-point of these is that what ESGF really serves still looks like those recordings.
 """
 
 from __future__ import annotations
@@ -37,10 +25,6 @@ pytestmark = pytest.mark.reads_file_headers
 SEARCH_HOST = "esgf.ceda.ac.uk"
 """
 Which index to ask for files
-
-One host rather than the facade's failover, because these tests are about the *data*
-nodes, and a search that quietly came from somewhere else would make a failure harder
-to read.
 """
 
 
@@ -294,10 +278,6 @@ def test_the_data_nodes_still_honour_a_range_request():
 def test_a_url_that_is_not_there_is_reported_as_missing():
     """
     A real 404 from a real node, classified by its status code
-
-    Cheap, and it pins the one classification that cannot be checked offline without
-    trusting our own mock: that an ESGF node really does answer 404 rather than, say,
-    an HTML error page with a 200.
     """
     header = first_header(
         requests_for(

@@ -1,8 +1,5 @@
 """
 Tests of fetching a file's first bytes and reading a header out of them
-
-Every test here is offline: the client comes from `client_for`, which answers from a
-handler the test writes, so nothing reaches the network.
 """
 
 from __future__ import annotations
@@ -219,9 +216,6 @@ class TestANodeThatIgnoresTheRange:
     ):
         """
         A usable answer, but one that cost us a connection the node flooded
-
-        Worth knowing per node rather than absorbing silently, which is why this is a
-        recorded flag and not a failure.
         """
         observer, calls = collect_calls
         transport = self._whole_file_handler(cmip5_netcdf3_prefix, [])
@@ -244,8 +238,6 @@ class TestANodeThatIgnoresTheRange:
     ):
         """
         On a `200` the body *is* the file, so `Content-Length` is the file's length
-
-        Unlike a `206`, where `Content-Length` is only as long as the range.
         """
         transport = self._whole_file_handler(cmip5_netcdf3_prefix, [])
 
@@ -285,9 +277,6 @@ def test_a_status_code_is_classified_by_its_number(  # noqa: PLR0913 - three fix
 def test_a_416_is_reported_as_an_empty_file(route, client_for, no_retry):
     """
     Any range from byte zero is satisfiable unless the file has no bytes
-
-    So this is a publication fault rather than a node fault, and it has a 404's
-    consequences: do not retry, do not blame the node, try another mirror.
     """
     with client_for(lambda request: httpx.Response(416)) as client:
         with pytest.raises(HeaderRouteMissingError, match="empty file") as caught:
@@ -342,12 +331,6 @@ def test_stalling_after_connecting_is_a_timeout(route, client_for, no_retry):
 class TestTellingConnectionFailuresApart:
     """
     Refusal, DNS failure and TLS failure all arrive as `httpx.ConnectError`
-
-    Separating them is the lesson the prototype paid most for: a refusal can be a
-    momentarily overloaded node and is worth retrying, while an unresolvable name or a
-    bad certificate will fail identically for ever. It got the distinction by
-    searching error messages for `"ssl"` and `"could not resolve host"`; here it comes
-    from the *type* of `__cause__`, which is what this package's rule demands.
     """
 
     @staticmethod
@@ -391,9 +374,6 @@ class TestTellingConnectionFailuresApart:
     def test_an_unreachable_node_does_not(self, route, client_for, no_retry, cause):
         """
         Including a cause we have never seen, which is treated as unreachable
-
-        The expensive mistake is retrying a node that will never answer, so an
-        unrecognised connect failure errs that way.
         """
         with self._client_raising(client_for, cause) as client:
             with pytest.raises(HeaderNodeHostFaultError) as caught:
@@ -566,9 +546,6 @@ class TestAskingForMoreBytes:
     ):
         """
         Doubling for ever would fetch a pathological file in full, one ask at a time
-
-        Which is the cost reading a header exists to avoid, so there is a ceiling and
-        reaching it is a failure rather than a reason to keep going.
         """
         asked: list[int] = []
         handler = self._serving(

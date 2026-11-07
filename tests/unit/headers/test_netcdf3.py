@@ -246,11 +246,6 @@ def test_a_mangled_attribute_list_tag_is_refused():
 def test_a_real_cmip5_header_reads_its_parent_facts(cmip5_netcdf3_prefix):
     """
     The whole point, against bytes a data node really served
-
-    Recorded rather than live so it runs offline, but these are real: the values below
-    are what `bcc-csm1-1-m`'s `abrupt4xCO2` run publishes. Note what CMIP5 does *not*
-    say -- there is no parent model, era or activity anywhere in here, which is why
-    those have to be inferred further up.
     """
     attributes = read_netcdf3_global_attributes(cmip5_netcdf3_prefix)
 

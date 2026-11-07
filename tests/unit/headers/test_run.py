@@ -100,10 +100,6 @@ def test_the_first_route_that_serves_it_wins(
 def test_a_file_no_route_serves_comes_back_rather_than_raising(client_for, no_retry):
     """
     One file failing is not a reason to abandon a run
-
-    The prototype drove its parent searches through `list(executor.map(...))`, which
-    re-raises the first worker's exception -- so a single `504` from one node killed a
-    whole hop and lost every other result in it.
     """
     request = HeaderRequest(routes=(route_on("a.example.org"),), filename="tas.nc")
 
@@ -135,9 +131,7 @@ class TestGivingUpOnADataNodeNotJustARoute:
     The death-spiral fix, at the route level
 
     A node that is unreachable or hanging fails its other URLs identically, so walking
-    them spends the time that should have gone on the next mirror. The prototype did
-    walk them -- 660 to 1162 URLs against one dead node, three attempts each -- which
-    is about 36 minutes for one node of one simulation.
+    them spends the time that should have gone on the next mirror.
     """
 
     @staticmethod
@@ -184,8 +178,6 @@ class TestGivingUpOnADataNodeNotJustARoute:
     ):
         """
         A 404 is an answer about one file, so the node's other URLs are still worth it
-
-        Getting this wrong is how the prototype evicted a node that was 93% healthy.
         """
         tried: list[str] = []
 
@@ -263,9 +255,6 @@ def test_each_result_is_handed_over_as_it_finishes(
 ):
     """
     What makes a long run survive being killed
-
-    The prototype persisted at the end and lost an hour and three quarters of header
-    reads to a session that was interrupted first.
     """
     seen: list[int | None] = []
     guard = threading.Lock()

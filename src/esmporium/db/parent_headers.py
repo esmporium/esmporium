@@ -392,12 +392,6 @@ def read_cmip5_parent_header(
 PARENT_HEADER_READERS_BY_PROJECT: Mapping[str, ParentHeaderReader] = {
     "CMIP5": read_cmip5_parent_header,
     "CMIP6": read_cmip6_parent_header,
-    # The same attributes as CMIP6, and reading them is **not needed**: CMIP7 publishes
-    # its parent in the search index, so a CMIP7 walk never asks for a header. Here so
-    # that a header read against CMIP7 is answered correctly rather than refused --
-    # useful for checking what a file says against what the index says, which is the
-    # one place the two could be found to disagree.
-    "CMIP7": read_cmip6_parent_header,
 }
 """
 Which reader turns each project's global attributes into a
@@ -409,7 +403,7 @@ project: CMIP5 is mostly classic netCDF but `EC-EARTH`'s rcp85 output is netCDF-
 format decides who reads the bytes ([esmporium.headers][] settles that from the bytes
 themselves); the project decides what the attributes mean.
 
-Pass a mapping of your own to override one, e.g.
+Pass a mapping of your own to override one, or to add a project, e.g.
 `{**PARENT_HEADER_READERS_BY_PROJECT, "CMIP5": my_reader}`.
 """
 

@@ -1,13 +1,5 @@
 """
 Tests of the fixes themselves, and of looking one up
-
-Pure: nothing here touches a database or a network. How a fix gets *applied* is the
-database layer's business and is tested in `tests/unit/db/test_parent_headers.py`,
-beside the provider that applies it.
-
-Mostly about the mechanism rather than about the three corrections, which is the point:
-a fix is a claim about the world and will be reviewed by a person, where the machinery
-around one has to be right regardless of what is in it.
 """
 
 from __future__ import annotations

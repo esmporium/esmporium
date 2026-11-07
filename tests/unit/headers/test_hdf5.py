@@ -1,11 +1,5 @@
 """
 Tests of reading global attributes out of a netCDF-4/HDF5 header
-
-Every test here works from a recorded prefix of a real CMIP6 file rather than from a
-hand-made one. That is a deliberate difference from the classic-netCDF tests, where
-building a header by hand is a dozen lines: an HDF5 file with dense attribute storage
-cannot reasonably be constructed in a test, and one built small enough to construct
-would store its attributes *compactly* and so exercise the path CMIP6 never takes.
 """
 
 from __future__ import annotations
@@ -64,12 +58,6 @@ def test_no_numpy_types_escape(cmip6_netcdf4_prefix):
 def test_the_whole_file_size_is_what_hdf5_is_told(cmip6_netcdf4_prefix):
     """
     Passing the prefix's own length instead of the file's fails outright
-
-    This is the fact that makes reading a prefix possible at all, and it is not
-    guessable: HDF5 checks the length it is given against the end-of-file address in
-    the superblock and refuses the file when they disagree
-    (`truncated file: eof = 65536, sblock->base_addr = 0`). So the size has to come
-    from the response that fetched the bytes.
     """
     with pytest.raises(UnreadableHeaderError, match="could not read a header"):
         read_hdf5_global_attributes(
@@ -80,9 +68,6 @@ def test_the_whole_file_size_is_what_hdf5_is_told(cmip6_netcdf4_prefix):
 def test_a_short_prefix_says_how_far_it_got(cmip6_netcdf4_prefix):
     """
     A read past the prefix is reported, never served as zeros
-
-    Zero-filling would let HDF5 read attributes out of padding and hand them back as
-    though they were the file's, which is a wrong answer that looks like a right one.
     """
     with pytest.raises(TruncatedHeaderError) as caught:
         read_hdf5_global_attributes(
