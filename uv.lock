@@ -901,7 +901,7 @@ requires-dist = [
     { name = "alembic", specifier = ">=1.13.0" },
     { name = "esmporium", extras = ["headers"], marker = "extra == 'full'" },
     { name = "esmporium", extras = ["plots"], marker = "extra == 'full'" },
-    { name = "h5py", marker = "extra == 'headers'", specifier = ">=3.0" },
+    { name = "h5py", marker = "extra == 'headers'", specifier = ">=3.6" },
     { name = "httpx", specifier = ">=0.28.0" },
     { name = "matplotlib", marker = "extra == 'plots'", specifier = ">=3.7.1" },
     { name = "pandas", specifier = ">=2.2.0" },

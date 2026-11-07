@@ -73,7 +73,9 @@ def test_a_real_cmip5_file_is_dispatched_to_the_classic_reader(cmip5_netcdf3_pre
     assert attributes["project_id"] == "CMIP5"
 
 
-def test_a_real_cmip6_file_is_dispatched_to_the_hdf5_reader(cmip6_netcdf4_prefix):
+def test_a_real_cmip6_file_is_dispatched_to_the_hdf5_reader(
+    needs_h5py, cmip6_netcdf4_prefix
+):
     attributes = read_global_attributes(cmip6_netcdf4_prefix, file_size=CMIP6_FILE_SIZE)
 
     assert attributes["parent_experiment_id"] == "piControl"

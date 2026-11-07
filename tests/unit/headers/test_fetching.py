@@ -120,7 +120,7 @@ def test_the_file_size_comes_from_the_node_not_the_index(
 
 
 def test_the_published_size_is_the_fallback_when_the_node_is_silent(
-    route, client_for, no_retry, cmip6_netcdf4_prefix
+    needs_h5py, route, client_for, no_retry, cmip6_netcdf4_prefix
 ):
     """
     A netCDF-4 file is unreadable without a size, so the index is better than nothing
@@ -519,7 +519,7 @@ class TestAskingForMoreBytes:
         return handler
 
     def test_a_short_ask_escalates_until_the_header_fits(
-        self, route, client_for, no_retry, cmip6_netcdf4_prefix
+        self, needs_h5py, route, client_for, no_retry, cmip6_netcdf4_prefix
     ):
         asked: list[int] = []
         handler = self._serving(
@@ -542,7 +542,7 @@ class TestAskingForMoreBytes:
         assert asked[0] == 4096
 
     def test_escalation_stops_at_the_ceiling(
-        self, route, client_for, no_retry, cmip6_netcdf4_prefix
+        self, needs_h5py, route, client_for, no_retry, cmip6_netcdf4_prefix
     ):
         """
         Doubling for ever would fetch a pathological file in full, one ask at a time

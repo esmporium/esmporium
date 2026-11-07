@@ -422,6 +422,23 @@ CMIP6_FILE_SIZE = 218823170
 
 
 @pytest.fixture
+def needs_h5py() -> None:
+    """
+    Skip a test which cannot run without the optional `headers` extra
+
+    Reading a netCDF-4/HDF5 header needs `h5py`, which is the `headers` extra rather
+    than a dependency, because a classic-netCDF archive needs nothing installed. CI
+    runs the suite without extras to keep that true, so a test which really reads
+    netCDF-4 bytes has to stand aside there rather than fail.
+
+    Not put on [cmip6_netcdf4_prefix][(m).cmip6_netcdf4_prefix] itself, because
+    recognising those bytes as netCDF-4 needs no `h5py` at all -- only reading their
+    attributes does.
+    """
+    pytest.importorskip("h5py", reason="needs the optional `headers` extra")
+
+
+@pytest.fixture
 def cmip5_netcdf3_prefix() -> bytes:
     """
     Get the first bytes of a real CMIP5 file, which is classic netCDF

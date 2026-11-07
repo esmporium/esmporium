@@ -17,7 +17,7 @@ from esmporium.headers import (
 )
 
 
-def test_a_real_cmip6_header_reads_its_parent_facts(cmip6_netcdf4_prefix):
+def test_a_real_cmip6_header_reads_its_parent_facts(needs_h5py, cmip6_netcdf4_prefix):
     """
     The whole point, against bytes a data node really served
 
@@ -38,7 +38,7 @@ def test_a_real_cmip6_header_reads_its_parent_facts(cmip6_netcdf4_prefix):
     assert attributes["branch_time_in_child"] == 0.0
 
 
-def test_no_numpy_types_escape(cmip6_netcdf4_prefix):
+def test_no_numpy_types_escape(needs_h5py, cmip6_netcdf4_prefix):
     """
     h5py hands back numpy objects, and none of them may reach a caller
 
@@ -55,7 +55,7 @@ def test_no_numpy_types_escape(cmip6_netcdf4_prefix):
         assert type(value).__module__ == "builtins", name
 
 
-def test_the_whole_file_size_is_what_hdf5_is_told(cmip6_netcdf4_prefix):
+def test_the_whole_file_size_is_what_hdf5_is_told(needs_h5py, cmip6_netcdf4_prefix):
     """
     Passing the prefix's own length instead of the file's fails outright
     """
@@ -65,7 +65,7 @@ def test_the_whole_file_size_is_what_hdf5_is_told(cmip6_netcdf4_prefix):
         )
 
 
-def test_a_short_prefix_says_how_far_it_got(cmip6_netcdf4_prefix):
+def test_a_short_prefix_says_how_far_it_got(needs_h5py, cmip6_netcdf4_prefix):
     """
     A read past the prefix is reported, never served as zeros
     """
@@ -79,6 +79,7 @@ def test_a_short_prefix_says_how_far_it_got(cmip6_netcdf4_prefix):
 
 
 def test_the_attribute_names_are_readable_long_before_their_values(
+    needs_h5py,
     cmip6_netcdf4_prefix,
 ):
     """
@@ -95,7 +96,7 @@ def test_the_attribute_names_are_readable_long_before_their_values(
         )
 
 
-def test_bytes_that_are_not_hdf5_are_refused():
+def test_bytes_that_are_not_hdf5_are_refused(needs_h5py):
     with pytest.raises(UnreadableHeaderError, match="could not read a header"):
         read_hdf5_global_attributes(b"CDF\x01" + bytes(256), file_size=260)
 

@@ -62,7 +62,10 @@ plots = [
 # OSError. h5py opens a file-like object, so `esmporium.headers.fetching` keeps the
 # request in httpx. See the module docstring of `esmporium.headers.hdf5`.
 headers = [
-    "h5py>=3.0",
+    # 3.6 is the floor because it is the first release with a wheel for Python 3.10,
+    # the oldest version we support. Earlier releases ship an sdist only, so our
+    # lowest-direct CI job would have to build HDF5 from source to install one.
+    "h5py>=3.6",
 ]
 full = [
     "esmporium[plots]",
