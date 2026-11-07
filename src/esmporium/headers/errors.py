@@ -1,19 +1,5 @@
 """
 What can go wrong reading a file's header from a data node
-
-Classification is by **HTTP status code and exception type**, never by matching
-substrings in an exception's message -- the same rule
-[esmporium.downloads.errors][] states, and worth restating here because the prototype
-this replaces had no choice but to break it. It read headers through a netCDF library
-which did its own HTTP, so an HTTP status reached it only as text inside an `OSError`
-and had to be recovered by searching that text for `"429"` or `"ssl"`. Doing the
-requests ourselves is what makes a real taxonomy possible.
-
-The errors come in two families, and the split is the one that matters when deciding
-what to do next. A [HeaderReadError][(m).HeaderReadError] is about the **data node**:
-somebody else's machine did or did not answer, and another mirror may do better. A
-[HeaderParseError][(m).HeaderParseError] is about the **bytes**: every mirror of a file
-serves the same bytes, so trying another one cannot help.
 """
 
 from __future__ import annotations
@@ -24,10 +10,6 @@ from esmporium.datasets import HeaderReadOutcome
 class HeaderReadError(OSError):
     """
     Base for every way one attempt to read one route's header can fail
-
-    The twin of [DataNodeFetchError][esmporium.downloads.DataNodeFetchError], with the
-    same three pieces of state, so that whatever records an attempt can treat the two
-    alike.
     """
 
     outcome: HeaderReadOutcome
@@ -134,10 +116,7 @@ class HeaderReadTimeoutError(HeaderReadError):
 
     **Not retried against the same route, and it abandons that node's other routes
     too.** A header is a few kilobytes; a node which cannot send that much is not
-    going to on the second ask, and its other URLs hang the same way. That is the
-    whole difference between this and
-    [DataNodeTimeoutError][esmporium.downloads.DataNodeTimeoutError], which retries
-    because finishing a large transfer is worth another go.
+    going to on the second ask, and its other URLs hang the same way.
     """
 
     outcome = HeaderReadOutcome.TIMEOUT
@@ -151,9 +130,7 @@ class HeaderNodeHostFaultError(HeaderReadError):
     [HeaderTransportError][(m).HeaderTransportError] -- because a refusal can be a
     momentarily overloaded node where a DNS or TLS failure cannot. Retrying the
     latter gives the identical failure and its other URLs fail identically, so this
-    gives up on the node; the former keeps its retries. Getting that distinction
-    backwards is what the prototype measured at roughly seven and a half minutes
-    wasted per simulation per dead node.
+    gives up on the node; the former keeps its retries.
     """
 
     outcome = HeaderReadOutcome.HOST_FAULT
@@ -179,16 +156,6 @@ class HeaderParseError(ValueError):
     [HeaderReadError][(m).HeaderReadError]: nothing is wrong with the transfer, and no
     data node is implicated. The bytes arrived exactly as asked for and are not what
     we need.
-
-    That distinction decides what happens next. A node-level failure means try
-    another mirror; one of these means do not, because every mirror of a file serves
-    the same bytes. The one exception is
-    [UnreadableHeaderError][(m).UnreadableHeaderError], where the bytes are *corrupt*
-    rather than merely unusable, and another copy genuinely may be fine.
-
-    Carries no URL, deliberately, because a parser is handed bytes and is told nothing
-    about where they came from. Whatever orchestrates the read knows the route and
-    records it.
     """
 
     outcome: HeaderReadOutcome
@@ -244,8 +211,7 @@ class UnreadableHeaderError(HeaderParseError):
 
     A corrupt or mangled header. **Counted against the data node**, and the one
     [HeaderParseError][(m).HeaderParseError] where another mirror is worth trying:
-    this is bad data rather than too little of it, which is the same argument
-    [ChecksumMismatchError][esmporium.downloads.ChecksumMismatchError] makes.
+    this is bad data rather than too little of it.
     """
 
     outcome = HeaderReadOutcome.UNREADABLE_BYTES

@@ -1,12 +1,7 @@
 """
 Fetching the first bytes of a remote file, and reading a header out of them
 
-One HTTP range request per attempt. That is the whole design, and it is worth saying
-because the obvious alternative -- letting a netCDF library open the URL and seek
-around inside it -- is what the prototype before us did, and it turned one read into
-about thirty round trips which could not be timed out from Python. Asking for a fixed
-prefix ourselves makes a header read an ordinary HTTP request with ordinary timeouts
-and ordinary status codes.
+One HTTP range request per attempt.
 """
 
 from __future__ import annotations
@@ -51,12 +46,7 @@ DEFAULT_WANT_BYTES = 64 * 1024
 """
 How many bytes from the start of a file to ask for
 
-Sized from measurement rather than guessed. Across live ESGF files on 2026-11-04: a
-classic netCDF file's global attributes ended by 6.3 kB, and a netCDF-4 file needed
-42.3 kB to reach its attribute *values* (their names were readable within 1.9 kB,
-which is the trap -- a prefix can list every attribute and still be too short to read
-one). 64 KiB clears both with room to spare, and is small enough that the request costs
-about what an empty one would.
+Sized from measurement rather than guessed.
 
 Asking for too little is recoverable: a parser raises
 [TruncatedHeaderError][esmporium.headers.TruncatedHeaderError] and
@@ -66,12 +56,6 @@ Asking for too little is recoverable: a parser raises
 DEFAULT_MAX_WANT_BYTES = 1024 * 1024
 """
 The most we will ever ask for before giving up on a file
-
-The ceiling on escalation. A header this far into a file is pathological rather than
-unlucky -- nothing sampled needed more than 42 kB -- so past here the honest answer is
-that we cannot read this file cheaply, not that we should keep asking for more of it.
-Without a ceiling, a file whose header is at the end would be downloaded in full one
-doubling at a time, which is exactly the cost reading a header exists to avoid.
 """
 
 DEFAULT_CONNECT_TIMEOUT_SECONDS = 30.0
@@ -79,10 +63,7 @@ DEFAULT_CONNECT_TIMEOUT_SECONDS = 30.0
 How long to wait for a data node to accept a connection
 
 A connection that never completes is the signature of a black-holed node -- one that
-accepts the packet and answers nothing. Left to the operating system this takes about
-75 seconds (macOS's `net.inet.tcp.keepinit`), which is where the prototype's
-oddly-specific "after 75003 ms" failures came from. Cutting it shorter is what makes a
-dead node cheap to discover.
+accepts the packet and answers nothing.
 """
 
 DEFAULT_READ_TIMEOUT_SECONDS = 30.0
@@ -93,11 +74,6 @@ A *whole-read* deadline in effect, unlike
 [esmporium.downloads.DEFAULT_READ_TIMEOUT_SECONDS][], which is per chunk because a
 large file legitimately takes a long time. Here there is only one small range to
 deliver, so a node that has not managed it in this long is stalled rather than slow.
-
-Not as tight as it could be, on purpose: the prototype cut this to 25 s and wrongly
-condemned two healthy nodes which really did take 39.8 s and 58.8 s -- but it was
-measuring ~30 round trips, where this measures one. Matching the connect timeout keeps
-the two phases comparable and is still generous for a single range request.
 """
 
 _PARTIAL_CONTENT = 206
@@ -271,9 +247,8 @@ def _retry_after_seconds(response: httpx.Response) -> float | None:
     """
     Read a `Retry-After` header as a number of seconds, if it is one we understand
 
-    Only the delay-seconds form is read, not the HTTP-date form, for the reason
-    [esmporium.downloads][] gives: a date needs the node's clock and ours to agree,
-    and nothing in ESGF sends one.
+    Only the delay-seconds form is read, not the HTTP-date form: a date needs the
+    node's clock and ours to agree and nothing in ESGF sends one.
 
     Parameters
     ----------
@@ -357,17 +332,6 @@ def _header_int(response: httpx.Response, name: str) -> int | None:
 def _connect_error(url: str, error: httpx.ConnectError) -> HeaderReadError:
     """
     Decide whether a failure to connect is the node being unreachable or just unhappy
-
-    The distinction the prototype paid most dearly for getting wrong, and the reason
-    this function exists at all. A node we could not *reach* -- its name does not
-    resolve, its certificate is bad -- will fail identically on a retry and on its
-    other URLs, so the right move is to abandon it. A node that *refused* the
-    connection may simply have been out of accept queue a moment ago, so the right
-    move is to try again.
-
-    `httpx` reports both as `ConnectError`, so the answer is in `__cause__`, whose
-    *type* says which happened. Reading its message instead is how the prototype had
-    to do it, and it is what this package forbids.
 
     Parameters
     ----------
@@ -672,16 +636,14 @@ def read_header(  # noqa: PLR0913 - the keyword-only extras are deliberate injec
     **Fetching and parsing are one attempt, not two**, which is why there is no
     public "just get me the bytes" function beside this. The question an observer
     needs answered is "did asking this node for this header work", and bytes that
-    arrive and do not parse are a no. It is the same reason a download records
-    [CHECKSUM_FAILED][esmporium.datasets.DownloadOutcome.CHECKSUM_FAILED] against the
-    call that carried the bytes, rather than as a separate event afterwards.
+    arrive and do not parse are a no.
 
     Parameters
     ----------
     client
         The client to request with
 
-        **The credentials seam**, as it is for downloads: header reads go anonymously,
+        **The credentials seam**: header reads go anonymously,
         and a caller who needs otherwise passes an already-authenticated client. No
         ESGF node has been seen to ask.
 

@@ -1,24 +1,5 @@
 """
 Reading many files' headers, across routes, nodes and threads
-
-The shape is deliberately the same as [esmporium.downloads.run][]: a serial default, an
-opt-in thread pool, results keyed by position so order survives the threads, and a
-per-file loop which **returns** a failure rather than raising -- one file failing is
-not a reason to abandon a run of ten thousand. That last point is not a stylistic
-choice. The prototype before us drove its parent searches through
-`list(executor.map(...))`, which re-raises the first worker's exception, so a single
-`504` from one index node killed an entire parent hop and lost every other result in
-it.
-
-What this adds, and the download layer has no need for, is **giving up on a data node
-rather than only on a route**. A node that is unreachable or hanging fails its other
-URLs identically, so walking them spends the time that should have gone on the next
-mirror. That is the "death spiral" the prototype's post-mortem is named after: it tried
-every file of every variable against one dead node, 660 to 1162 URLs, three attempts
-each, single file at a time -- about 36 minutes for one node of one simulation, during
-which the simulations that *would* have worked were starved. Here
-[stops_this_data_node][esmporium.datasets.HeaderReadOutcome.stops_this_data_node]
-settles it after the first such failure.
 """
 
 from __future__ import annotations
@@ -62,12 +43,6 @@ logger = logging.getLogger(__name__)
 DEFAULT_PER_DATA_NODE = 2
 """
 How many header reads may run at once against any one data node, by default
-
-Half the download layer's four, and lower for a reason that is about politeness rather
-than throughput. A download holds one connection and streams; a header read opens a
-connection, asks for a few kilobytes and closes it, so the same number in flight is a
-much heavier pattern of connection churn on a shared archive. The prototype settled on
-two for the same reason, and grew it only where a node proved it could take more.
 """
 
 _PERMANENT_OUTCOMES = frozenset(
@@ -85,7 +60,7 @@ Outcomes which will not change by trying again later
 
 Note what is **not** here: [UNREADABLE_BYTES][esmporium.datasets.HeaderReadOutcome.UNREADABLE_BYTES]
 is corrupt data rather than an unreadable format, and another copy of the file may well
-be fine -- the same argument the download layer makes for a failed checksum.
+be fine.
 """  # noqa: E501
 
 
@@ -93,28 +68,16 @@ be fine -- the same argument the download layer makes for a failed checksum.
 class HeaderRequest:
     """
     One file whose header we want, and everything needed to go and get it
-
-    Deliberately carries no database rows, only ids, so this layer stays testable
-    without a database -- the same rule
-    [DownloadRequest][esmporium.downloads.DownloadRequest] follows.
     """
 
     routes: tuple[Route, ...]
     """
     Every route we know of for this file
-
-    Passed whole rather than pre-filtered, because choosing between them is the
-    selector's job. [prepare_routes][esmporium.downloads.prepare_routes] drops what
-    cannot be fetched and prefers HTTPS.
     """
 
     file_id: int | None = None
     """
     Which [File][esmporium.db.schema.File] this is
-
-    Recorded on every observed attempt, and -- once a header is read -- on the parent
-    facts that came out of it, so a fact read out of bytes stays traceable to the
-    bytes.
     """
 
     filename: str | None = None
@@ -162,9 +125,6 @@ class RouteFailure:
 class HeaderReadResult:
     """
     What came of trying to read one file's header
-
-    Describes a failure as readily as a success: a file no route served comes back
-    with `header=None` and every failure recorded, rather than raising.
     """
 
     request: HeaderRequest
@@ -230,15 +190,6 @@ class HeaderReadResult:
 ResultCallback = Callable[[HeaderReadResult], None]
 """
 Told about each file as soon as its header is read or given up on
-
-The seam a database layer writes through, one file at a time as a run proceeds rather
-than all at the end. The prototype lost an hour and three quarters of header reads to
-a run that was killed before its single final write, which is the whole reason this is
-a callback rather than a return value.
-
-Called from whichever thread finished that file, so an implementation touching anything
-shared has to be safe to call from several threads at once. A database-backed one is,
-because it opens and commits its own session per call.
 """
 
 

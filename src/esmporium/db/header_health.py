@@ -1,22 +1,5 @@
 """
 Recording how the ESGF data nodes behave when asked for a header, and ranking them by it
-
-The twin of [esmporium.db.download_health][], and separate from it for the reason
-[HeaderReadCallRecord][esmporium.db.schema.HeaderReadCallRecord] gives: pooling a
-64 KiB read with a whole-file transfer would drag every node's measured throughput down
-to the speed of its handshake.
-
-So the two differ in what they rank on, and that difference is the point. A download
-wants the node that moves bytes fastest. A header read moves almost no bytes, and is
-almost entirely connection setup plus one round trip -- so what decides whether a node
-is a good one to ask is **latency**, and the summary here measures that instead.
-
-The other thing carried over from the prototype is how a node gets written off. It
-evicted a node after three consecutive failures, which killed one that was serving 228
-of 244 reads successfully -- 93% healthy -- and stranded 214 simulations, because work
-is grouped by model and so one model with a gap on one mirror produced a run of
-consecutive failures there. [unreliable_data_nodes][(m).unreliable_data_nodes] therefore
-judges a **rate over a fair sample**, never a streak.
 """
 
 from __future__ import annotations
@@ -113,15 +96,6 @@ def write_header_read_calls(
     """
     Write some observed attempts through a session the caller already has
 
-    **The one to use when the reads happen inside somebody else's transaction**, which
-    is the case that matters: a parent walk holds a session and calls its facts
-    provider from inside it, and
-    [record_header_read_calls][(m).record_header_read_calls] would block against that
-    for five minutes per attempt. See that function for why.
-
-    Does not commit: the caller owns the transaction boundary, as everywhere else in
-    this layer.
-
     Parameters
     ----------
     session
@@ -146,25 +120,6 @@ def write_header_read_calls(
 def record_header_read_calls(engine: Engine) -> HeaderReadCallObserver:
     """
     Build an observer which records each header-read attempt as it happens
-
-    **Only safe when nothing else is holding a transaction on `engine`.** On SQLite --
-    the backend this is built for --
-    [configure_sqlite_for_concurrency][esmporium.db.configure_sqlite_for_concurrency]
-    issues `BEGIN IMMEDIATE`, so a session takes the database's single write lock the
-    moment its transaction starts, and holds it until it commits. A second connection
-    that tries to write then waits for the `busy_timeout`, which that function sets to
-    five minutes. So an observer opening its own session *inside* a transaction does
-    not race -- it stops, for five minutes, per attempt.
-
-    That is exactly the situation a parent walk is in: it holds a session and calls its
-    facts provider from inside it. So the provider buffers its attempts and writes them
-    through the walk's own session with
-    [write_header_read_calls][(m).write_header_read_calls] instead, which costs the
-    "health survives a walk that later fails" property and buys never hanging. The
-    walk commits per hop, so the attempts are still saved as the run goes.
-
-    Use this one for reads driven from outside a transaction -- a standalone
-    [read_headers][esmporium.headers.read_headers], a script, a demo.
 
     Parameters
     ----------
@@ -239,10 +194,7 @@ class HeaderReadHealth:
     """
     The fraction of *all* attempts that yielded a header
 
-    Over `n_calls` rather than `n_judged`, unlike
-    [failure_rate][(c).failure_rate], because this is what
-    [unreliable_data_nodes][(m).unreliable_data_nodes] writes a node off on and the
-    question there is the blunt one: how often does asking this node actually work.
+    Over `n_calls` rather than `n_judged`.
 
     `0.0` when nothing was tried.
     """
@@ -250,10 +202,6 @@ class HeaderReadHealth:
     median_seconds: float | None
     """
     The median time a successful read took
-
-    **What a node should be ranked on here**, where a download ranks on throughput.
-    Reading a few kilobytes is almost all connection setup and one round trip, so this
-    is latency.
 
     Median rather than mean, so one unlucky read does not decide a node's reputation.
     `None` if nothing succeeded.
@@ -271,10 +219,6 @@ class HeaderReadHealth:
     n_unreadable: int
     """
     How many attempts served bytes that did not parse
-
-    Worth its own number however rare, because it is the only one that says the node
-    served *wrong* data rather than no data -- and the only parse failure another
-    mirror might fix.
     """
 
     n_missing: int
@@ -305,14 +249,6 @@ def aggregate_header_read_health(
 ) -> dict[str, HeaderReadHealth]:
     """
     Combine the recorded attempts into one [HeaderReadHealth][(m).] per data node
-
-    **Call this with no session of your own open on `engine`.** It opens one, and on
-    SQLite a session takes the database's single write lock the moment its transaction
-    begins -- see
-    [configure_sqlite_for_concurrency][esmporium.db.configure_sqlite_for_concurrency],
-    which issues `BEGIN IMMEDIATE` -- so asking for this from inside another waits on
-    that session's lock rather than reading past it. Gather what you need from your
-    session, close it, then ask.
 
     Parameters
     ----------
@@ -531,11 +467,7 @@ def unreliable_data_nodes(
     """
     Name the data nodes which are failing often enough to be worth skipping
 
-    **Judged on a rate over a fair sample, never on a streak**, and that is the whole
-    design. The prototype evicted a node after three consecutive failures and so
-    dropped one that was succeeding 228 times out of 244, because reads are grouped by
-    model and a single model with a gap on one mirror makes its failures consecutive.
-    Dropping that node stranded 214 simulations whose files it was the best source for.
+    **Judged on a rate over a fair sample, never on a streak**.
 
     Parameters
     ----------

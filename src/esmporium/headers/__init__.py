@@ -8,23 +8,6 @@ branched from and which CMIP5 and CMIP6 publish nowhere else.
 
 A header is a few kilobytes at the start of a file that can be hundreds of megabytes,
 so this fetches a prefix with one HTTP range request and reads the attributes out of it.
-
-**This is its own package, beside [esmporium.downloads][] rather than inside it**, and
-that is a deliberate boundary rather than tidiness. The two want opposite policies from
-the same-looking failures. A download retries a timeout, because finishing a large
-transfer is worth another go; a header read does not, because a node that cannot send
-four kilobytes will not manage it on the second ask, and the next mirror is the better
-bet. A download is ranked by throughput; a 64 KiB read measures latency and would drag
-a working replica's measured speed to nothing if the two were pooled. So they share
-their vocabulary -- [Route][esmporium.downloads.Route], the data node selectors, the
-per-node limiter -- and keep their own retry policies, outcomes and health.
-
-The package is also deliberately **not about parents**. It reads *all* of a file's
-global attributes into a plain mapping and says nothing about what they mean; deciding
-that CMIP5's `parent_experiment_rip` is what CMIP6 calls `parent_variant_label` is a
-question about those projects, answered in [esmporium.db.parent_headers][]. Reading a
-header is a general capability, and a local archive walked from disk will want the same
-one.
 """
 
 from esmporium.headers.errors import (

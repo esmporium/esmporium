@@ -122,14 +122,6 @@ def data_node_id(session: Session, data_node: str) -> int:
     """
     Get the id of a data node's row, creating the row if it is new
 
-    Public, and shared with [esmporium.db.header_health][], because a
-    [DataNode][esmporium.db.schema.DataNode] row is the one thing the two kinds of
-    health genuinely have in common: whether a node answers at all is the same
-    question whether we wanted a whole file or four kilobytes of one. Their *records*
-    are deliberately separate tables -- see
-    [HeaderReadCallRecord][esmporium.db.schema.HeaderReadCallRecord] -- but the node
-    they both point at must be the same row, or the two could never be compared.
-
     Parameters
     ----------
     session
@@ -247,14 +239,6 @@ def aggregate_data_node_health(
 ) -> dict[str, DataNodeHealth]:
     """
     Combine the recorded attempts into one [DataNodeHealth][(m).] per data node
-
-    **Call this with no session of your own open on `engine`.** It opens one, and on
-    SQLite a session takes the database's single write lock the moment its transaction
-    begins -- see
-    [configure_sqlite_for_concurrency][esmporium.db.configure_sqlite_for_concurrency],
-    which issues `BEGIN IMMEDIATE` -- so asking for this from inside another waits on
-    that session's lock rather than reading past it. Gather what you need from your
-    session, close it, then ask.
 
     Parameters
     ----------

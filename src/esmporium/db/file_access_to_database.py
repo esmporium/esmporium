@@ -481,23 +481,6 @@ def build_result_processor_with_file_access(  # noqa: PLR0913 - one parameter pe
     what a search is *for*, and its files are a second request nobody should pay for
     unless they want them.
 
-    **Anything that needs to open a file does want them**, and on Solr it will not get
-    them any other way. That is the case this exists for. Reading a dataset's parent out
-    of a file header, for instance, needs a file and a route to it, and a Solr dataset
-    document carries neither -- so a walk driven by the plain processor finds datasets
-    it cannot read, and reports every one of them as a simulation whose parent could not
-    be obtained.
-
-    This is the one place where the facade and that page's ingested documents are both
-    in scope, which is why the extra request belongs here rather than in a later pass:
-    a `type=File` request has to name the node-specific dataset ids the documents
-    carried.
-
-    ESGF-NG needs none of this -- a STAC item's `assets` are its files, so
-    [ingest_parsed_documents][esmporium.db.ingest_parsed_documents] has already stored
-    its routes -- so for a non-Solr facade this behaves exactly like the plain
-    processor, and costs nothing.
-
     Parameters
     ----------
     session

@@ -1,20 +1,5 @@
 """
 Retry policy for reading a header from a data node
-
-Deliberately much more reluctant than [esmporium.downloads.retry][], and this is where
-the most expensive lesson of the prototype that came before us is spent.
-
-A download retries a timeout because finishing a large transfer is worth another go. A
-header read must not: it is asking for a few kilobytes, so a node that did not manage
-that has something wrong with it, and the next mirror is a better bet than the same
-node again. The prototype retried every unclassified failure three times across both of
-a node's URLs, which cost roughly `2 URLs x 3 attempts x 75 s` -- about seven and a half
-minutes -- per dead node per simulation, before anything else was tried. Multiply that
-by the nodes a simulation is published on and the whole walk stalls on files it was
-never going to get.
-
-So only two things are retried here: a node that is up and asking us to slow down, and
-a connection that broke in a way which might not recur.
 """
 
 from __future__ import annotations
@@ -29,9 +14,7 @@ DEFAULT_ATTEMPTS = 2
 """
 How many times to try one route before moving to the next
 
-One try plus one retry, against the download layer's three. A header read is small and
-cheap to repeat, so the reason to keep this low is not the cost of the request -- it is
-the cost of the *waiting*, which is paid before we get to a mirror that works.
+One try plus one retry.
 """
 
 DEFAULT_BACKOFF_BASE_SECONDS = 1.0
@@ -40,11 +23,6 @@ DEFAULT_BACKOFF_BASE_SECONDS = 1.0
 DEFAULT_BACKOFF_CAP_SECONDS = 20.0
 """
 The longest we will wait between attempts
-
-A third of the download layer's cap. The thing being protected is different: a download
-that waits a minute and then succeeds has still saved the whole transfer, where a
-header read that waits a minute has spent longer waiting than trying every other mirror
-would have taken.
 """
 
 DEFAULT_JITTER = 0.25

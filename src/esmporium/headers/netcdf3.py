@@ -6,31 +6,6 @@ whose files begin `CDF\x01` and `CDF\x02`. Nothing is imported to do this: the f
 is a short, fully specified, sequentially laid out structure at the very start of the
 file, so reading the global attributes out of it is a few hundred bytes of
 `struct.unpack` rather than a dependency.
-
-**The two versions are parsed identically here**, which is worth knowing because it
-looks as though they should not be. They differ only in the width of a *variable's*
-data offset -- four bytes in `CDF\x01`, eight in `CDF\x02` -- and the global
-attributes come before the variable list, so this stops reading before the difference
-can matter.
-
-The layout, as far as this reads it (the netCDF classic format specification, with the
-parts after `gatt_list` left out):
-
-```
-header    = magic  numrecs  dim_list  gatt_list  ...
-magic     = 'C' 'D' 'F'  version
-numrecs   = uint32
-dim_list  = ABSENT | NC_DIMENSION  nelems  [dim ...]
-gatt_list = ABSENT | NC_ATTRIBUTE  nelems  [attr ...]
-ABSENT    = uint32(0)  uint32(0)
-dim       = name  uint32
-attr      = name  nc_type  nelems  [values ...]
-name      = uint32  chars     -- padded to a four-byte boundary
-```
-
-Dimensions are read and discarded rather than skipped over, because their lengths are
-not needed but their *names* are variable-length, so there is no way to step past them
-without parsing them.
 """
 
 from __future__ import annotations
@@ -76,13 +51,6 @@ _NUMERIC_TYPES: dict[int, tuple[str, int]] = {
 class _Reader:
     """
     A cursor over a prefix of a file, which refuses to read past what it was given
-
-    Every read goes through [take][(c).take], so running off the end of a short prefix
-    raises [TruncatedHeaderError][esmporium.headers.TruncatedHeaderError] from one
-    place rather than being a possible `IndexError` at each of a dozen call sites.
-    Slicing `bytes` past its end returns something shorter instead of failing, so
-    without this a truncated header would parse as mangled rather than as incomplete,
-    and the caller would try another mirror instead of asking for more bytes.
     """
 
     def __init__(self, data: bytes) -> None:
@@ -220,8 +188,7 @@ def _attribute_value(reader: _Reader, nc_type: int, element_count: int) -> objec
     :
         A `str` for a character attribute. For a numeric one, the value itself when
         there is a single element and a `tuple` when there are several -- so that a
-        scalar does not have to be unwrapped by every caller, which is how a
-        one-element tuple ends up being read as a number by accident.
+        scalar does not have to be unwrapped by every caller.
 
     Raises
     ------

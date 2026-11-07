@@ -1,26 +1,9 @@
 """
 Observing how the ESGF data nodes behave when asked for a header
 
-Every attempt to read a header goes through
-[read_header][esmporium.headers.read_header], whatever drove it. That is
-the one place where the route, the response code, any error, the bytes moved and the
-time taken all exist together, so it is where an attempt is observed -- the same
-argument [esmporium.downloads.health][] makes.
-
-Note the vocabulary, which matches the download layer's on purpose: a **read** is
+Note the vocabulary: a **read** is
 getting one file's header, and a **call** is one HTTP attempt against one route. A
 single read can make several calls, across several routes and several data nodes.
-
-**Observed separately from downloads, into its own table, and the reason is a
-measurement rather than a preference.** [esmporium.db.download_health][] ranks a data
-node partly by the median throughput of its successful calls. A header read moves
-around 64 KiB and spends most of its time on the connection, so it looks like a
-fraction of a megabyte per second; and because one header serves a whole simulation
-while a download is per file, header calls would still outnumber download calls across
-a run. Pooling them would drag every node's measured throughput down to the speed of
-its handshake and steer downloads away from the fastest replicas. What *is* worth
-sharing is whether a node answers at all, and that is a question both tables can be
-asked.
 """
 
 from __future__ import annotations
@@ -76,11 +59,6 @@ class HeaderReadCall:
     seconds: float
     """
     See [HeaderReadCallRecord.seconds][esmporium.db.schema.HeaderReadCallRecord.seconds].
-
-    **The measurement that matters for a header read**, in the way throughput is the
-    one that matters for a download. Reading a few kilobytes is almost entirely
-    connection setup and one round trip, so this is latency, and a node's typical
-    latency is what should decide whether to ask it first.
     """  # noqa: E501
 
     attempt_number: int
@@ -124,8 +102,6 @@ def fan_out(*observers: HeaderReadCallObserver) -> HeaderReadCallObserver:
     [read_header][esmporium.headers.read_header] still calls a single
     observer, and `fan_out` composes many into that one (e.g. record to the database
     *and* print progress to the console).
-
-    The twin of [esmporium.downloads.fan_out][] and [esmporium.search.fan_out][].
 
     Parameters
     ----------

@@ -1,30 +1,5 @@
 """
 Getting a dataset's parent facts out of its files' headers
-
-The implementation of [ParentFactsProvider][esmporium.db.ParentFactsProvider], which is
-the seam ancestry left open for the projects whose parent facts are published nowhere.
-CMIP7 announces its parent in the search index, so a CMIP7 parent costs no extra
-request at all; **CMIP5 and CMIP6 publish none on either API**, and for them the only
-source is a data file's own global attributes.
-
-Three things are decided here, and they are kept apart on purpose.
-
-- **Which file to read.** One header answers a whole *simulation*, so this reads one
-  file per simulation rather than one per dataset. That is the single most important
-  thing the prototype before us learned, and the arithmetic is worth keeping: it pooled
-  every file of every variable, 660 to 1162 URLs for one model, and spent about 36
-  minutes against one dead data node for one simulation while the simulations that
-  would have worked waited. See [plan_header_reads][(m).plan_header_reads].
-- **What the attributes mean.** Which attribute carries the parent's variant label is a
-  question about CMIP5 or CMIP6, not about netCDF, so
-  [esmporium.headers][] reads *all* of a file's global attributes and says nothing
-  about them. Turning them into a [ParentInfo][esmporium.search.ParentInfo] is done
-  per project, by
-  [PARENT_HEADER_READERS_BY_PROJECT][(m).PARENT_HEADER_READERS_BY_PROJECT].
-- **Where the facts go.** Through
-  [save_parent_info][esmporium.db.save_parent_info] with
-  [FILE_HEADER][esmporium.db.schema.ParentInfoSource.FILE_HEADER] and the id of the
-  file the bytes came from, so a fact read out of bytes stays traceable to the bytes.
 """
 
 from __future__ import annotations
@@ -218,11 +193,7 @@ class ParentHeaderReader(Protocol):
     Turns one file's global attributes into what it says about its parent
 
     One per project, collected in
-    [PARENT_HEADER_READERS_BY_PROJECT][(m).PARENT_HEADER_READERS_BY_PROJECT]. Split by
-    project rather than by format, for the same reason
-    [ParentMatcher][esmporium.db.ParentMatcher] is: which attribute carries the
-    parent's variant label is a CMIP5-versus-CMIP6 question, and has nothing to do with
-    whether the file is classic netCDF or HDF5.
+    [PARENT_HEADER_READERS_BY_PROJECT][(m).PARENT_HEADER_READERS_BY_PROJECT].
     """
 
     def __call__(
@@ -330,39 +301,7 @@ def read_cmip5_parent_header(
     CMIP5 publishes far less than CMIP6 and spells what it does publish differently.
     Measured across 47 models on 2026-11-04, a CMIP5 header carries
     `parent_experiment_id`, `parent_experiment_rip` and `branch_time`, **and nothing
-    else about the parent at all**. So two facts have to be inferred:
-
-    - **the parent's model** is taken as the **child dataset's own model**, as the
-      database holds it. Unavoidable rather than chosen: a simulation cannot be
-      searched for without a model, and CMIP5 publishes no `parent_source_id` to read
-      one from. It is also safe in a way the variant label is not -- a run branches
-      from another run of the *same* model, where it frequently branches from a
-      *different* variant, which is why
-      [parent_variant_label][esmporium.db.schema.DatasetVersionParent.parent_variant_label]
-      is read and this is not.
-
-      **Taken from the database and not from the file's own `model_id`**, which is the
-      tempting mistake and the one that would quietly break every search. CMIP5's
-      search index spells several models differently from the files themselves: the
-      `model` facet says `INM-CM4`, `BCC-CSM1.1(m)`, `ACCESS1.0` and `CSIRO-Mk3.6.0`
-      where the file's `model_id` -- and the DRS path -- say `inmcm4`,
-      `bcc-csm1-1-m`, `ACCESS1-0` and `CSIRO-Mk3-6-0`. Checked on 2026-11-05.
-      [Dataset.model][esmporium.db.schema.Dataset.model] holds the facet spelling,
-      because that is what a search is issued and matched with, so a parent named with
-      the file's spelling would be searched for and never found.
-    - **the parent's project** is taken as the child's project. A CMIP5 run branches
-      from a CMIP5 run.
-
-    Both are inferred **only when the file declares a parent at all**. Doing it
-    unconditionally would be the one thing that must not happen here: a CMIP5
-    `piControl` says `parent_experiment_id = "N/A"` and nothing else, so filling in a
-    model and a project would turn every root run in the archive into a dataset
-    asserting a parent it never named -- which resolution could only fail on.
-
-    `parent_activity` is left `None` because CMIP5 has no concept of an activity, and
-    `parent_time_units` because CMIP5 does not publish one -- see the warning on
-    [branch_time_in_parent][esmporium.db.schema.DatasetVersionParent.branch_time_in_parent]
-    for why that makes `branch_time` a record rather than a usable number.
+    else about the parent at all**.
 
     Parameters
     ----------
@@ -478,13 +417,6 @@ Pass a mapping of your own to override one, e.g.
 class UnknownProjectHeaderReaderError(KeyError):
     """
     Raised when a project's header has no reader
-
-    There is deliberately **no default**, unlike
-    [matcher_for_project][esmporium.db.matcher_for_project]. A matcher that guesses
-    compares a few facets and may compare too many or too few; a header reader that
-    guessed would have to guess *which attributes carry the parent*, and getting that
-    wrong does not fail -- it silently records that every dataset in a project is a
-    root of the tree, which is a plausible-looking and completely wrong answer.
     """
 
     def __init__(self, project: str, known: Collection[str]) -> None:
@@ -574,22 +506,17 @@ class FileCandidate:
 
 DEFAULT_MAX_FILE_CANDIDATES = 3
 """
-How many of a simulation's files to be willing to try before giving up on it
+How many of a simulation's files to try before giving up on it
 
-The number that balances the two ways of getting this wrong, both of which have been
-measured.
+Every file of a simulation carries the same parent, so any one of them answers the
+question. A file whose data nodes do not answer is therefore bad luck rather than a
+dead end -- the next file is tried instead, and the simulation is only given up on
+once this many have failed.
 
-Trying **one** file is not enough. Sampled live on 2026-11-05,
-`BCC-CSM1.1(m) abrupt4xCO2` publishes 110 files, and the smallest of them is served
-only by a data node which does not answer -- so a plan committed to that one file gave
-up on a simulation whose other 109 files were perfectly readable.
-
-Trying **all** of them is the prototype's death spiral: it pooled every file of every
-variable, 660 to 1162 URLs, and spent about 36 minutes against one dead node for one
-simulation while the simulations that would have succeeded waited.
-
-Three files of about two routes each is at most six attempts, which a dead node gets
-through in seconds.
+One would be too few: a simulation whose other files are perfectly readable would be
+lost to a single unlucky pick. Every file would be too many, because each unanswered
+one costs a timeout, and that time is taken from the simulations still waiting. Three
+files of about two routes each is at most six attempts.
 """
 
 
@@ -664,9 +591,6 @@ class HeaderReadPlanItem:
 class HeaderReadPlan:
     """
     What reading some versions' parent facts will take
-
-    Separated into the three answers rather than returned as one list, because they
-    have different costs and a caller is entitled to see which it is paying.
     """
 
     to_read: tuple[HeaderReadPlanItem, ...]
@@ -796,15 +720,6 @@ def _file_candidates(
     """
     Pick the few files of a simulation worth trying, smallest first
 
-    **The death-spiral fix.** Any file of a simulation answers for all of them, so
-    trying a handful bounds what a dead data node can cost us. The prototype pooled
-    every file of every variable instead -- 660 to 1162 URLs for one model -- and a
-    node that failed slowly then cost about 36 minutes for a single simulation, during
-    which the simulations that would have succeeded elsewhere were starved.
-
-    Smallest first, because a file's header is as good as any other's and the smallest
-    is the one where a data node ignoring our range request costs least.
-
     Parameters
     ----------
     session
@@ -898,10 +813,6 @@ def plan_header_reads(
 ) -> HeaderReadPlan:
     """
     Work out what reading these versions' parent facts will take, without doing it
-
-    Separated from the doing so that the cost is inspectable: a caller -- or a test, or
-    a demo script -- can see how many headers a walk is about to fetch, and how many
-    datasets each of them answers for.
 
     Parameters
     ----------
@@ -1250,25 +1161,6 @@ def build_header_facts_provider(  # noqa: PLR0913 - one argument per injection s
     """
     Build the [ParentFactsProvider][esmporium.db.ParentFactsProvider] that reads headers
 
-    Hand the result to [find_parents][esmporium.db.find_parents] as `facts_provider`
-    and a CMIP5 or CMIP6 walk works. Without one, such a walk raises
-    [NoParentFactsProviderError][esmporium.db.NoParentFactsProviderError], because
-    neither project publishes a parent anywhere a search can see it.
-
-    A **factory** rather than a plain function because the seam it implements is handed
-    only a session and some version ids -- there is nowhere in that signature for a
-    client, a selector or an observer, so they are closed over here instead.
-
-    **Takes no database handle, on purpose.** Everything it writes goes through the
-    session it is handed, including the record of what the data nodes did. That is not
-    a simplification but a requirement: on SQLite a session holds the database's single
-    write lock from the moment its transaction opens
-    ([configure_sqlite_for_concurrency][esmporium.db.configure_sqlite_for_concurrency]
-    uses `BEGIN IMMEDIATE`), and a walk calls its facts provider from inside such a
-    session -- so anything here that opened a connection of its own would wait out the
-    five-minute `busy_timeout` on every attempt. Having no engine to open one with is
-    the cheapest way to make that mistake impossible.
-
     Parameters
     ----------
     client
@@ -1337,10 +1229,6 @@ def build_header_facts_provider(  # noqa: PLR0913 - one argument per injection s
     -------
     :
         A provider, suitable for `find_parents(..., facts_provider=...)`
-
-        It does **not** commit, as the seam requires -- the walk owns the transaction
-        boundary. The health observer is the exception, and deliberately so: it writes
-        through its own sessions, so what a node did survives a walk that later fails.
     """
 
     def provider(session: Session, dataset_version_ids: Collection[int]) -> None:
@@ -1472,20 +1360,6 @@ def build_parent_searcher_with_file_access(
 ) -> ParentSearcher:
     """
     Build the [ParentSearcher][esmporium.db.ParentSearcher] that a header read needs
-
-    `find_parents`' default searcher records the datasets a hop found and stops there,
-    which is right for CMIP7: its parents are in the index, so a hop needs nothing from
-    the files. For CMIP5 and CMIP6 it is not enough. Their parents are in the files, and
-    **a Solr dataset document carries no file URLs at all** -- those are a second
-    `type=File` request -- so a hop driven by the default searcher brings in ancestors
-    with no file to read, and every one of them is reported as a simulation whose
-    parent could not be obtained.
-
-    Pass this as `find_parents(..., searcher=...)` alongside
-    [build_header_facts_provider][(m).build_header_facts_provider], and use
-    [build_result_processor_with_file_access][esmporium.db.build_result_processor_with_file_access]
-    for the search that finds the datasets you start from -- those need files for the
-    same reason, and nothing in the walk goes back for them.
 
     Parameters
     ----------

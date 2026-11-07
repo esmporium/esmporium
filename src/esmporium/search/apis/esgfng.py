@@ -745,9 +745,9 @@ def stac_parent_info(
 
     # Named one by one rather than splatted, so that the fields STAC does *not*
     # publish are visible here as the omissions they are. `ParentInfo` also carries
-    # two branch times, and no STAC item has one: ESGF-1 Solr publishes
-    # `branch_time_in_parent` for CMIP7 and a file header gives both for CMIP5 and
-    # CMIP6, but STAC gives neither, so they are left at their defaults.
+    # two branch times, and no STAC item has either: they only ever come out of a file
+    # header, which gives both for CMIP6 and only the parent-side one for CMIP5. Left
+    # at their defaults here.
     return ParentInfo(
         parent_project=read["parent_project"],
         parent_activity=read["parent_activity"],

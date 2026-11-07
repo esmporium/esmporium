@@ -103,20 +103,6 @@ class ParentFactsProvider(Protocol):
 class NoParentFactsProviderError(RuntimeError):
     """
     Raised when a dataset's parent facts could not be obtained
-
-    The version carries no assertion, and its project publishes none in the search
-    index, so there is nothing to walk from. This is an error rather than an empty
-    answer because the two look identical from outside and only one of them is a
-    finished job: a walk that quietly returned nothing would read as "this data has no
-    ancestry" when it means "nobody has looked".
-
-    Covers **two** situations, and [provider_was_given][(c).provider_was_given] says
-    which -- because the thing to do about them is different. Either nothing was
-    offered to read headers with, and the fix is to pass
-    [build_header_facts_provider][esmporium.db.build_header_facts_provider]; or one
-    was, and it could not get a header for some datasets, and the fix is to look at
-    why. The logs say which data nodes were tried, and
-    [HeaderReadCallRecord][esmporium.db.schema.HeaderReadCallRecord] keeps the record.
     """
 
     def __init__(

@@ -1,35 +1,5 @@
 r"""
 Reading global attributes out of a netCDF-4/HDF5 file's header
-
-netCDF-4 files are HDF5 files -- they begin `\x89HDF\r\n\x1a\n` -- and a netCDF global
-attribute is an HDF5 attribute on the root group. Unlike the classic format, this one
-is not a sequential structure that can be walked with `struct.unpack`: the files ESGF
-serves keep 45 to 52 global attributes, well past HDF5's threshold of eight for
-storing them inline, so they live in a *fractal heap* indexed by a *version 2 B-tree*.
-Reading that by hand is several hundred lines of format-version-specific work, so this
-module uses `h5py` instead.
-
-`h5py` is an **optional extra** (`pip install esmporium[headers]`), imported inside the
-function that needs it. Classic netCDF needs nothing installed, so a CMIP5 archive
-reads with no extra at all; CMIP6 is entirely netCDF-4 and does need it.
-
-**`h5py`, not `netCDF4`**, although `netCDF4` can also do this and the prototype which
-came before us used it. `netCDF4` opens a *URL* and does its own HTTP inside the C
-library, which is where every one of that prototype's failure modes came from: a stall
-that no Python timeout could interrupt, so each read needed its own killable
-subprocess; HTTP statuses reaching Python only as text inside an `OSError`, so failures
-had to be classified by searching their messages; and a child wedged in an
-uninterruptible kernel read surviving `SIGKILL`, which deadlocked every worker at once.
-`h5py` opens a *file-like object*, so the bytes are fetched by
-[esmporium.headers.fetching][] with `httpx` and handed over already in memory. Nothing
-here touches the network.
-
-The one thing that makes reading a fetched prefix work at all: HDF5 needs to be told
-how long the **whole** file is, because the superblock records an end-of-file address
-and HDF5 checks it. Told the prefix's own length it refuses to open the file at all
-(`truncated file: eof = 65536, sblock->base_addr = 0`). So
-[read_hdf5_global_attributes][(m).read_hdf5_global_attributes] takes the real size and
-serves reads from the prefix underneath it.
 """
 
 from __future__ import annotations

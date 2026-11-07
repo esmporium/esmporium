@@ -1,19 +1,5 @@
 r"""
 Working out what a file is, and reading its global attributes accordingly
-
-A route's [ContainerFormat][esmporium.datasets.ContainerFormat] says `netcdf`, and that
-is **a routing hint rather than a complete instruction**: `netcdf` is two unrelated
-on-disk formats. Classic netCDF (`CDF\x01`, `CDF\x02`) is a sequential structure read
-here with no dependencies at all; netCDF-4 (`\x89HDF\r\n\x1a\n`) is HDF5 and needs
-`h5py`. ESGF serves both, so the only way to know which a file is, is to look at its
-first bytes.
-
-**It is not safe to guess from the project either**, which is the trap worth naming
-because the guess looks so reasonable. Sampled live on 2026-11-04: CMIP6 was netCDF-4
-in 18 files out of 18, and CMIP5 was classic netCDF in 44 models out of 47 -- but
-`EC-EARTH`'s rcp85 output is netCDF-4. So a reader that assumed "CMIP5 means classic"
-would work for most of an archive and then fail, and the thing it failed on would look
-like a corrupt file rather than a mis-identified one.
 """
 
 from __future__ import annotations
@@ -37,23 +23,13 @@ MAGIC_BYTES_NEEDED = max(len(HDF5_MAGIC), *(len(each) for each in NETCDF3_MAGICS
 How many of a file's first bytes to quote when its layout is not one we read
 
 The longest magic number this recognises, so an unrecognised file start is reported in
-full rather than cut off part way through. Derived rather than stated, so adding a
-layout cannot leave it behind.
+full rather than cut off part way through.
 """
 
 
 class HeaderLayout(str, Enum):
     """
     The on-disk layout of a file we can read a header out of
-
-    `str`-valued for the same reason as every other enum stored or logged here: a
-    record of one reads as its name rather than an integer nobody can interpret.
-
-    Deliberately *not* the same thing as
-    [ContainerFormat][esmporium.datasets.ContainerFormat]. That says what a route
-    claims to serve, which is what the search index published; this says what the
-    bytes turned out to be. The two can disagree, and when they do it is this one that
-    is right.
     """
 
     NETCDF3 = "netcdf3"

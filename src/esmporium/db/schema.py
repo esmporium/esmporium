@@ -1414,22 +1414,6 @@ class HeaderReadCallRecord(EsmporiumBase, table=True):
     The twin of [DataNodeCallRecord][esmporium.db.schema.DataNodeCallRecord], one row
     per *attempt* rather than per file, with the same meaning of `attempt_number` and
     `data_node_id`.
-
-    **A separate table, and the reason is a measurement rather than a preference.**
-    [aggregate_data_node_health][esmporium.db.download_health.aggregate_data_node_health]
-    ranks a data node partly on the median throughput of its successful calls. A
-    header read moves about 64 KiB and spends most of its time on the connection, so
-    it looks like a fraction of a megabyte per second; and because one header serves a
-    whole simulation while a download is per file, header calls still outnumber
-    download calls across a run. Recording them together would drag every node's
-    measured throughput down towards the speed of its handshake and steer downloads
-    away from the fastest replicas -- the same way
-    [SIZE_MISMATCH][esmporium.datasets.DownloadOutcome.SIZE_MISMATCH] would retire a
-    working replica if it were charged to the node.
-
-    What the two tables *do* share is [DataNode][esmporium.db.schema.DataNode], so
-    "does this node answer at all" is a question either can be asked, and asking both
-    is a join rather than a merge.
     """
 
     # See the note on `Dataset.model_config`: this catches a bad *value* at
@@ -1496,17 +1480,7 @@ class HeaderReadCallRecord(EsmporiumBase, table=True):
     """
     How the attempt turned out
 
-    See [HeaderReadOutcome][esmporium.datasets.HeaderReadOutcome]. Stored as its
-    value, so a row read back carries a plain `str` -- it compares equal to the enum
-    member but is not it, so compare with `==` and not `is`.
-
-    Indexed because every health question filters on it, and because several of its
-    members must be *excluded* when judging a node: a 404, a 401, a truncated header
-    and an unreadable format are all facts about the file rather than the node.
-
-    There is deliberately no `success` boolean beside this, for the reason
-    [DataNodeCallRecord.outcome][esmporium.db.schema.DataNodeCallRecord.outcome]
-    gives.
+    See [HeaderReadOutcome][esmporium.datasets.HeaderReadOutcome].
     """
 
     error: str | None = None
@@ -1515,12 +1489,6 @@ class HeaderReadCallRecord(EsmporiumBase, table=True):
     bytes_requested: int
     """
     How many bytes from the start of the file this attempt asked for
-
-    Recorded because it is not constant: a header that does not fit in the first ask
-    is retried with a larger one, so a row with an unusually large value here is a
-    file whose header sits deep inside it. Comparing this with
-    [bytes_transferred][(c).bytes_transferred] also shows a node serving a short file
-    in full rather than a range of a long one.
     """
 
     bytes_transferred: int = Field(default=0, sa_type=BigInteger)
@@ -1531,20 +1499,11 @@ class HeaderReadCallRecord(EsmporiumBase, table=True):
     [DataNodeCallRecord.bytes_transferred][esmporium.db.schema.DataNodeCallRecord.bytes_transferred]
     rather than from need: a header read is bounded to about a megabyte. `0` on an
     attempt that failed before any body arrived.
-
-    **Not a throughput measurement.** Dividing this by
-    [seconds][(c).seconds] gives the speed of a handshake, not of the node. See the
-    note on this table.
     """
 
     seconds: float
     """
     How long the attempt took, in wall-clock seconds
-
-    **The measurement that matters here**, in the way throughput is the one that
-    matters for a download: reading a few kilobytes is almost entirely connection
-    setup and one round trip, so this is latency, and a node's typical latency is what
-    should decide whether to ask it first.
     """
 
     attempt_number: int
@@ -2061,10 +2020,15 @@ class DatasetVersionParent(EsmporiumBase, table=True):
     """
     When the child branched off, in the **parent's** time coordinate
 
-    Published as `branch_time_in_parent` by CMIP6 and CMIP7 file headers, and as
-    `branch_time_in_parent` by ESGF-1 Solr for CMIP7. Measured in
+    Published as `branch_time_in_parent` by CMIP6 file headers, and measured in
     [parent_time_units][(c).parent_time_units], which is the only thing that makes it
     interpretable.
+
+    **Only ever read out of a file.** No search API publishes a branch time: an
+    ESGF-NG STAC item carries the parent's identity and its time units but neither
+    branch time. A value here
+    came from a [FILE_HEADER][esmporium.db.schema.ParentInfoSource.FILE_HEADER] or a
+    [FIX][esmporium.db.schema.ParentInfoSource.FIX].
 
     **Stored exactly as published and never interpreted**, which matters most for
     CMIP5. A CMIP5 header calls this plain `branch_time`, publishes no
@@ -2080,22 +2044,21 @@ class DatasetVersionParent(EsmporiumBase, table=True):
     CMIP5 value into one needs per-model knowledge, which is a
     [FIX][esmporium.db.schema.ParentInfoSource.FIX]'s job rather than a parser's.
 
-    `None` for a record which declared no parent, or for a source which did not say --
-    which is every search document on ESGF-NG, since STAC publishes no branch time at
-    all.
+    `None` for a record which declared no parent, and for every row read from a search
+    document.
     """
 
     branch_time_in_child: float | None = None
     """
     When the child branched off, in the **child's own** time coordinate
 
-    Published by CMIP6 and CMIP7 file headers, and almost always `0.0` -- a run
-    usually starts at its own time zero. Recorded anyway, because a non-zero value
-    says the child's series begins part way in, and that is exactly the kind of thing
-    worth having stored before someone needs it.
+    Published as `branch_time_in_child` by CMIP6 file headers, and almost always `0.0`
+    -- a run usually starts at its own time zero. Recorded anyway, because a non-zero
+    value says the child's series begins part way in, and that is exactly the kind of
+    thing worth having stored before someone needs it.
 
-    No CMIP5 header publishes this, and neither search API publishes it for any
-    project.
+    The one parent fact nothing else carries: no CMIP5 header publishes it, and no
+    search API does either.
 
     `None` for a record which declared no parent, or for a source which did not say.
     """

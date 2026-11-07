@@ -14,20 +14,6 @@ handful we have evidence for. A file format for fixes -- something a user could 
 or that could be published for others to use -- is deliberately **not** here yet: a
 format is the one part that is hard to change once people have written files against
 it, and the shape of the evidence is still being learned.
-
-**Why `evidence` is a required field.** Because the obvious way to write a fix is also
-wrong. If a model publishes exactly one `piControl` variant and a child points at a
-different one, it is tempting to call the single option the answer. It is not: the real
-parent may simply never have been published. A fix is only *not* an assumption when
-either the modelling centre has confirmed it, or the data has been compared and lines
-up. Anything else is a guess, and has to be able to say so.
-
-A fix is written as a [FIX][esmporium.db.schema.ParentInfoSource.FIX] row, which is a
-separate row from the header that it corrects --
-[SOURCE_PRECEDENCE][esmporium.db.SOURCE_PRECEDENCE] puts a fix above a header and a
-header above the search index. So a correction survives every re-ingest and every
-re-read of the file it corrects, and the thing it disagrees with stays visible beside
-it.
 """
 
 from __future__ import annotations
