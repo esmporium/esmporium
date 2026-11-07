@@ -139,7 +139,10 @@ tests-min = [
     # ----------------
     # The `headers` extra, so the netCDF-4/HDF5 reader is covered. Pinned like
     # everything else here; a test run should not change because a wheel did.
-    "h5py==3.14.0",
+    # 3.15 is the floor for this pin because it is the first release with a wheel for
+    # Python 3.14, which the test matrix covers -- 3.14.0 has none, so the job there
+    # fell back to building HDF5 from source and failed for want of `libhdf5.so`.
+    "h5py==3.16.0",
     "hypothesis==6.165.3",
     "pytest==8.3.4",
     "pytest-regressions==2.11.0",
