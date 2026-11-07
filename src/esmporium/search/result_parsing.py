@@ -193,15 +193,43 @@ class ParentInfo:
     [DatasetVersionParent.parent_time_units][esmporium.db.schema.DatasetVersionParent.parent_time_units].
     """
 
+    branch_time_in_parent: float | None = None
+    """
+    See
+    [DatasetVersionParent.branch_time_in_parent][esmporium.db.schema.DatasetVersionParent.branch_time_in_parent].
+
+    **Defaulted, unlike every field above it**, because the two branch times are the
+    only facts here that no *search* document carries -- they come from a file header
+    -- so requiring every parser to pass `None` for them would be ceremony rather than
+    a decision.
+    """
+
+    branch_time_in_child: float | None = None
+    """
+    See
+    [DatasetVersionParent.branch_time_in_child][esmporium.db.schema.DatasetVersionParent.branch_time_in_child].
+    """
+
     @property
     def declares_a_parent(self) -> bool:
         """
         Whether this names a parent simulation at all
 
+        **Decided by the simulation fields only**, deliberately. A branch time is a
+        number of time units into a run; it says *when* a child left its parent and
+        nothing whatever about *which* run that was. So a record carrying a branch
+        time and no model, experiment or variant has not named a parent, and treating
+        it as though it had would record an assertion that resolution could only fail
+        on.
+
+        Nothing published has been seen to do that -- every CMIP6 header with a branch
+        time names its parent fully -- so this is a guard rather than a workaround.
+
         Returns
         -------
         :
-            `True` if any field is set, `False` if the document declared no parent.
+            `True` if any field naming the parent *simulation* is set, `False` if the
+            source declared no parent.
         """
         return any(
             value is not None

@@ -32,6 +32,20 @@ GREGORY_VARIABLES = ("tas", "rsdt", "rlut", "rsut")
 The variables a Gregory-method ECS needs
 """
 
+CMIP6_GREGORY_CHILD = QueryCMIP6(
+    experiment_id="abrupt-4xCO2",
+    variable_id="tas",
+    frequency="mon",
+    source_id="UKESM1-0-LL",
+)
+"""
+One CMIP6 simulation to walk, kept small on purpose
+
+`UKESM1-0-LL abrupt-4xCO2` branches from a `piControl` with a *different* variant
+label, which is the case that makes reading the parent necessary rather than
+guessable.
+"""
+
 UNTIL_PICONTROL = ("piControl", "esm-piControl")
 """
 Where a CMIP7 chain should stop
@@ -40,6 +54,30 @@ Both spellings, because an Earth-system run branches from `esm-piControl`. Note 
 neither is the top of the tree: CMIP7 `piControl` declares a parent of
 `piControl-spinup`, which is not published, so a walk with no target would fail.
 """
+
+
+def _cmip6_version_ids(session) -> list[int]:
+    """
+    Get the id of every stored CMIP6 dataset version
+
+    Parameters
+    ----------
+    session
+        The session to read with
+
+    Returns
+    -------
+    :
+        The version ids
+    """
+    return [
+        one.id
+        for one in session.exec(
+            select(DatasetVersion)
+            .join(Dataset, Dataset.id == DatasetVersion.dataset_id)
+            .where(Dataset.project == "CMIP6")
+        ).all()
+    ]
 
 
 @pytest.fixture
@@ -235,26 +273,26 @@ def test_the_live_target_experiments_are_real(migrated_engine):
     check_until_experiments_exist(UNTIL_PICONTROL, "CMIP7")
 
 
-def test_cmip6_refuses_because_nothing_reads_a_header_yet(migrated_engine):
+def test_cmip6_still_publishes_no_parent_facts_in_either_index(migrated_engine):
     """
-    Where this step deliberately stops, pinned against the live API
+    Why a header has to be read at all, pinned against the live API
 
-    CMIP6 publishes no parent facts on either API, so a real CMIP6 search leaves
-    datasets with no assertions and the walk refuses.
+    Two things, and the first is the premise of the second: CMIP6 publishes nothing
+    about its parents where a search can see it, so a real CMIP6 search leaves its
+    datasets with no assertions at all. A walk given no provider then refuses, which is
+    the seam saying "nobody has looked" rather than "this data has no ancestry".
+
+    If ESGF ever starts publishing them, this fails -- which is the right way round,
+    because reading a header would then be an avoidable request.
     """
     with Session(migrated_engine) as session:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             search_single_project(
-                # Narrowed to one model: the point is the shape of the gap, and
-                # every CMIP6 dataset in existence would demonstrate it equally well
-                # at a hundred times the cost.
-                QueryCMIP6(
-                    experiment_id="abrupt-4xCO2",
-                    variable_id="tas",
-                    frequency="mon",
-                    source_id="UKESM1-0-LL",
-                ),
+                # Narrowed to one model: the point is the shape of the gap, and every
+                # CMIP6 dataset in existence would demonstrate it equally well at a
+                # hundred times the cost.
+                CMIP6_GREGORY_CHILD,
                 processor=build_result_processor(session),
                 warn_on_pagination=False,
             )
@@ -266,14 +304,7 @@ def test_cmip6_refuses_because_nothing_reads_a_header_yet(migrated_engine):
         # Nothing was read off the documents, because CMIP6 publishes nothing to read.
         assert session.exec(select(DatasetVersionParent)).all() == []
 
-        version_ids = [
-            one.id
-            for one in session.exec(
-                select(DatasetVersion)
-                .join(Dataset, Dataset.id == DatasetVersion.dataset_id)
-                .where(Dataset.project == "CMIP6")
-            ).all()
-        ]
+        version_ids = _cmip6_version_ids(session)
         with pytest.raises(NoParentFactsProviderError) as caught:
             find_parents(
                 session,
@@ -284,3 +315,47 @@ def test_cmip6_refuses_because_nothing_reads_a_header_yet(migrated_engine):
 
         assert set(caught.value.missing) == {"CMIP6"}
         assert caught.value.missing["CMIP6"] == len(version_ids)
+        # The message sends someone to the seam rather than to a dead end.
+        assert not caught.value.provider_was_given
+        assert "build_header_facts_provider" in str(caught.value)
+
+
+def test_a_walk_given_a_provider_that_delivers_nothing_says_so(migrated_engine):
+    """
+    The other half of that error: a provider was given and still delivered nothing
+
+    A node down, or a simulation with no HTTPS route. Reported as its own situation
+    rather than as "no facts provider was given", which would send someone to fix
+    something that is not broken.
+
+    No network beyond the search: the provider here is one that deliberately does
+    nothing, which is exactly what a totally unreachable archive looks like.
+    """
+    with Session(migrated_engine) as session:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            search_single_project(
+                CMIP6_GREGORY_CHILD,
+                processor=build_result_processor(session),
+                warn_on_pagination=False,
+            )
+        session.commit()
+
+        version_ids = _cmip6_version_ids(session)
+        assert version_ids, "ESGF published no CMIP6 abrupt-4xCO2 tas"
+
+        def delivers_nothing(session, dataset_version_ids):
+            """Stand in for an archive where no node served a single header."""
+
+        with pytest.raises(NoParentFactsProviderError) as caught:
+            find_parents(
+                session,
+                version_ids,
+                until_experiment=("piControl",),
+                check_until_exists=False,
+                facts_provider=delivers_nothing,
+            )
+
+        assert caught.value.provider_was_given
+        assert "could not read a header" in str(caught.value)
+        assert "HeaderReadCallRecord" in str(caught.value)

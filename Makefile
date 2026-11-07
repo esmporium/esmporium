@@ -55,9 +55,16 @@ test-downloads:  ## run only the tests which really download files from the ESGF
     # (CMIP7 `areacella`, ~51 KB), so this is quick.
 	uv run --group tests pytest tests -r a -v --run-downloads-data -m downloads_data
 
+.PHONY: test-headers
+test-headers:  ## run only the tests which really read file headers from the ESGF data nodes
+    # These fetch about 64 KiB per file over a range request and write nothing to disk,
+    # so they are much cheaper than `test-downloads` -- but they do depend on a data
+    # node answering, and some of them do not (3 of 47 timed out when sampled).
+	uv run --group tests pytest tests -r a -v --run-reads-file-headers -m reads_file_headers
+
 .PHONY: test-live-apis
 test-live-apis:  ## run the tests, including all tests that talk to live APIs
-	uv run --group tests pytest tests -r a -v --run-network --run-hits-esgf-search-api --run-downloads-data
+	uv run --group tests pytest tests -r a -v --run-network --run-hits-esgf-search-api --run-downloads-data --run-reads-file-headers
 
 # Note on code coverage and testing:
 # You must specify cov=src.

@@ -100,6 +100,8 @@ griffelib==2.1.0
     #   mkdocstrings-python
 h11==0.16.0
     # via httpcore
+h5py==3.16.0
+    # via esmporium
 httpcore==1.0.9
     # via httpx
 httpx==0.28.1
@@ -274,16 +276,19 @@ notebook-shim==0.2.4
 numpy==2.2.6 ; python_full_version < '3.11'
     # via
     #   contourpy
+    #   h5py
     #   matplotlib
     #   pandas
 numpy==2.4.6 ; python_full_version == '3.11.*'
     # via
     #   contourpy
+    #   h5py
     #   matplotlib
     #   pandas
 numpy==2.5.1 ; python_full_version >= '3.12'
     # via
     #   contourpy
+    #   h5py
     #   matplotlib
     #   pandas
 overrides==7.7.0 ; python_full_version < '3.12'

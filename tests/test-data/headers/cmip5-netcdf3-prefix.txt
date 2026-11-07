@@ -1,0 +1,8 @@
+A real CMIP5 file's first bytes, for testing the classic-netCDF reader.
+
+file:          tas_Amon_bcc-csm1-1-m_abrupt4xCO2_r1i1p1_024001-038912.nc
+url:           https://esgf.ceda.ac.uk/thredds/fileServer/esg_dataroot/cmip5/output1/BCC/bcc-csm1-1-m/abrupt4xCO2/mon/atmos/Amon/r1i1p1/v20120910/tas/tas_Amon_bcc-csm1-1-m_abrupt4xCO2_r1i1p1_024001-038912.nc
+whole file:    368702896 bytes
+prefix kept:   6364 bytes
+minimum that parses: 6300 bytes
+fetched:       2026-11-05

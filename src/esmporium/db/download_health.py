@@ -95,7 +95,7 @@ def record_data_node_calls(engine: Engine) -> DataNodeCallObserver:
         with Session(engine) as session:
             session.add(
                 DataNodeCallRecord(
-                    data_node_id=_data_node_id(session, call.data_node),
+                    data_node_id=data_node_id(session, call.data_node),
                     file_id=call.file_id,
                     data_access_id=call.data_access_id,
                     url=call.url,
@@ -118,7 +118,7 @@ def record_data_node_calls(engine: Engine) -> DataNodeCallObserver:
     return observer
 
 
-def _data_node_id(session: Session, data_node: str) -> int:
+def data_node_id(session: Session, data_node: str) -> int:
     """
     Get the id of a data node's row, creating the row if it is new
 
@@ -354,10 +354,19 @@ def _summarise(data_node: str, records: Sequence[DataNodeCallRecord]) -> DataNod
     ]
     # Compare on the enum's *value*: a row read back from the database carries a plain
     # `str`, so `DownloadOutcome(record.outcome)` is what gets us the member back.
+    #
+    # A success has to be in here too, because this is the *denominator* of a failure
+    # rate. `counts_against_data_node` answers a narrower question -- "is this a
+    # failure worth charging to the node" -- and it excludes `SUCCESS`, so using it
+    # alone made every node with a single counting failure report a failure rate of
+    # 1.0: `n_failed` was then the whole of `judged`. A node succeeding nine times in
+    # ten came out indistinguishable from a dead one, which is exactly the
+    # "retire a working replica" outcome the ranking is supposed to avoid.
     judged = [
         record
         for record in records
-        if DownloadOutcome(record.outcome).counts_against_data_node
+        if record.outcome == DownloadOutcome.SUCCESS
+        or DownloadOutcome(record.outcome).counts_against_data_node
     ]
     n_failed = sum(1 for record in judged if record.outcome != DownloadOutcome.SUCCESS)
 

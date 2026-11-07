@@ -734,15 +734,27 @@ def stac_parent_info(
         column: _suffixed_key(properties, suffix) for column, suffix in suffixes.items()
     }
 
+    read = {
+        column: (
+            None
+            if api_field is None
+            else stac_read_facet_as_string(feature, api_field, context)
+        )
+        for column, api_field in api_fields.items()
+    }
+
+    # Named one by one rather than splatted, so that the fields STAC does *not*
+    # publish are visible here as the omissions they are. `ParentInfo` also carries
+    # two branch times, and no STAC item has either: they only ever come out of a file
+    # header, which gives both for CMIP6 and only the parent-side one for CMIP5. Left
+    # at their defaults here.
     return ParentInfo(
-        **{
-            column: (
-                None
-                if api_field is None
-                else stac_read_facet_as_string(feature, api_field, context)
-            )
-            for column, api_field in api_fields.items()
-        }
+        parent_project=read["parent_project"],
+        parent_activity=read["parent_activity"],
+        parent_model=read["parent_model"],
+        parent_experiment=read["parent_experiment"],
+        parent_variant_label=read["parent_variant_label"],
+        parent_time_units=read["parent_time_units"],
     )
 
 

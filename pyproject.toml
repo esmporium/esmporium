@@ -50,8 +50,26 @@ Issues = "https://github.com/esmporium/esmporium/issues"
 plots = [
     "matplotlib>=3.7.1",  # pin based on minimum supported python version
 ]
+# Reading a netCDF-4/HDF5 file's global attributes, which is how parent information
+# reaches us for CMIP6 (and for the handful of CMIP5 models published as netCDF-4).
+# An extra rather than a dependency because classic netCDF -- most of CMIP5 -- is read
+# by `esmporium.headers.netcdf3` with nothing installed, so requiring a compiled HDF5
+# library of every user would charge all of them for one file format.
+#
+# h5py specifically, and not netCDF4, even though netCDF4 can also do this: netCDF4
+# opens a URL and does its own HTTP inside the C library, which makes a stalled read
+# impossible to time out from Python and turns an HTTP status into text inside an
+# OSError. h5py opens a file-like object, so `esmporium.headers.fetching` keeps the
+# request in httpx. See the module docstring of `esmporium.headers.hdf5`.
+headers = [
+    # 3.6 is the floor because it is the first release with a wheel for Python 3.10,
+    # the oldest version we support. Earlier releases ship an sdist only, so our
+    # lowest-direct CI job would have to build HDF5 from source to install one.
+    "h5py>=3.6",
+]
 full = [
     "esmporium[plots]",
+    "esmporium[headers]",
 ]
 
 [dependency-groups]
@@ -82,12 +100,17 @@ dev = [
     # -------------------------------
     "ty==0.0.33",
     "typer>=0.27.1",
-    # Note for the download step: nothing here reads data files, so the engines for
-    # that (xarray, fsspec, h5netcdf, scipy, kerchunk, zarr and friends) are not
-    # dependencies of this package, dev or otherwise. They were here briefly, for a
-    # one-off probe which opened the routes we had recorded; what it found is written
-    # up on `esmporium.datasets.ContainerFormat` and in PLAN.md's download step, so
-    # the dependencies went when the probe did.
+    # Note on reading data files: downloading one still does not open it, and the
+    # general-purpose engines for that (xarray, fsspec, h5netcdf, scipy, kerchunk,
+    # zarr and friends) are still not dependencies of this package, dev or otherwise.
+    # They were here briefly, for a one-off probe which opened the routes we had
+    # recorded; what it found is written up on `esmporium.datasets.ContainerFormat`
+    # and in PLAN.md's download step, so the dependencies went when the probe did.
+    #
+    # The one exception is h5py, which `esmporium.headers` needs to read a
+    # netCDF-4 file's global attributes. It is the `headers` *extra* rather than a
+    # dependency, and it is in the test groups below so that CI covers both the
+    # classic-netCDF reader (which needs nothing) and the netCDF-4 one.
 ]
 docs = [
     # Key dependencies
@@ -114,6 +137,12 @@ docs = [
 tests-min = [
     # Key dependencies
     # ----------------
+    # The `headers` extra, so the netCDF-4/HDF5 reader is covered. Pinned like
+    # everything else here; a test run should not change because a wheel did.
+    # 3.15 is the floor for this pin because it is the first release with a wheel for
+    # Python 3.14, which the test matrix covers -- 3.14.0 has none, so the job there
+    # fell back to building HDF5 from source and failed for want of `libhdf5.so`.
+    "h5py==3.16.0",
     "hypothesis==6.165.3",
     "pytest==8.3.4",
     "pytest-regressions==2.11.0",
@@ -174,6 +203,14 @@ show_error_context = true
 warn_unreachable = true
 follow_imports = "normal"
 
+# h5py ships no type stubs and no `py.typed` marker. It is the optional `headers`
+# extra, imported in one function in `esmporium.headers.hdf5`, and nothing it returns
+# reaches a public signature -- `_plain_python` reduces every value it hands back to a
+# plain Python object before it leaves that module.
+[[tool.mypy.overrides]]
+module = ["h5py"]
+ignore_missing_imports = true
+
 [tool.ty.environment]
 extra-paths = ["stubs"]
 python-version = "3.10"
@@ -198,6 +235,7 @@ markers = [
     "network: test which needs network access, for something not worth naming more specifically",
     "hits_esgf_search_api: test which talks to the live ESGF search APIs",
     "downloads_data: test which downloads real files from the live ESGF data nodes",
+    "reads_file_headers: test which reads real file headers from the live ESGF data nodes",
 ]
 
 [tool.ruff]

@@ -1,0 +1,8 @@
+A real CMIP6 file's first bytes, for testing the netCDF-4/HDF5 reader.
+
+file:          tas_Amon_TaiESM1_abrupt-4xCO2_r1i1p1f1_gn_000101-015012.nc
+url:           https://esgf.ceda.ac.uk/thredds/fileServer/esg_cmip6/CMIP6/CMIP/AS-RCEC/TaiESM1/abrupt-4xCO2/r1i1p1f1/Amon/tas/gn/v20200310/tas_Amon_TaiESM1_abrupt-4xCO2_r1i1p1f1_gn_000101-015012.nc
+whole file:    218823170 bytes (as served)
+prefix kept:   42487 bytes
+minimum that parses: 42231 bytes
+fetched:       2026-11-05

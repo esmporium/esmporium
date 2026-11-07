@@ -376,7 +376,7 @@ def download_file(  # noqa: PLR0913 - the keyword-only extras are deliberate inj
                 "giving up on %s after %d route(s)",
                 request.label,
                 attempt,
-                extra={"filename": request.label, "max_routes": max_routes},
+                extra={"file_name": request.label, "max_routes": max_routes},
             )
             break
 
@@ -413,7 +413,7 @@ def download_file(  # noqa: PLR0913 - the keyword-only extras are deliberate inj
                 exc.outcome,
                 extra={
                     "data_node": route.data_node,
-                    "filename": request.label,
+                    "file_name": request.label,
                     "outcome": str(exc.outcome),
                 },
             )

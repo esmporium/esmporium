@@ -102,24 +102,47 @@ class ParentFactsProvider(Protocol):
 
 class NoParentFactsProviderError(RuntimeError):
     """
-    Raised when a dataset's parent facts cannot be obtained and nothing was offered
+    Raised when a dataset's parent facts could not be obtained
     """
 
-    def __init__(self, missing: Mapping[str, int]) -> None:
+    def __init__(
+        self, missing: Mapping[str, int], *, provider_was_given: bool = False
+    ) -> None:
         self.missing = dict(missing)
         """How many versions had no parent facts, per project"""
+
+        self.provider_was_given = provider_was_given
+        """
+        Whether a [ParentFactsProvider][(m).ParentFactsProvider] was passed and ran
+
+        `True` means one was tried and could not deliver, which is a different problem
+        from not having one -- so saying "no provider was given" in that case would
+        send someone to fix something that is not broken.
+        """
 
         counts = ", ".join(
             f"{count} {project}" for project, count in sorted(self.missing.items())
         )
+
+        if provider_was_given:
+            super().__init__(
+                f"No parent facts could be obtained for some datasets ({counts}). "
+                "A facts provider was given and ran, so this is not a missing seam: "
+                "it could not read a header for them. Check the logs for which data "
+                "nodes were tried, and esmporium.db.HeaderReadCallRecord for what "
+                "they answered. Common causes are a simulation whose files publish "
+                "no HTTPS route at all, and every data node holding it being down."
+            )
+
+            return
+
         super().__init__(
             f"No parent facts are recorded for some datasets ({counts}), and no "
             "facts provider was given to obtain them. Only CMIP7 publishes parent "
             "information in the search index, so for every other project the facts "
-            "come from a file header, which this package does not read yet. Pass "
-            "find_parents a facts_provider which records them (writing through "
-            "esmporium.db.save_parent_info with ParentInfoSource.FILE_HEADER), or "
-            "restrict the walk to datasets whose facts are already stored."
+            "come from a file header. Pass find_parents a facts_provider which reads "
+            "them -- esmporium.db.build_header_facts_provider(engine) is the one that "
+            "does -- or restrict the walk to datasets whose facts are already stored."
         )
 
 
@@ -1554,7 +1577,9 @@ def ensure_parent_facts(
 
     missing = _projects_of_versions_without_facts(session, dataset_version_ids)
     if missing:
-        raise NoParentFactsProviderError(missing)
+        raise NoParentFactsProviderError(
+            missing, provider_was_given=facts_provider is not None
+        )
 
 
 def _projects_of_versions_without_facts(

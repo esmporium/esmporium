@@ -821,6 +821,8 @@ PARENT_FACT_COLUMNS: tuple[str, ...] = (
     "parent_experiment",
     "parent_variant_label",
     "parent_time_units",
+    "branch_time_in_parent",
+    "branch_time_in_child",
 )
 """
 The columns of [DatasetVersionParent][esmporium.db.schema.DatasetVersionParent] which

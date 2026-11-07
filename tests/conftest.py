@@ -5,6 +5,7 @@ See https://docs.pytest.org/en/7.1.x/reference/fixtures.html#conftest-py-sharing
 """
 
 import datetime
+import pathlib
 import types
 import typing
 from dataclasses import dataclass
@@ -28,6 +29,7 @@ OPT_IN_MARKERS: dict[str, str] = {
     "network": "a third-party service over the network",
     "hits_esgf_search_api": "the live ESGF search APIs",
     "downloads_data": "the live ESGF data nodes, and really downloads files",
+    "reads_file_headers": "the live ESGF data nodes, reading the first bytes of files",
 }
 """
 Markers whose tests only run when they are explicitly asked for
@@ -41,6 +43,12 @@ and keeps the third-party checks somewhere they can be read as what they are.
 `network` is the generic one, for network access which is not worth naming.
 Anything we hit often enough to want to run, skip or debug on its own
 gets its own marker instead, which is why the ESGF search API has one.
+
+`downloads_data` and `reads_file_headers` both talk to the data nodes and are still
+kept apart, because what they cost and how they fail differ enough to want to run one
+without the other: a download writes whole files to disk, where a header read fetches
+about 64 KiB and writes nothing. When a data node is flaky, which of the two is red
+says which part of the problem it is.
 
 Give a test exactly one of these, the most specific one which applies.
 Two would mean it only runs when both flags are given,
@@ -395,3 +403,73 @@ def pandas_terminal_width():
     # Display as many columns as you want (i.e. let the display width do the
     # truncation)
     pd.set_option("display.max_columns", 1000)
+
+
+HEADER_TEST_DATA = pathlib.Path(__file__).parent / "test-data" / "headers"
+"""Where the recorded file prefixes live"""
+
+CMIP5_FILE_SIZE = 368702896
+"""
+How long the whole CMIP5 file is, as its data node served it
+
+Taken from the `Content-Range` of the response that fetched the prefix and recorded in
+the `.txt` beside it. Not derivable from the fixture: the HDF5 reader needs the *whole*
+file's length, not the prefix's, so these have to be carried alongside.
+"""
+
+CMIP6_FILE_SIZE = 218823170
+"""How long the whole CMIP6 file is, as its data node served it"""
+
+
+@pytest.fixture
+def needs_h5py() -> None:
+    """
+    Skip a test which cannot run without the optional `headers` extra
+
+    Reading a netCDF-4/HDF5 header needs `h5py`, which is the `headers` extra rather
+    than a dependency, because a classic-netCDF archive needs nothing installed. CI
+    runs the suite without extras to keep that true, so a test which really reads
+    netCDF-4 bytes has to stand aside there rather than fail.
+
+    Not put on [cmip6_netcdf4_prefix][(m).cmip6_netcdf4_prefix] itself, because
+    recognising those bytes as netCDF-4 needs no `h5py` at all -- only reading their
+    attributes does.
+    """
+    pytest.importorskip("h5py", reason="needs the optional `headers` extra")
+
+
+@pytest.fixture
+def cmip5_netcdf3_prefix() -> bytes:
+    """
+    Get the first bytes of a real CMIP5 file, which is classic netCDF
+
+    Returns
+    -------
+    :
+        6,364 bytes of `tas_Amon_bcc-csm1-1-m_abrupt4xCO2_r1i1p1_024001-038912.nc`
+
+        Trimmed to just past where its global attributes end (6,300 bytes), out of a
+        file of 368 MB -- which is the point of reading a header rather than a file.
+        Its parent facts are `piControl` / `r1i1p1` / `branch_time = 240.0`, and its
+        own `model_id` is `bcc-csm1-1-m` -- which is *not* how CMIP5's search index
+        spells that model, and several tests turn on the difference.
+    """
+    return (HEADER_TEST_DATA / "cmip5-netcdf3-prefix.bin").read_bytes()
+
+
+@pytest.fixture
+def cmip6_netcdf4_prefix() -> bytes:
+    """
+    Get the first bytes of a real CMIP6 file, which is netCDF-4/HDF5
+
+    Returns
+    -------
+    :
+        42,487 bytes of `tas_Amon_TaiESM1_abrupt-4xCO2_r1i1p1f1_gn_000101-015012.nc`
+
+        Trimmed to just past the 42,231 bytes HDF5 needs to reach the attribute
+        *values*. Their names are readable within 1.9 kB, which is a trap worth
+        knowing about: a prefix that lists every attribute can still be too short to
+        read any of them.
+    """
+    return (HEADER_TEST_DATA / "cmip6-netcdf4-prefix.bin").read_bytes()

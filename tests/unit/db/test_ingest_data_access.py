@@ -396,7 +396,7 @@ def test_a_files_scalars_are_refreshed_on_a_later_ingest(engine):
         assert (stored.size, stored.checksum) == (456, "cd" * 32)
 
     # Both values, so the one we dropped is at least in the log.
-    said = str(warned[0].message)
+    said = str(warned.pop(FileFactsChangedWarning).message)
     assert "we hold 123" in said
     assert "this document says 456" in said
     assert "ab" * 32 in said
