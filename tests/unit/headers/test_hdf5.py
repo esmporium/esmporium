@@ -90,10 +90,14 @@ def test_the_attribute_names_are_readable_long_before_their_values(
     file. So "the prefix lists every attribute" is not evidence that it is long
     enough, and any check that the header is complete has to read a value.
     """
-    with pytest.raises(TruncatedHeaderError):
+    with pytest.raises(TruncatedHeaderError) as caught:
         read_hdf5_global_attributes(
             cmip6_netcdf4_prefix[:4096], file_size=CMIP6_FILE_SIZE
         )
+
+    # Past the prefix it was given, so the failure is "fetch more" rather than
+    # "these bytes are broken" -- the number the escalation in `read_header` acts on.
+    assert caught.value.bytes_needed > 4096
 
 
 def test_bytes_that_are_not_hdf5_are_refused(needs_h5py):

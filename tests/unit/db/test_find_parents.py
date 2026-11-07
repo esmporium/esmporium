@@ -1231,8 +1231,17 @@ def test_a_walk_climbs_through_a_defaulted_version_and_warns_once(
 
         assert result.hops >= 1
         assert len(result.linked) == 2
-        assert len(warned) == 1
-        message = str(warned[0].message)
+        # Filtered by category rather than taken by position, because
+        # `pytest.warns` records *every* warning the block raised. On Python 3.14
+        # sqlite3 reports an unclosed connection as a `ResourceWarning`, which
+        # sqlmodel raises from under us and which arrives first.
+        decisions = [
+            each
+            for each in warned
+            if isinstance(each.message, ParentVersionDecidedWarning)
+        ]
+        assert len(decisions) == 1
+        message = str(decisions[0].message)
         assert "piControl" in message
         # Both counts, and the sentence that stops the dates reading as nonsense.
         assert "0 matched the child's own version string" in message
@@ -1535,4 +1544,4 @@ def test_the_decision_warning_summarises_more_simulations_than_it_names(
             )
 
         assert len(result.version_decisions) == 4
-        assert "and 1 more" in str(warned[0].message)
+        assert "and 1 more" in str(warned.pop(ParentVersionDecidedWarning).message)

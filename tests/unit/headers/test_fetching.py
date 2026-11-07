@@ -389,12 +389,18 @@ class TestTellingConnectionFailuresApart:
         `ssl.SSLError` and `ConnectionRefusedError` are both `OSError` subclasses
 
         So the order the two lists are checked in is load-bearing, not incidental.
+
+        The message is matched on the cause's *type name*, which is what
+        `_connect_error` puts there rather than reading the cause's prose -- the one
+        thing this package refuses to do.
         """
         with self._client_raising(
             client_for, ssl.SSLError("protocol mismatch")
         ) as client:
-            with pytest.raises(HeaderNodeHostFaultError):
+            with pytest.raises(HeaderNodeHostFaultError, match="SSLError") as caught:
                 read_header(client, route, retrying=no_retry)
+
+        assert caught.value.outcome.stops_this_data_node
 
 
 def test_a_block_is_retried_on_the_same_route(
@@ -434,7 +440,7 @@ def test_a_host_fault_is_not_retried_on_the_same_route(
         ) from socket.gaierror(8)
 
     with client_for(handler) as client:
-        with pytest.raises(HeaderNodeHostFaultError):
+        with pytest.raises(HeaderNodeHostFaultError, match="gaierror"):
             read_header(client, route, retrying=fast_retrying(3))
 
     assert len(attempts) == 1
