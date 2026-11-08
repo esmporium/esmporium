@@ -8,12 +8,14 @@ import pytest
 
 from esmporium.query import Query, QueryCMIP5
 from esmporium.requirements import (
+    Ancestors,
     Cardinality,
     ExplanationStatusNotOk,
     ExplanationStatusOk,
     InMemoryCatalogue,
     MixedProjectFacetError,
     NotANodeError,
+    ParentLookup,
     Requirement,
     UngroupableFacetError,
     UnmodelledFacetError,
@@ -25,7 +27,13 @@ from esmporium.requirements import (
     requirement,
     solve,
 )
-from esmporium.requirements.solve import _Context, _eval_tree, _label
+from esmporium.requirements.solve import (
+    _Context,
+    _eval_tree,
+    _label,
+    _lineage,
+    facets_read,
+)
 
 GROUP_BY = ("model", "variant_label")
 """What these tests use to group by, unless grouping is the point"""
@@ -87,7 +95,13 @@ def variables_together(variables=VARIABLES_TOGETHER, **overrides) -> Requirement
     return requirement(**settings)
 
 
-A_CONTEXT = _Context(requirement=tas_requirement(), found={}, group={})
+A_CONTEXT = _Context(
+    requirement=tas_requirement(),
+    catalogue=InMemoryCatalogue(entries=()),
+    found={},
+    needs_facets=frozenset(),
+    group={},
+)
 """A context for calling the dispatch functions directly, when it does not matter"""
 
 
@@ -1076,3 +1090,342 @@ def test_an_ambiguity_among_lean_candidates_says_what_was_read(dataset):
     # And it does not send them to the issue tracker for an optimisation working.
     assert "should not happen" not in explanation.message
     assert "raise an issue" not in explanation.message
+
+
+# --------------------------------------------------------------------------- lineage
+
+CONTROL = ("piControl", "esm-piControl")
+"""Both spellings of the unforced run, since which one a model published varies"""
+
+TO_CONTROL = Ancestors(until=Query(experiment=CONTROL), role="control")
+"""Trace a dataset back to the control its simulation branched from"""
+
+HISTORICAL_TAS = Query(variable="tas", experiment="historical")
+"""The child dataset these tests trace back, unless the child is the point"""
+
+
+def traced(child=HISTORICAL_TAS, lineage=TO_CONTROL, **overrides) -> Requirement:
+    """
+    Get a requirement for one dataset, traced back along a lineage
+
+    `child` has to pin the dataset the lineage hangs off well enough to exclude its
+    own ancestors, which is why it names an experiment: a parent is the same variable
+    as its child, so a query which asked only for `tas` would find the control too and
+    the leaf would be ambiguous before any lineage was followed.
+    """
+    settings = {"group_by": GROUP_BY, **overrides}
+
+    return requirement(
+        name="traced", tree=leaf(child, "field").with_lineage(lineage), **settings
+    )
+
+
+def test_a_lineage_fills_a_role_under_its_own_name(dataset):
+    child, control = dataset(1), dataset(2, experiment="piControl")
+    catalogue = InMemoryCatalogue(entries=(child, control), parents={1: 2, 2: None})
+
+    (group,) = solve(traced(), catalogue).satisfied.values()
+
+    assert sorted(group.roles) == ["control.field", "field"]
+    # By ID, because a solve hands back entries narrowed to the facets it was
+    # told it would read, so they are not the objects the catalogue was given.
+    assert group.one("control.field").id == control.id
+
+
+def test_a_chain_walks_through_what_it_passes(dataset):
+    # The branch simulation branched from 1pctCO2, which branched from the control.
+    # Only the last of those matches `until`, so the one in between is addressed by
+    # position rather than by name -- nobody writing the requirement knew it was there.
+    branch = dataset(1, experiment="esm-1pct-brch-1000PgC")
+    onepct = dataset(2, experiment="1pctCO2")
+    control = dataset(3, experiment="esm-piControl")
+    catalogue = InMemoryCatalogue(
+        entries=(branch, onepct, control), parents={1: 2, 2: 3, 3: None}
+    )
+
+    (group,) = solve(
+        traced(child=Query(variable="tas", experiment="esm-1pct-brch-1000PgC")),
+        catalogue,
+    ).satisfied.values()
+
+    assert sorted(group.roles) == ["chain.0.field", "control.field", "field"]
+    assert group.one("chain.0.field").id == onepct.id
+    assert group.one("control.field").id == control.id
+
+
+def test_the_lineage_is_also_reported_as_a_chain(dataset):
+    branch = dataset(1, experiment="esm-1pct-brch-1000PgC")
+    onepct = dataset(2, experiment="1pctCO2")
+    control = dataset(3, experiment="esm-piControl")
+    catalogue = InMemoryCatalogue(
+        entries=(branch, onepct, control), parents={1: 2, 2: 3, 3: None}
+    )
+
+    (group,) = solve(
+        traced(child=Query(variable="tas", experiment="esm-1pct-brch-1000PgC")),
+        catalogue,
+    ).satisfied.values()
+
+    # The same datasets as in `roles`, in the shape a check reads them: the order of
+    # the chain, and which end is which.
+    (lineage,) = group.lineages
+    assert [member.id for member in lineage.members] == [
+        branch.id,
+        onepct.id,
+        control.id,
+    ]
+    assert lineage.end_role == "control"
+    assert lineage.index_of("chain.0") == 1
+
+
+def test_a_lineage_stops_at_the_first_match(dataset):
+    # Two controls in one chain would be odd data, but the rule is worth pinning: the
+    # walk stops the first time `until` matches rather than going as far as it can.
+    child = dataset(1)
+    near = dataset(2, experiment="piControl")
+    far = dataset(3, experiment="piControl", variant_label="r2i1p1f1")
+    catalogue = InMemoryCatalogue(
+        entries=(child, near, far), parents={1: 2, 2: 3, 3: None}
+    )
+
+    (group,) = solve(traced(), catalogue).satisfied.values()
+
+    assert group.one("control.field").id == near.id
+    assert "chain.0.field" not in group.roles
+
+
+def test_a_dataset_is_never_its_own_ancestor(dataset):
+    # `until` is matched against each parent, never against the dataset the lineage
+    # hangs off, so a control traced back to a control walks rather than stopping where
+    # it started. A differently-numbered parent variant is ordinary, not contrived.
+    child = dataset(1, experiment="piControl")
+    control = dataset(2, experiment="piControl", variant_label="r2i1p1f1")
+    catalogue = InMemoryCatalogue(entries=(child, control), parents={1: 2, 2: None})
+
+    (group,) = solve(
+        traced(
+            child=Query(
+                variable="tas", experiment="piControl", variant_label="r1i1p1f1"
+            ),
+            group_by=("model",),
+        ),
+        catalogue,
+    ).satisfied.values()
+
+    assert group.one("control.field").id == control.id
+
+
+def test_the_lineage_role_names_where_it_stopped(dataset):
+    # Nothing hardcodes "control": where the chain stops is the user's to name.
+    child, historical = dataset(1, experiment="ssp126"), dataset(2)
+    catalogue = InMemoryCatalogue(entries=(child, historical), parents={1: 2, 2: None})
+    to_historical = Ancestors(until=Query(experiment="historical"), role="historical")
+
+    (group,) = solve(
+        traced(child=Query(variable="tas", experiment="ssp126"), lineage=to_historical),
+        catalogue,
+    ).satisfied.values()
+
+    assert group.one("historical.field").id == historical.id
+    assert "control.field" not in group.roles
+
+
+def test_a_lineage_which_was_never_read_says_so(dataset):
+    # The message which matters most: this is work waiting to be done, not missing
+    # data, and a user told "no parent" would go looking in the wrong place.
+    catalogue = InMemoryCatalogue(entries=(dataset(1),))
+
+    result = solve(traced(), catalogue)
+
+    assert list(result.unsatisfied) == [ONLY_GROUP]
+    rendered = result.explain()
+    assert "nothing has read a parent for" in rendered
+    assert "esmporium.db.find_parents" in rendered
+
+
+def test_a_root_before_the_target_says_the_chain_ended(dataset):
+    catalogue = InMemoryCatalogue(entries=(dataset(1),), parents={1: None})
+
+    result = solve(traced(), catalogue)
+
+    assert list(result.unsatisfied) == [ONLY_GROUP]
+    assert "declares no parent" in result.explain()
+
+
+def test_max_hops_is_a_guard_rather_than_the_stopping_rule(dataset):
+    branch = dataset(1, experiment="esm-1pct-brch-1000PgC")
+    onepct = dataset(2, experiment="1pctCO2")
+    control = dataset(3, experiment="esm-piControl")
+    catalogue = InMemoryCatalogue(
+        entries=(branch, onepct, control), parents={1: 2, 2: 3, 3: None}
+    )
+    shallow = Ancestors(until=Query(experiment=CONTROL), role="control", max_hops=1)
+
+    result = solve(
+        traced(
+            child=Query(variable="tas", experiment="esm-1pct-brch-1000PgC"),
+            lineage=shallow,
+        ),
+        catalogue,
+    )
+
+    assert list(result.unsatisfied) == [ONLY_GROUP]
+    assert "within 1 parents" in result.explain()
+
+
+def test_a_lineage_which_cannot_be_followed_is_unsatisfied_not_ambiguous(dataset):
+    # A dataset has one parent, so there is nothing for `ambiguous` to be about.
+    result = solve(traced(), InMemoryCatalogue(entries=(dataset(1),)))
+
+    assert not result.ambiguous
+    assert result.unsatisfied[ONLY_GROUP].status is ExplanationStatusNotOk.UNSATISFIED
+
+
+def test_every_dataset_in_a_role_is_traced(dataset):
+    # With `Cardinality.ALL` a role holds several datasets, and each gets its own
+    # chain: the controls line up with the variants they belong to.
+    entries = (
+        dataset(1, variant_label="r1i1p1f1"),
+        dataset(2, variant_label="r2i1p1f1"),
+        dataset(3, variant_label="r1i1p1f1", experiment="piControl"),
+        dataset(4, variant_label="r2i1p1f1", experiment="piControl"),
+    )
+    catalogue = InMemoryCatalogue(
+        entries=entries, parents={1: 3, 2: 4, 3: None, 4: None}
+    )
+
+    (group,) = solve(
+        traced(group_by=("model",), cardinality=Cardinality.ALL), catalogue
+    ).satisfied.values()
+
+    assert len(group.roles["field"]) == 2
+    assert len(group.roles["control.field"]) == 2
+    assert len(group.lineages) == 2
+
+
+def test_one_dataset_without_a_chain_fails_the_whole_role(dataset):
+    # All or nothing, deliberately: an analysis whose subject is the spread across
+    # every variant would be answering a different question if we quietly dropped the
+    # variants whose parent nobody has read.
+    entries = (
+        dataset(1, variant_label="r1i1p1f1"),
+        dataset(2, variant_label="r2i1p1f1"),
+        dataset(3, variant_label="r1i1p1f1", experiment="piControl"),
+    )
+    catalogue = InMemoryCatalogue(entries=entries, parents={1: 3, 3: None})
+
+    result = solve(traced(group_by=("model",), cardinality=Cardinality.ALL), catalogue)
+
+    assert not result.satisfied
+    # The dataset which broke it is named, so it can be gone and looked at.
+    assert "#2" in result.explain()
+
+
+def test_a_lineage_is_followed_for_every_leaf_of_an_all_of(dataset):
+    entries = (
+        dataset(1, variable="tas"),
+        dataset(2, variable="pr"),
+        dataset(3, variable="tas", experiment="piControl"),
+        dataset(4, variable="pr", experiment="piControl"),
+    )
+    catalogue = InMemoryCatalogue(
+        entries=entries, parents={1: 3, 2: 4, 3: None, 4: None}
+    )
+    tree = all_of(
+        leaf(Query(variable="tas"), "tas"), leaf(Query(variable="pr"), "pr")
+    ).with_lineage(TO_CONTROL)
+    both = requirement(
+        name="both",
+        tree=tree,
+        group_by=GROUP_BY,
+        where=Query(experiment="historical"),
+    )
+
+    (group,) = solve(both, catalogue).satisfied.values()
+
+    assert sorted(group.roles) == ["control.pr", "control.tas", "pr", "tas"]
+    # Each leaf has its own chain, rather than the two sharing one.
+    assert len(group.lineages) == 2
+
+
+def test_the_explanation_nests_the_lineage_under_its_leaf(dataset):
+    child, control = dataset(1), dataset(2, experiment="piControl")
+    catalogue = InMemoryCatalogue(entries=(child, control), parents={1: 2, 2: None})
+
+    rendered = solve(traced(), catalogue).explain()
+
+    assert "  [satisfied] field: #1" in rendered
+    assert "    [satisfied] control.field: #2" in rendered
+
+
+def test_provenance_reaches_the_explanation(dataset):
+    # The in-memory catalogue says nothing about where its answers came from, so this
+    # uses one which does, to pin that the phrase is rendered where it belongs.
+    class WithProvenance(InMemoryCatalogue):
+        """An in-memory catalogue which says how it came to its parents"""
+
+        def parent_of(self, entry, **kwargs):
+            """Answer as the in-memory catalogue does, with a phrase added"""
+            found = super().parent_of(entry, **kwargs)
+            if found.parent is None:
+                return found
+
+            return ParentLookup(
+                found.status,
+                parent=found.parent,
+                provenance="parent read from a file header",
+            )
+
+    child, control = dataset(1), dataset(2, experiment="piControl")
+    catalogue = WithProvenance(entries=(child, control), parents={1: 2, 2: None})
+
+    rendered = solve(traced(), catalogue).explain()
+
+    assert "control.field: #2" in rendered
+    assert "-- parent read from a file header" in rendered
+
+
+def test_a_lineage_until_is_read_even_when_nothing_else_names_it(dataset):
+    # `facets_read` has to include `until`, or the parent comes back unable to answer
+    # for the facet which decides whether the walk has finished.
+    child = dataset(1, variant_label="r1i1p1f1")
+    control = dataset(2, variant_label="r2i1p1f1", experiment="piControl")
+    catalogue = InMemoryCatalogue(entries=(child, control), parents={1: 2, 2: None})
+    # `experiment` appears nowhere else: not in the leaf's query, not in `group_by`.
+    by_model = traced(
+        child=Query(variable="tas", variant_label="r1i1p1f1"), group_by=("model",)
+    )
+
+    assert "experiment" in facets_read(by_model)
+    assert solve(by_model, catalogue).satisfied
+
+
+def test_a_relation_which_is_not_one_is_refused(dataset):
+    # The dispatch ends in a raise rather than a silent fallthrough, so a relation
+    # added to `LineageRelation` without a branch in the solver fails loudly. Called
+    # directly because the tree refuses to hold one, which is the point.
+    with pytest.raises(TypeError, match="Expected a lineage relation"):
+        _lineage(dataset(1), "not a relation", A_CONTEXT, "field")
+
+
+def test_the_parent_lookup_is_told_which_versions_count(dataset):
+    # One solve is answered from one set of versions throughout, lineage included, so
+    # a parent cannot come from a release the requirement excluded.
+    asked = []
+
+    class Recording(InMemoryCatalogue):
+        """An in-memory catalogue which records how it was asked"""
+
+        def parent_of(self, entry, **kwargs):
+            """Answer as the in-memory catalogue does, noting the arguments"""
+            asked.append(kwargs)
+
+            return super().parent_of(entry, **kwargs)
+
+    child, control = dataset(1), dataset(2, experiment="piControl")
+    catalogue = Recording(entries=(child, control), parents={1: 2, 2: None})
+
+    solve(traced(versions=VersionFilter.ANY), catalogue)
+
+    assert [each["versions"] for each in asked] == [VersionFilter.ANY]
+    assert "experiment" in asked[0]["needs_facets"]

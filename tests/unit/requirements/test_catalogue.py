@@ -27,9 +27,14 @@ from esmporium.query import (
     QueryCMIP7,
 )
 from esmporium.requirements import (
+    ANCESTOR_LINEAGE_END,
     Catalogue,
     DuplicateEntryIDError,
     InMemoryCatalogue,
+    Lineage,
+    ParentLookup,
+    ParentStatus,
+    UnknownReferenceError,
     UnloadedFacetError,
     asked_facets,
     matches,
@@ -479,4 +484,143 @@ def test_in_memory_catalogue_satisfies_the_catalogue_protocol():
     catalogue: Catalogue = InMemoryCatalogue(entries=())
 
     assert inspect.signature(type(catalogue).find) == inspect.signature(Catalogue.find)
+    assert inspect.signature(type(catalogue).parent_of) == inspect.signature(
+        Catalogue.parent_of
+    )
     assert catalogue.find(Query()) == ()
+
+
+# ------------------------------------------------------------------ ParentLookup
+
+
+@pytest.mark.parametrize(
+    ("status", "parent"),
+    [
+        pytest.param(ParentStatus.FOUND, None, id="found-without-a-parent"),
+        pytest.param(ParentStatus.ROOT, "an entry", id="a-parent-without-found"),
+    ],
+)
+def test_a_lookup_cannot_disagree_with_itself(status, parent, make_entry):
+    # The invariant is what lets a caller which has read `status` stop checking
+    # `parent`, so it is worth holding rather than documenting.
+    with pytest.raises(ValueError, match="cannot both be true"):
+        ParentLookup(status, parent=None if parent is None else make_entry(1))
+
+
+# ----------------------------------------------------- InMemoryCatalogue.parent_of
+
+
+def test_an_unmentioned_dataset_has_not_been_looked_at(make_entry):
+    # Absent from `parents` is the question not having been asked. The distinction
+    # from a root is the whole reason this is not just "a parent or nothing".
+    catalogue = InMemoryCatalogue(entries=(make_entry(1),))
+
+    assert catalogue.parent_of(make_entry(1)) == ParentLookup(
+        ParentStatus.NOT_LOOKED_FOR
+    )
+
+
+def test_a_dataset_mapped_to_none_is_a_root(make_entry):
+    catalogue = InMemoryCatalogue(entries=(make_entry(1),), parents={1: None})
+
+    assert catalogue.parent_of(make_entry(1)) == ParentLookup(ParentStatus.ROOT)
+
+
+def test_a_mapped_dataset_gives_its_parent(make_entry):
+    child, parent = make_entry(1), make_entry(2)
+    catalogue = InMemoryCatalogue(entries=(child, parent), parents={1: 2})
+
+    found = catalogue.parent_of(child)
+
+    assert found.status is ParentStatus.FOUND
+    assert found.parent == parent
+    # Nothing here knows where its answers came from, so it claims nothing.
+    assert found.provenance == ""
+
+
+def test_a_parent_is_narrowed_like_anything_else(make_entry):
+    # So that a parent from here answers for exactly what a parent from the
+    # database-backed catalogue would, which is what makes testing against this one
+    # mean anything.
+    child = make_entry(1)
+    parent = make_entry(2, project_facets={"realm": "atmos"})
+    catalogue = InMemoryCatalogue(entries=(child, parent), parents={1: 2})
+
+    found = catalogue.parent_of(child, needs_facets=["experiment"])
+
+    assert found.parent is not None
+    with pytest.raises(UnloadedFacetError):
+        found.parent.facet("realm")
+
+
+@pytest.mark.parametrize(
+    "parents",
+    [
+        pytest.param({99: None}, id="an-unknown-child"),
+        pytest.param({1: 99}, id="an-unknown-parent"),
+    ],
+)
+def test_a_catalogue_rejects_unknown_references(parents, make_entry):
+    # A relation is a pair of IDs, so an ID which is not in the catalogue leaves it
+    # pointing at nothing. Caught when the catalogue is built, because it is a mistake
+    # in whatever built it rather than a fact about the data.
+    with pytest.raises(UnknownReferenceError) as excinfo:
+        InMemoryCatalogue(entries=(make_entry(1),), parents=parents)
+
+    assert excinfo.value.unknown == (99,)
+    assert excinfo.value.field_name == "parents"
+
+
+def test_duplicate_ids_are_reported_before_dangling_references(make_entry):
+    # A repeated ID makes "which dataset is this?" unanswerable, which is the more
+    # fundamental complaint, so it is the one to fix first.
+    with pytest.raises(DuplicateEntryIDError):
+        InMemoryCatalogue(entries=(make_entry(1), make_entry(1)), parents={1: 99})
+
+
+# ----------------------------------------------------------------------- Lineage
+
+
+def test_lineage_names_its_two_ends(make_entry):
+    lineage = Lineage(members=(make_entry(1), make_entry(2)), end_role="control")
+
+    assert lineage.index_of("self") == 0
+    assert lineage.index_of("control") == 1
+    # `end` means the far end without naming it, so a check written that way does not
+    # have to be edited when the lineage is renamed.
+    assert lineage.index_of(ANCESTOR_LINEAGE_END) == 1
+
+
+def test_lineage_numbers_the_parents_in_between(make_entry):
+    lineage = Lineage(
+        members=tuple(make_entry(index) for index in (1, 2, 3, 4)),
+        end_role="control",
+    )
+
+    # `chain.0` is the anchor's own parent however long the chain is, so a check which
+    # means "the one it branched from" does not depend on the chain's length.
+    assert lineage.index_of("chain.0") == 1
+    assert lineage.index_of("chain.1") == 2
+    # The last member is reachable only under the end role: two names for one dataset
+    # would make a check's subject depend on how long the chain turned out to be.
+    with pytest.raises(ValueError, match=re.escape("'chain.<i>' with i < 2")):
+        lineage.index_of("chain.2")
+
+
+@pytest.mark.parametrize(
+    "name", ["chain.0", "chain", "chain.x", "parent", "", "self.tas"]
+)
+def test_lineage_refuses_a_name_it_does_not_hold(name, make_entry):
+    # Two long, which is the common case, so there is no `chain.<i>` at all -- and the
+    # message says that rather than listing an empty range.
+    lineage = Lineage(members=(make_entry(1), make_entry(2)), end_role="control")
+
+    with pytest.raises(ValueError, match="is not in this lineage"):
+        lineage.index_of(name)
+
+
+def test_a_short_lineage_says_it_has_no_parents_in_between(make_entry):
+    lineage = Lineage(members=(make_entry(1), make_entry(2)), end_role="control")
+
+    with pytest.raises(ValueError, match="no parents in between"):
+        lineage.index_of("chain.0")

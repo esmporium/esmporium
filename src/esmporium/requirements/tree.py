@@ -29,7 +29,7 @@ import hashlib
 import json
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from enum import Enum
-from typing import Annotated, Any, Literal, TypeVar, Union, cast
+from typing import Annotated, Literal, TypeVar, Union, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -40,9 +40,15 @@ from esmporium.query import (
     QueryCanonical,
     QueryProtocol,
     modelled_facet_names,
-    to_canonical,
 )
-from esmporium.requirements.catalogue import VersionFilter, set_facets
+from esmporium.requirements.catalogue import (
+    VersionFilter,
+    accept_any_query_style,
+    set_facets,
+    to_stored_query,
+)
+from esmporium.requirements.relations import LineageRelation
+from esmporium.requirements.roles import ROLE_SEPARATOR, check_role
 
 NODE_MODEL_CONFIG = ConfigDict(frozen=True, extra="forbid")
 """
@@ -53,16 +59,6 @@ The reason is [requirement_hash][(m).Requirement.requirement_hash]: a
 requirement is fingerprinted and stored, and anything which could be
 edited afterwards would leave that fingerprint
 describing something which no longer exists.
-"""
-# TODO future note:
-# One constant with two users, which is the reason it is not written out at either of
-# them: a role may not contain it (see [Leaf.role][(m).Leaf.role]), *because* it is
-# what joins the parts of a path together. A lineage or a scope makes those paths (R4
-# and R8), and the rule and the joining have to agree or a role could be written which
-# silently splits into two.
-ROLE_SEPARATOR = "."
-"""
-Separator between the parts of a role path, e.g. the `.` in `abrupt4x.control.tas`
 """
 
 
@@ -105,6 +101,43 @@ class ConflictingFacetsError(ValueError):
             f"Set each facet once: on the leaf or in {source_name}, not both. "
             "Repeating a facet with the same values is fine, "
             "it is only a disagreement which is refused."
+        )
+
+
+class ConflictingLineageError(ValueError):
+    """
+    Raised when a leaf is given a second, different lineage
+
+    The same rule as [ConflictingFacetsError][(m).ConflictingFacetsError]'s, for the
+    same reason: a leaf has one lineage, so saying it twice leaves no way to tell which
+    was meant. Giving a leaf the lineage it already has is fine; it is only a
+    disagreement which is refused.
+    """
+
+    def __init__(self, role: str, had: str, given: str) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        role
+            Role of the leaf which already has a lineage
+
+        had
+            Role the lineage it already has files its last member under
+
+        given
+            Role the incoming lineage would file its last member under
+        """
+        self.role = role
+        self.had = had
+        self.given = given
+        super().__init__(
+            f"Leaf {role!r} already has a lineage, filed under {had!r}, "
+            f"and was given another, filed under {given!r}. "
+            "A leaf has one lineage, so set it once: on the leaf or above it, not "
+            "both. Giving a leaf the lineage it already has is fine, it is only a "
+            "disagreement which is refused."
         )
 
 
@@ -231,62 +264,6 @@ class UnmodelledFacetError(ValueError):
             "never checked -- so the name has to be spelled exactly as the search "
             "document spells it."
         )
-
-
-def _canonical(query: QueryProtocol) -> QueryCanonical:
-    """
-    Put a query into the form a requirement stores
-
-    A leaf can be written in whichever query style suits the user, but is translated
-    so that it is stored in a consistent way.
-    That matters because a stored requirement has to reload
-    into a known class, because one question must hash the same whichever style it was
-    written in, and because turning a requirement back into searches converts *from*
-    canonical.
-
-    Parameters
-    ----------
-    query
-        Query to canonicalise, in any style
-
-    Returns
-    -------
-    :
-        The query, under canonical names and with no `source_query`
-    """
-    canonical = query if isinstance(query, QueryCanonical) else to_canonical(query)
-
-    if canonical.source_query is None:
-        return canonical
-
-    return canonical.model_copy(update={"source_query": None})
-
-
-def _accept_any_query_style(value: Any) -> Any:
-    """
-    Translate whatever was passed for a query field, on the way in
-
-    Parameters
-    ----------
-    value
-        What was passed
-
-    Returns
-    -------
-    :
-        A [QueryCanonical][esmporium.query.QueryCanonical] if `value` was a query of
-        some kind, and `value` untouched otherwise, so that pydantic reports anything
-        unusable in its own words.
-
-        A mapping is left alone too: that is a stored requirement being loaded, where
-        pydantic builds the query from JSON and there is nothing to translate.
-    """
-    # Duck-typed rather than `isinstance(value, QueryProtocol)`, because a `Protocol`
-    # is only checkable at runtime when it says so, and this one does not.
-    if isinstance(value, Mapping) or not hasattr(value, "other_terms"):
-        return value
-
-    return _canonical(value)
 
 
 def _homes(query: QueryCanonical) -> tuple[dict[str, tuple[str, ...]], ...]:
@@ -465,29 +442,34 @@ class Leaf(BaseModel):
     and it is what a check refers to later,
     so it wants to read as a job e.g. 'control', 'reference', 'scenario-data'.
 
-    You choose it, freely, subject only to three rules: it cannot be empty, it cannot
-    contain a `.` (that separates the nested paths which arrive with lineage and
-    scopes, as in `control.field`), and no two leaves used together may share the same
-    role.
+    You choose it, freely, subject only to four rules: it cannot be empty, it cannot
+    contain a `.` (that separates the parts of a nested path, as in `control.field`),
+    it cannot be one of [RESERVED_ROLES][esmporium.requirements.roles.RESERVED_ROLES],
+    and no two leaves used together may share the same role. A leaf with a lineage has
+    a fifth: its role cannot be the lineage's role either.
     """
 
-    _accept_any_style = field_validator("query", mode="before")(_accept_any_query_style)
+    lineage: LineageRelation | None = None
+    """
+    How this dataset's related datasets -- its control, say -- are found
+
+    `None`, the default, is a leaf which asks for one dataset and nothing around it.
+
+    Set it with [with_lineage][(m).Leaf.with_lineage], which can also be called on a
+    node above the leaf to give the same lineage to every leaf below it.
+
+    A lineage adds roles rather than changing this one: a leaf `field` with
+    `Ancestors(role="control")` fills `field` and `control.field`, and `chain.0.field`
+    and so on for any parents in between. See
+    [Ancestors][esmporium.requirements.Ancestors].
+    """
+
+    _accept_any_style = field_validator("query", mode="before")(accept_any_query_style)
 
     @field_validator("role")
     @classmethod
     def _valid_role(cls, value: str) -> str:
-        # `strip()` because a role of only whitespace is indistinguishable from an
-        # empty one in any message which quotes it, and is never what was meant.
-        # Capitals, spaces within, and length are all left alone: a role is a label
-        # someone chose, and this is not the place to have opinions about their naming.
-        if not value.strip() or ROLE_SEPARATOR in value:
-            msg = (
-                "Roles must have some non-whitespace content "
-                f"and contain no {ROLE_SEPARATOR!r}, got {value!r}"
-            )
-            raise ValueError(msg)
-
-        return value
+        return check_role(value)
 
     @model_validator(mode="after")
     def _query_sets_a_facet(self) -> Leaf:
@@ -495,6 +477,13 @@ class Leaf(BaseModel):
         # available to name in the error.
         if not set_facets(self.query):
             raise EmptyLeafQueryError(self.role)
+
+        return self
+
+    @model_validator(mode="after")
+    def _role_is_not_its_lineage_role(self) -> Leaf:
+        if self.lineage is not None:
+            check_lineage_role_differs(self.role, self.lineage)
 
         return self
 
@@ -534,9 +523,43 @@ class Leaf(BaseModel):
         """
         return self.model_copy(
             update={
-                "query": add_facets(self.query, _canonical(query), self.role, "where")
+                "query": add_facets(
+                    self.query, to_stored_query(query), self.role, "where"
+                )
             }
         )
+
+    def with_lineage(self, lineage: LineageRelation) -> Leaf:
+        """
+        Set how this leaf's related datasets are found
+
+        Parameters
+        ----------
+        lineage
+            The relation to use
+
+        Returns
+        -------
+        :
+            Updated leaf
+
+        Raises
+        ------
+        ConflictingLineageError
+            This leaf already has a different lineage
+
+        ValueError
+            `lineage`'s role is this leaf's role
+        """
+        if self.lineage is not None and self.lineage != lineage:
+            raise ConflictingLineageError(self.role, self.lineage.role, lineage.role)
+
+        # Checked here as well as in the model validator which backs it up, because
+        # `model_copy` runs no validators at all. `where` is in the same position, and
+        # gets away with it only because `add_facets` does its checking for it.
+        check_lineage_role_differs(self.role, lineage)
+
+        return self.model_copy(update={"lineage": lineage})
 
 
 class AllOf(BaseModel):
@@ -588,6 +611,35 @@ class AllOf(BaseModel):
             different home
         """
         return apply_to_leaves(self, lambda each_leaf: each_leaf.where(query))
+
+    def with_lineage(self, lineage: LineageRelation) -> AllOf:
+        """
+        Set how every leaf below this node finds its related datasets
+
+        One lineage, shared: each leaf below gets the same relation, so each resolves
+        its own parents under the same role. That is what makes
+        `all_of(tas, rsdt, rlut).with_lineage(TO_CONTROL)` mean "every one of these,
+        traced back to its own control" rather than "all of these and one control".
+
+        Parameters
+        ----------
+        lineage
+            The relation to use
+
+        Returns
+        -------
+        :
+            Updated node
+
+        Raises
+        ------
+        ConflictingLineageError
+            A leaf below this node already has a different lineage
+
+        ValueError
+            `lineage`'s role is the role of a leaf below this node
+        """
+        return apply_to_leaves(self, lambda each_leaf: each_leaf.with_lineage(lineage))
 
 
 Node = Annotated[Union[Leaf, AllOf], Field(discriminator="kind")]
@@ -812,7 +864,7 @@ class Requirement(BaseModel):
     The three cases are worked through side by side in [requirement][(m).requirement].
     """
 
-    _accept_any_style = field_validator("where", mode="before")(_accept_any_query_style)
+    _accept_any_style = field_validator("where", mode="before")(accept_any_query_style)
 
     @model_validator(mode="after")
     def _check_tree(self) -> Requirement:
@@ -1004,7 +1056,7 @@ def walk_leaves(node: Node, role_prefix: str = "") -> Iterator[tuple[str, Leaf]]
     role_prefix
         Role path prefix the node sits under, e.g. `"abrupt4x."` giving
         `abrupt4x.field`, for a `node` that has `role="field"`,
-        joined with [ROLE_SEPARATOR][(m).ROLE_SEPARATOR]
+        joined with [ROLE_SEPARATOR][esmporium.requirements.roles.ROLE_SEPARATOR]
 
         Always empty for now. It is here because a node which renames the leaves below
         it is what makes the same role usable twice.
@@ -1042,6 +1094,15 @@ def role_paths(node: Node) -> frozenset[str]:
     :
         Role paths
 
+        The paths a lineage adds come too, which is to say the one it files its last
+        member under -- `control.field` for a leaf `field` with
+        `Ancestors(role="control")`.
+
+        The `chain.<i>` paths for the parents in between do **not**, and cannot: how
+        many there are depends on how long the chain turns out to be, which is a fact
+        about the data rather than about the requirement. So this is every path a
+        requirement *names*, and a solved group can hold more.
+
     Raises
     ------
     DuplicateRoleError
@@ -1051,7 +1112,10 @@ def role_paths(node: Node) -> frozenset[str]:
         `node` is not a node
     """
     if isinstance(node, Leaf):
-        return frozenset({node.role})
+        if node.lineage is None:
+            return frozenset({node.role})
+
+        return frozenset({node.role, f"{node.lineage.role}{ROLE_SEPARATOR}{node.role}"})
 
     if isinstance(node, AllOf):
         return distinct_role_paths(node.children)
@@ -1126,6 +1190,42 @@ def check_roles_are_distinct(node: Node) -> None:
     role_paths(node)
 
 
+def check_lineage_role_differs(role: str, lineage: LineageRelation) -> None:
+    """
+    Check that a leaf's role and its lineage's role are different names
+
+    Returns nothing: this is here to raise, and exists so that a caller which wants
+    the check can ask for the check, the way
+    [check_roles_are_distinct][(m).check_roles_are_distinct] does.
+
+    Not something [check_role][esmporium.requirements.roles.check_role] could catch,
+    because it sees one name at a time: a lineage's role is free in general and clashes
+    only with the leaf it is attached to.
+
+    Parameters
+    ----------
+    role
+        Role of the leaf
+
+    lineage
+        The leaf's lineage
+
+    Raises
+    ------
+    ValueError
+        The two roles are the same name
+    """
+    if lineage.role != role:
+        return
+
+    msg = (
+        f"Leaf role {role!r} is also the role of this leaf's lineage, so the leaf "
+        f"would fill both {role!r} and {role}{ROLE_SEPARATOR}{role}, which are "
+        "different datasets. Rename one of them."
+    )
+    raise ValueError(msg)
+
+
 def check_grouping_facets_are_modelled(
     group_by: Iterable[str], prefer: Iterable[str]
 ) -> None:
@@ -1192,7 +1292,7 @@ def leaf(query: QueryProtocol, role: str) -> Leaf:
     # Translated here rather than left to the field's own validator, so that what is
     # handed over is what the field says it holds. The validator does it again on the
     # way in, which costs nothing: canonicalising is idempotent.
-    canonical = _canonical(query)
+    canonical = to_stored_query(query)
 
     # As with `all_of`, checked here so the error arrives as itself rather than wrapped
     # in a `ValidationError` by the model validator which backs it up.
@@ -1397,7 +1497,7 @@ def requirement(  # noqa: PLR0913 - one argument per field of the requirement
     not change shape. [Solution.one][esmporium.requirements.Solution.one] is
     the way to ask for the single dataset in a role, and refuses when there are three.
     """
-    canonical_where = QueryCanonical() if where is None else _canonical(where)
+    canonical_where = QueryCanonical() if where is None else to_stored_query(where)
 
     # As with `all_of`, checked here so the errors arrive as themselves rather than
     # wrapped in a `ValidationError` by the model validator which backs them up.

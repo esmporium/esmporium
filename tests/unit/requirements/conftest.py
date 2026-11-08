@@ -68,6 +68,17 @@ def satisfying_catalogue(make_entry):
     Facets no leaf names keep the values `get_dataset_kwargs` builds, so every
     entry agrees on `model` and `variant_label` and there is exactly one group.
 
+    A leaf with a lineage gets one further entry, which is its own entry with the
+    lineage's `until` facets written over the top, recorded as its parent. So the chain
+    is always **one hop** here, deliberately: `role_paths` cannot predict the
+    `chain.<i>` roles a longer chain would fill (how many there are depends on the
+    data), so a longer chain would put role paths in a solved group which the
+    requirement never named, and `test_use_cases.py` compares the two. Longer chains
+    are tested where they belong, in `test_solve.py`.
+
+    That parent is recorded as a root, so a requirement which traced its lineage one
+    hop further would be `unsatisfied` here rather than running off the end.
+
     The known limit, and the part which grows as the tree does: a requirement
     which groups on a facet no leaf's query names has nothing here to answer for it,
     so solving it raises
@@ -76,11 +87,9 @@ def satisfying_catalogue(make_entry):
 
     def factory(requirement):
         entries = {}
-        for _, each_leaf in walk_leaves(requirement.tree):
-            asked = asked_facets(effective_query(each_leaf, requirement.where))
-            modelled = {facet: values[0] for facet, values in asked.modelled.items()}
-            literal = {facet: values[0] for facet, values in asked.literal.items()}
 
+        def entry_for(modelled, literal):
+            """Get, or build, the one entry which answers these facet values"""
             columns = {
                 facet: value
                 for facet, value in modelled.items()
@@ -103,6 +112,32 @@ def satisfying_catalogue(make_entry):
                     **columns,
                 )
 
-        return InMemoryCatalogue(entries=tuple(entries.values()))
+            return entries[key]
+
+        parents = {}
+        for _, each_leaf in walk_leaves(requirement.tree):
+            asked = asked_facets(effective_query(each_leaf, requirement.where))
+            modelled = {facet: values[0] for facet, values in asked.modelled.items()}
+            literal = {facet: values[0] for facet, values in asked.literal.items()}
+            entry = entry_for(modelled, literal)
+
+            if each_leaf.lineage is None:
+                continue
+
+            until = asked_facets(each_leaf.lineage.until)
+            parent = entry_for(
+                {
+                    **modelled,
+                    **{facet: values[0] for facet, values in until.modelled.items()},
+                },
+                {
+                    **literal,
+                    **{facet: values[0] for facet, values in until.literal.items()},
+                },
+            )
+            parents[entry.id] = parent.id
+            parents.setdefault(parent.id, None)
+
+        return InMemoryCatalogue(entries=tuple(entries.values()), parents=parents)
 
     return factory

@@ -11,29 +11,45 @@ from __future__ import annotations
 
 import inspect
 import json
+import warnings
 
 import pytest
-from sqlmodel import Session
+from sqlmodel import Session, col, select
 
 from esmporium.datasets import DATASET_FACET_COLUMNS
 from esmporium.db import (
+    PARENT_STATUS_BY_RESOLUTION,
     DatabaseCatalogue,
+    ParentLinkMissingError,
+    ParentResolutionError,
     UnknownVersionFilterError,
     facet_filters,
     find_datasets,
+    find_parents,
+    parent_of_dataset,
+    resolve_parent_links,
+    save_parent_info,
     to_catalogue_entry,
 )
+from esmporium.db.database_catalogue import _VERSION_CHOICE_PHRASES
 from esmporium.db.schema import (
     Dataset,
+    DatasetParentLink,
     DatasetRawDoc,
     DatasetVersion,
+    ParentInfoSource,
+    ParentResolution,
+    ParentVersionChoice,
     RawDocVersionLink,
 )
 from esmporium.query import ClashingFacetsError, Query, QueryCMIP5, QueryCMIP6
 from esmporium.requirements import (
+    Ancestors,
     Catalogue,
     CatalogueEntry,
     InMemoryCatalogue,
+    ParentLookup,
+    ParentStatus,
     UnloadedFacetError,
     UnrecordedFacetError,
     VersionFilter,
@@ -45,6 +61,7 @@ from esmporium.requirements import (
 from esmporium.search import (
     DEFAULT_NORMALISERS,
     VERBATIM_NORMALISERS,
+    ParentInfo,
     UnknownRawDocFormatTagError,
 )
 
@@ -819,6 +836,9 @@ def test_it_satisfies_the_catalogue_protocol(engine):
     # fail once someone asked for a different filter. The in-memory catalogue is held
     # to the same comparison in `tests/unit/requirements/test_catalogue.py`.
     assert inspect.signature(type(catalogue).find) == inspect.signature(Catalogue.find)
+    assert inspect.signature(type(catalogue).parent_of) == inspect.signature(
+        Catalogue.parent_of
+    )
     assert catalogue.find(Query(variable="tas")) == ()
 
 
@@ -968,3 +988,429 @@ def test_both_catalogues_answer_alike_about_a_facet_nothing_records(
     assert outcome(DatabaseCatalogue(engine), query) == outcome(in_memory, query)
     # Pinned, not just compared: two catalogues which both raised would also agree.
     assert outcome(DatabaseCatalogue(engine), query) == ()
+
+
+# ---------------------------------------------------------------------- parent_of
+
+NO_PARENT = ParentInfo(
+    parent_project=None,
+    parent_activity=None,
+    parent_model=None,
+    parent_experiment=None,
+    parent_variant_label=None,
+    parent_time_units=None,
+)
+"""What a record which declares no parent looks like: a root of the tree"""
+
+
+def a_declared_parent(
+    experiment: str = "piControl", variant_label: str = "r1i1p1f1"
+) -> ParentInfo:
+    """What a record declares about the simulation it branched from"""
+    return ParentInfo(
+        parent_project="CMIP7",
+        parent_activity="CMIP",
+        parent_model="UKESM1-3-LL",
+        parent_experiment=experiment,
+        parent_variant_label=variant_label,
+        parent_time_units="days since 1850-01-01",
+    )
+
+
+@pytest.fixture
+def entry_of(engine):
+    """Get the catalogue entry for one stored dataset, by its version's ID"""
+
+    def factory(version_id, **kwargs):
+        with Session(engine) as session:
+            version = session.get(DatasetVersion, version_id)
+            assert version is not None
+            dataset = session.get(Dataset, version.dataset_id)
+            assert dataset is not None
+
+            return to_catalogue_entry(dataset, **kwargs)
+
+    return factory
+
+
+def test_a_dataset_nobody_has_read_a_parent_for(engine, a_dataset_version, entry_of):
+    with Session(engine) as session:
+        child = a_dataset_version(session)
+        session.commit()
+
+    found = DatabaseCatalogue(engine).parent_of(entry_of(child))
+
+    # No row at all, which is the question not having been asked. Reported as such
+    # rather than as "no parent", because only one of those is settled.
+    assert found == ParentLookup(ParentStatus.NOT_LOOKED_FOR)
+
+
+def test_a_dataset_which_declares_no_parent_is_a_root(
+    engine, a_dataset_version, entry_of
+):
+    with Session(engine) as session:
+        child = a_dataset_version(session, experiment="piControl")
+        save_parent_info(session, child, NO_PARENT, ParentInfoSource.SEARCH_METADATA)
+        session.commit()
+
+    found = DatabaseCatalogue(engine).parent_of(entry_of(child))
+
+    assert found.status is ParentStatus.ROOT
+    assert found.parent is None
+    # Still worth saying where the answer came from: a root declared by the index and
+    # a root declared by a header are different kinds of confidence.
+    assert found.provenance == "parent published in the search index"
+
+
+def test_a_declared_parent_nothing_has_matched_yet(engine, a_dataset_version, entry_of):
+    with Session(engine) as session:
+        child = a_dataset_version(session)
+        save_parent_info(
+            session, child, a_declared_parent(), ParentInfoSource.SEARCH_METADATA
+        )
+        session.commit()
+
+    found = DatabaseCatalogue(engine).parent_of(entry_of(child))
+
+    assert found.status is ParentStatus.UNRESOLVED
+    assert found.parent is None
+
+
+def test_a_resolved_parent_comes_back_as_an_entry(engine, a_dataset_version, entry_of):
+    with Session(engine) as session:
+        child = a_dataset_version(session)
+        control = a_dataset_version(session, experiment="piControl")
+        save_parent_info(
+            session, child, a_declared_parent(), ParentInfoSource.SEARCH_METADATA
+        )
+        resolve_parent_links(session)
+        session.commit()
+
+    found = DatabaseCatalogue(engine).parent_of(entry_of(child))
+
+    assert found.status is ParentStatus.FOUND
+    assert found.parent is not None
+    assert found.parent.id == entry_of(control).id
+    assert found.parent.experiment == "piControl"
+    # One release, so nothing was chosen, so nothing is said about the release.
+    assert found.provenance == "parent published in the search index"
+
+
+def test_a_parent_which_does_not_publish_the_variable(
+    engine, a_dataset_version, entry_of
+):
+    with Session(engine) as session:
+        child = a_dataset_version(session, variable="tas")
+        # The simulation is there; this variable of it is not.
+        a_dataset_version(session, experiment="piControl", variable="pr")
+        save_parent_info(
+            session, child, a_declared_parent(), ParentInfoSource.SEARCH_METADATA
+        )
+        session.commit()
+
+    # Walked rather than merely resolved, because it takes a fruitless search for the
+    # gap to be settled: until something has looked, "we hold no such dataset" and
+    # "this simulation does not publish it" are the same absence.
+    with Session(engine) as session:
+        find_parents(
+            session,
+            [child],
+            until_experiment=("piControl",),
+            check_until_exists=False,
+            searcher=lambda session, item: None,
+        )
+        session.commit()
+
+    found = DatabaseCatalogue(engine).parent_of(entry_of(child))
+
+    assert found.status is ParentStatus.VARIABLE_MISSING
+    assert found.parent is None
+
+
+def test_a_parent_the_archive_does_not_publish(engine, a_dataset_version, entry_of):
+    with Session(engine) as session:
+        child = a_dataset_version(session)
+        save_parent_info(
+            session, child, a_declared_parent(), ParentInfoSource.SEARCH_METADATA
+        )
+        session.commit()
+
+    # Walked with a search which finds nothing, which is how a named parent comes to
+    # be recorded as not published: a chain can end in a parent which does not exist.
+    with Session(engine) as session:
+        with pytest.raises(ParentResolutionError):
+            find_parents(
+                session,
+                [child],
+                until_experiment=("piControl",),
+                check_until_exists=False,
+                searcher=lambda session, item: None,
+            )
+        session.commit()
+
+    found = DatabaseCatalogue(engine).parent_of(entry_of(child))
+
+    assert found.status is ParentStatus.PARENT_NOT_FOUND
+    assert found.parent is None
+
+
+def test_a_parent_held_only_as_a_retracted_release(engine, a_dataset_version, entry_of):
+    with Session(engine) as session:
+        child = a_dataset_version(session)
+        control = a_dataset_version(session, experiment="piControl")
+        save_parent_info(
+            session, child, a_declared_parent(), ParentInfoSource.SEARCH_METADATA
+        )
+        resolve_parent_links(session)
+
+        version = session.get(DatasetVersion, control)
+        assert version is not None
+        version.retracted = True
+        session.add(version)
+        session.commit()
+
+    catalogue = DatabaseCatalogue(engine)
+
+    # The parent is there and the filter excluded it, which is about the question
+    # rather than about the data -- so asking for everything finds it.
+    assert catalogue.parent_of(entry_of(child)).status is ParentStatus.NO_USABLE_VERSION
+    assert (
+        catalogue.parent_of(entry_of(child), versions=VersionFilter.ANY).status
+        is ParentStatus.FOUND
+    )
+
+
+def test_a_fix_outranks_the_header_it_corrects(engine, a_dataset_version, entry_of):
+    """
+    A correction wins, and the link the header produced does not come back instead
+
+    The sharp edge this pins: `datasetparentlink` has no unique constraint on the child
+    version, so the link made from the header survives beside the one made from the
+    fix. Reading the link by the child version would pick between the two arbitrarily.
+    """
+    with Session(engine) as session:
+        child = a_dataset_version(session)
+        from_header = a_dataset_version(session, experiment="piControl")
+        from_fix = a_dataset_version(
+            session, experiment="piControl", variant_label="r2i1p1f1"
+        )
+
+        save_parent_info(
+            session,
+            child,
+            a_declared_parent(variant_label="r1i1p1f1"),
+            ParentInfoSource.FILE_HEADER,
+        )
+        resolve_parent_links(session)
+
+        save_parent_info(
+            session,
+            child,
+            a_declared_parent(variant_label="r2i1p1f1"),
+            ParentInfoSource.FIX,
+        )
+        resolve_parent_links(session)
+        session.commit()
+
+    # Both links are on record, which is the situation worth having a test for.
+    with Session(engine) as session:
+        links = list(
+            session.exec(
+                select(DatasetParentLink).where(
+                    col(DatasetParentLink.child_dataset_version_id) == child
+                )
+            )
+        )
+        assert len(links) == 2
+
+    found = DatabaseCatalogue(engine).parent_of(entry_of(child))
+
+    assert found.status is ParentStatus.FOUND
+    assert found.parent is not None
+    assert found.parent.id == entry_of(from_fix).id
+    assert found.parent.id != entry_of(from_header).id
+    assert found.provenance == "parent supplied by a fix of ours"
+
+
+def test_a_resolved_row_with_no_link_is_our_bug(engine, a_dataset_version, entry_of):
+    with Session(engine) as session:
+        child = a_dataset_version(session)
+        a_dataset_version(session, experiment="piControl")
+        save_parent_info(
+            session, child, a_declared_parent(), ParentInfoSource.SEARCH_METADATA
+        )
+        resolve_parent_links(session)
+
+        # The two are written together and cannot legitimately disagree, so this is a
+        # state only a bug of ours could produce -- and it says so rather than
+        # quietly reading as an unresolved parent.
+        for link in session.exec(select(DatasetParentLink)):
+            session.delete(link)
+        session.commit()
+
+    with pytest.raises(ParentLinkMissingError, match="is marked resolved"):
+        DatabaseCatalogue(engine).parent_of(entry_of(child))
+
+
+def test_a_parent_answers_for_what_was_asked_for(engine, a_dataset_version, entry_of):
+    with Session(engine) as session:
+        child = a_dataset_version(session)
+        a_dataset_version(session, experiment="piControl")
+        save_parent_info(
+            session, child, a_declared_parent(), ParentInfoSource.SEARCH_METADATA
+        )
+        resolve_parent_links(session)
+        session.commit()
+
+    found = DatabaseCatalogue(engine).parent_of(
+        entry_of(child), needs_facets=["experiment"]
+    )
+
+    assert found.parent is not None
+    assert found.parent.facet("experiment") == "piControl"
+    # Narrowed the same way a `find` would narrow it, so a parent cannot be asked
+    # about a facet the solve said it would not read.
+    with pytest.raises(UnloadedFacetError):
+        found.parent.facet("realm")
+
+
+def test_every_parent_resolution_reads_as_a_status():
+    """
+    No stored resolution is invisible to a requirement
+
+    A resolution with no entry would fall through to `UNRESOLVED`, which would read as
+    "searching again may find it" for a state where that is not true.
+    """
+    assert set(PARENT_STATUS_BY_RESOLUTION) == set(ParentResolution)
+
+
+def test_every_parent_source_has_a_phrase(engine, a_dataset_version, entry_of):
+    """Each source reads as itself in an explanation, rather than as a bare value"""
+    for source in ParentInfoSource:
+        with Session(engine) as session:
+            child = a_dataset_version(session, variant_label=f"r1i1p1f1-{source.value}")
+            save_parent_info(session, child, NO_PARENT, source)
+            session.commit()
+
+        found = DatabaseCatalogue(engine).parent_of(entry_of(child))
+
+        assert found.provenance.startswith("parent ")
+        assert repr(source) not in found.provenance
+
+
+@pytest.mark.parametrize("choice", list(ParentVersionChoice))
+def test_every_version_choice_has_a_phrase(choice):
+    """
+    How a parent's release was picked reads as itself, or says nothing
+
+    `ONLY_VERSION` maps to nothing deliberately: we hold one release, so nothing was
+    decided and a phrase would imply otherwise.
+    """
+    phrase = _VERSION_CHOICE_PHRASES[choice]
+
+    if choice is ParentVersionChoice.ONLY_VERSION:
+        assert phrase == ""
+    else:
+        assert phrase and repr(choice) not in phrase
+
+
+def test_a_decided_release_says_so(engine, a_dataset_version, entry_of):
+    with Session(engine) as session:
+        child = a_dataset_version(session)
+        control = a_dataset_version(session, experiment="piControl", version="20200101")
+        existing = session.get(DatasetVersion, control)
+        assert existing is not None
+        session.add(
+            DatasetVersion(
+                dataset_id=existing.dataset_id,
+                version="20210101",
+                is_latest=True,
+                retracted=False,
+            )
+        )
+        save_parent_info(
+            session, child, a_declared_parent(), ParentInfoSource.SEARCH_METADATA
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            resolve_parent_links(session)
+        session.commit()
+
+    found = DatabaseCatalogue(engine).parent_of(entry_of(child))
+
+    # Two releases and neither is the child's, so a rule of ours picked -- which is
+    # the weakest kind of answer and the one most worth seeing in an explanation.
+    assert found.status is ParentStatus.FOUND
+    assert "release defaulted" in found.provenance
+
+
+def test_parent_of_dataset_and_the_catalogue_agree(engine, a_dataset_version, entry_of):
+    """The session-level primitive gives what the engine-level wrapper gives"""
+    with Session(engine) as session:
+        child = a_dataset_version(session)
+        a_dataset_version(session, experiment="piControl")
+        save_parent_info(
+            session, child, a_declared_parent(), ParentInfoSource.SEARCH_METADATA
+        )
+        resolve_parent_links(session)
+        session.commit()
+
+    entry = entry_of(child)
+    with Session(engine) as session:
+        directly = parent_of_dataset(session, entry)
+
+    assert directly == DatabaseCatalogue(engine).parent_of(entry)
+
+
+def test_a_walk_writes_links_a_solve_can_read(engine, a_dataset_version, entry_of):
+    """
+    The seam between recording ancestry and asking for it, tested end to end
+
+    Every other test here reads rows a test wrote. This one reads rows `find_parents`
+    wrote, which is the only way to catch the walk recording a shape the catalogue
+    misreads. No network: the walk is handed a search which finds nothing, and
+    everything it needs is already stored.
+    """
+    with Session(engine) as session:
+        scenario = a_dataset_version(session, experiment="ssp126")
+        historical = a_dataset_version(session, experiment="historical")
+        a_dataset_version(session, experiment="piControl")
+
+        save_parent_info(
+            session,
+            scenario,
+            a_declared_parent(experiment="historical"),
+            ParentInfoSource.SEARCH_METADATA,
+        )
+        save_parent_info(
+            session,
+            historical,
+            a_declared_parent(experiment="piControl"),
+            ParentInfoSource.SEARCH_METADATA,
+        )
+        session.commit()
+
+    with Session(engine) as session:
+        find_parents(
+            session,
+            [scenario],
+            until_experiment=("piControl",),
+            check_until_exists=False,
+            searcher=lambda session, item: None,
+        )
+        session.commit()
+
+    traced = requirement(
+        name="scenario-to-control",
+        tree=leaf(Query(variable="tas", experiment="ssp126"), "field").with_lineage(
+            Ancestors(until=Query(experiment="piControl"), role="control")
+        ),
+        group_by=("model", "variant_label"),
+    )
+
+    result = solve(traced, DatabaseCatalogue(engine))
+
+    (group,) = result.satisfied.values()
+    assert sorted(group.roles) == ["chain.0.field", "control.field", "field"]
+    assert group.one("chain.0.field").experiment == "historical"
+    assert group.one("control.field").experiment == "piControl"

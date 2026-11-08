@@ -11,7 +11,7 @@ from collections import Counter
 from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from enum import Enum
-from typing import Protocol
+from typing import Any, Protocol
 
 from esmporium.datasets import DATASET_FACET_COLUMNS
 from esmporium.query import (
@@ -156,6 +156,40 @@ class DuplicateEntryIDError(ValueError):
             "Two rows which describe the same data "
             "but are genuinely different datasets are a different problem, "
             "see esmporium.db.UnhandledDatasetClashError."
+        )
+
+
+class UnknownReferenceError(ValueError):
+    """
+    A catalogue relates one of its datasets to a dataset it does not hold
+
+    A relation is written as a pair of IDs, so an ID which is not in the catalogue
+    leaves the relation pointing at nothing. Like
+    [DuplicateEntryIDError][(m).DuplicateEntryIDError] this is a mistake in whatever
+    built the catalogue rather than a fact about the data: read from the database both
+    ends are foreign keys and cannot dangle.
+    """
+
+    def __init__(self, field_name: str, unknown: Iterable[int]) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        field_name
+            Field holding the relation, e.g. `"parents"`
+
+        unknown
+            The IDs which are not those of any entry
+        """
+        self.field_name = field_name
+        self.unknown = tuple(sorted(unknown))
+        listed = ", ".join(str(entry_id) for entry_id in self.unknown)
+        super().__init__(
+            f"{field_name} refers to datasets this catalogue does not hold: {listed}. "
+            "Both ends of a relation have to be entries of the catalogue, or the "
+            "relation points at nothing. Add the datasets to `entries`, or drop the "
+            f"entries of {field_name} which name them."
         )
 
 
@@ -572,6 +606,85 @@ def set_facets(query: QueryProtocol) -> dict[str, tuple[str, ...]]:
     return {**asked.modelled, **asked.literal}
 
 
+# A note for developers: these two are query plumbing in a module about datasets, and
+# they are here because this is the only module both of their callers can see. The
+# tree ([esmporium.requirements.tree][]) and the relations which hang off it
+# ([esmporium.requirements.relations][]) each accept a query in any style, and
+# relations are imported by the tree, so anything shared by the two has to sit below
+# both. This module already is: it holds [set_facets][(m).set_facets] and
+# [asked_facets][(m).asked_facets], which are the same kind of thing.
+def to_stored_query(query: QueryProtocol) -> QueryCanonical:
+    """
+    Put a query into the form a requirement stores
+
+    A query can be written in whichever style suits the user, but is translated so that
+    it is stored in a consistent way.
+    That matters because a stored requirement has to reload
+    into a known class, because one question must hash the same whichever style it was
+    written in, and because turning a requirement back into searches converts *from*
+    canonical.
+
+    Parameters
+    ----------
+    query
+        Query to canonicalise, in any style
+
+    Returns
+    -------
+    :
+        The query, under canonical names and with no `source_query`
+
+    Examples
+    --------
+    >>> from esmporium.query import QueryCMIP6
+    >>> stored = to_stored_query(QueryCMIP6(variable_id="tas"))
+    >>> stored.variable, stored.project
+    (('tas',), ('CMIP6',))
+
+    `source_query` is dropped, because a stored query has to be comparable to one
+    which was never translated:
+
+    >>> stored.source_query is None
+    True
+    """
+    canonical = query if isinstance(query, QueryCanonical) else to_canonical(query)
+
+    if canonical.source_query is None:
+        return canonical
+
+    return canonical.model_copy(update={"source_query": None})
+
+
+def accept_any_query_style(value: Any) -> Any:
+    """
+    Translate whatever was passed for a query field, on the way in
+
+    Written to be handed to pydantic's `field_validator(..., mode="before")`, which is
+    how every field holding a query accepts any style.
+
+    Parameters
+    ----------
+    value
+        What was passed
+
+    Returns
+    -------
+    :
+        A [QueryCanonical][esmporium.query.QueryCanonical] if `value` was a query of
+        some kind, and `value` untouched otherwise, so that pydantic reports anything
+        unusable in its own words.
+
+        A mapping is left alone too: that is a stored requirement being loaded, where
+        pydantic builds the query from JSON and there is nothing to translate.
+    """
+    # Duck-typed rather than `isinstance(value, QueryProtocol)`, because a `Protocol`
+    # is only checkable at runtime when it says so, and this one does not.
+    if isinstance(value, Mapping) or not hasattr(value, "other_terms"):
+        return value
+
+    return to_stored_query(value)
+
+
 def matches_facets(asked: AskedFacets, entry: CatalogueEntry) -> bool:
     """
     Determine whether an entry matches already-split facets
@@ -746,6 +859,130 @@ class VersionFilter(str, Enum):
     """
 
 
+class ParentStatus(str, Enum):
+    """
+    What came of asking a catalogue for a dataset's parent
+
+    Six answers rather than "a parent or nothing", because the reasons there is no
+    parent are not variations on one another and a user can act on only some of them.
+    "Nobody has read a parent for this dataset" is work waiting to be done; "this
+    dataset declares no parent" is the end of the chain and will not change however
+    long you wait.
+    """
+
+    FOUND = "found"
+    """The parent is a dataset this catalogue holds"""
+
+    NOT_LOOKED_FOR = "not_looked_for"
+    """
+    Nothing has read a parent for this dataset yet
+
+    Not an answer about the data: it says the question has not been asked.
+    [esmporium.db.find_parents][] is what asks it.
+    """
+
+    ROOT = "root"
+    """
+    The dataset was read for a parent and declares none, so it is a root of the tree
+
+    Distinct from [NOT_LOOKED_FOR][(c).NOT_LOOKED_FOR] and the distinction is the
+    point: this one is settled.
+    """
+
+    UNRESOLVED = "unresolved"
+    """
+    A parent is named, and has not been matched to a dataset we hold
+
+    Either nothing has searched for it yet, or it was searched for and had not been
+    stored at the time. Searching again can change this.
+    """
+
+    PARENT_NOT_FOUND = "parent_not_found"
+    """
+    The named parent was searched for and the archive published nothing for it
+
+    A real case rather than a defensive one: a chain can end in a parent which is
+    named and does not exist, which is not the same as ending in a dataset which
+    declares no parent.
+    """
+
+    VARIABLE_MISSING = "variable_missing"
+    """
+    The named parent exists and does not publish this dataset's variable
+
+    A parent link joins like to like -- the same variable, frequency and grid -- so a
+    control which never published the variable being analysed cannot fill the role,
+    even though the simulation is there.
+    """
+
+    NO_USABLE_VERSION = "no_usable_version"
+    """
+    The parent is a dataset we hold, and no version of it passes the version filter
+
+    The one answer which is about the question rather than the data: the parent is
+    there, and was excluded by the [VersionFilter][(m).VersionFilter] the lookup was
+    given -- every release of it retracted, say, when the caller asked for
+    [NOT_RETRACTED][(m).VersionFilter.NOT_RETRACTED]. Asking with
+    [ANY][(m).VersionFilter.ANY] finds it.
+    """
+
+
+@dataclass(frozen=True)
+class ParentLookup:
+    """
+    A catalogue's answer to "what is this dataset's parent?"
+
+    The answer and the reason travel together so that a requirement which cannot be
+    met can say which of the six situations it met. See
+    [ParentStatus][(m).ParentStatus].
+    """
+
+    status: ParentStatus
+    """What came of the lookup"""
+
+    parent: CatalogueEntry | None = None
+    """
+    The parent, when there is one
+
+    Set exactly when `status` is [ParentStatus.FOUND][(m).ParentStatus.FOUND], which
+    is checked, so a caller which has looked at `status` does not have to check this
+    as well.
+    """
+
+    provenance: str = ""
+    """
+    How the catalogue came to this answer, as a phrase for a person to read
+
+    For example `"read from a file header; parent release defaulted (we hold 3)"`.
+    Rendered into a solve's explanation and nothing else: it is deliberately prose
+    rather than modelled, because what is worth saying differs by catalogue and
+    nothing should be making decisions on it.
+
+    Empty when there is nothing to add, which is what a catalogue with no concept of
+    where its answers came from gives back.
+    """
+
+    def __post_init__(self) -> None:
+        """
+        Check that a parent is given exactly when one was found
+
+        Raises
+        ------
+        ValueError
+            `status` is `FOUND` and no parent was given, or a parent was given with
+            some other status
+        """
+        found = self.status is ParentStatus.FOUND
+        if found != (self.parent is not None):
+            msg = (
+                f"status={self.status.value!r} and "
+                f"parent={'an entry' if self.parent is not None else None}, "
+                "which cannot both be true: a parent is given exactly when `status` "
+                f"is {ParentStatus.FOUND.value!r}."
+            )
+            raise ValueError(msg)
+
+
 class Catalogue(Protocol):
     """
     Every dataset we have, and what is known about them
@@ -803,6 +1040,55 @@ class Catalogue(Protocol):
         -------
         :
             Matching datasets, in a stable order
+        """
+        ...
+
+    def parent_of(
+        self,
+        entry: CatalogueEntry,
+        *,
+        versions: VersionFilter = VersionFilter.NOT_RETRACTED,
+        needs_facets: Collection[str] | None = None,
+    ) -> ParentLookup:
+        """
+        Get the dataset a dataset branched from
+
+        One hop, not a chain: following it to a given experiment is
+        [solve][esmporium.requirements.solve]'s job, because where to stop is part of
+        what an analysis asked for.
+
+        A parent joins like to like -- the same variable, frequency and grid as the
+        dataset asking -- so this answers with the parent *of this dataset*, not with
+        the parent simulation. A control which never published the variable is
+        [ParentStatus.VARIABLE_MISSING][(m).ParentStatus.VARIABLE_MISSING] rather than
+        a parent whose variable differs.
+
+        Parameters
+        ----------
+        entry
+            Dataset whose parent is wanted
+
+        versions
+            Which of a dataset's versions count, on both ends of the link. See
+            [VersionFilter][(m).VersionFilter].
+
+            It decides which of `entry`'s versions is asked -- the same version whose
+            documents describe `entry` -- and which version's documents describe the
+            parent that comes back, so one solve is answered from one set of versions
+            throughout.
+
+        needs_facets
+            The facets the caller will ask the parent about
+
+            As on [find][(m).Catalogue.find], and it matters more here: the parent is
+            matched against the experiment a lineage walks back to, so a lookup told
+            it would be asked about nothing would hand back a parent which cannot
+            answer the question it exists to answer.
+
+        Returns
+        -------
+        :
+            The parent, or which of the six situations was met
         """
         ...
 
@@ -881,14 +1167,36 @@ class InMemoryCatalogue:
     entries: tuple[CatalogueEntry, ...]
     """The datasets available"""
 
+    parents: Mapping[int, int | None] = field(default_factory=dict)
+    """
+    Entry ID -> the ID of the dataset it branched from, or `None` for a root
+
+    The three cases are written as three different things, so that this can say
+    everything [ParentStatus][(m).ParentStatus] can say about a root or an absence:
+
+    - an ID maps to another ID: that is the parent
+    - an ID maps to `None`: the dataset was looked at and declares no parent
+    - an ID is **absent**: nobody has looked
+
+    Writing a root as a missing key would merge the second and third, which is the
+    distinction worth keeping -- one is the end of the chain, the other is work
+    waiting to be done.
+
+    Both ends of every entry here have to be datasets this catalogue holds, which is
+    checked when it is built.
+    """
+
     def __post_init__(self) -> None:
         """
-        Check that no two entries share an ID
+        Check that no two entries share an ID and that every relation resolves
 
         Raises
         ------
         DuplicateEntryIDError
             Two or more entries have the same `id`
+
+        UnknownReferenceError
+            `parents` names a dataset this catalogue does not hold
         """
         # `Counter` rather than counting each ID against the whole list, which rescans
         # it once per entry. This class stands in for a real catalogue, so it should
@@ -904,6 +1212,17 @@ class InMemoryCatalogue:
         }
         if collisions:
             raise DuplicateEntryIDError(collisions)
+
+        # After the duplicate check, so that a catalogue built wrongly in both ways
+        # reports the IDs first: a repeated ID makes "which dataset is this?"
+        # unanswerable, which is the more fundamental complaint.
+        known = set(counts)
+        referenced = set(self.parents) | {
+            parent_id for parent_id in self.parents.values() if parent_id is not None
+        }
+        unknown = referenced - known
+        if unknown:
+            raise UnknownReferenceError("parents", unknown)
 
     def find(
         self,
@@ -954,3 +1273,58 @@ class InMemoryCatalogue:
             return found
 
         return tuple(_narrowed(entry, needs_facets) for entry in found)
+
+    def parent_of(
+        self,
+        entry: CatalogueEntry,
+        *,
+        versions: VersionFilter = VersionFilter.NOT_RETRACTED,
+        needs_facets: Collection[str] | None = None,
+    ) -> ParentLookup:
+        """
+        Get the dataset a dataset branched from, as `parents` records it
+
+        Parameters
+        ----------
+        entry
+            Dataset whose parent is wanted. Only its `id` is read, so an entry
+            narrowed to a few facets can still be asked.
+
+        versions
+            Accepted, and makes no difference, for the reason given on the class:
+            these entries have no versions for it to choose between.
+
+        needs_facets
+            Honoured, so that a parent from here answers for exactly what a parent
+            from [esmporium.db.DatabaseCatalogue][] would.
+
+        Returns
+        -------
+        :
+            The parent, or which situation was met
+
+            Only [FOUND][(m).ParentStatus.FOUND],
+            [NOT_LOOKED_FOR][(m).ParentStatus.NOT_LOOKED_FOR] and
+            [ROOT][(m).ParentStatus.ROOT]. The other three describe a parent which was
+            named and then not found, and a written-down mapping names a dataset or
+            says nothing, so a test which needs one of those needs a store which
+            searched -- [esmporium.db.DatabaseCatalogue][].
+
+            `provenance` is always empty: nothing here knows where its answers came
+            from, and inventing a phrase would make this catalogue claim more than it
+            was told.
+        """
+        if entry.id not in self.parents:
+            return ParentLookup(ParentStatus.NOT_LOOKED_FOR)
+
+        parent_id = self.parents[entry.id]
+        if parent_id is None:
+            return ParentLookup(ParentStatus.ROOT)
+
+        # `__post_init__` checked that every ID here is one of ours, so this cannot
+        # come up empty.
+        parent = next(each for each in self.entries if each.id == parent_id)
+        if needs_facets is not None:
+            parent = _narrowed(parent, needs_facets)
+
+        return ParentLookup(ParentStatus.FOUND, parent)

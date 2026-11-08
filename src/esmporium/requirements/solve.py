@@ -37,10 +37,14 @@ from esmporium.query import QueryProtocol, project_specific_facet_names
 from esmporium.requirements.catalogue import (
     Catalogue,
     CatalogueEntry,
+    ParentStatus,
     VersionFilter,
     asked_facets,
+    matches,
     set_facets,
 )
+from esmporium.requirements.relations import Ancestors, Lineage, LineageRelation
+from esmporium.requirements.roles import ROLE_SEPARATOR
 from esmporium.requirements.tree import (
     AllOf,
     Cardinality,
@@ -351,11 +355,10 @@ class Explanation:
 
 
 # TODO future as tree grows:
-# Three more fields join `roles` as the tree grows, each carrying what its own node
-# type produces: `lineages` (the chain of parents behind each dataset), `choices`
-# (which alternative an `any_of` used) and `notes` (an optional part dropped, a check
-# which passed with a complaint). None of them are here yet, because nothing can put
-# anything in them yet.
+# Two more fields join `roles` and `lineages` as the tree grows, each carrying what its
+# own node type produces: `choices` (which alternative an `any_of` used) and `notes` (an
+# optional part dropped, a check which passed with a complaint). Neither is here yet,
+# because nothing can put anything in them yet.
 @dataclass(frozen=True)
 class NodeResultOk:
     """
@@ -367,6 +370,16 @@ class NodeResultOk:
 
     explanation: Explanation
     """How this node was satisfied"""
+
+    lineages: tuple[Lineage, ...] = ()
+    """
+    The chains behind the datasets below this node, one per dataset which has one
+
+    Empty when no leaf below asked for a lineage, which is every requirement that does
+    not mention one. The datasets in these chains are also in `roles`, under the paths
+    the lineage names; this is the same datasets in the shape a check reads them, where
+    the order of the chain and which end is which are what matter.
+    """
 
 
 @dataclass(frozen=True)
@@ -407,6 +420,13 @@ class Solution:
 
     explanation: Explanation
     """How the group was satisfied"""
+
+    lineages: tuple[Lineage, ...] = ()
+    """
+    The chains behind the datasets in this group, one per dataset which has one
+
+    See [NodeResultOk.lineages][(m).NodeResultOk.lineages].
+    """
 
     def one(self, role: str) -> CatalogueEntry:
         """
@@ -551,12 +571,26 @@ class _Context:
     """What stays the same while one group is evaluated"""
 
     requirement: Requirement
+    catalogue: Catalogue
+    """
+    The datasets available
+
+    Kept because a lineage is followed *during* the evaluation of a leaf rather than
+    before it: which dataset's parent to ask for is only known once the leaf has
+    chosen, so unlike a leaf's candidates these lookups cannot be done up front.
+    """
     found: Mapping[str, tuple[CatalogueEntry, ...]]
     """
     Role path -> its leaf's candidates, before grouping
 
     Built once by [_candidates_by_role][(m)._candidates_by_role], because a leaf's
     candidates are the same in every group.
+    """
+    needs_facets: frozenset[str]
+    """
+    The facets this solve will ask an entry about, i.e. [facets_read][(m).facets_read]
+
+    Held rather than recomputed because every hop of every lineage has to pass it on.
     """
     group: dict[str, str | None]
 
@@ -853,6 +887,336 @@ def _choose(
     return tuple(remaining)
 
 
+@dataclass(frozen=True)
+class _Hop:
+    """One step up a lineage"""
+
+    parent: CatalogueEntry
+    """The dataset which was found"""
+
+    provenance: str
+    """
+    How the catalogue came to it, as a phrase for a person to read
+
+    Carried through to the explanation rather than acted on. See
+    [ParentLookup.provenance][esmporium.requirements.ParentLookup.provenance].
+    """
+
+
+def _no_parent_message(
+    current: CatalogueEntry, ancestors: Ancestors, status: ParentStatus
+) -> str:
+    """
+    Explain why a lineage could not take its next step
+
+    One message per [ParentStatus][esmporium.requirements.ParentStatus], because what
+    to do about each is different and a single message would have to be vague enough to
+    fit all five. The one to get right is `NOT_LOOKED_FOR`: it is not a fact about the
+    archive at all, it is a job nobody has run, and reporting it as "no parent" would
+    send a user looking for data which is very likely already there.
+
+    Parameters
+    ----------
+    current
+        Dataset whose parent was asked for
+
+    ancestors
+        The relation being followed
+
+    status
+        What the catalogue answered. Never
+        [ParentStatus.FOUND][esmporium.requirements.ParentStatus.FOUND], which is not a
+        failure.
+
+    Returns
+    -------
+    :
+        The message
+
+    Raises
+    ------
+    ValueError
+        `status` is `FOUND`, i.e. there was nothing to explain
+    """
+    subject = _describe_entry(current)
+    target = f"a dataset matching {describe_query(ancestors.until)}"
+
+    if status is ParentStatus.NOT_LOOKED_FOR:
+        return (
+            f"nothing has read a parent for {subject} yet, so the chain back to "
+            f"{target} cannot be followed. This is work waiting to be done rather "
+            "than missing data: run `esmporium.db.find_parents` over this dataset, "
+            "with `until_experiment` naming the experiments `until` names, and solve "
+            "again."
+        )
+
+    if status is ParentStatus.ROOT:
+        return (
+            f"{subject} declares no parent, so its chain ends there, before reaching "
+            f"{target}. Either the lineage is asking for an ancestor this simulation "
+            "does not have, or `until` names the wrong experiment."
+        )
+
+    if status is ParentStatus.UNRESOLVED:
+        return (
+            f"{subject} names a parent which has not been matched to a dataset we "
+            f"hold, so the chain back to {target} stops here. Searching for that "
+            "parent may find it."
+        )
+
+    if status is ParentStatus.PARENT_NOT_FOUND:
+        return (
+            f"the parent {subject} names was searched for and the archive published "
+            f"nothing for it, so the chain cannot reach {target}. A chain can end in "
+            "a parent which is named and does not exist."
+        )
+
+    if status is ParentStatus.VARIABLE_MISSING:
+        return (
+            f"the parent {subject} names does not publish its variable, so there is "
+            f"no dataset to fill the role. The simulation is there; this variable of "
+            "it is not."
+        )
+
+    msg = f"{status!r} is not a reason a parent was not found"
+    raise ValueError(msg)
+
+
+def _ancestor_lineage(
+    entry: CatalogueEntry, ancestors: Ancestors, ctx: _Context, subject: str
+) -> tuple[_Hop, ...] | NodeResultNotOk:
+    """
+    Follow parent links up from a dataset until one matches `until`
+
+    Parameters
+    ----------
+    entry
+        Dataset to start from, i.e. the one filling the leaf's role
+
+    ancestors
+        The relation to follow
+
+    ctx
+        What is being solved
+
+    subject
+        Role path being filled, used in the explanation
+
+    Returns
+    -------
+    :
+        One hop per parent, closest first, the last of which matched `until`.
+        At least one long.
+
+        Or why the chain could not be followed, which is always `unsatisfied`: a
+        lineage either reaches what it was told to reach or it does not, and there is
+        nothing for `ambiguous` to be about -- a dataset has one parent.
+    """
+    hops: list[_Hop] = []
+    current = entry
+    for _ in range(ancestors.max_hops):
+        lookup = ctx.catalogue.parent_of(
+            current,
+            versions=ctx.requirement.versions,
+            needs_facets=ctx.needs_facets,
+        )
+        if lookup.parent is None:
+            return NodeResultNotOk(
+                ExplanationStatusNotOk.UNSATISFIED,
+                Explanation(
+                    subject,
+                    ExplanationStatusNotOk.UNSATISFIED,
+                    _no_parent_message(current, ancestors, lookup.status),
+                ),
+            )
+
+        hops.append(_Hop(lookup.parent, lookup.provenance))
+
+        # Tested against the parent, never against `entry`, so a dataset which matches
+        # `until` itself is still walked back from rather than being its own ancestor.
+        # That is what makes `Ancestors(until=piControl)` on a piControl leaf mean "the
+        # piControl this piControl branched from" instead of quietly meaning nothing.
+        if matches(ancestors.until, lookup.parent):
+            return tuple(hops)
+
+        current = lookup.parent
+
+    return NodeResultNotOk(
+        ExplanationStatusNotOk.UNSATISFIED,
+        Explanation(
+            subject,
+            ExplanationStatusNotOk.UNSATISFIED,
+            f"did not reach {describe_query(ancestors.until)} within "
+            f"{ancestors.max_hops} parents of {_describe_entry(entry)}. "
+            "`max_hops` is a guard rather than the stopping rule, and is set well "
+            "above any real lineage, so reaching it means the chain is not going "
+            "where `until` says.",
+        ),
+    )
+
+
+def _lineage(
+    entry: CatalogueEntry, lineage: LineageRelation, ctx: _Context, subject: str
+) -> tuple[_Hop, ...] | NodeResultNotOk:
+    """
+    Resolve one dataset's related datasets
+
+    Dispatches on the kind of relation, the way [_eval_tree][(m)._eval_tree] dispatches
+    on the kind of node, and ends in a raise rather than a silent fallthrough so that a
+    relation added later without a branch here fails loudly.
+
+    Parameters
+    ----------
+    entry
+        Dataset the relation hangs off
+
+    lineage
+        The relation to resolve
+
+    ctx
+        What is being solved
+
+    subject
+        Role path being filled, used in the explanation
+
+    Returns
+    -------
+    :
+        One hop per related dataset, in the order the chain runs, or why they could not
+        be found
+
+    Raises
+    ------
+    TypeError
+        `lineage` is not a relation this function knows
+    """
+    if isinstance(lineage, Ancestors):
+        return _ancestor_lineage(entry, lineage, ctx, subject)
+
+    # Unreachable while `LineageRelation` has one member, which is why the type
+    # checkers are told to allow it. It is here so that a relation added to that union
+    # without a branch above fails loudly instead of being walked as if it were
+    # ancestry, which is the same bargain the node dispatches make.
+    msg = (  # type: ignore[unreachable]
+        f"Expected a lineage relation, got {type(lineage).__name__}: {lineage!r}. "
+        "Every member of `LineageRelation` needs a branch here."
+    )
+    raise TypeError(msg)
+
+
+def _lineage_paths(
+    leaf: Leaf, lineage: LineageRelation, role_prefix: str, hops: Sequence[_Hop]
+) -> list[tuple[str, _Hop]]:
+    """
+    Work out the role path each hop of a lineage fills
+
+    Parameters
+    ----------
+    leaf
+        The leaf whose role the lineage hangs beneath
+
+    lineage
+        The relation which was followed, whose role names the last hop
+
+    role_prefix
+        Role path prefix the leaf sits under
+
+    hops
+        The hops, closest parent first, at least one
+
+    Returns
+    -------
+    :
+        Role path and hop, in chain order
+
+        The last hop takes the lineage's own role, e.g. `control.tas`. The ones before
+        it take `chain.<i>`, numbered from the leaf's dataset outwards, so `chain.0` is
+        always its own parent however long the chain is.
+    """
+
+    def path(*parts: str) -> str:
+        return ROLE_SEPARATOR.join((*parts, leaf.role))
+
+    paths = [
+        f"{role_prefix}{path('chain', str(index))}" for index in range(len(hops) - 1)
+    ]
+    paths.append(f"{role_prefix}{path(lineage.role)}")
+
+    return list(zip(paths, hops, strict=True))
+
+
+def _eval_lineage(
+    leaf: Leaf,
+    lineage: LineageRelation,
+    chosen: Sequence[CatalogueEntry],
+    ctx: _Context,
+    role_prefix: str,
+) -> (
+    tuple[dict[str, tuple[CatalogueEntry, ...]], list[Lineage], list[Explanation]]
+    | NodeResultNotOk
+):
+    """
+    Resolve the lineage of every dataset filling a leaf's role
+
+    Parameters
+    ----------
+    leaf
+        The leaf whose role is being filled
+
+    lineage
+        Its lineage, which its caller has established it has
+
+    chosen
+        The datasets filling its role, at least one
+
+    ctx
+        What is being solved
+
+    role_prefix
+        Role path prefix the leaf sits under
+
+    Returns
+    -------
+    :
+        The role paths the lineages fill, the lineages themselves, and one explanation
+        per resolved dataset
+
+        Or why a lineage could not be resolved. **One dataset without a chain fails the
+        whole leaf**, which matters under
+        [Cardinality.ALL][esmporium.requirements.Cardinality]: an analysis whose subject
+        is the spread across every variant wants every variant traced back, and
+        quietly computing the spread over the ones which happened to have a parent
+        recorded would answer a different question. The message names the dataset which
+        broke it.
+    """
+    roles: dict[str, tuple[CatalogueEntry, ...]] = {}
+    lineages: list[Lineage] = []
+    parts: list[Explanation] = []
+    for entry in chosen:
+        hops = _lineage(entry, lineage, ctx, f"{role_prefix}{leaf.role}")
+        if isinstance(hops, NodeResultNotOk):
+            return hops
+
+        lineages.append(
+            Lineage(
+                members=(entry, *(hop.parent for hop in hops)),
+                end_role=lineage.role,
+            )
+        )
+        for member_path, hop in _lineage_paths(leaf, lineage, role_prefix, hops):
+            roles[member_path] = (*roles.get(member_path, ()), hop.parent)
+            described = _describe_entry(hop.parent)
+            parts.append(
+                Explanation(
+                    member_path,
+                    ExplanationStatusOk.SATISFIED,
+                    f"{described} -- {hop.provenance}" if hop.provenance else described,
+                )
+            )
+
+    return roles, lineages, parts
+
+
 def _in_group(entry: CatalogueEntry, ctx: _Context) -> bool:
     return all(entry.facet(facet) == value for facet, value in ctx.group.items())
 
@@ -879,13 +1243,28 @@ def _eval_leaf(leaf: Leaf, ctx: _Context, role_prefix: str) -> NodeResult:
     if isinstance(chosen, NodeResultNotOk):
         return chosen
 
+    described = ", ".join(_describe_entry(entry) for entry in chosen)
+    if leaf.lineage is None:
+        return NodeResultOk(
+            {path: chosen},
+            Explanation(path, ExplanationStatusOk.SATISFIED, described),
+        )
+
+    resolved = _eval_lineage(leaf, leaf.lineage, chosen, ctx, role_prefix)
+    if isinstance(resolved, NodeResultNotOk):
+        return resolved
+
+    lineage_roles, lineages, parts = resolved
+
     return NodeResultOk(
-        {path: chosen},
+        {path: chosen, **lineage_roles},
         Explanation(
             path,
             ExplanationStatusOk.SATISFIED,
-            ", ".join(_describe_entry(entry) for entry in chosen),
+            described,
+            parts=tuple(parts),
         ),
+        lineages=tuple(lineages),
     )
 
 
@@ -924,11 +1303,14 @@ def _label(node: Node) -> str:
 # would be a bad way to find that out.
 def _merge(results: Sequence[NodeResultOk], explanation: Explanation) -> NodeResultOk:
     roles: dict[str, tuple[CatalogueEntry, ...]] = {}
+    lineages: list[Lineage] = []
     for result in results:
         for role, entries in result.roles.items():
             roles[role] = (*roles.get(role, ()), *entries)
 
-    return NodeResultOk(roles, explanation)
+        lineages.extend(result.lineages)
+
+    return NodeResultOk(roles, explanation, lineages=tuple(lineages))
 
 
 def _worst(results: Sequence[NodeResultNotOk]) -> ExplanationStatusNotOk:
@@ -1038,6 +1420,20 @@ def facets_read(requirement: Requirement) -> frozenset[str]:
     ... )
     >>> sorted(facets_read(req))
     ['cordex-cmip6:driving_source_id', 'model', 'variable']
+
+    So does the experiment a lineage walks back to, because each parent is matched
+    against it:
+
+    >>> from esmporium.requirements import Ancestors
+    >>> req = requirement(
+    ...     name="three",
+    ...     tree=leaf(Query(variable="tas"), "tas").with_lineage(
+    ...         Ancestors(until=Query(experiment="piControl"), role="control")
+    ...     ),
+    ...     group_by=("model",),
+    ... )
+    >>> sorted(facets_read(req))
+    ['experiment', 'model', 'variable']
     """
     named = {
         *group_facets(requirement),
@@ -1050,6 +1446,12 @@ def facets_read(requirement: Requirement) -> frozenset[str]:
     # which of them a catalogue works out for itself.
     for _, each_leaf in walk_leaves(requirement.tree):
         named |= set_facets(effective_query(each_leaf, requirement.where)).keys()
+
+        # A lineage's `until` is matched against each parent, so a parent which was
+        # not built to answer for those facets cannot answer the question which
+        # decides whether the walk has finished.
+        if each_leaf.lineage is not None:
+            named |= set_facets(each_leaf.lineage.until).keys()
 
     return frozenset(named)
 
@@ -1316,6 +1718,7 @@ def solve(requirement: Requirement, catalogue: Catalogue) -> SolveResult:
         ExplanationStatusNotOk.AMBIGUOUS: {},
     }
 
+    needs = facets_read(requirement)
     found = _candidates_by_role(requirement, catalogue)
 
     facets = group_facets(requirement)
@@ -1323,7 +1726,13 @@ def solve(requirement: Requirement, catalogue: Catalogue) -> SolveResult:
         group_dict = dict(zip(facets, group_values, strict=True))
         key: GroupKey = tuple(group_dict.items())
         subject = _describe_group(group_dict)
-        ctx = _Context(requirement=requirement, found=found, group=group_dict)
+        ctx = _Context(
+            requirement=requirement,
+            catalogue=catalogue,
+            found=found,
+            needs_facets=needs,
+            group=group_dict,
+        )
 
         evaluated = _eval_tree(requirement.tree, ctx, role_prefix="")
         if isinstance(evaluated, NodeResultOk):
@@ -1335,6 +1744,7 @@ def solve(requirement: Requirement, catalogue: Catalogue) -> SolveResult:
                     ExplanationStatusOk.SATISFIED,
                     parts=(evaluated.explanation,),
                 ),
+                lineages=evaluated.lineages,
             )
 
         else:
