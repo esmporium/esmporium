@@ -6,9 +6,6 @@ A leaf's query says which datasets could fill its role, and
 groups. Everything else an analysis needs hangs off one of the datasets so chosen: the
 control it branched from, the sibling experiment it is compared against, the cell areas
 it is weighted by. A *relation* is how one of those is found.
-
-This module holds the relations themselves and [Lineage][(m).Lineage], which is what a
-relation resolves to.
 """
 
 from __future__ import annotations
