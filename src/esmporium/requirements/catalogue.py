@@ -162,12 +162,6 @@ class DuplicateEntryIDError(ValueError):
 class UnknownReferenceError(ValueError):
     """
     A catalogue relates one of its datasets to a dataset it does not hold
-
-    A relation is written as a pair of IDs, so an ID which is not in the catalogue
-    leaves the relation pointing at nothing. Like
-    [DuplicateEntryIDError][(m).DuplicateEntryIDError] this is a mistake in whatever
-    built the catalogue rather than a fact about the data: read from the database both
-    ends are foreign keys and cannot dangle.
     """
 
     def __init__(self, field_name: str, unknown: Iterable[int]) -> None:
@@ -659,9 +653,6 @@ def accept_any_query_style(value: Any) -> Any:
     """
     Translate whatever was passed for a query field, on the way in
 
-    Written to be handed to pydantic's `field_validator(..., mode="before")`, which is
-    how every field holding a query accepts any style.
-
     Parameters
     ----------
     value
@@ -862,12 +853,6 @@ class VersionFilter(str, Enum):
 class ParentStatus(str, Enum):
     """
     What came of asking a catalogue for a dataset's parent
-
-    Six answers rather than "a parent or nothing", because the reasons there is no
-    parent are not variations on one another and a user can act on only some of them.
-    "Nobody has read a parent for this dataset" is work waiting to be done; "this
-    dataset declares no parent" is the end of the chain and will not change however
-    long you wait.
     """
 
     FOUND = "found"
@@ -931,10 +916,6 @@ class ParentStatus(str, Enum):
 class ParentLookup:
     """
     A catalogue's answer to "what is this dataset's parent?"
-
-    The answer and the reason travel together so that a requirement which cannot be
-    met can say which of the six situations it met. See
-    [ParentStatus][(m).ParentStatus].
     """
 
     status: ParentStatus
@@ -952,14 +933,6 @@ class ParentLookup:
     provenance: str = ""
     """
     How the catalogue came to this answer, as a phrase for a person to read
-
-    For example `"read from a file header; parent release defaulted (we hold 3)"`.
-    Rendered into a solve's explanation and nothing else: it is deliberately prose
-    rather than modelled, because what is worth saying differs by catalogue and
-    nothing should be making decisions on it.
-
-    Empty when there is nothing to add, which is what a catalogue with no concept of
-    where its answers came from gives back.
     """
 
     def __post_init__(self) -> None:
@@ -1053,16 +1026,6 @@ class Catalogue(Protocol):
         """
         Get the dataset a dataset branched from
 
-        One hop, not a chain: following it to a given experiment is
-        [solve][esmporium.requirements.solve]'s job, because where to stop is part of
-        what an analysis asked for.
-
-        A parent joins like to like -- the same variable, frequency and grid as the
-        dataset asking -- so this answers with the parent *of this dataset*, not with
-        the parent simulation. A control which never published the variable is
-        [ParentStatus.VARIABLE_MISSING][(m).ParentStatus.VARIABLE_MISSING] rather than
-        a parent whose variable differs.
-
         Parameters
         ----------
         entry
@@ -1072,18 +1035,8 @@ class Catalogue(Protocol):
             Which of a dataset's versions count, on both ends of the link. See
             [VersionFilter][(m).VersionFilter].
 
-            It decides which of `entry`'s versions is asked -- the same version whose
-            documents describe `entry` -- and which version's documents describe the
-            parent that comes back, so one solve is answered from one set of versions
-            throughout.
-
         needs_facets
             The facets the caller will ask the parent about
-
-            As on [find][(m).Catalogue.find], and it matters more here: the parent is
-            matched against the experiment a lineage walks back to, so a lookup told
-            it would be asked about nothing would hand back a parent which cannot
-            answer the question it exists to answer.
 
         Returns
         -------
@@ -1202,11 +1155,6 @@ class InMemoryCatalogue:
         # it once per entry. This class stands in for a real catalogue, so it should
         # not go quadratic on the number of datasets.
         counts = Counter(entry.id for entry in self.entries)
-        # The count is the whole report. Saying *which* entries collided means
-        # choosing the facets which identify one, and no such choice survives moving
-        # between projects (see `DuplicateEntryIDError`). A repeated ID is a mistake
-        # in the code which built the catalogue, and the ID is the literal that code
-        # wrote, so it is the thing to go and look for.
         collisions = {
             entry_id: count for entry_id, count in counts.items() if count > 1
         }
@@ -1302,13 +1250,6 @@ class InMemoryCatalogue:
         -------
         :
             The parent, or which situation was met
-
-            Only [FOUND][(m).ParentStatus.FOUND],
-            [NOT_LOOKED_FOR][(m).ParentStatus.NOT_LOOKED_FOR] and
-            [ROOT][(m).ParentStatus.ROOT]. The other three describe a parent which was
-            named and then not found, and a written-down mapping names a dataset or
-            says nothing, so a test which needs one of those needs a store which
-            searched -- [esmporium.db.DatabaseCatalogue][].
 
             `provenance` is always empty: nothing here knows where its answers came
             from, and inventing a phrase would make this catalogue claim more than it

@@ -27,7 +27,7 @@ from esmporium.query import (
     QueryCMIP7,
 )
 from esmporium.requirements import (
-    ANCESTOR_LINEAGE_END,
+    LINEAGE_END,
     Catalogue,
     DuplicateEntryIDError,
     InMemoryCatalogue,
@@ -588,7 +588,7 @@ def test_lineage_names_its_two_ends(make_entry):
     assert lineage.index_of("control") == 1
     # `end` means the far end without naming it, so a check written that way does not
     # have to be edited when the lineage is renamed.
-    assert lineage.index_of(ANCESTOR_LINEAGE_END) == 1
+    assert lineage.index_of(LINEAGE_END) == 1
 
 
 def test_lineage_numbers_the_parents_in_between(make_entry):

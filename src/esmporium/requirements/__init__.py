@@ -74,7 +74,7 @@ from esmporium.requirements.catalogue import (
     to_stored_query,
 )
 from esmporium.requirements.relations import (
-    ANCESTOR_LINEAGE_END,
+    LINEAGE_END,
     RELATION_MODEL_CONFIG,
     Ancestors,
     EmptyUntilError,
@@ -124,7 +124,7 @@ from esmporium.requirements.tree import (
 )
 
 __all__ = [
-    "ANCESTOR_LINEAGE_END",
+    "LINEAGE_END",
     "RELATION_MODEL_CONFIG",
     "RESERVED_ROLES",
     "ROLE_SEPARATOR",

@@ -160,12 +160,6 @@ def version_clause(versions: VersionFilter) -> ColumnElement[bool] | None:
     """
     Get the `where` clause which keeps only the versions a version filter allows
 
-    About [DatasetVersion][esmporium.db.schema.DatasetVersion] rows, where
-    [version_filter][(m).version_filter] is about the datasets which have one. Three
-    readers need the same answer -- which datasets to return, which version's documents
-    describe them, and which version's parent to follow -- so the rule is written once
-    and they cannot disagree about what a retracted release means.
-
     Parameters
     ----------
     versions
@@ -803,10 +797,6 @@ and because the requirements side needs two answers this one cannot give. Neithe
 [NO_USABLE_VERSION][esmporium.requirements.ParentStatus.NO_USABLE_VERSION] is in here:
 the first is the absence of a row and so has nothing to map from, and the second is
 about the lookup's version filter rather than about what was recorded.
-
-Every member of `ParentResolution` has an entry, which
-`test_every_parent_resolution_reads_as_a_status` holds it to -- a resolution with no
-entry here would make a stored state invisible to every requirement.
 """
 
 _SOURCE_PHRASES: Mapping[ParentInfoSource, str] = {
@@ -843,11 +833,6 @@ rests on a rule of ours.
 class ParentLinkMissingError(RuntimeError):
     """
     A parent row says it was resolved and no link records what to
-
-    Ours to fix rather than the user's to work around: the resolution and the link are
-    written together, and a change to the facts deletes the link and puts the row back
-    to [UNRESOLVED][esmporium.db.schema.ParentResolution.UNRESOLVED], so the two cannot
-    legitimately disagree.
     """
 
     def __init__(self, parent_info_id: int | None, dataset_version_id: int) -> None:
@@ -878,12 +863,6 @@ def describing_version(
 ) -> DatasetVersion | None:
     """
     Get the version of a dataset which speaks for it
-
-    The newest release which passes the filter, which is the same release whose
-    documents answer for a dataset's facets (`_documents_by_dataset` in this module
-    picks them the same way). That is the point of it being one function: what an entry
-    *says* and what its parent *is* come from one release, so the two cannot describe
-    different publications of the same dataset.
 
     Parameters
     ----------
@@ -969,26 +948,6 @@ def parent_of_dataset(  # noqa: PLR0913 - one argument per thing reading a row n
     The session-level primitive behind
     [DatabaseCatalogue.parent_of][(m).DatabaseCatalogue.parent_of], for a caller who
     wants one transaction across a whole solve.
-
-    Three things are *not* decided here, because each is already decided elsewhere and
-    a second opinion would be a second answer:
-
-    - **which release of the parent to use.** That is recorded on the link, along with
-      how it was picked
-      ([DatasetParentLink.version_choice][esmporium.db.schema.DatasetParentLink]).
-    - **which source to believe**, when a version carries rows from several.
-      [preferred_parent_info][esmporium.db.preferred_parent_info] and
-      [SOURCE_PRECEDENCE][esmporium.db.SOURCE_PRECEDENCE] say.
-    - **which release of the child to ask.** `versions` already says, through
-      [describing_version][(m).describing_version].
-
-    That last one is a choice in principle and almost never one in practice. Parent
-    facts belong to a simulation rather than to one of its releases:
-    [record_header_parent_facts][esmporium.db.record_header_parent_facts] writes what
-    one header said against every version it answers for, and
-    [copy_parent_facts][esmporium.db.copy_parent_facts] carries it to the simulation's
-    other variables. So a dataset's releases agree about their parent unless a
-    republication corrected it, which nothing we do can currently produce.
 
     Parameters
     ----------
@@ -1232,24 +1191,6 @@ class DatabaseCatalogue:
     ) -> ParentLookup:
         """
         Get the dataset a dataset branched from, out of the stored parent links
-
-        Reads what a parent walk recorded (see [esmporium.db.find_parents][]), and
-        says so when nothing has: a dataset whose parent has never been read is
-        [ParentStatus.NOT_LOOKED_FOR][esmporium.requirements.ParentStatus] rather than
-        a dataset with no parent, because those are different facts and only one of
-        them is settled.
-
-        One session per call, for the reason [find][(m).DatabaseCatalogue.find] takes
-        one: a held session would hold a transaction whose snapshot predates the walk
-        whose links this exists to read.
-
-        Worth knowing about the cost, because it is a different shape to `find`'s. A
-        solve asks `find` once per distinct question in the requirement, and asks this
-        once per hop per dataset which filled a role -- so a requirement with a lineage
-        over a thousand models makes a thousand small lookups rather than one large one.
-        That is the thing to measure first if a solve becomes slow, and
-        [parent_of_dataset][(m).parent_of_dataset] is the seam to batch behind, since it
-        takes the session rather than making one.
 
         Parameters
         ----------

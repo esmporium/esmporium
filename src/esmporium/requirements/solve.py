@@ -911,9 +911,7 @@ def _no_parent_message(
 
     One message per [ParentStatus][esmporium.requirements.ParentStatus], because what
     to do about each is different and a single message would have to be vague enough to
-    fit all five. The one to get right is `NOT_LOOKED_FOR`: it is not a fact about the
-    archive at all, it is a job nobody has run, and reporting it as "no parent" would
-    send a user looking for data which is very likely already there.
+    fit all five.
 
     Parameters
     ----------
@@ -1083,10 +1081,6 @@ def _lineage(
     """
     Resolve one dataset's related datasets
 
-    Dispatches on the kind of relation, the way [_eval_tree][(m)._eval_tree] dispatches
-    on the kind of node, and ends in a raise rather than a silent fallthrough so that a
-    relation added later without a branch here fails loudly.
-
     Parameters
     ----------
     entry
@@ -1208,8 +1202,7 @@ def _eval_lineage(
         [Cardinality.ALL][esmporium.requirements.Cardinality]: an analysis whose subject
         is the spread across every variant wants every variant traced back, and
         quietly computing the spread over the ones which happened to have a parent
-        recorded would answer a different question. The message names the dataset which
-        broke it.
+        recorded would answer a different question.
     """
     roles: dict[str, tuple[CatalogueEntry, ...]] = {}
     lineages: list[Lineage] = []

@@ -33,32 +33,17 @@ part of a requirement, a requirement is fingerprinted by
 [requirement_hash][esmporium.requirements.Requirement.requirement_hash], and anything
 which could be edited afterwards would leave that fingerprint describing something
 which no longer exists.
-
-Separate from the nodes' config even though the two are identical today, because the
-two are not the same kind of thing and have no reason to stay identical. A node is part
-of the shape of a requirement; a relation is a fact attached to one leaf of it.
 """
 
-ANCESTOR_LINEAGE_END = "end"
+LINEAGE_END = "end"
 """
 Name a lineage accepts for its last member, whatever that member's role is called
-
-Written on a check which wants "wherever this lineage stopped" without naming it, so
-that the check does not have to be edited when the lineage's own role is renamed. See
-[Lineage.index_of][(m).Lineage.index_of].
 """
 
 
 class EmptyUntilError(ValueError):
     """
     Raised when a lineage is told to walk back to a query which sets no facets
-
-    The counterpart of
-    [EmptyLeafQueryError][esmporium.requirements.EmptyLeafQueryError], and refused for
-    the same reason: a query which sets no facets constrains nothing, so it matches the
-    very first parent and the walk stops after one hop. That is never what was meant,
-    and it fails a long way from the mistake -- as a lineage which mysteriously never
-    reaches the control, rather than as an error where it was written.
     """
 
     def __init__(self, role: str) -> None:
@@ -87,10 +72,6 @@ class Ancestors(BaseModel):
     only as good as what the archive recorded. A dataset for which nothing has read a
     parent yet is reported as such rather than as a dataset with no parent --
     see [ParentStatus][esmporium.requirements.ParentStatus].
-
-    Resolves, for each dataset which fills the leaf's role, one role per dataset in the
-    chain: `chain.<i>` for the parents in between, closest first, and
-    [role][(m).Ancestors.role] for the one which matched `until`.
     """
 
     model_config = RELATION_MODEL_CONFIG
@@ -98,10 +79,6 @@ class Ancestors(BaseModel):
     kind: Literal["ancestors"] = "ancestors"
     """
     Which relation this is
-
-    Read by pydantic to pick the right class out of
-    [Relation][esmporium.requirements.Relation] when a stored requirement is
-    loaded, rather than each being tried in turn.
     """
 
     until: QueryCanonical
@@ -116,30 +93,11 @@ class Ancestors(BaseModel):
     allowed and sometimes right (a particular variant of `historical`, say), but note
     that a query style written in a project's own names sets `project` for you, which
     then has to match as well.
-
-    It is matched against each *parent*, never against the dataset the lineage hangs
-    off, so a chain can pass through a dataset of the kind it is looking for on its
-    way to the one it stops at.
-
-    It cannot be where the chain *starts*, though: a leaf which selects only datasets
-    matching `until` is refused when the requirement is built (see
-    [check_lineage_does_not_start_at_target][esmporium.requirements.check_lineage_does_not_start_at_target]),
-    and one which selects such a dataset among others reports it as unsatisfied when
-    solved. [esmporium.db.find_parents][] stops at a dataset matching `until` and
-    records no parent for it, so a chain which started at one would have nothing to
-    walk.
     """
 
     role: str
     """
     Role the dataset which matched `until` is filed under
-
-    Required, with no default, because this is the name checks refer to: a check
-    written `role="control"` and a lineage written `role="control"` are visibly the
-    same thing, which they could not be if the name were generated.
-
-    Say where the walk *stopped*, since that is what it names: `"control"` when
-    walking back to piControl, `"historical"` when that is where you stop.
 
     Yours to choose, subject to the same rules as a leaf's role (see
     [check_role][esmporium.requirements.roles.check_role]), and it may not be the role
@@ -153,11 +111,6 @@ class Ancestors(BaseModel):
     A guard, not the stopping rule -- `until` is. It is insurance against a chain which
     never ends, and the default is set well above any real lineage, so reaching it
     means something is wrong rather than that a chain was simply long.
-
-    The same guard, with the same name and the same default, as
-    [esmporium.db.find_parents][]'s: one walks the archive to record the links and the
-    other walks the links which were recorded, and a requirement which could ask for
-    more hops than were ever followed would be asking for something nothing can answer.
     """
 
     _accept_any_style = field_validator("until", mode="before")(accept_any_query_style)
@@ -180,11 +133,6 @@ class Ancestors(BaseModel):
 Relation = Annotated[Union[Ancestors], Field(discriminator="kind")]
 """
 How a leaf's related datasets -- its control, its sibling -- are found
-
-One member today. It is written as a discriminated union anyway, because
-`discriminator="kind"` is what lets a stored requirement load back into the right
-relation class, and a second relation should not have to change how the first one is
-stored.
 """
 
 
@@ -192,10 +140,6 @@ stored.
 class Lineage:
     """
     The datasets a leaf's lineage resolved to, and what they are called
-
-    The resolved form of a relation, which is why it lives here rather than beside the
-    checks which read it: solving produces one of these per dataset which filled a
-    leaf's role, and it does so whether or not any check exists to look at it.
     """
 
     members: tuple[CatalogueEntry, ...]
@@ -205,8 +149,6 @@ class Lineage:
     The *anchor* is the dataset which filled the leaf's role, and `end` is the one the
     relation was looking for. At least two long: a relation which resolved to nothing
     is not a lineage, it is an unsatisfied leaf.
-
-    Two long exactly when the end is the anchor's own parent, which is the common case.
     """
 
     end_role: str
@@ -218,20 +160,12 @@ class Lineage:
         """
         Get the position in this lineage a name refers to
 
-        Four ways to name a member, and the reason there are four is that a check is
-        written before anybody knows how long the chain will be. `"self"` and the
-        relation's own role are the two ends, which are always there;
-        [ANCESTOR_LINEAGE_END][(m).ANCESTOR_LINEAGE_END] is the far end again for a
-        check which does not want to name it; and `chain.<i>` reaches the parents in
-        between, which is the only part whose length depends on the data.
-
         Parameters
         ----------
         role
             `"self"` for the anchor, `"chain.<i>"` for a parent in between (`chain.0`
-            is the anchor's own parent), or
-            [end_role][(m).Lineage.end_role] -- or
-            [ANCESTOR_LINEAGE_END][(m).ANCESTOR_LINEAGE_END] -- for the last member
+            is the anchor's own parent), or [end_role][(m).Lineage.end_role] -- or
+            [LINEAGE_END][(m).LINEAGE_END] -- for the last member
 
         Returns
         -------
@@ -268,7 +202,7 @@ class Lineage:
         if role == "self":
             return 0
 
-        if role in (self.end_role, ANCESTOR_LINEAGE_END):
+        if role in (self.end_role, LINEAGE_END):
             return len(self.members) - 1
 
         head, _, index = role.partition(".")
@@ -298,7 +232,7 @@ class Lineage:
         :
             The message
         """
-        names = f"use 'self', {self.end_role!r} or {ANCESTOR_LINEAGE_END!r}"
+        names = f"use 'self', {self.end_role!r} or {LINEAGE_END!r}"
         in_between = len(self.members) - 2
         if in_between < 1:
             return (

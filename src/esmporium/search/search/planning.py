@@ -79,16 +79,6 @@ class SearchPlan:
 
     One entry per distinct [Ancestors.until][esmporium.requirements.Ancestors.until]
     below the tree, and empty for a requirement with no lineage in it.
-
-    Not something to search for. A lineage is followed by walking parent links rather
-    than by matching facets, so these are not queries to fire -- they say how far back
-    the links have to reach before the requirement can be solved, which is what
-    [esmporium.db.find_parents][] needs telling and the one thing a requirement knows
-    and it does not.
-
-    Kept as queries rather than flattened to experiment names because that is what the
-    requirement said, and `find_parents` is not the only possible reader. A caller
-    which wants the names reads them off `experiment`.
     """
 
 

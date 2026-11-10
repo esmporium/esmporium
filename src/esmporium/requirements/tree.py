@@ -107,11 +107,6 @@ class ConflictingFacetsError(ValueError):
 class ConflictingLineageError(ValueError):
     """
     Raised when a leaf is given a second, different lineage
-
-    The same rule as [ConflictingFacetsError][(m).ConflictingFacetsError]'s, for the
-    same reason: a leaf has one lineage, so saying it twice leaves no way to tell which
-    was meant. Giving a leaf the lineage it already has is fine; it is only a
-    disagreement which is refused.
     """
 
     def __init__(self, role: str, had: str, given: str) -> None:
@@ -144,20 +139,6 @@ class ConflictingLineageError(ValueError):
 class LineageStartsAtTargetError(ValueError):
     """
     Raised when a leaf's datasets already match where its lineage says to stop
-
-    A lineage walks from the dataset which filled a leaf's role back to an ancestor of
-    it, so its two ends are different datasets. A leaf whose query can only select
-    datasets matching `until` has no such walk to make: every dataset it finds is
-    already at the target.
-
-    Refused rather than walked past, because [esmporium.db.find_parents][] stops at a
-    dataset matching one of its `until_experiment` and records no parent for it. A
-    lineage of this shape is therefore unsatisfied by every database our own walk
-    builds, and running the walk again would not change that -- which is a long way
-    from the mistake, and the reason this is checked where the requirement is written.
-
-    To trace a dataset back to another of its own kind, say in `until` how the two
-    differ, e.g. by naming the ancestor's `variant_label`.
     """
 
     def __init__(
@@ -1171,11 +1152,6 @@ def role_paths(node: Node) -> frozenset[str]:
         member under -- `control.field` for a leaf `field` with
         `Ancestors(role="control")`.
 
-        The `chain.<i>` paths for the parents in between do **not**, and cannot: how
-        many there are depends on how long the chain turns out to be, which is a fact
-        about the data rather than about the requirement. So this is every path a
-        requirement *names*, and a solved group can hold more.
-
     Raises
     ------
     DuplicateRoleError
@@ -1267,14 +1243,6 @@ def check_lineage_role_differs(role: str, lineage: Relation) -> None:
     """
     Check that a leaf's role and its lineage's role are different names
 
-    Returns nothing: this is here to raise, and exists so that a caller which wants
-    the check can ask for the check, the way
-    [check_roles_are_distinct][(m).check_roles_are_distinct] does.
-
-    Not something [check_role][esmporium.requirements.roles.check_role] could catch,
-    because it sees one name at a time: a lineage's role is free in general and clashes
-    only with the leaf it is attached to.
-
     Parameters
     ----------
     role
@@ -1304,22 +1272,6 @@ def check_lineage_does_not_start_at_target(
 ) -> None:
     """
     Check that a leaf's datasets are not already where its lineage says to stop
-
-    Returns nothing: this is here to raise, and is asked for by name the way
-    [check_lineage_role_differs][(m).check_lineage_role_differs] is.
-
-    The rule is the one [esmporium.db.find_parents][] walks by: a dataset matching
-    `until` is where a chain *ends*, so a chain cannot start at one. `until` is
-    otherwise matched against each parent and never against the dataset the lineage
-    hangs off, which is what lets a chain pass through a dataset of the kind it is
-    looking for; this is the one case that rule cannot cover, because there is no
-    chain to pass through anything.
-
-    Refused only when the query settles it -- every facet `until` sets is set by the
-    query too, to a subset of the same values, so every dataset the leaf can select
-    matches. A query which merely *could* select such a dataset is left to
-    [solve][esmporium.requirements.solve], which reports it per dataset, since whether
-    it happened is a fact about the data rather than about the requirement.
 
     Parameters
     ----------
@@ -1362,8 +1314,6 @@ def check_lineages_do_not_start_at_their_target(
 ) -> None:
     """
     Check every lineage in a tree against the leaf it hangs off
-
-    Returns nothing: this is here to raise.
 
     Called when a requirement is built, and *not* only when a leaf is, because a
     requirement's `where` is part of what each leaf selects: a leaf which names no
