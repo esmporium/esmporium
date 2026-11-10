@@ -163,16 +163,18 @@ The numbered steps of this plan, as they have landed:
 | 3 | Track changes in search results | [#59](https://github.com/esmporium/esmporium/pull/59) |
 | 4 | Nice summaries of results and of changes (`summarise_search`) | [#61](https://github.com/esmporium/esmporium/pull/61) |
 | 6 | Data access tracking (`File`, `DataAccess`) | [#62](https://github.com/esmporium/esmporium/pull/62) |
-| 7 | Downloads, and the data-node access layer | _this PR_ |
+| 7 | Downloads, and the data-node access layer | [#63](https://github.com/esmporium/esmporium/pull/63) |
+| 8 | Download parallelisation and per-data-node caps | [#64](https://github.com/esmporium/esmporium/pull/64) |
+| 10 | Dataset ancestry (`find_parents`, `esmporium.headers`, `esmporium.fixes`) | [#65](https://github.com/esmporium/esmporium/pull/65), [#66](https://github.com/esmporium/esmporium/pull/66) |
+| 11 | `Ancestors` lineage in requirements | _this PR_ |
 
 So **phase 1 is done except step 5** (the live pattern-effect watch on the server),
-and phase 2 has steps 6 and 7 done, leaving 8 (parallelism), 9 (deployment), 10
-(ancestry) and 11 (`Ancestors`).
+and **phase 2 is done except step 9** (the deployment).
 
-**Step 9 is now unblocked**, which is the nearest thing to a live archive: step 5
-watches and step 7 can download, so wiring those two together is the only thing
-between us and data arriving on disk by itself. Its one caveat is in the ordering
-note above -- following parents back to `historical` needs step 10.
+**Step 9 is now fully unblocked**, which is the nearest thing to a live archive: step 5
+watches, step 7 can download, and step 10 can follow parents back to `historical` --
+which was its one remaining caveat. Wiring those together is the only thing between us
+and data arriving on disk by itself.
 
 The PR numbers above are taken from the `changelog/<PR>.<type>.md` fragment names, so
 they should be right, but they were not checked against GitHub -- worth a glance.
@@ -814,9 +816,38 @@ Tests: `test_branch_chain_back_to_picontrol`, `test_bell_is_rooted_in_esm_picont
 `test_lineage_role_names_where_it_stopped`, `test_catalog_rejects_unknown_references`,
 `test_leaf_role_cannot_be_its_own_lineage_role`,
 `test_role_names_are_free_unless_a_lineage_uses_them`,
-`test_machinery_role_names_are_always_reserved`, no parent recorded, `max_depth` exhausted.
+`test_machinery_role_names_are_always_reserved`, no parent recorded, `max_hops` exhausted.
 
 Use cases: `15-pattern-scaling`, `17-etccdi` — both have a lineage and no constraints.
+
+What landed differently from the sketch above, and why:
+
+- **The depth guard is `max_hops`, not `max_depth`**, defaulting to 16, matching
+  `find_parents` exactly. One walk records the links and the other walks the links which
+  were recorded, so one word and one number for one guard.
+- **`roles.py` is a new module**, holding `ROLE_SEPARATOR`, `RESERVED_ROLES` and
+  `check_role`. Both a leaf and a relation name roles, and the relations are imported by
+  the tree, so the shared rule has to sit below both or the two could disagree about
+  what a legal role is. `LineageRelation` went to `relations.py` for the same reason.
+- **`Catalogue.parent_of` answers with a reason, not just a parent or `None`**
+  (`ParentStatus`, `ParentLookup`). Step 10 was careful to distinguish "nobody has read
+  a parent for this" from "this declares no parent", and collapsing the two here would
+  have thrown that away -- a user told "no parent" would go looking for data rather than
+  running `find_parents`. `NOT_LOOKED_FOR` is the natural home for step 12's
+  `undetermined`.
+- **A satisfied lineage says how it was resolved**, in its explanation only
+  (`ParentLookup.provenance`). A chain which rests on a hand fix, or on our own rule for
+  which release of the parent to use, reads differently from one the archive published.
+  Nothing is modelled, so step 13's `Covers` is still free to decide whether that counts
+  as degraded.
+- **`SearchPlan.ancestry_until` landed here too**, which `planning.py`'s own note always
+  said belonged to this step. `search()` is deliberately *not* wired to `find_parents`:
+  populating the links stays an explicit call.
+- **Every stored requirement's hash changed**, because `Leaf` gained a field and
+  `identity_json` is a complete dump. Accepted while there are no users; step 17 owns
+  the question of what the hash should cover.
+- `Resolved.lineages` is `NodeResultOk.lineages` and `Solution.lineages`, the names
+  those classes ended up with at step 3.
 
 # Phase 3 — say what we need precisely
 

@@ -425,7 +425,7 @@ class AmbiguousParentVersion:
 
 
 _DECIDED_VERSION_CHOICES = frozenset(
-    {ParentVersionChoice.CHILD_VERSION, ParentVersionChoice.DEFAULTED}
+    {ParentVersionChoice.CHILD_VERSION, ParentVersionChoice.DEFAULTED_TO_NEWEST}
 )
 """
 The [ParentVersionChoice][esmporium.db.schema.ParentVersionChoice]s that are decisions
@@ -470,8 +470,8 @@ class ParentVersionDecision:
 
     See [ParentVersionChoice][esmporium.db.schema.ParentVersionChoice]. Only ever
     [CHILD_VERSION][esmporium.db.schema.ParentVersionChoice.CHILD_VERSION] or
-    [DEFAULTED][esmporium.db.schema.ParentVersionChoice.DEFAULTED] here; the other two
-    values are not decisions, so they are not recorded as any.
+    [DEFAULTED_TO_NEWEST][esmporium.db.schema.ParentVersionChoice.DEFAULTED_TO_NEWEST]
+    here; the other two values are not decisions, so they are not recorded as any.
     """
 
     passed_over_dataset_version_ids: tuple[int, ...]

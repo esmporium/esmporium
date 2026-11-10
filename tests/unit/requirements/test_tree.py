@@ -18,11 +18,15 @@ from esmporium.query import (
     QueryCMIP6,
 )
 from esmporium.requirements import (
+    RESERVED_ROLES,
     AllOf,
+    Ancestors,
     Cardinality,
     ConflictingFacetsError,
+    ConflictingLineageError,
     DuplicateRoleError,
     EmptyLeafQueryError,
+    EmptyUntilError,
     Leaf,
     NotANodeError,
     Requirement,
@@ -37,6 +41,12 @@ from esmporium.requirements.tree import (
     role_paths,
     walk_leaves,
 )
+
+TO_CONTROL = Ancestors(until=Query(experiment="piControl"), role="control")
+"""A lineage back to the control, when which control is not the point"""
+
+TO_HISTORICAL = Ancestors(until=Query(experiment="historical"), role="historical")
+"""A different lineage, for the tests which need two"""
 
 
 def a_leaf(role: str = "field", **facets) -> Leaf:
@@ -471,3 +481,150 @@ def test_a_requirement_is_a_root_and_not_a_node():
     # `Requirement` holds a tree rather than being part of one, which is why it has
     # no `kind` and cannot be nested.
     assert not isinstance(a_requirement(), (Leaf, AllOf))
+
+
+# ------------------------------------------------------------------------- lineage
+
+
+def test_a_leaf_has_no_lineage_unless_it_is_given_one():
+    assert a_leaf().lineage is None
+    assert role_paths(a_leaf()) == {"field"}
+
+
+def test_a_lineage_adds_a_role_under_its_own_name():
+    # The lineage's role prefixes the leaf's, rather than replacing it: the leaf still
+    # fills its own role, and the control fills a second one beneath it.
+    node = a_leaf().with_lineage(TO_CONTROL)
+
+    assert role_paths(node) == {"field", "control.field"}
+
+
+def test_lineage_role_names_the_path_it_adds():
+    # Whatever the lineage is called is what the path is called. Nothing hardcodes
+    # "control": where a chain stops is the user's to say and to name.
+    node = a_leaf().with_lineage(TO_HISTORICAL)
+
+    assert role_paths(node) == {"field", "historical.field"}
+
+
+def test_with_lineage_reaches_every_leaf_below_a_node():
+    # One `.with_lineage()` above an `all_of` means "each of these, traced back to its
+    # own control", which is what makes it worth having on a container at all.
+    tree = all_of(a_leaf(role="tasmax"), a_leaf(role="pr")).with_lineage(TO_CONTROL)
+
+    assert role_paths(tree) == {"tasmax", "pr", "control.tasmax", "control.pr"}
+    assert all(each.lineage == TO_CONTROL for _, each in walk_leaves(tree))
+
+
+def test_a_second_different_lineage_is_refused():
+    with pytest.raises(ConflictingLineageError) as excinfo:
+        all_of(
+            a_leaf(role="tasmax"),
+            a_leaf(role="pr").with_lineage(TO_HISTORICAL),
+        ).with_lineage(TO_CONTROL)
+
+    # Both roles are named, because which one is wrong is the user's call.
+    assert excinfo.value.role == "pr"
+    assert excinfo.value.had == "historical"
+    assert excinfo.value.given == "control"
+
+
+def test_the_same_lineage_twice_is_fine():
+    # The rule `ConflictingFacetsError` states, applied here: a repeat which agrees is
+    # not a mistake, only a disagreement is.
+    once = a_leaf().with_lineage(TO_CONTROL)
+
+    assert once.with_lineage(TO_CONTROL) == once
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        pytest.param(
+            lambda: leaf(Query(variable="tas"), "control").with_lineage(TO_CONTROL),
+            id="with_lineage",
+        ),
+        pytest.param(
+            lambda: Leaf(
+                query=Query(variable="tas"), role="control", lineage=TO_CONTROL
+            ),
+            id="constructor",
+        ),
+    ],
+)
+def test_a_leaf_role_cannot_be_its_own_lineage_role(build):
+    # Both ways in, because `with_lineage` goes through `model_copy`, which runs no
+    # validators -- so the model validator alone would not catch it.
+    with pytest.raises(ValueError, match="Rename one of them"):
+        build()
+
+
+def test_a_lineage_role_is_free_on_any_other_leaf():
+    # "control" is a name someone chose, so it is reserved only for the leaf which
+    # declared it. A sibling leaf may still be called that.
+    tree = all_of(a_leaf(role="field").with_lineage(TO_CONTROL), a_leaf(role="control"))
+
+    assert role_paths(tree) == {"field", "control.field", "control"}
+
+
+@pytest.mark.parametrize("role", sorted(RESERVED_ROLES))
+def test_machinery_role_names_are_always_reserved(role):
+    # These two are how a lineage addresses its own members, so a leaf which took one
+    # could not be told apart from them.
+    with pytest.raises(ValidationError, match="is reserved"):
+        leaf(Query(variable="tas"), role)
+
+
+def test_two_leaves_cannot_collide_through_a_lineage():
+    # `chain.0.field` is not here to collide with, but the end role is: a leaf called
+    # `control.field` is impossible (no dots allowed), yet a lineage can build that
+    # path, so the check has to be on the paths rather than on the roles.
+    with pytest.raises(DuplicateRoleError):
+        all_of(
+            a_leaf(role="field").with_lineage(TO_CONTROL),
+            a_leaf(role="field").with_lineage(TO_HISTORICAL),
+        )
+
+
+def test_a_lineage_with_nothing_to_stop_at_is_refused():
+    # An `until` which sets no facets matches the first parent, so the walk would stop
+    # after one hop and call whatever it found the control.
+    with pytest.raises(ValidationError) as excinfo:
+        Ancestors(until=Query(), role="control")
+
+    assert isinstance(excinfo.value.errors()[0]["ctx"]["error"], EmptyUntilError)
+
+
+def test_a_lineage_until_is_stored_canonical():
+    # Written in any style, like a leaf's query, and stored one way -- which is what
+    # lets one question hash the same however it was written.
+    written = Ancestors(until=QueryCMIP6(experiment_id="piControl"), role="control")
+
+    assert written.until == QueryCanonical(
+        experiment=("piControl",), project=("CMIP6",)
+    )
+    assert written.until.source_query is None
+
+
+def traced(tree: Leaf | AllOf) -> Requirement:
+    """Get a requirement around one tree, when only the tree is the point."""
+    return requirement(name="an-analysis", tree=tree, group_by=("model",))
+
+
+def test_a_lineage_survives_being_stored():
+    with_lineage = traced(a_leaf().with_lineage(TO_CONTROL))
+
+    loaded = Requirement.model_validate_json(with_lineage.model_dump_json())
+
+    assert loaded == with_lineage
+    assert isinstance(loaded.tree.lineage, Ancestors)
+    assert loaded.requirement_hash() == with_lineage.requirement_hash()
+
+
+def test_a_lineage_is_part_of_the_question():
+    # Two requirements which ask for the same dataset, one of which also needs its
+    # control, are not the same question.
+    plain = traced(a_leaf())
+    with_lineage = traced(a_leaf().with_lineage(TO_CONTROL))
+
+    assert plain.requirement_hash() != with_lineage.requirement_hash()

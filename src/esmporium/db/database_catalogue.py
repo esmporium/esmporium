@@ -15,10 +15,16 @@ from typing import TYPE_CHECKING, Any
 from sqlmodel import Session, col, select
 
 from esmporium.datasets import DATASET_FACET_COLUMNS
+from esmporium.db.parents_to_database import SOURCE_PRECEDENCE, preferred_parent_info
 from esmporium.db.schema import (
     Dataset,
+    DatasetParentLink,
     DatasetRawDoc,
     DatasetVersion,
+    DatasetVersionParent,
+    ParentInfoSource,
+    ParentResolution,
+    ParentVersionChoice,
     RawDocVersionLink,
 )
 from esmporium.query import (
@@ -27,6 +33,8 @@ from esmporium.query import (
 )
 from esmporium.requirements import (
     CatalogueEntry,
+    ParentLookup,
+    ParentStatus,
     UnrecordedFacetError,
     VersionFilter,
     asked_facets,
@@ -39,7 +47,7 @@ from esmporium.search.result_normalisation import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Collection, Mapping
+    from collections.abc import Collection, Mapping, Sequence
 
     from sqlalchemy import ColumnElement, Engine
 
@@ -134,17 +142,9 @@ def version_filter(versions: VersionFilter) -> ColumnElement[bool] | None:
     UnknownVersionFilterError
         `versions` is not one of the settings we know
     """
-    if versions == VersionFilter.ANY:
+    version_is_ok = version_clause(versions)
+    if version_is_ok is None:
         return None
-
-    if versions == VersionFilter.NOT_RETRACTED:
-        version_is_ok: ColumnElement[bool] = col(DatasetVersion.retracted).is_(False)
-    elif versions == VersionFilter.LATEST_NOT_RETRACTED:
-        version_is_ok = col(DatasetVersion.retracted).is_(False) & col(
-            DatasetVersion.is_latest
-        ).is_(True)
-    else:
-        raise UnknownVersionFilterError(versions)
 
     return (
         select(DatasetVersion.id)
@@ -154,6 +154,41 @@ def version_filter(versions: VersionFilter) -> ColumnElement[bool] | None:
         )
         .exists()
     )
+
+
+def version_clause(versions: VersionFilter) -> ColumnElement[bool] | None:
+    """
+    Get the `where` clause which keeps only the versions a version filter allows
+
+    Parameters
+    ----------
+    versions
+        Which versions to keep. See
+        [VersionFilter][esmporium.requirements.VersionFilter].
+
+    Returns
+    -------
+    :
+        The clause, or `None` for
+        [VersionFilter.ANY][esmporium.requirements.VersionFilter], which filters nothing
+
+    Raises
+    ------
+    UnknownVersionFilterError
+        `versions` is not one of the settings we know
+    """
+    if versions == VersionFilter.ANY:
+        return None
+
+    if versions == VersionFilter.NOT_RETRACTED:
+        return col(DatasetVersion.retracted).is_(False)
+
+    if versions == VersionFilter.LATEST_NOT_RETRACTED:
+        return col(DatasetVersion.retracted).is_(False) & col(
+            DatasetVersion.is_latest
+        ).is_(True)
+
+    raise UnknownVersionFilterError(versions)
 
 
 def _spec_for(
@@ -443,13 +478,9 @@ def _documents_by_dataset(
         .where(col(DatasetVersion.dataset_id).in_(dataset_ids))
     )
 
-    if versions == VersionFilter.NOT_RETRACTED:
-        statement = statement.where(col(DatasetVersion.retracted).is_(False))
-    elif versions == VersionFilter.LATEST_NOT_RETRACTED:
-        statement = statement.where(
-            col(DatasetVersion.retracted).is_(False),
-            col(DatasetVersion.is_latest).is_(True),
-        )
+    version_is_ok = version_clause(versions)
+    if version_is_ok is not None:
+        statement = statement.where(version_is_ok)
 
     # Version descending, so the newest qualifying version answers; then document ID
     # ascending, so several documents for one version (one per data node, typically)
@@ -536,6 +567,101 @@ def to_catalogue_entry(
         project_facets={} if project_facets is None else dict(project_facets),
         other_terms={} if other_terms is None else dict(other_terms),
         facets_loaded=facets_loaded,
+    )
+
+
+def _entries_from_rows(  # noqa: PLR0913 - one argument per thing reading a row needs
+    session: Session,
+    rows: Sequence[Dataset],
+    *,
+    versions: VersionFilter,
+    needs_facets: Collection[str] | None,
+    matched_on_entry: bool,
+    normalisers: Mapping[str, NormaliseFunc],
+    verbatim_normalisers: Mapping[str, NormaliseFunc],
+    project_query_map: Mapping[str, type[QueryProtocol]],
+) -> tuple[CatalogueEntry, ...]:
+    """
+    Turn stored rows into entries, reading their documents only if anybody will ask
+
+    Shared by every lookup which hands rows back, so that a dataset describes itself
+    the same way however it was reached -- found by a query, or arrived at by following
+    a parent link.
+
+    Parameters
+    ----------
+    session
+        Session to read with
+
+    rows
+        The datasets to describe
+
+    versions
+        Which versions count, matching the filter the rows were selected with
+
+    needs_facets
+        The facets the caller will ask the entries about, or `None` for all of them
+
+    matched_on_entry
+        Whether the caller still has matching to do against the entries
+
+        Forces the documents to be read even when `needs_facets` would not, because a
+        facet which is about to be matched on has to be there to match.
+
+    normalisers
+        How to flatten a stored raw document of each format
+
+    verbatim_normalisers
+        The same, keeping each document's own facet names
+
+    project_query_map
+        Mapping from projects to the query class which names their facets
+
+    Returns
+    -------
+    :
+        One entry per row, in the order given
+
+    Raises
+    ------
+    UnknownRawDocFormatTagError
+        A stored raw document's format tag has no flattener in `normalisers`
+    """
+    # `None` means the caller did not say what they would read, so everything is read
+    # and the entry answers for everything it could know.
+    facets_loaded = (
+        None
+        if needs_facets is None
+        else frozenset(needs_facets) | frozenset(DATASET_FACET_COLUMNS)
+    )
+
+    documents_wanted = (
+        facets_loaded is None
+        or matched_on_entry
+        or bool(facets_loaded - frozenset(DATASET_FACET_COLUMNS))
+    )
+
+    if not documents_wanted:
+        return tuple(
+            to_catalogue_entry(row, facets_loaded=facets_loaded) for row in rows
+        )
+
+    documents = _documents_by_dataset(
+        session, [row.id for row in rows if row.id is not None], versions
+    )
+
+    return tuple(
+        to_catalogue_entry(
+            row,
+            *_facets_from_documents(
+                row.project,
+                documents.get(row.id, []) if row.id else [],
+                normalisers,
+                verbatim_normalisers,
+                project_query_map,
+            ),
+        )
+        for row in rows
     )
 
 
@@ -629,41 +755,18 @@ def find_datasets(  # noqa: PLR0913 - one argument per thing a find has to be to
     # the ordering costs nothing (it is the primary key).
     rows = list(session.exec(statement.order_by(col(Dataset.id))))
 
-    # `None` means the caller did not say what they would read, so everything is read
-    # and the entry answers for everything it could know.
-    facets_loaded = (
-        None
-        if needs_facets is None
-        else frozenset(needs_facets) | frozenset(DATASET_FACET_COLUMNS)
-    )
-
-    documents_wanted = (
-        facets_loaded is None
-        or matched_on_entry
-        or bool(facets_loaded - frozenset(DATASET_FACET_COLUMNS))
-    )
-
-    if documents_wanted:
-        documents = _documents_by_dataset(
-            session, [row.id for row in rows if row.id is not None], versions
+    entries = list(
+        _entries_from_rows(
+            session,
+            rows,
+            versions=versions,
+            needs_facets=needs_facets,
+            matched_on_entry=matched_on_entry,
+            normalisers=normalisers,
+            verbatim_normalisers=verbatim_normalisers,
+            project_query_map=project_query_map,
         )
-
-        entries = [
-            to_catalogue_entry(
-                row,
-                *_facets_from_documents(
-                    row.project,
-                    documents.get(row.id, []) if row.id else [],
-                    normalisers,
-                    verbatim_normalisers,
-                    project_query_map,
-                ),
-            )
-            for row in rows
-        ]
-
-    else:
-        entries = [to_catalogue_entry(row, facets_loaded=facets_loaded) for row in rows]
+    )
 
     if not matched_on_entry:
         return tuple(entries)
@@ -674,6 +777,288 @@ def find_datasets(  # noqa: PLR0913 - one argument per thing a find has to be to
     # for reads as `None` and so does not match, which is what makes the answer the
     # same whether or not any row got far enough to be asked.
     return tuple(entry for entry in entries if matches_facets(asked, entry))
+
+
+PARENT_STATUS_BY_RESOLUTION: Mapping[ParentResolution, ParentStatus] = {
+    ParentResolution.RESOLVED: ParentStatus.FOUND,
+    ParentResolution.NO_PARENT_DECLARED: ParentStatus.ROOT,
+    ParentResolution.UNRESOLVED: ParentStatus.UNRESOLVED,
+    ParentResolution.NOT_ON_ESGF: ParentStatus.PARENT_NOT_FOUND,
+    ParentResolution.VARIABLE_NOT_PUBLISHED: ParentStatus.VARIABLE_MISSING,
+}
+"""
+How a stored parent row's state reads to a requirement
+
+Two vocabularies for one idea, kept apart because
+[ParentResolution][esmporium.db.schema.ParentResolution] is a *stored* enum -- its
+members are strings in the database, and a requirement must not be coupled to them --
+and because the requirements side needs two answers this one cannot give. Neither
+[NOT_LOOKED_FOR][esmporium.requirements.ParentStatus.NOT_LOOKED_FOR] nor
+[NO_USABLE_VERSION][esmporium.requirements.ParentStatus.NO_USABLE_VERSION] is in here:
+the first is the absence of a row and so has nothing to map from, and the second is
+about the lookup's version filter rather than about what was recorded.
+"""
+
+_SOURCE_PHRASES: Mapping[ParentInfoSource, str] = {
+    ParentInfoSource.SEARCH_METADATA: "parent published in the search index",
+    ParentInfoSource.FILE_HEADER: "parent read from a file header",
+    ParentInfoSource.FIX: "parent supplied by a fix of ours",
+}
+"""
+How to describe where a parent fact came from, for a person reading an explanation
+"""
+
+_VERSION_CHOICE_PHRASES: Mapping[ParentVersionChoice, str] = {
+    ParentVersionChoice.ONLY_VERSION: "",
+    ParentVersionChoice.CHILD_VERSION: (
+        "parent release matched the child's version string"
+    ),
+    ParentVersionChoice.DEFAULTED_TO_NEWEST: (
+        "parent release defaulted to the newest we hold"
+    ),
+    ParentVersionChoice.CHOSEN: "parent release picked by a version chooser",
+}
+"""
+How to describe which release of the parent was used, for a person reading
+
+[ONLY_VERSION][esmporium.db.schema.ParentVersionChoice.ONLY_VERSION] maps to nothing to
+say, deliberately: we hold one release, so nothing was decided and a phrase would imply
+otherwise. The other three were all decisions of some kind, and which kind is worth
+seeing -- a chain which rests on
+[DEFAULTED_TO_NEWEST][esmporium.db.schema.ParentVersionChoice.DEFAULTED_TO_NEWEST]
+rests on a rule of ours.
+"""
+
+
+class ParentLinkMissingError(RuntimeError):
+    """
+    A parent row says it was resolved and no link records what to
+    """
+
+    def __init__(self, parent_info_id: int | None, dataset_version_id: int) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        parent_info_id
+            ID of the parent row which says it resolved
+
+        dataset_version_id
+            ID of the dataset version it belongs to
+        """
+        self.parent_info_id = parent_info_id
+        self.dataset_version_id = dataset_version_id
+        super().__init__(
+            f"Parent row {parent_info_id} (for dataset version {dataset_version_id}) "
+            "is marked resolved, but no link records which dataset it resolved to. "
+            "These are written together and cannot disagree, so this is a bug in "
+            "esmporium rather than something to work around. Please raise an issue at "
+            "https://github.com/esmporium/esmporium/issues quoting those two IDs."
+        )
+
+
+def describing_version(
+    session: Session, dataset_id: int, versions: VersionFilter
+) -> DatasetVersion | None:
+    """
+    Get the version of a dataset which speaks for it
+
+    Parameters
+    ----------
+    session
+        Session to read with
+
+    dataset_id
+        The dataset
+
+    versions
+        Which versions count. See
+        [VersionFilter][esmporium.requirements.VersionFilter].
+
+    Returns
+    -------
+    :
+        The version, or `None` if the dataset has none which passes the filter
+
+    Raises
+    ------
+    UnknownVersionFilterError
+        `versions` is not one of the settings we know
+    """
+    statement = select(DatasetVersion).where(DatasetVersion.dataset_id == dataset_id)
+
+    version_is_ok = version_clause(versions)
+    if version_is_ok is not None:
+        statement = statement.where(version_is_ok)
+
+    # Version descending for the same reason, and compared the same way (as strings),
+    # as in `_documents_by_dataset`; then ID ascending so that two releases which
+    # somehow carry one version string resolve the same way every time.
+    return session.exec(
+        statement.order_by(
+            col(DatasetVersion.version).desc(), col(DatasetVersion.id).asc()
+        )
+    ).first()
+
+
+def _parent_provenance(
+    info: DatasetVersionParent, link: DatasetParentLink | None
+) -> str:
+    """
+    Describe how a parent came to be this dataset's parent
+
+    Parameters
+    ----------
+    info
+        The parent row which was believed
+
+    link
+        The link it resolved to, if it resolved
+
+    Returns
+    -------
+    :
+        A phrase for a person to read, or an empty string if there is nothing to add
+    """
+    said = [_SOURCE_PHRASES.get(info.source, f"parent from {info.source!r}")]
+    if link is not None:
+        said.append(
+            _VERSION_CHOICE_PHRASES.get(
+                link.version_choice, f"release {link.version_choice!r}"
+            )
+        )
+
+    return "; ".join(phrase for phrase in said if phrase)
+
+
+def parent_of_dataset(  # noqa: PLR0913 - one argument per thing reading a row needs
+    session: Session,
+    entry: CatalogueEntry,
+    *,
+    versions: VersionFilter = VersionFilter.NOT_RETRACTED,
+    needs_facets: Collection[str] | None = None,
+    normalisers: Mapping[str, NormaliseFunc] = DEFAULT_NORMALISERS,
+    verbatim_normalisers: Mapping[str, NormaliseFunc] = VERBATIM_NORMALISERS,
+    project_query_map: Mapping[str, type[QueryProtocol]] = PROJECT_QUERY_MAP_DEFAULT,
+) -> ParentLookup:
+    """
+    Get the dataset a stored dataset branched from
+
+    The session-level primitive behind
+    [DatabaseCatalogue.parent_of][(m).DatabaseCatalogue.parent_of], for a caller who
+    wants one transaction across a whole solve.
+
+    Parameters
+    ----------
+    session
+        Session to read with
+
+    entry
+        Dataset whose parent is wanted. Only its `id` is read.
+
+    versions
+        Which versions count, on both ends of the link. See
+        [VersionFilter][esmporium.requirements.VersionFilter].
+
+    needs_facets
+        The facets the caller will ask the parent about
+
+    normalisers
+        How to flatten a stored raw document of each format
+
+    verbatim_normalisers
+        The same, keeping each document's own facet names
+
+    project_query_map
+        Mapping from projects to the query class which names their facets
+
+    Returns
+    -------
+    :
+        The parent, or which situation was met. See
+        [ParentStatus][esmporium.requirements.ParentStatus].
+
+    Raises
+    ------
+    ParentLinkMissingError
+        A parent row is marked resolved and no link records what to
+
+    UnknownVersionFilterError
+        `versions` is not one of the settings we know
+    """
+    child_version = describing_version(session, entry.id, versions)
+    if child_version is None or child_version.id is None:
+        # No release of the child qualifies, so there is no release whose parent to
+        # ask about. Reported as the question not having been asked rather than as an
+        # absence in the data, which is what it is: a different `versions` may well
+        # find one.
+        return ParentLookup(ParentStatus.NOT_LOOKED_FOR)
+
+    rows = list(
+        session.exec(
+            select(DatasetVersionParent).where(
+                col(DatasetVersionParent.dataset_version_id) == child_version.id
+            )
+        )
+    )
+    preferred = preferred_parent_info(rows, SOURCE_PRECEDENCE)
+    if preferred is None:
+        return ParentLookup(ParentStatus.NOT_LOOKED_FOR)
+
+    # `UNRESOLVED` for a resolution this version does not know about -- a database
+    # written by a later one, say. Of the six answers it is the only one which invites
+    # looking again rather than closing the question, which is the right thing to say
+    # about a state we cannot read.
+    status = PARENT_STATUS_BY_RESOLUTION.get(
+        preferred.resolution, ParentStatus.UNRESOLVED
+    )
+    if status is not ParentStatus.FOUND:
+        return ParentLookup(status, provenance=_parent_provenance(preferred, None))
+
+    # Found by the preferred row's own ID rather than by `child_dataset_version_id`,
+    # which is **not** unique: a fix arriving after a header row was already linked
+    # leaves the older link in place beside the new one. Selecting on the child version
+    # would pick between them arbitrarily, which would quietly undo the precedence just
+    # applied.
+    link = session.exec(
+        select(DatasetParentLink).where(
+            DatasetParentLink.parent_info_id == preferred.id
+        )
+    ).first()
+    if link is None:
+        raise ParentLinkMissingError(preferred.id, child_version.id)
+
+    # The same version filter the child was asked under, so one solve is answered from
+    # one set of versions at both ends of every link.
+    statement = select(Dataset).where(col(Dataset.id) == link.parent_dataset_id)
+    keep_available = version_filter(versions)
+    if keep_available is not None:
+        statement = statement.where(keep_available)
+
+    parent_rows = list(session.exec(statement))
+    if not parent_rows:
+        return ParentLookup(
+            ParentStatus.NO_USABLE_VERSION,
+            provenance=_parent_provenance(preferred, link),
+        )
+
+    (parent,) = _entries_from_rows(
+        session,
+        parent_rows,
+        versions=versions,
+        needs_facets=needs_facets,
+        matched_on_entry=False,
+        normalisers=normalisers,
+        verbatim_normalisers=verbatim_normalisers,
+        project_query_map=project_query_map,
+    )
+
+    return ParentLookup(
+        ParentStatus.FOUND,
+        parent=parent,
+        provenance=_parent_provenance(preferred, link),
+    )
 
 
 @dataclass(frozen=True)
@@ -790,6 +1175,52 @@ class DatabaseCatalogue:
             return find_datasets(
                 session,
                 query,
+                versions=versions,
+                needs_facets=needs_facets,
+                normalisers=self.normalisers,
+                verbatim_normalisers=self.verbatim_normalisers,
+                project_query_map=self.project_query_map,
+            )
+
+    def parent_of(
+        self,
+        entry: CatalogueEntry,
+        *,
+        versions: VersionFilter = VersionFilter.NOT_RETRACTED,
+        needs_facets: Collection[str] | None = None,
+    ) -> ParentLookup:
+        """
+        Get the dataset a dataset branched from, out of the stored parent links
+
+        Parameters
+        ----------
+        entry
+            Dataset whose parent is wanted
+
+        versions
+            Which of a dataset's versions count, on both ends of the link. See
+            [VersionFilter][esmporium.requirements.VersionFilter].
+
+        needs_facets
+            The facets the caller will ask the parent about
+
+        Returns
+        -------
+        :
+            The parent, or which situation was met
+
+        Raises
+        ------
+        ParentLinkMissingError
+            A parent row is marked resolved and no link records what to
+
+        UnknownVersionFilterError
+            `versions` is not one of the version filters we know
+        """
+        with Session(self.engine) as session:
+            return parent_of_dataset(
+                session,
+                entry,
                 versions=versions,
                 needs_facets=needs_facets,
                 normalisers=self.normalisers,

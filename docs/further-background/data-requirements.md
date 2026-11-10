@@ -258,7 +258,7 @@ flowchart TD
 
 `group_by` applies to the datasets a leaf selects. Everything else hangs off one of those:
 
-- **`Ancestors(until=..., role=...)`** walks parent links, which come from file headers (esmporium PR6). `until` is a query (noting also that until only relates to the experiments facet), so `("piControl", "esm-piControl")` works. `role` is **required**, names the dataset it stops at, and is what constraints refer to: e.g. write `role="piControl"` when walking back to piControl, `role="historical"` when that is where you stop. The experiment (facet) value should be written correctly. No hardcoding of where to stop, that is the user's role.
+- **`Ancestors(until=..., role=..., max_hops=16)`** walks the parent links a parent walk recorded (`esmporium.db.find_parents`, from file headers or the search index depending on the project). `until` is a query, written in any style, and **every** facet it sets has to match — so in practice it names the experiment and nothing else, which is what "walk back to the control" means: `Query(experiment=("piControl", "esm-piControl"))`. Naming more is allowed and occasionally right, but note that a query written in a project's own names sets `project` for you, which then has to match too. `until` is tested against each *parent*, never against the dataset the lineage hangs off, so a chain can pass through a dataset of the kind it is looking for, stopping at the first parent which matches. It cannot *start* at one: `find_parents` stops at a dataset matching `until` and records no parent for it, so a lineage which began there would have nothing to walk, however many times the walk was run. A leaf which can only select such datasets is refused when the requirement is built; a leaf which selects one among others reports it unsatisfied when solved. To trace a dataset back to another of its own kind, say in `until` how the two differ, e.g. by naming the ancestor's `variant_label`. `role` is **required**, names the dataset it stops at, and is what constraints refer to: e.g. write `role="piControl"` when walking back to piControl, `role="historical"` when that is where you stop. The experiment (facet) value should be written correctly. No hardcoding of where to stop, that is the user's role. `max_hops` is a guard rather than the stopping rule, set well above any real lineage, and is the same guard under the same name as `find_parents`'s.
 - **`Sibling(query, match_on=..., role=...)`** matches facets instead. piClim-histall and piClim-control are both children of piControl, so ERF needs this.
 - **`Aux(query, required=, match=, via=, also_for_lineage=)`** is auxiliary data, **named explicitly** by the user: sftlf for land variables, sftof for ocean ones, and areacella, areacello or areacellr. There is no built-in mapping.
   - `via="match"` (the default) compares facets level by level. The default is a **single strict level** (model, grid, experiment, variant), so fallbacks are opt-in: see `FX_FALLBACK` in the use cases.
@@ -299,11 +299,16 @@ Shipped checks:
 - **Output:** satisfied, unsatisfied, ambiguous and undetermined groups, each with an explanation tree (`SolveResult.explain()`). Per node, `NodeResultOk` and `NodeResultNotOk` carry the roles, lineages, choices and notes that are merged upwards.
 
 `Catalogue` is a protocol with `find`, `parent_of`, `linked` and `metadata`.
-`find` has two implementations: `InMemoryCatalogue`, written out by hand, and
-`esmporium.db.DatabaseCatalogue`, which answers from the `Dataset` rows a search
-saved. The two have to agree, and a test holds them to it; the in-memory one is how
-each new piece of this design gets written and is expected to stay. `parent_of`,
-`linked` and `metadata` are still ahead of us, on both.
+`find` and `parent_of` each have two implementations: `InMemoryCatalogue`, written out
+by hand, and `esmporium.db.DatabaseCatalogue`, which answers from the `Dataset` rows a
+search saved and the parent links a parent walk recorded. The two have to agree, and a
+test holds them to it; the in-memory one is how each new piece of this design gets
+written and is expected to stay. `linked` and `metadata` are still ahead of us, on both.
+
+`parent_of` answers with a reason as well as a parent, because "nobody has read a parent
+for this dataset yet" and "this dataset declares no parent" are different facts and only
+the second is settled. Reporting the first as an absence would send a reader looking for
+data which is very likely already published.
 
 ## Flow and storage
 

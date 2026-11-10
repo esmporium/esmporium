@@ -25,12 +25,10 @@ from esmporium.requirements import Requirement, effective_query, walk_leaves
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-# TODO for future: a search plan is currently the leaf queries and nothing else,
-# because a leaf query is all a requirement can express today. Three things join it
-# as the tree grows, and each is another field on `SearchPlan` rather than a change
-# to the ones here: sibling queries (R10, from `Sibling`), auxiliary queries (R11,
-# from `Aux`) and `ancestry_until` (R5, which says how far back up a lineage to
-# follow parents). That is why this returns a class rather than a tuple of queries.
+# TODO for future: two more things join the leaf queries and `ancestry_until` as the
+# tree grows, and each is another field on `SearchPlan` rather than a change to the ones
+# here: sibling queries (R10, from `Sibling`) and auxiliary queries (R11, from `Aux`).
+# That is why this returns a class rather than a tuple of queries.
 
 
 @dataclass(frozen=True)
@@ -75,6 +73,14 @@ class SearchPlan:
     (see [EmptyLeafQueryError][esmporium.requirements.EmptyLeafQueryError]).
     """
 
+    ancestry_until: tuple[QueryCanonical, ...] = ()
+    """
+    Where each of the tree's lineages stops walking back, deduplicated, in tree order
+
+    One entry per distinct [Ancestors.until][esmporium.requirements.Ancestors.until]
+    below the tree, and empty for a requirement with no lineage in it.
+    """
+
 
 def _dedupe_key(query: QueryCanonical) -> str:
     """
@@ -115,7 +121,8 @@ def to_search_plan(requirement: Requirement) -> SearchPlan:
     Returns
     -------
     :
-        The queries to search for, in tree order
+        The queries to search for, in tree order, and how far back any lineage below
+        the tree has to be followed
 
     Raises
     ------
@@ -153,6 +160,26 @@ def to_search_plan(requirement: Requirement) -> SearchPlan:
     >>> plan.leaves[0].query.experiment
     ('abrupt-4xCO2',)
 
+    A lineage adds no searches -- its datasets are reached by following links, not by
+    matching facets -- but the plan carries where it stops, because that is what has to
+    be told to whatever follows those links:
+
+    >>> from esmporium.requirements import Ancestors
+    >>> to_control = Ancestors(
+    ...     until=Query(experiment=("piControl", "esm-piControl")), role="control"
+    ... )
+    >>> traced = requirement(
+    ...     name="ecs",
+    ...     tree=leaf(Query(variable="tas"), "tas").with_lineage(to_control),
+    ...     group_by=("model",),
+    ...     where=Query(project="CMIP7"),
+    ... )
+    >>> plan = to_search_plan(traced)
+    >>> [leaf_search.roles for leaf_search in plan.leaves]
+    [('tas',)]
+    >>> [query.experiment for query in plan.ancestry_until]
+    [('piControl', 'esm-piControl')]
+
     Two roles which want the same dataset are searched for once:
 
     >>> scaling = requirement(
@@ -171,6 +198,9 @@ def to_search_plan(requirement: Requirement) -> SearchPlan:
     # first entry rather than adding another. `dict` keeps insertion order, which is
     # tree order, which is what the plan promises.
     found: dict[str, tuple[QueryCanonical, list[str]]] = {}
+    # Same keying, and a `dict` for the same reason: two leaves traced back to the same
+    # experiment say so once.
+    until: dict[str, QueryCanonical] = {}
 
     for role_prefix, leaf_node in walk_leaves(requirement.tree):
         path = f"{role_prefix}{leaf_node.role}"
@@ -182,11 +212,17 @@ def to_search_plan(requirement: Requirement) -> SearchPlan:
         else:
             found[key] = (query, [path])
 
+        if leaf_node.lineage is not None:
+            until.setdefault(
+                _dedupe_key(leaf_node.lineage.until), leaf_node.lineage.until
+            )
+
     return SearchPlan(
         leaves=tuple(
             LeafSearch(query=query, roles=tuple(roles))
             for query, roles in found.values()
-        )
+        ),
+        ancestry_until=tuple(until.values()),
     )
 
 

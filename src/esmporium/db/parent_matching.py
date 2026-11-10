@@ -12,6 +12,18 @@ and this module makes both:
    [match_on_facets][(m).match_on_facets].
 2. **which version of that dataset** to use, which nothing published decides and
    nothing could. See [choose_parent_version][(m).choose_parent_version].
+
+**Why nothing could.** A dataset's version is assigned when the dataset is published,
+which is after its files were written and which can change afterwards, so a version
+cannot be recorded in the files themselves. A child therefore has no way to name the
+release of its parent it branched from -- what a header can say, and does say, is which
+*simulation* that was. `tracking_id` does not close the gap either: an unchanged file
+keeps its own across releases, so one of them names a set of releases rather than one.
+This is a property of how ESGF publishes rather than an omission anybody can correct,
+and the same conclusion -- reached about reconstructing a file's path rather than about
+parents -- is at https://github.com/WCRP-CMIP/CMIP7-CVs/issues/172. So step 2 is a rule
+of ours, and [ParentVersionChoice][esmporium.db.schema.ParentVersionChoice] records
+which one each link rests on.
 """
 
 from __future__ import annotations
@@ -422,9 +434,9 @@ class VersionMatchOutcome:
     The versions that lost, when `parent_version` was reached by a real decision
 
     Empty unless `choice` is
-    [DEFAULTED][esmporium.db.schema.ParentVersionChoice.DEFAULTED]. Carried so that what
-    is reported to a caller names what it did not pick, which is the part they would
-    need in order to disagree.
+    [DEFAULTED_TO_NEWEST][esmporium.db.schema.ParentVersionChoice.DEFAULTED_TO_NEWEST].
+    Carried so that what is reported to a caller names what it did not pick, which
+    is the part they would need in order to disagree.
     """
 
     reason: str | None = None
@@ -496,7 +508,7 @@ def choose_parent_version(
        a contemporaneous pair is internally consistent where a 2019 child against a 2021
        parent may not be.
     3. **several, none of them the child's** -- the highest `version` string, labelled
-       [DEFAULTED][esmporium.db.schema.ParentVersionChoice.DEFAULTED].
+       [DEFAULTED_TO_NEWEST][esmporium.db.schema.ParentVersionChoice.DEFAULTED_TO_NEWEST].
 
     Retracted releases are dropped before 2 and 3, so a retracted match never beats a
     live newer release. If *every* release is retracted the filter is skipped rather
@@ -549,7 +561,7 @@ def choose_parent_version(
     choice = ParentVersionChoice.CHILD_VERSION
     if chosen is None:
         chosen = max(live, key=lambda one: one.version)
-        choice = ParentVersionChoice.DEFAULTED
+        choice = ParentVersionChoice.DEFAULTED_TO_NEWEST
 
     return VersionMatchOutcome(
         parent_version=chosen,

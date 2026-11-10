@@ -277,7 +277,7 @@ def test_several_versions_with_no_match_take_the_newest_and_say_so():
     outcome = choose_parent_version(a_version("20261008"), candidates)
 
     assert outcome.parent_version is candidates[1]
-    assert outcome.choice == ParentVersionChoice.DEFAULTED
+    assert outcome.choice == ParentVersionChoice.DEFAULTED_TO_NEWEST
     assert {one.version for one in outcome.passed_over} == {"20110615", "20200630"}
     assert not outcome.is_ambiguous
 
@@ -306,7 +306,7 @@ def test_a_retracted_match_does_not_beat_a_live_newer_release():
     outcome = choose_parent_version(child, candidates)
 
     assert outcome.parent_version is candidates[1]
-    assert outcome.choice == ParentVersionChoice.DEFAULTED
+    assert outcome.choice == ParentVersionChoice.DEFAULTED_TO_NEWEST
 
 
 def test_every_release_being_newer_than_the_child_is_not_a_problem():
@@ -328,7 +328,7 @@ def test_every_release_being_newer_than_the_child_is_not_a_problem():
     outcome = choose_parent_version(child, candidates)
 
     assert outcome.parent_version is candidates[2]
-    assert outcome.choice == ParentVersionChoice.DEFAULTED
+    assert outcome.choice == ParentVersionChoice.DEFAULTED_TO_NEWEST
     assert not outcome.is_ambiguous
 
 
@@ -339,7 +339,7 @@ def test_a_retracted_version_loses_to_a_live_one():
     outcome = choose_parent_version(a_version("20261008"), candidates)
 
     assert outcome.parent_version is candidates[1]
-    assert outcome.choice == ParentVersionChoice.DEFAULTED
+    assert outcome.choice == ParentVersionChoice.DEFAULTED_TO_NEWEST
 
 
 def test_an_all_retracted_parent_is_still_the_parent():
@@ -354,7 +354,7 @@ def test_an_all_retracted_parent_is_still_the_parent():
     outcome = choose_parent_version(a_version("20261008"), candidates)
 
     assert outcome.parent_version is candidates[1]
-    assert outcome.choice == ParentVersionChoice.DEFAULTED
+    assert outcome.choice == ParentVersionChoice.DEFAULTED_TO_NEWEST
 
 
 def test_no_versions_at_all_is_the_one_case_with_no_answer():

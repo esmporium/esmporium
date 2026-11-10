@@ -216,7 +216,7 @@ def test_a_cmip6_chain_is_walked_from_a_header(migrated_engine):
             chosen = session.get(DatasetVersion, decision.chosen_dataset_version_id)
             assert chosen is not None
 
-            if decision.choice == ParentVersionChoice.DEFAULTED:
+            if decision.choice == ParentVersionChoice.DEFAULTED_TO_NEWEST:
                 assert chosen.version == max(
                     one.version
                     for one in versions
