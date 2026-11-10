@@ -119,6 +119,45 @@ class UnloadedFacetError(ValueError):
         )
 
 
+# A note for developers: this is a `LookupError` rather than a `ValueError`, unlike the
+# three facet errors above, and the difference is who made the mistake. Those three are
+# about a *name*: a facet which no query declares, which no dataset records, or which
+# this entry was told not to read. Asking is a reasonable thing to have done and the
+# answer is no, so the caller can fix the question.
+#
+# This one is about work which has not been done. Nothing is wrong with the question --
+# "how many years does this dataset span?" is exactly what a constraint should ask --
+# and nothing the caller can rewrite will change the answer. What changes it is someone
+# running the thing which records the fact. So it is a lookup which came up empty, and
+# the solver reports it as `undetermined` rather than as a failure.
+class MetadataUnavailableError(LookupError):
+    """
+    Nothing has recorded a fact about a dataset which was asked for
+    """
+
+    def __init__(self, entry_id: int, key: str, how_to_get_it: str = "") -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        entry_id
+            ID of the dataset which was asked about
+
+        key
+            The fact which was asked for
+
+        how_to_get_it
+            What would record it, if the catalogue knows, e.g. naming the function to
+            run. Left empty by a catalogue which cannot say, rather than guessed at.
+        """
+        self.entry_id = entry_id
+        self.key = key
+        self.how_to_get_it = how_to_get_it
+        advice = f" {how_to_get_it}" if how_to_get_it else ""
+        super().__init__(f"No {key!r} recorded for dataset {entry_id}.{advice}")
+
+
 class DuplicateEntryIDError(ValueError):
     """
     Two or more of a catalogue's entries share an ID
@@ -1045,6 +1084,53 @@ class Catalogue(Protocol):
         """
         ...
 
+    def metadata(self, entry: CatalogueEntry, key: str) -> object:
+        """
+        Get a fact about a dataset which is not one of its facets
+
+        The seam constraints read through. A facet says which dataset this is; this
+        says what is in it -- the years it spans, the point in its parent it branched
+        at, the calendar its time axis uses.
+
+        Keyed by a string rather than being one method per fact, so that a constraint
+        can ask for something we never modelled: the keys we use are named where the
+        constraint which reads them is defined, and a caller with their own catalogue
+        and their own check is free to invent their own.
+
+        This reports what has been **recorded**. It does not search, download a file or
+        read a header, and that is deliberate rather than a limitation: those are
+        explicit calls which record what they find, and a lookup which quietly did one
+        of them would turn solving a requirement into an unbounded amount of network
+        work. A fact nobody has recorded raises, and the solver reports the group
+        `undetermined` -- the same shape as
+        [ParentStatus.NOT_LOOKED_FOR][(m).ParentStatus.NOT_LOOKED_FOR], which says the
+        question has not been asked rather than that the answer is no.
+
+        Parameters
+        ----------
+        entry
+            Dataset to get the fact about
+
+        key
+            The fact wanted, e.g. `"time_range"`
+
+        Returns
+        -------
+        :
+            The fact
+
+            Typed `object`, which is the price of the keys being open: a caller knows
+            what shape it asked for and has to check that it got it. A constraint which
+            reads a fact of ours should use the helper defined beside that key rather
+            than checking by hand.
+
+        Raises
+        ------
+        MetadataUnavailableError
+            Nothing has recorded `key` for `entry`
+        """
+        ...
+
 
 def _narrowed(entry: CatalogueEntry, needs_facets: Collection[str]) -> CatalogueEntry:
     """
@@ -1139,6 +1225,24 @@ class InMemoryCatalogue:
     checked when it is built.
     """
 
+    metadata_by_id: Mapping[int, Mapping[str, object]] = field(default_factory=dict)
+    """
+    Entry ID -> the facts recorded about that dataset -> their values
+
+    Whatever a constraint under test needs, written down. The keys are open on purpose,
+    so a test can record a fact for which nothing stores a value yet, and a check which
+    reads one we never modelled can be tested without a column existing for it.
+
+    A dataset absent from here, or present without the key being asked for, has nothing
+    recorded for that key, and asking raises
+    [MetadataUnavailableError][(m).MetadataUnavailableError]. There is no way to write
+    down "recorded as nothing": a fact which is genuinely absent from the data is
+    indistinguishable here from one nobody has read, and a catalogue of entries somebody
+    typed out has no source for the difference.
+
+    Every ID here has to be one of `entries`, which is checked when this is built.
+    """
+
     def __post_init__(self) -> None:
         """
         Check that no two entries share an ID and that every relation resolves
@@ -1149,7 +1253,7 @@ class InMemoryCatalogue:
             Two or more entries have the same `id`
 
         UnknownReferenceError
-            `parents` names a dataset this catalogue does not hold
+            `parents` or `metadata_by_id` names a dataset this catalogue does not hold
         """
         # `Counter` rather than counting each ID against the whole list, which rescans
         # it once per entry. This class stands in for a real catalogue, so it should
@@ -1171,6 +1275,13 @@ class InMemoryCatalogue:
         unknown = referenced - known
         if unknown:
             raise UnknownReferenceError("parents", unknown)
+
+        # Checked separately, and reported under its own field name, because the two
+        # are unrelated mistakes: one is a relation pointing nowhere, the other is a
+        # fact recorded about a dataset which is not here to have facts about.
+        unknown_subjects = set(self.metadata_by_id) - known
+        if unknown_subjects:
+            raise UnknownReferenceError("metadata_by_id", unknown_subjects)
 
     def find(
         self,
@@ -1269,3 +1380,34 @@ class InMemoryCatalogue:
             parent = _narrowed(parent, needs_facets)
 
         return ParentLookup(ParentStatus.FOUND, parent)
+
+    def metadata(self, entry: CatalogueEntry, key: str) -> object:
+        """
+        Get a fact about a dataset, as `metadata_by_id` records it
+
+        Parameters
+        ----------
+        entry
+            Dataset to get the fact about. Only its `id` is read, so an entry narrowed
+            to a few facets can still be asked.
+
+        key
+            The fact wanted
+
+        Returns
+        -------
+        :
+            The fact, exactly as it was written down
+
+        Raises
+        ------
+        MetadataUnavailableError
+            `metadata_by_id` records no `key` for this dataset
+
+            `how_to_get_it` is empty: what would record a fact is a property of where
+            the fact comes from, and these were typed out by hand.
+        """
+        try:
+            return self.metadata_by_id[entry.id][key]
+        except KeyError:
+            raise MetadataUnavailableError(entry.id, key) from None

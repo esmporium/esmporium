@@ -33,6 +33,7 @@ from esmporium.query import (
 )
 from esmporium.requirements import (
     CatalogueEntry,
+    MetadataUnavailableError,
     ParentLookup,
     ParentStatus,
     UnrecordedFacetError,
@@ -1227,3 +1228,45 @@ class DatabaseCatalogue:
                 verbatim_normalisers=self.verbatim_normalisers,
                 project_query_map=self.project_query_map,
             )
+
+    def metadata(self, entry: CatalogueEntry, key: str) -> object:
+        """
+        Get a fact about a dataset which is not one of its facets
+
+        Nothing is answerable here yet, because the schema holds no fact of this kind.
+        What it does hold about a dataset beyond its facets is its parent links
+        ([DatasetVersionParent][esmporium.db.schema.DatasetVersionParent], which carries
+        the branch times), its versions, its files
+        ([File][esmporium.db.schema.File]: filename, size, checksum, tracking ID) and
+        its access routes. No column anywhere records the span of a dataset's time axis,
+        its calendar or its units, which are the facts a check about time wants.
+
+        So this raises for everything, and that is the honest answer rather than a
+        placeholder: solving a requirement whose checks need such a fact reports those
+        groups `undetermined`, which says the work has not been done. It is not that the
+        data fails the check.
+
+        Parameters
+        ----------
+        entry
+            Dataset to get the fact about
+
+        key
+            The fact wanted
+
+        Returns
+        -------
+        :
+            Never returns
+
+        Raises
+        ------
+        MetadataUnavailableError
+            Always
+        """
+        raise MetadataUnavailableError(
+            entry.id,
+            key,
+            "No column records a fact of this kind, so there is nothing to "
+            "read. See this method's documentation for what the schema does hold.",
+        )
