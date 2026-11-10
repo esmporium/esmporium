@@ -8,7 +8,7 @@ import hashlib
 import re
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from esmporium.query import (
     ClashingFacetsError,
@@ -535,6 +535,79 @@ def test_the_same_lineage_twice_is_fine():
     once = a_leaf().with_lineage(TO_CONTROL)
 
     assert once.with_lineage(TO_CONTROL) == once
+
+
+# --------------------------------------------------------------------- constraints
+
+
+class LongEnough(BaseModel):
+    """A judgement, for when what it judges is not the point."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    years: float = 150.0
+
+    def evaluate(self, view, catalogue):
+        raise NotImplementedError
+
+
+def test_a_leaf_starts_with_no_constraints():
+    assert a_leaf().constraints == ()
+
+
+def test_with_lineage_and_with_constraints_reach_every_leaf():
+    # Both of the things a container can share, shared at once: the leaves below get
+    # the same chain to walk and the same judgement to pass, each applied to itself.
+    tree = (
+        all_of(a_leaf(role="tasmax"), a_leaf(role="pr"))
+        .with_lineage(TO_CONTROL)
+        .with_constraints(LongEnough())
+    )
+
+    assert role_paths(tree) == {"tasmax", "pr", "control.tasmax", "control.pr"}
+    for _, each in walk_leaves(tree):
+        assert each.lineage == TO_CONTROL
+        assert each.constraints == (LongEnough(),)
+
+
+def test_constraints_add_rather_than_replace():
+    # The difference from `with_lineage`, which conflicts. A dataset has one chain
+    # behind it, so a second lineage contradicts the first; two judgements are simply
+    # both true, so they accumulate -- including from separate calls, which is what
+    # lets a leaf pick up checks from several nodes above it.
+    once = a_leaf().with_constraints(LongEnough(years=150))
+    twice = once.with_constraints(LongEnough(years=500))
+
+    assert twice.constraints == (LongEnough(years=150), LongEnough(years=500))
+    # And the original is untouched, as everywhere else on the tree.
+    assert once.constraints == (LongEnough(years=150),)
+
+
+def test_the_same_constraint_twice_is_kept_twice():
+    # Unlike a repeated lineage, which is dropped as agreeing. Two identical judgements
+    # are harmless and de-duplicating them would be a surprise, since nothing else here
+    # does.
+    twice = a_leaf().with_constraints(LongEnough()).with_constraints(LongEnough())
+
+    assert twice.constraints == (LongEnough(), LongEnough())
+
+
+def test_several_constraints_at_once():
+    node = a_leaf().with_constraints(LongEnough(years=1), LongEnough(years=2))
+
+    assert node.constraints == (LongEnough(years=1), LongEnough(years=2))
+
+
+def test_constraints_are_not_role_paths():
+    # A judgement names no dataset of its own, so it adds nothing to the tree's shape.
+    # This is why a new constraint needs no branch in any of the dispatch functions.
+    plain, checked = a_leaf(), a_leaf().with_constraints(LongEnough())
+
+    assert role_paths(checked) == role_paths(plain)
+
+
+def test_a_requirement_starts_with_no_constraints():
+    assert a_requirement().constraints == ()
 
 
 @pytest.mark.parametrize(

@@ -352,6 +352,43 @@ def test_ambiguous_grids_and_prefer(dataset):
     assert preferred.satisfied[ONLY_GROUP].one("tas").grid_label == "gn"
 
 
+def test_ambiguity_names_the_unevaluated_constraints(dataset):
+    # A check judges the dataset which was chosen, and in a tie nothing is, so the
+    # checks never run. Saying so is the whole of what makes the ambiguity actionable:
+    # one of these two candidates may well be the one that would have passed, and
+    # without this the user has no way to know a check was even involved.
+    class Enough:
+        def evaluate(self, view, catalogue):
+            raise NotImplementedError
+
+    checked = tas_requirement(
+        tree=leaf(Query(variable="tas"), "tas").with_constraints(Enough())
+    )
+    catalogue = InMemoryCatalogue(
+        entries=(dataset(1, grid_label="gn"), dataset(2, grid_label="gr"))
+    )
+
+    result = solve(checked, catalogue)
+
+    assert list(result.ambiguous) == [ONLY_GROUP]
+    (explanation,) = result.ambiguous[ONLY_GROUP].explanation.parts
+    assert "'Enough' was not evaluated" in explanation.message
+    assert "may well be the one that passes" in explanation.message
+
+
+def test_an_ambiguity_with_no_constraints_says_nothing_about_them(dataset):
+    # The counterpart, because a sentence about checks in a requirement which has none
+    # would be noise in the message every user sees most often.
+    catalogue = InMemoryCatalogue(
+        entries=(dataset(1, grid_label="gn"), dataset(2, grid_label="gr"))
+    )
+
+    result = solve(tas_requirement(), catalogue)
+
+    (explanation,) = result.ambiguous[ONLY_GROUP].explanation.parts
+    assert "not evaluated" not in explanation.message
+
+
 def test_ambiguous_despite_prefer_says_what_was_preferred(dataset):
     # Both candidates are on the preferred grid, so `prefer` ranked them equally
     # and the tie survives. The message has to say that, rather than repeat the
@@ -1239,14 +1276,16 @@ def test_the_lineage_role_names_where_it_stopped(dataset):
     assert "control.field" not in group.roles
 
 
-def test_a_lineage_which_was_never_read_says_so(dataset):
-    # The message which matters most: this is work waiting to be done, not missing
-    # data, and a user told "no parent" would go looking in the wrong place.
+def test_a_lineage_which_was_never_read_is_undetermined(dataset):
+    # The distinction which matters most: this is work waiting to be done, not missing
+    # data, and a user told "no parent" would go looking in the wrong place. So it is
+    # `undetermined` rather than `unsatisfied`, and the message says what to run.
     catalogue = InMemoryCatalogue(entries=(dataset(1),))
 
     result = solve(traced(), catalogue)
 
-    assert list(result.unsatisfied) == [ONLY_GROUP]
+    assert list(result.undetermined) == [ONLY_GROUP]
+    assert not result.unsatisfied
     rendered = result.explain()
     assert "nothing has read a parent for" in rendered
     assert "esmporium.db.find_parents" in rendered
@@ -1282,12 +1321,50 @@ def test_max_hops_is_a_guard_rather_than_the_stopping_rule(dataset):
     assert "within 1 parents" in result.explain()
 
 
-def test_a_lineage_which_cannot_be_followed_is_unsatisfied_not_ambiguous(dataset):
+def test_a_lineage_which_cannot_be_followed_is_not_ambiguous(dataset):
     # A dataset has one parent, so there is nothing for `ambiguous` to be about.
+    # Nobody has read this one's, so the honest answer is that we have not looked.
     result = solve(traced(), InMemoryCatalogue(entries=(dataset(1),)))
 
     assert not result.ambiguous
+    assert result.undetermined[ONLY_GROUP].status is ExplanationStatusNotOk.UNDETERMINED
+
+
+def test_unsatisfied_beats_undetermined(dataset):
+    # Two leaves failing two ways. A group with a dataset missing stays unsatisfiable
+    # however many questions get answered, so the missing dataset is the headline and
+    # the unanswered question is further down -- going and reading a parent would not
+    # change the outcome, so sending someone to do it would be the wrong instruction.
+    present = dataset(1, variable="tasmax")
+    catalogue = InMemoryCatalogue(entries=(present,))
+    both = requirement(
+        name="both",
+        tree=all_of(
+            leaf(Query(variable="tasmax"), "tasmax").with_lineage(TO_CONTROL),
+            leaf(Query(variable="tasmin"), "tasmin"),
+        ),
+        group_by=GROUP_BY,
+    )
+
+    result = solve(both, catalogue)
+
+    assert list(result.unsatisfied) == [ONLY_GROUP]
+    assert not result.undetermined
+    rendered = result.explain()
+    # Nothing short-circuits, so both reasons are still on the page.
+    assert "undetermined] tasmax" in rendered
+    assert "unsatisfied] tasmin" in rendered
+
+
+def test_a_chain_which_ends_before_its_target_is_unsatisfied(dataset):
+    # The counterpart: this one was read, and declares no parent, so the chain really
+    # does stop short. Nothing further to do about it, hence `unsatisfied`.
+    result = solve(
+        traced(), InMemoryCatalogue(entries=(dataset(1),), parents={1: None})
+    )
+
     assert result.unsatisfied[ONLY_GROUP].status is ExplanationStatusNotOk.UNSATISFIED
+    assert not result.undetermined
 
 
 def test_every_dataset_in_a_role_is_traced(dataset):

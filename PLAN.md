@@ -166,7 +166,8 @@ The numbered steps of this plan, as they have landed:
 | 7 | Downloads, and the data-node access layer | [#63](https://github.com/esmporium/esmporium/pull/63) |
 | 8 | Download parallelisation and per-data-node caps | [#64](https://github.com/esmporium/esmporium/pull/64) |
 | 10 | Dataset ancestry (`find_parents`, `esmporium.headers`, `esmporium.fixes`) | [#65](https://github.com/esmporium/esmporium/pull/65), [#66](https://github.com/esmporium/esmporium/pull/66) |
-| 11 | `Ancestors` lineage in requirements | _this PR_ |
+| 11 | `Ancestors` lineage in requirements | [#67](https://github.com/esmporium/esmporium/pull/67) |
+| 12 | The `Constraint` protocol, nothing shipped | _this PR_ |
 
 So **phase 1 is done except step 5** (the live pattern-effect watch on the server),
 and **phase 2 is done except step 9** (the deployment).
@@ -896,6 +897,41 @@ Tests: `test_user_defined_constraint`, `test_missing_metadata`,
 `test_constraint_which_is_not_a_pydantic_model`, `test_round_trip_user_defined_constraint`,
 `test_with_lineage_and_with_constraints_reach_every_leaf`.
 
+What landed differently from the sketch above, and why:
+
+- **No `required_metadata()`.** The protocol is `evaluate` alone. Nothing called the
+  other method -- not the solver, not the search plan -- and two comments in `solve.py`
+  refuse exactly that: a thing is "deliberately absent rather than defined and
+  unreachable". It comes back the day something pre-loads metadata the way
+  `facets_read` feeds `needs_facets`, and because this is a protocol it can come back as
+  an optional duck-typed method, so nothing written against the one-method version
+  breaks.
+- **`GroupView` is `ConstraintView`.** At a leaf it holds that leaf's roles and its
+  chain, not the group's, so the old name was true only at the root. Named for who it is
+  for instead, which is the one description true at all three attachment levels.
+- **`notes` arrived here rather than at step 14.** `Degraded` needs somewhere to put its
+  message, and a caller asking "which of my forty groups are degraded?" should not have
+  to walk the explanation tree to find out. `NodeResultOk`, `Solution` and `_merge` all
+  carry it. `choices` is still step 14's.
+- **`NodeResultOk.lineages` is keyed by role path** (`Solution.lineages` is still the
+  flat tuple it was). A check names the role it is talking about, so it has to be handed
+  the chains under those names; recovering the key by searching `roles` for each chain's
+  anchor is ambiguous when two leaves hold the same dataset.
+- **`ParentStatus.NOT_LOOKED_FOR` now reports `undetermined`.** This was a step-11
+  mismatch with nowhere to land until the status existed: `_no_parent_message` already
+  said "work waiting to be done rather than missing data" while filing it as
+  unsatisfied. `UNRESOLVED` deliberately stays `unsatisfied` -- it blurs "not asked"
+  with "asked, wasn't there", and nothing here can tell those apart, so splitting it
+  belongs with whatever records it.
+- **`DatabaseCatalogue.metadata` raises for every key**, which is what the schema
+  supports: see the note under step 13.
+- **`requirement()` grew a `constraints` argument.** The field alone was not enough --
+  the factory is the documented way to build one, so a requirement-level check would
+  have been unreachable through it.
+- **Every stored `requirement_hash` changed again**, as at step 11: `Leaf` and
+  `Requirement` each gained a field and `identity_json` is a complete dump. Clear or
+  re-stem any tracked search before its next run.
+
 ## 13. `Covers`
 
 *Was R7.*
@@ -911,6 +947,21 @@ Tests: `test_covers_calendar`, `test_covers_branch_needs_ancestor`, `test_covers
 
 Use cases: `01-tcr`, `03-tcre-flat10`, `04-tcre-1pct`, `05-zec-flat10`,
 `11-tas-scenario-anomalies`, plus `TO_CONTROL`, `CONTROL_COVERS` and `CONTROL_IDEALLY_COVERS`.
+
+**This step needs a source of `time_range`, and we have none.** Step 12 reads as though
+phase 2 unlocked it, and it did not. What is stored about a dataset beyond its facets is
+its parent links (`DatasetVersionParent`, which carries the branch times), its versions,
+its files (`File`: filename, size, checksum, tracking ID) and its access routes. No
+column anywhere holds the span of a time axis, a calendar or units. So `Covers` against
+`DatabaseCatalogue` reports every group `undetermined` until something records one.
+
+The cheapest route is the filename, which already encodes it --
+`tas_Amon_MIROC6_abrupt-4xCO2_r1i1p1f1_gn_320001-325012.nc` -- and `File.filename` is
+stored for every file we have seen, so it needs no new fetching. Reading it out of
+headers instead is more work and more trustworthy. Either way it wants deciding before
+this step rather than inside it, since it brings its own questions: which convention per
+project, what a dataset whose files disagree or have gaps spans, and which calendar the
+numbers are in (the branch-time note above applies here too).
 
 ## 14. `any_of`, `optional`
 

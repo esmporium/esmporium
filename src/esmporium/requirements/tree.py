@@ -47,6 +47,7 @@ from esmporium.requirements.catalogue import (
     set_facets,
     to_stored_query,
 )
+from esmporium.requirements.constraints import Constraint, Constraints, check_constraint
 from esmporium.requirements.relations import Ancestors, Relation
 from esmporium.requirements.roles import ROLE_SEPARATOR, check_role
 
@@ -502,6 +503,23 @@ class Leaf(BaseModel):
     [Ancestors][esmporium.requirements.Ancestors].
     """
 
+    constraints: Constraints = ()
+    """
+    Judgements this dataset has to pass, beyond matching the query
+
+    A query decides *which* dataset; these decide whether it will do. They see this
+    dataset and the chain behind it and nothing else, which is what makes a failure
+    local: this leaf becomes unsatisfied, and whatever is around it decides what that
+    costs.
+
+    Set them with [with_constraints][(m).Leaf.with_constraints], which can also be
+    called on a node above the leaf to give the same judgements to every leaf below it.
+
+    A check which compares one leaf against another cannot go here, because it would
+    see only one of them. That belongs on the
+    [Requirement][(m).Requirement.constraints].
+    """
+
     _accept_any_style = field_validator("query", mode="before")(accept_any_query_style)
 
     @field_validator("role")
@@ -614,6 +632,38 @@ class Leaf(BaseModel):
 
         return self.model_copy(update={"lineage": lineage})
 
+    def with_constraints(self, *constraints: Constraint) -> Leaf:
+        """
+        Add judgements this leaf's dataset has to pass
+
+        Adds rather than replaces, which is the difference from
+        [with_lineage][(m).Leaf.with_lineage]. A dataset has one chain behind it, so a
+        second lineage contradicts the first; judgements accumulate, and two of them
+        are simply both true. So this can be called more than once, and a leaf can pick
+        up judgements from several nodes above it.
+
+        Parameters
+        ----------
+        constraints
+            The judgements to add, each anything with an
+            `evaluate(view, catalogue)` method
+
+        Returns
+        -------
+        :
+            Updated leaf
+
+        Raises
+        ------
+        NotAConstraintError
+            One of `constraints` cannot act as one
+        """
+        # Checked here as well as by the field's own validator, for the reason
+        # `with_lineage` gives: `model_copy` runs no validators at all.
+        added = tuple(check_constraint(each) for each in constraints)
+
+        return self.model_copy(update={"constraints": (*self.constraints, *added)})
+
 
 class AllOf(BaseModel):
     """
@@ -693,6 +743,42 @@ class AllOf(BaseModel):
             `lineage`'s role is the role of a leaf below this node
         """
         return apply_to_leaves(self, lambda each_leaf: each_leaf.with_lineage(lineage))
+
+    def with_constraints(self, *constraints: Constraint) -> AllOf:
+        """
+        Add judgements every leaf below this node has to pass
+
+        One judgement, applied separately: each leaf below gets the same check, and each
+        is judged on its own. That is what makes
+
+            all_of(tas, rsdt, rlut).with_lineage(TO_CONTROL).with_constraints(COVERS)
+
+        mean "every one of these, back to its own control, which must cover it" rather
+        than "these three between them must satisfy one check".
+
+        Which means a check that *compares* leaves must not be put here. Pushed down, it
+        would reach each leaf separately, where it would find only that leaf to compare
+        and pass without having compared anything. A check like that belongs on the
+        [Requirement][(m).Requirement.constraints], which sees every role at once.
+
+        Parameters
+        ----------
+        constraints
+            The judgements to add
+
+        Returns
+        -------
+        :
+            Updated node
+
+        Raises
+        ------
+        NotAConstraintError
+            One of `constraints` cannot act as one
+        """
+        return apply_to_leaves(
+            self, lambda each_leaf: each_leaf.with_constraints(*constraints)
+        )
 
 
 Node = Annotated[Union[Leaf, AllOf], Field(discriminator="kind")]
@@ -915,6 +1001,20 @@ class Requirement(BaseModel):
     requirement says it is not a tie.
 
     The three cases are worked through side by side in [requirement][(m).requirement].
+    """
+
+    constraints: Constraints = ()
+    """
+    Judgements the whole group has to pass
+
+    These see every role path in the group at once, which is what a check that compares
+    one dataset against another needs: two variables wanted over the same years, a
+    control which has to cover whichever of several runs was chosen. A failure here
+    fails the group, because nothing smaller was being judged.
+
+    The counterpart to [Leaf.constraints][(m).Leaf.constraints], and the choice between
+    them is a choice about what a failure should cost. A check which only ever looks at
+    one dataset wants to be on that leaf, so that a failure is local.
     """
 
     _accept_any_style = field_validator("where", mode="before")(accept_any_query_style)
@@ -1460,6 +1560,7 @@ def requirement(  # noqa: PLR0913 - one argument per field of the requirement
     prefer_other_terms: Mapping[str, tuple[str, ...]] | None = None,
     versions: VersionFilter = VersionFilter.NOT_RETRACTED,
     cardinality: Cardinality = Cardinality.ONE,
+    constraints: Iterable[Constraint] = (),
 ) -> Requirement:
     """
     Create a [Requirement][(m).Requirement]
@@ -1507,6 +1608,12 @@ def requirement(  # noqa: PLR0913 - one argument per field of the requirement
         How many datasets fill each leaf's role, per group.
         See [Requirement.cardinality][(m).Requirement.cardinality].
 
+    constraints
+        Judgements the whole group has to pass.
+        See [Requirement.constraints][(m).Requirement.constraints]. A judgement about
+        one dataset belongs on its leaf instead, so that a failure is local; put one
+        here when it compares roles.
+
     Returns
     -------
     :
@@ -1516,6 +1623,9 @@ def requirement(  # noqa: PLR0913 - one argument per field of the requirement
     ------
     NotANodeError
         `tree` is not a node
+
+    NotAConstraintError
+        One of `constraints` cannot act as one
 
     DuplicateRoleError
         Two leaves which are both used fill the same role
@@ -1632,6 +1742,7 @@ def requirement(  # noqa: PLR0913 - one argument per field of the requirement
         ),
         versions=versions,
         cardinality=cardinality,
+        constraints=tuple(constraints),
     )
 
 
