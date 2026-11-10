@@ -1183,10 +1183,6 @@ def test_a_parent_held_only_as_a_retracted_release(engine, a_dataset_version, en
 def test_a_fix_outranks_the_header_it_corrects(engine, a_dataset_version, entry_of):
     """
     A correction wins, and the link the header produced does not come back instead
-
-    The sharp edge this pins: `datasetparentlink` has no unique constraint on the child
-    version, so the link made from the header survives beside the one made from the
-    fix. Reading the link by the child version would pick between the two arbitrarily.
     """
     with Session(engine) as session:
         child = a_dataset_version(session)
@@ -1302,9 +1298,6 @@ def test_every_parent_source_has_a_phrase(engine, a_dataset_version, entry_of):
 def test_every_version_choice_has_a_phrase(choice):
     """
     How a parent's release was picked reads as itself, or says nothing
-
-    `ONLY_VERSION` maps to nothing deliberately: we hold one release, so nothing was
-    decided and a phrase would imply otherwise.
     """
     phrase = _VERSION_CHOICE_PHRASES[choice]
 
