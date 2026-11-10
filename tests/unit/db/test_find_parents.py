@@ -1022,12 +1022,12 @@ def test_a_republished_parent_is_linked_at_its_newest_and_reported(
         assert len(result.linked) == 1
         link = result.linked[0]
         assert link.parent_dataset_version_id == newest
-        assert link.version_choice == ParentVersionChoice.DEFAULTED
+        assert link.version_choice == ParentVersionChoice.DEFAULTED_TO_NEWEST
 
         (reported,) = result.version_decisions
         assert reported.child_dataset_version_id == child
         assert reported.chosen_dataset_version_id == newest
-        assert reported.choice == ParentVersionChoice.DEFAULTED
+        assert reported.choice == ParentVersionChoice.DEFAULTED_TO_NEWEST
         assert sorted(reported.passed_over_dataset_version_ids) == sorted(
             [first, middle]
         )
@@ -1096,7 +1096,7 @@ def test_a_retracted_matching_release_loses_to_a_live_newer_one(
 
         link = result.linked[0]
         assert link.parent_dataset_version_id == newer
-        assert link.version_choice == ParentVersionChoice.DEFAULTED
+        assert link.version_choice == ParentVersionChoice.DEFAULTED_TO_NEWEST
 
 
 def test_the_link_holds_the_dataset_as_well_as_the_version(engine, a_dataset_version):
@@ -1347,10 +1347,10 @@ def test_an_ambiguous_parent_version_names_the_dataset_it_did_match():
             id="child_version",
         ),
         pytest.param(
-            ParentVersionChoice.DEFAULTED,
+            ParentVersionChoice.DEFAULTED_TO_NEWEST,
             "none of them carries the child's own version string, so the newest "
             "was used",
-            id="defaulted",
+            id="defaulted_to_newest",
         ),
     ),
 )

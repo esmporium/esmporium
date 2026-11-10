@@ -1873,10 +1873,11 @@ class ParentVersionChoice(str, Enum):
     Checked *after* retracted releases are dropped, so a retracted match never beats a
     live newer release.
 
-    Reported like a [DEFAULTED][(c).DEFAULTED] one, because it is still a decision.
+    Reported like a [DEFAULTED_TO_NEWEST][(c).DEFAULTED_TO_NEWEST] one, because it is
+    still a decision.
     """
 
-    DEFAULTED = "defaulted"
+    DEFAULTED_TO_NEWEST = "defaulted_to_newest"
     """
     Several versions were held, none of them the child's, so the newest one was taken
 
@@ -1892,9 +1893,9 @@ class ParentVersionChoice(str, Enum):
     """
     Something other than our own rules decided, i.e. an injected chooser
 
-    Recorded separately from [DEFAULTED][(c).DEFAULTED] because it is a different kind
-    of answer: somebody who knows the data said so, rather than a rule picking in the
-    absence of information.
+    Recorded separately from [DEFAULTED_TO_NEWEST][(c).DEFAULTED_TO_NEWEST] because it
+    is a different kind of answer: somebody who knows the data said so, rather than a
+    rule picking in the absence of information.
     """
 
 

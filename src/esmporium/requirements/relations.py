@@ -100,8 +100,8 @@ class Ancestors(BaseModel):
     Which relation this is
 
     Read by pydantic to pick the right class out of
-    [LineageRelation][esmporium.requirements.LineageRelation] when a stored requirement
-    is loaded, rather than each being tried in turn.
+    [Relation][esmporium.requirements.Relation] when a stored requirement is
+    loaded, rather than each being tried in turn.
     """
 
     until: QueryCanonical
@@ -118,8 +118,16 @@ class Ancestors(BaseModel):
     then has to match as well.
 
     It is matched against each *parent*, never against the dataset the lineage hangs
-    off, so a dataset which matches `until` itself is still walked back from rather
-    than being its own ancestor.
+    off, so a chain can pass through a dataset of the kind it is looking for on its
+    way to the one it stops at.
+
+    It cannot be where the chain *starts*, though: a leaf which selects only datasets
+    matching `until` is refused when the requirement is built (see
+    [check_lineage_does_not_start_at_target][esmporium.requirements.check_lineage_does_not_start_at_target]),
+    and one which selects such a dataset among others reports it as unsatisfied when
+    solved. [esmporium.db.find_parents][] stops at a dataset matching `until` and
+    records no parent for it, so a chain which started at one would have nothing to
+    walk.
     """
 
     role: str
@@ -169,7 +177,7 @@ class Ancestors(BaseModel):
         return self
 
 
-LineageRelation = Annotated[Union[Ancestors], Field(discriminator="kind")]
+Relation = Annotated[Union[Ancestors], Field(discriminator="kind")]
 """
 How a leaf's related datasets -- its control, its sibling -- are found
 

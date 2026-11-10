@@ -13,6 +13,7 @@ from esmporium.requirements import (
     ExplanationStatusNotOk,
     ExplanationStatusOk,
     InMemoryCatalogue,
+    LineageStartsAtTargetError,
     MixedProjectFacetError,
     NotANodeError,
     ParentLookup,
@@ -1194,25 +1195,33 @@ def test_a_lineage_stops_at_the_first_match(dataset):
     assert "chain.0.field" not in group.roles
 
 
-def test_a_dataset_is_never_its_own_ancestor(dataset):
-    # `until` is matched against each parent, never against the dataset the lineage
-    # hangs off, so a control traced back to a control walks rather than stopping where
-    # it started. A differently-numbered parent variant is ordinary, not contrived.
-    child = dataset(1, experiment="piControl")
-    control = dataset(2, experiment="piControl", variant_label="r2i1p1f1")
-    catalogue = InMemoryCatalogue(entries=(child, control), parents={1: 2, 2: None})
+def test_a_lineage_cannot_start_where_it_says_to_stop():
+    # A chain ends at a dataset matching `until`, so it cannot start at one:
+    # `find_parents` stops there and records no parent, so nothing would ever resolve
+    # it. Refused where it is written, because every dataset this leaf can select is
+    # already at the target.
+    with pytest.raises(LineageStartsAtTargetError, match="selects only datasets"):
+        traced(child=Query(variable="tas", experiment="piControl"))
 
-    (group,) = solve(
+
+def test_a_dataset_which_is_already_at_the_target_is_unsatisfied(dataset):
+    # The same rule where only the data settles it: this leaf names no experiment, so
+    # the requirement is legitimate and it is this dataset which turns out to be a
+    # control. Reported per dataset rather than raised, because what a query found is
+    # not the requirement's mistake.
+    control = dataset(1, experiment="piControl")
+    older = dataset(2, experiment="piControl", variant_label="r2i1p1f1")
+    catalogue = InMemoryCatalogue(entries=(control, older), parents={1: 2, 2: None})
+
+    result = solve(
         traced(
-            child=Query(
-                variable="tas", experiment="piControl", variant_label="r1i1p1f1"
-            ),
-            group_by=("model",),
+            child=Query(variable="tas", variant_label="r1i1p1f1"), group_by=("model",)
         ),
         catalogue,
-    ).satisfied.values()
+    )
 
-    assert group.one("control.field").id == control.id
+    assert not result.satisfied
+    assert "already matches experiment=piControl" in result.explain()
 
 
 def test_the_lineage_role_names_where_it_stopped(dataset):
@@ -1402,9 +1411,9 @@ def test_a_lineage_until_is_read_even_when_nothing_else_names_it(dataset):
 
 def test_a_relation_which_is_not_one_is_refused(dataset):
     # The dispatch ends in a raise rather than a silent fallthrough, so a relation
-    # added to `LineageRelation` without a branch in the solver fails loudly. Called
-    # directly because the tree refuses to hold one, which is the point.
-    with pytest.raises(TypeError, match="Expected a lineage relation"):
+    # added to `Relation` without a branch in the solver fails loudly. Called directly
+    # because the tree refuses to hold one, which is the point.
+    with pytest.raises(TypeError, match="Expected a relation"):
         _lineage(dataset(1), "not a relation", A_CONTEXT, "field")
 
 

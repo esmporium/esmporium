@@ -43,7 +43,7 @@ from esmporium.requirements.catalogue import (
     matches,
     set_facets,
 )
-from esmporium.requirements.relations import Ancestors, Lineage, LineageRelation
+from esmporium.requirements.relations import Ancestors, Lineage, Relation
 from esmporium.requirements.roles import ROLE_SEPARATOR
 from esmporium.requirements.tree import (
     AllOf,
@@ -1012,6 +1012,27 @@ def _ancestor_lineage(
         lineage either reaches what it was told to reach or it does not, and there is
         nothing for `ambiguous` to be about -- a dataset has one parent.
     """
+    if matches(ancestors.until, entry):
+        # A chain ends at a dataset matching `until`, so it cannot start at one.
+        # `check_lineage_does_not_start_at_target` refuses this when the requirement
+        # is written, wherever the query settles it; this is the same rule for the
+        # datasets where only the data says so, and it is reported rather than raised
+        # because which datasets a query found is not the requirement's mistake.
+        return NodeResultNotOk(
+            ExplanationStatusNotOk.UNSATISFIED,
+            Explanation(
+                subject,
+                ExplanationStatusNotOk.UNSATISFIED,
+                f"{_describe_entry(entry)} already matches "
+                f"{describe_query(ancestors.until)}, which is where this lineage "
+                "says to stop, so there is no chain to walk back. "
+                "`esmporium.db.find_parents` stops at such a dataset and records no "
+                "parent for it, so nothing would resolve this lineage. Either this "
+                "dataset is not one the requirement meant to select, or `until` "
+                "names the wrong place to stop.",
+            ),
+        )
+
     hops: list[_Hop] = []
     current = entry
     for _ in range(ancestors.max_hops):
@@ -1032,10 +1053,11 @@ def _ancestor_lineage(
 
         hops.append(_Hop(lookup.parent, lookup.provenance))
 
-        # Tested against the parent, never against `entry`, so a dataset which matches
-        # `until` itself is still walked back from rather than being its own ancestor.
-        # That is what makes `Ancestors(until=piControl)` on a piControl leaf mean "the
-        # piControl this piControl branched from" instead of quietly meaning nothing.
+        # Tested against the parent rather than against `current`, so a chain can pass
+        # through a dataset of the kind it is looking for -- an abrupt-4xCO2 which
+        # branched from a piControl which branched from another one stops at the first.
+        # The dataset the lineage hangs off is handled before the walk starts, where a
+        # chain which begins at its own target is refused rather than walked.
         if matches(ancestors.until, lookup.parent):
             return tuple(hops)
 
@@ -1056,7 +1078,7 @@ def _ancestor_lineage(
 
 
 def _lineage(
-    entry: CatalogueEntry, lineage: LineageRelation, ctx: _Context, subject: str
+    entry: CatalogueEntry, lineage: Relation, ctx: _Context, subject: str
 ) -> tuple[_Hop, ...] | NodeResultNotOk:
     """
     Resolve one dataset's related datasets
@@ -1093,19 +1115,19 @@ def _lineage(
     if isinstance(lineage, Ancestors):
         return _ancestor_lineage(entry, lineage, ctx, subject)
 
-    # Unreachable while `LineageRelation` has one member, which is why the type
-    # checkers are told to allow it. It is here so that a relation added to that union
-    # without a branch above fails loudly instead of being walked as if it were
-    # ancestry, which is the same bargain the node dispatches make.
+    # Unreachable while `Relation` has one member, which is why the type checkers are
+    # told to allow it. It is here so that a relation added to that union without a
+    # branch above fails loudly instead of being walked as if it were ancestry, which
+    # is the same bargain the node dispatches make.
     msg = (  # type: ignore[unreachable]
-        f"Expected a lineage relation, got {type(lineage).__name__}: {lineage!r}. "
-        "Every member of `LineageRelation` needs a branch here."
+        f"Expected a relation, got {type(lineage).__name__}: {lineage!r}. "
+        "Every member of `Relation` needs a branch here."
     )
     raise TypeError(msg)
 
 
 def _lineage_paths(
-    leaf: Leaf, lineage: LineageRelation, role_prefix: str, hops: Sequence[_Hop]
+    leaf: Leaf, lineage: Relation, role_prefix: str, hops: Sequence[_Hop]
 ) -> list[tuple[str, _Hop]]:
     """
     Work out the role path each hop of a lineage fills
@@ -1147,7 +1169,7 @@ def _lineage_paths(
 
 def _eval_lineage(
     leaf: Leaf,
-    lineage: LineageRelation,
+    lineage: Relation,
     chosen: Sequence[CatalogueEntry],
     ctx: _Context,
     role_prefix: str,

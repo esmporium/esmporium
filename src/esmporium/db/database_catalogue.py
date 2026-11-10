@@ -823,7 +823,9 @@ _VERSION_CHOICE_PHRASES: Mapping[ParentVersionChoice, str] = {
     ParentVersionChoice.CHILD_VERSION: (
         "parent release matched the child's version string"
     ),
-    ParentVersionChoice.DEFAULTED: "parent release defaulted to the newest we hold",
+    ParentVersionChoice.DEFAULTED_TO_NEWEST: (
+        "parent release defaulted to the newest we hold"
+    ),
     ParentVersionChoice.CHOSEN: "parent release picked by a version chooser",
 }
 """
@@ -833,7 +835,8 @@ How to describe which release of the parent was used, for a person reading
 say, deliberately: we hold one release, so nothing was decided and a phrase would imply
 otherwise. The other three were all decisions of some kind, and which kind is worth
 seeing -- a chain which rests on
-[DEFAULTED][esmporium.db.schema.ParentVersionChoice.DEFAULTED] rests on a rule of ours.
+[DEFAULTED_TO_NEWEST][esmporium.db.schema.ParentVersionChoice.DEFAULTED_TO_NEWEST]
+rests on a rule of ours.
 """
 
 

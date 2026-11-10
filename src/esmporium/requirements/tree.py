@@ -47,7 +47,7 @@ from esmporium.requirements.catalogue import (
     set_facets,
     to_stored_query,
 )
-from esmporium.requirements.relations import LineageRelation
+from esmporium.requirements.relations import Ancestors, Relation
 from esmporium.requirements.roles import ROLE_SEPARATOR, check_role
 
 NODE_MODEL_CONFIG = ConfigDict(frozen=True, extra="forbid")
@@ -138,6 +138,63 @@ class ConflictingLineageError(ValueError):
             "A leaf has one lineage, so set it once: on the leaf or above it, not "
             "both. Giving a leaf the lineage it already has is fine, it is only a "
             "disagreement which is refused."
+        )
+
+
+class LineageStartsAtTargetError(ValueError):
+    """
+    Raised when a leaf's datasets already match where its lineage says to stop
+
+    A lineage walks from the dataset which filled a leaf's role back to an ancestor of
+    it, so its two ends are different datasets. A leaf whose query can only select
+    datasets matching `until` has no such walk to make: every dataset it finds is
+    already at the target.
+
+    Refused rather than walked past, because [esmporium.db.find_parents][] stops at a
+    dataset matching one of its `until_experiment` and records no parent for it. A
+    lineage of this shape is therefore unsatisfied by every database our own walk
+    builds, and running the walk again would not change that -- which is a long way
+    from the mistake, and the reason this is checked where the requirement is written.
+
+    To trace a dataset back to another of its own kind, say in `until` how the two
+    differ, e.g. by naming the ancestor's `variant_label`.
+    """
+
+    def __init__(
+        self, role: str, lineage_role: str, facets: Mapping[str, tuple[str, ...]]
+    ) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        role
+            Role of the leaf
+
+        lineage_role
+            Role the lineage files its last member under
+
+        facets
+            Facets the lineage's `until` sets, as
+            [set_facets][esmporium.requirements.set_facets] gives them
+        """
+        self.role = role
+        self.lineage_role = lineage_role
+        self.facets = dict(facets)
+        # `describe_query`'s format, written out because that lives in
+        # `esmporium.requirements.solve`, which imports this module.
+        described = ", ".join(
+            f"{facet}={'|'.join(values)}" for facet, values in self.facets.items()
+        )
+        super().__init__(
+            f"Leaf {role!r} selects only datasets which already match the `until` of "
+            f"its lineage filed under {lineage_role!r} ({described}), "
+            "so the lineage would be looking for an ancestor of the kind of dataset "
+            "it starts from. "
+            "`esmporium.db.find_parents` stops at a dataset matching `until` and "
+            "records no parent for it, so this lineage would never resolve. "
+            "Name the experiment the chain really ends at, or, to trace a dataset "
+            "back to another of its own kind, say in `until` how the two differ."
         )
 
 
@@ -449,7 +506,7 @@ class Leaf(BaseModel):
     a fifth: its role cannot be the lineage's role either.
     """
 
-    lineage: LineageRelation | None = None
+    lineage: Relation | None = None
     """
     How this dataset's related datasets -- its control, say -- are found
 
@@ -487,6 +544,13 @@ class Leaf(BaseModel):
 
         return self
 
+    @model_validator(mode="after")
+    def _lineage_does_not_start_at_its_target(self) -> Leaf:
+        if self.lineage is not None:
+            check_lineage_does_not_start_at_target(self.role, self.query, self.lineage)
+
+        return self
+
     def where(self, query: QueryProtocol) -> Leaf:
         """
         Add a query's facets to this leaf's query
@@ -520,16 +584,21 @@ class Leaf(BaseModel):
 
         ClashingFacetsError
             A facet is already set to the same value, but in a different home
-        """
-        return self.model_copy(
-            update={
-                "query": add_facets(
-                    self.query, to_stored_query(query), self.role, "where"
-                )
-            }
-        )
 
-    def with_lineage(self, lineage: LineageRelation) -> Leaf:
+        LineageStartsAtTargetError
+            The added facets leave this leaf selecting only datasets which match
+            where its lineage says to stop
+        """
+        # Checked here as well as in the model validator which backs it up, for the
+        # reason `with_lineage` says: `model_copy` runs no validators. Checked against
+        # the combined query, since that is what the leaf will be solved with.
+        combined = add_facets(self.query, to_stored_query(query), self.role, "where")
+        if self.lineage is not None:
+            check_lineage_does_not_start_at_target(self.role, combined, self.lineage)
+
+        return self.model_copy(update={"query": combined})
+
+    def with_lineage(self, lineage: Relation) -> Leaf:
         """
         Set how this leaf's related datasets are found
 
@@ -550,14 +619,17 @@ class Leaf(BaseModel):
 
         ValueError
             `lineage`'s role is this leaf's role
+
+        LineageStartsAtTargetError
+            This leaf selects only datasets which match where `lineage` says to stop
         """
         if self.lineage is not None and self.lineage != lineage:
             raise ConflictingLineageError(self.role, self.lineage.role, lineage.role)
 
-        # Checked here as well as in the model validator which backs it up, because
-        # `model_copy` runs no validators at all. `where` is in the same position, and
-        # gets away with it only because `add_facets` does its checking for it.
+        # Checked here as well as in the model validators which back them up, because
+        # `model_copy` runs no validators at all.
         check_lineage_role_differs(self.role, lineage)
+        check_lineage_does_not_start_at_target(self.role, self.query, lineage)
 
         return self.model_copy(update={"lineage": lineage})
 
@@ -612,7 +684,7 @@ class AllOf(BaseModel):
         """
         return apply_to_leaves(self, lambda each_leaf: each_leaf.where(query))
 
-    def with_lineage(self, lineage: LineageRelation) -> AllOf:
+    def with_lineage(self, lineage: Relation) -> AllOf:
         """
         Set how every leaf below this node finds its related datasets
 
@@ -870,6 +942,7 @@ class Requirement(BaseModel):
     def _check_tree(self) -> Requirement:
         check_roles_are_distinct(self.tree)
         check_where_agrees_with_leaves(self.tree, self.where)
+        check_lineages_do_not_start_at_their_target(self.tree, self.where)
         check_grouping_facets_are_modelled(self.group_by, self.prefer)
 
         return self
@@ -1190,7 +1263,7 @@ def check_roles_are_distinct(node: Node) -> None:
     role_paths(node)
 
 
-def check_lineage_role_differs(role: str, lineage: LineageRelation) -> None:
+def check_lineage_role_differs(role: str, lineage: Relation) -> None:
     """
     Check that a leaf's role and its lineage's role are different names
 
@@ -1224,6 +1297,97 @@ def check_lineage_role_differs(role: str, lineage: LineageRelation) -> None:
         "different datasets. Rename one of them."
     )
     raise ValueError(msg)
+
+
+def check_lineage_does_not_start_at_target(
+    role: str, query: QueryCanonical, lineage: Relation
+) -> None:
+    """
+    Check that a leaf's datasets are not already where its lineage says to stop
+
+    Returns nothing: this is here to raise, and is asked for by name the way
+    [check_lineage_role_differs][(m).check_lineage_role_differs] is.
+
+    The rule is the one [esmporium.db.find_parents][] walks by: a dataset matching
+    `until` is where a chain *ends*, so a chain cannot start at one. `until` is
+    otherwise matched against each parent and never against the dataset the lineage
+    hangs off, which is what lets a chain pass through a dataset of the kind it is
+    looking for; this is the one case that rule cannot cover, because there is no
+    chain to pass through anything.
+
+    Refused only when the query settles it -- every facet `until` sets is set by the
+    query too, to a subset of the same values, so every dataset the leaf can select
+    matches. A query which merely *could* select such a dataset is left to
+    [solve][esmporium.requirements.solve], which reports it per dataset, since whether
+    it happened is a fact about the data rather than about the requirement.
+
+    Parameters
+    ----------
+    role
+        Role of the leaf
+
+    query
+        The query the leaf will be solved with, i.e. including any facets the
+        requirement adds. See [effective_query][(m).effective_query].
+
+    lineage
+        The leaf's lineage
+
+    Raises
+    ------
+    LineageStartsAtTargetError
+        Every dataset the query can select matches the lineage's `until`
+    """
+    if not isinstance(lineage, Ancestors):
+        # Unreachable while `Relation` has one member, which is why the type checkers
+        # are told to allow it, the way `_lineage`'s dispatch in
+        # `esmporium.requirements.solve` is. Nothing to check either way: a relation
+        # with no `until` does not walk back to anything, so it has no target to be
+        # starting at.
+        return  # type: ignore[unreachable]
+
+    until = set_facets(lineage.until)
+    asked = set_facets(query)
+    if any(
+        facet not in asked or not set(asked[facet]) <= set(values)
+        for facet, values in until.items()
+    ):
+        return
+
+    raise LineageStartsAtTargetError(role, lineage.role, until)
+
+
+def check_lineages_do_not_start_at_their_target(
+    tree: Node, where: QueryCanonical | None
+) -> None:
+    """
+    Check every lineage in a tree against the leaf it hangs off
+
+    Returns nothing: this is here to raise.
+
+    Called when a requirement is built, and *not* only when a leaf is, because a
+    requirement's `where` is part of what each leaf selects: a leaf which names no
+    experiment under a requirement whose `where` names the control is the same mistake,
+    written one level up. See [effective_query][(m).effective_query].
+
+    Parameters
+    ----------
+    tree
+        The tree whose leaves to check
+
+    where
+        Facets the requirement adds to every leaf, if any
+
+    Raises
+    ------
+    LineageStartsAtTargetError
+        A leaf selects only datasets which match where its lineage says to stop
+    """
+    for _, leaf in walk_leaves(tree):
+        if leaf.lineage is not None:
+            check_lineage_does_not_start_at_target(
+                leaf.role, effective_query(leaf, where), leaf.lineage
+            )
 
 
 def check_grouping_facets_are_modelled(

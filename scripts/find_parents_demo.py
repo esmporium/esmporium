@@ -279,7 +279,7 @@ def report(engine, *, file_bytes: int) -> None:
         for choice, count in sorted(by_choice.items()):
             decided = choice in {
                 ParentVersionChoice.CHILD_VERSION,
-                ParentVersionChoice.DEFAULTED,
+                ParentVersionChoice.DEFAULTED_TO_NEWEST,
             }
             marker = " <-- a release we picked" if decided else ""
             print(f"  x{count:<4} version_choice={choice}{marker}")

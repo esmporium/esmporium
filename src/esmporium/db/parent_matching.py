@@ -434,9 +434,9 @@ class VersionMatchOutcome:
     The versions that lost, when `parent_version` was reached by a real decision
 
     Empty unless `choice` is
-    [DEFAULTED][esmporium.db.schema.ParentVersionChoice.DEFAULTED]. Carried so that what
-    is reported to a caller names what it did not pick, which is the part they would
-    need in order to disagree.
+    [DEFAULTED_TO_NEWEST][esmporium.db.schema.ParentVersionChoice.DEFAULTED_TO_NEWEST].
+    Carried so that what is reported to a caller names what it did not pick, which
+    is the part they would need in order to disagree.
     """
 
     reason: str | None = None
@@ -508,7 +508,7 @@ def choose_parent_version(
        a contemporaneous pair is internally consistent where a 2019 child against a 2021
        parent may not be.
     3. **several, none of them the child's** -- the highest `version` string, labelled
-       [DEFAULTED][esmporium.db.schema.ParentVersionChoice.DEFAULTED].
+       [DEFAULTED_TO_NEWEST][esmporium.db.schema.ParentVersionChoice.DEFAULTED_TO_NEWEST].
 
     Retracted releases are dropped before 2 and 3, so a retracted match never beats a
     live newer release. If *every* release is retracted the filter is skipped rather
@@ -561,7 +561,7 @@ def choose_parent_version(
     choice = ParentVersionChoice.CHILD_VERSION
     if chosen is None:
         chosen = max(live, key=lambda one: one.version)
-        choice = ParentVersionChoice.DEFAULTED
+        choice = ParentVersionChoice.DEFAULTED_TO_NEWEST
 
     return VersionMatchOutcome(
         parent_version=chosen,
