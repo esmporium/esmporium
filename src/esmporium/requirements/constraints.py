@@ -30,22 +30,26 @@ see [Constraints][(m).Constraints].
 Solving does not need this,
 so any object with an `evaluate` method works there.
 
-## Information which is not in the database
+## Constraints which need more than the catalogue protocol provides
 
-For now, a constraint can only use what the
-[Catalogue][esmporium.requirements.Catalogue] protocol provides.
-Once we start needing metadata which isn't from the database,
-constraints will need a way to specify that they need to be able to get it.
-For example, a time range constraint will need to specify
-that it requires a catalogue which can provide that information.
-This will probably be done by defining a protocol locally,
-which has e.g. a `get_time_range_info` method,
-and using that protocol in the type hint of the constraint's `evaluate`.
-This keeps everything local and easy to trace.
-At runtime, if the catalogue which is actually passed doesn't have the right method,
-an error will be raised, which the solver can catch if needed.
-There is no need for a general "this metadata is unavailable" error
-nor for a catalogue method which can return any kind of metadata.
+[Constraint][(m).Constraint] is generic in the catalogue it needs.
+A constraint which only needs what the
+[Catalogue][esmporium.requirements.Catalogue] protocol provides
+is a `Constraint[Catalogue]`.
+A constraint which needs more, e.g. the time range of a dataset,
+defines a protocol next to itself which adds the methods it needs
+and is a constraint over that protocol instead.
+[Covers][esmporium.requirements.Covers] is the worked example:
+it is a `Constraint[CatalogueWithTimeInfo]`.
+This keeps everything local and easy to trace,
+and a type checker can tell whether a catalogue can be used with a constraint.
+
+What a type checker cannot check is a requirement:
+it holds constraints which may each need a different catalogue.
+So at runtime, if the catalogue passed to the solver doesn't have a method
+a constraint needs, the constraint raises,
+and the solver reports the part of the requirement it was attached to
+as unsatisfied, with the error in the explanation.
 """
 
 from __future__ import annotations
@@ -53,12 +57,22 @@ from __future__ import annotations
 import importlib
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Annotated, Any, Protocol, cast
+from typing import Annotated, Any, Protocol, TypeVar, cast
 
 from pydantic import BaseModel, PlainSerializer, PlainValidator
 
 from esmporium.requirements.catalogue import Catalogue, CatalogueEntry
 from esmporium.requirements.relations import Lineage
+
+CatalogueT_contra = TypeVar("CatalogueT_contra", bound=Catalogue, contravariant=True)
+"""
+The catalogue a constraint needs
+
+Contravariant because a constraint which needs less can be used wherever
+one which needs more can:
+a `Constraint[Catalogue]` can be used with any catalogue,
+so it is also a `Constraint[CatalogueWithTimeInfo]`.
+"""
 
 CONSTRAINT_TYPE_KEY = "type"
 """
@@ -114,8 +128,8 @@ Outcome = Pass | Degraded | Fail
 """
 What a constraint answers
 
-A constraint which cannot be evaluated raises,
-and the error propagates out of the solver
+A constraint which cannot be evaluated raises instead,
+and the solver reports that as a failure
 -- see [Constraint][(m).Constraint].
 """
 
@@ -164,7 +178,7 @@ class ConstraintView:
     """
 
 
-class Constraint(Protocol):
+class Constraint(Protocol[CatalogueT_contra]):
     """
     A judgement about the datasets a requirement selected
 
@@ -174,13 +188,17 @@ class Constraint(Protocol):
     A constraint must also be a pydantic model
     for it to be able to be stored with its requirement in an esmporium database
     -- see [Constraints][(m).Constraints].
+
+    Generic in the catalogue the constraint needs:
+    see the module's documentation.
     """
 
-    def evaluate(self, view: ConstraintView, catalogue: Catalogue) -> Outcome:
+    def evaluate(self, view: ConstraintView, catalogue: CatalogueT_contra) -> Outcome:
         """
         Evaluate whether the constraint is met
 
         If the constraint cannot be evaluated, raise.
+        The solver reports that as a failure.
 
         Parameters
         ----------
@@ -190,17 +208,21 @@ class Constraint(Protocol):
         catalogue
             Catalogue, which can be asked for further information if needed
 
-            A constraint which needs information
-            beyond what [Catalogue][esmporium.requirements.Catalogue] provides
-            should say so in its type hint for this argument.
-            See the module's documentation.
-
         Returns
         -------
         :
             The result of evaluating the constraint
         """
         ...
+
+
+AnyConstraint = Constraint[Any]
+"""
+A constraint, whatever catalogue it needs
+
+What a requirement holds,
+since the constraints in one requirement can each need a different catalogue.
+"""
 
 
 class NotAConstraintError(TypeError):
@@ -328,7 +350,7 @@ class UnresolvableConstraintError(TypeError):
         )
 
 
-def check_constraint(value: object) -> Constraint:
+def check_constraint(value: object) -> AnyConstraint:
     """
     Check that something can act as a constraint, and give it back
 
@@ -370,7 +392,7 @@ def check_constraint(value: object) -> Constraint:
     <object object at ...> is not a constraint
     """
     if _acts_as_constraint(value):
-        return cast("Constraint", value)
+        return cast("AnyConstraint", value)
 
     raise NotAConstraintError(value)
 
@@ -397,7 +419,7 @@ def _acts_as_constraint(value: object) -> bool:
     return not isinstance(value, type) and callable(getattr(value, "evaluate", None))
 
 
-def _load_constraint(value: object) -> Constraint:
+def _load_constraint(value: object) -> AnyConstraint:
     """
     Get a constraint back from a constraint or from its serialised form
 
@@ -417,7 +439,7 @@ def _load_constraint(value: object) -> Constraint:
         `value` is neither a constraint nor a serialised one
     """
     if _acts_as_constraint(value):
-        return cast("Constraint", value)
+        return cast("AnyConstraint", value)
 
     if isinstance(value, Mapping) and CONSTRAINT_TYPE_KEY in value:
         serialised = cast("Mapping[str, Any]", value)
@@ -432,7 +454,7 @@ def _load_constraint(value: object) -> Constraint:
         if not _acts_as_constraint(loaded):
             raise NotAConstraintError(loaded, path)
 
-        return cast("Constraint", loaded)
+        return cast("AnyConstraint", loaded)
 
     raise NotAConstraintError(value)
 
@@ -467,7 +489,7 @@ def _resolve(path: str) -> object:
     return target
 
 
-def _validate_constraints(value: object) -> tuple[Constraint, ...]:
+def _validate_constraints(value: object) -> tuple[AnyConstraint, ...]:
     """
     Get a tuple of constraints from whatever was given
 
@@ -494,7 +516,9 @@ def _validate_constraints(value: object) -> tuple[Constraint, ...]:
     return tuple(_load_constraint(each) for each in value)
 
 
-def _serialise_constraints(value: tuple[Constraint, ...]) -> list[dict[str, Any]]:
+def _serialise_constraints(
+    value: tuple[AnyConstraint, ...],
+) -> list[dict[str, Any]]:
     """
     Write constraints down, each with the class to rebuild it as
 
@@ -531,7 +555,7 @@ def _serialise_constraints(value: tuple[Constraint, ...]) -> list[dict[str, Any]
 
 
 Constraints = Annotated[
-    tuple[Constraint, ...],
+    tuple[AnyConstraint, ...],
     PlainValidator(_validate_constraints),
     PlainSerializer(_serialise_constraints),
 ]

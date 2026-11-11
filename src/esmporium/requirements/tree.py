@@ -47,7 +47,11 @@ from esmporium.requirements.catalogue import (
     set_facets,
     to_stored_query,
 )
-from esmporium.requirements.constraints import Constraint, Constraints, check_constraint
+from esmporium.requirements.constraints import (
+    AnyConstraint,
+    Constraints,
+    check_constraint,
+)
 from esmporium.requirements.relations import Ancestors, Relation
 from esmporium.requirements.roles import ROLE_SEPARATOR, check_role
 
@@ -632,7 +636,7 @@ class Leaf(BaseModel):
 
         return self.model_copy(update={"lineage": lineage})
 
-    def with_constraints(self, *constraints: Constraint) -> Leaf:
+    def with_constraints(self, *constraints: AnyConstraint) -> Leaf:
         """
         Add judgements this leaf's dataset has to pass
 
@@ -744,7 +748,7 @@ class AllOf(BaseModel):
         """
         return apply_to_leaves(self, lambda each_leaf: each_leaf.with_lineage(lineage))
 
-    def with_constraints(self, *constraints: Constraint) -> AllOf:
+    def with_constraints(self, *constraints: AnyConstraint) -> AllOf:
         """
         Add judgements every leaf below this node has to pass
 
@@ -1560,7 +1564,7 @@ def requirement(  # noqa: PLR0913 - one argument per field of the requirement
     prefer_other_terms: Mapping[str, tuple[str, ...]] | None = None,
     versions: VersionFilter = VersionFilter.NOT_RETRACTED,
     cardinality: Cardinality = Cardinality.ONE,
-    constraints: Iterable[Constraint] = (),
+    constraints: Iterable[AnyConstraint] = (),
 ) -> Requirement:
     """
     Create a [Requirement][(m).Requirement]

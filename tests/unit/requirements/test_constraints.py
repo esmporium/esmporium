@@ -227,15 +227,19 @@ def test_a_failed_check_still_says_what_was_found(dataset):
     assert "[satisfied] tas: #1" in rendered
 
 
-def test_a_catalogue_without_the_information_raises(dataset):
-    # The constraint's type hint says it needs a catalogue
-    # which can provide years of data.
-    # A catalogue which cannot raises, and the solver lets that propagate.
-    with pytest.raises(AttributeError, match="get_years_on_record"):
-        solve(
-            tas_requirement(AtLeastNYears(role="tas", years=150)),
-            InMemoryCatalogue(entries=(dataset(1),)),
-        )
+def test_a_catalogue_without_the_information_is_unsatisfied(dataset):
+    # The constraint needs a catalogue which can provide years of data.
+    # One which cannot makes the constraint raise,
+    # which the solver reports as a failure rather than crashing the whole solve.
+    result = solve(
+        tas_requirement(AtLeastNYears(role="tas", years=150)),
+        InMemoryCatalogue(entries=(dataset(1),)),
+    )
+
+    assert list(result.unsatisfied) == [ONLY_GROUP]
+    rendered = result.explain()
+    assert "AtLeastNYears: could not be evaluated: AttributeError" in rendered
+    assert "get_years_on_record" in rendered
 
 
 def test_degraded_is_satisfied_with_a_note(dataset):
@@ -517,9 +521,7 @@ def test_constraints_have_to_arrive_as_a_sequence():
 def test_nothing_in_the_package_names_a_constraint():
     # The claim this step exists to make, checked rather than argued for. Every
     # constraint in this module is defined in this module, so the package naming one of
-    # them would mean something had been special-cased. `Covers` is in the list because
-    # it is the one we are about to ship, and it must arrive as an implementation of
-    # this protocol rather than as a case the solver knows about.
+    # them would mean something had been special-cased.
     package = Path(esmporium.requirements.__file__).parent
     sources = {path.name: path.read_text() for path in package.glob("*.py")}
 
@@ -528,7 +530,20 @@ def test_nothing_in_the_package_names_a_constraint():
         "SameYears",
         "ControlIsLonger",
         "NotAModel",
-        "Covers",
     ):
         naming = sorted(file for file, text in sources.items() if name in text)
         assert not naming, f"{name} is named in {naming}"
+
+
+def test_nothing_in_the_package_special_cases_covers():
+    # `Covers` ships with the package, so it is named where it is defined,
+    # where it is exported and where the protocol's documentation points to it
+    # as the worked example.
+    # Anywhere else, e.g. the solver, would mean it had been special-cased
+    # rather than arriving as an implementation of the protocol.
+    package = Path(esmporium.requirements.__file__).parent
+    naming = sorted(
+        path.name for path in package.glob("*.py") if "Covers" in path.read_text()
+    )
+
+    assert naming == ["__init__.py", "constraints.py", "covers.py"]

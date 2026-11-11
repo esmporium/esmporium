@@ -44,7 +44,7 @@ from esmporium.requirements.catalogue import (
     set_facets,
 )
 from esmporium.requirements.constraints import (
-    Constraint,
+    AnyConstraint,
     ConstraintView,
     Degraded,
     Fail,
@@ -726,7 +726,7 @@ def _differing_facets(candidates: Sequence[CatalogueEntry]) -> tuple[str, ...]:
     )
 
 
-def _pending_constraints(constraints: Sequence[Constraint]) -> str:
+def _pending_constraints(constraints: Sequence[AnyConstraint]) -> str:
     """
     Say that constraints were never reached, when there were any
 
@@ -762,7 +762,7 @@ def _pending_constraints(constraints: Sequence[Constraint]) -> str:
 def _ambiguous_message(
     candidates: Sequence[CatalogueEntry],
     ctx: _Context,
-    pending: Sequence[Constraint] = (),
+    pending: Sequence[AnyConstraint] = (),
 ) -> str:
     """
     Explain an ambiguity in terms of what the user can do about it
@@ -872,7 +872,7 @@ def _choose(
     ctx: _Context,
     subject: str,
     cardinality: Cardinality,
-    pending: Sequence[Constraint] = (),
+    pending: Sequence[AnyConstraint] = (),
 ) -> tuple[CatalogueEntry, ...] | NodeResultNotOk:
     """
     Narrow candidates to the datasets which fill a role
@@ -1354,7 +1354,7 @@ def _constraint_view(result: NodeResultOk, role_prefix: str) -> ConstraintView:
 
 
 def _evaluate_constraints(
-    constraints: Sequence[Constraint],
+    constraints: Sequence[AnyConstraint],
     result: NodeResultOk,
     ctx: _Context,
     subject: str,
@@ -1370,10 +1370,13 @@ def _evaluate_constraints(
     because a failed check means the datasets the later checks would judge
     are not the ones which will be used.
 
-    Anything a constraint raises propagates.
-    (This is probably not that smart as it crashes the whole solve,
-    we should really catch the error and mark the result as failing.
-    Fix this while implementing `Covers`.)
+    A constraint which raises is treated as failing,
+    with the error in the explanation.
+    Letting it propagate would crash the whole solve over one group,
+    and the most common cause is expected to be a catalogue
+    which cannot provide what the constraint needs
+    (see [Constraint][esmporium.requirements.Constraint]),
+    which is a fact about this solve rather than a bug.
 
     Parameters
     ----------
@@ -1403,7 +1406,10 @@ def _evaluate_constraints(
 
     for constraint in constraints:
         name = type(constraint).__name__
-        outcome = constraint.evaluate(view, ctx.catalogue)
+        try:
+            outcome = constraint.evaluate(view, ctx.catalogue)
+        except Exception as exc:
+            outcome = Fail(f"could not be evaluated: {type(exc).__name__}: {exc}")
 
         if isinstance(outcome, Fail):
             status = ExplanationStatusNotOk.UNSATISFIED

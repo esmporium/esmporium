@@ -75,6 +75,7 @@ from esmporium.requirements.catalogue import (
 )
 from esmporium.requirements.constraints import (
     CONSTRAINT_TYPE_KEY,
+    AnyConstraint,
     Constraint,
     Constraints,
     ConstraintView,
@@ -87,6 +88,7 @@ from esmporium.requirements.constraints import (
     UnresolvableConstraintError,
     check_constraint,
 )
+from esmporium.requirements.covers import CatalogueWithTimeInfo, Covers
 from esmporium.requirements.relations import (
     LINEAGE_END,
     RELATION_MODEL_CONFIG,
@@ -145,15 +147,18 @@ __all__ = [
     "ROLE_SEPARATOR",
     "AllOf",
     "Ancestors",
+    "AnyConstraint",
     "AskedFacets",
     "Cardinality",
     "Catalogue",
     "CatalogueEntry",
+    "CatalogueWithTimeInfo",
     "ConflictingFacetsError",
     "ConflictingLineageError",
     "Constraint",
     "ConstraintView",
     "Constraints",
+    "Covers",
     "Degraded",
     "DuplicateEntryIDError",
     "DuplicateRoleError",

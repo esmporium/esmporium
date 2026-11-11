@@ -272,11 +272,17 @@ Picking *which* areacella dataset to link is also strict by default, with fallba
 ## Constraints
 
 A `Constraint` returns `Pass`, `Degraded(msg)` or `Fail(msg)`.
+`Constraint` is generic in the catalogue it needs.
 A constraint which needs information the `Catalogue` protocol does not provide
-says so through the type hint of its `evaluate`'s `catalogue` argument,
-using a protocol defined next to the constraint
-(e.g. one with a `get_time_range_info` method).
-If the catalogue which is passed at runtime does not have that method, an error is raised.
+defines a protocol next to itself which adds the methods it needs,
+and is a constraint over that protocol:
+`Covers` is a `Constraint[CatalogueWithTimeInfo]`,
+which adds `get_time_range` and `get_branch_time_in_parent`.
+A type checker can check a constraint against a catalogue,
+but not a requirement, whose constraints can each need a different catalogue.
+So at runtime, a constraint which raises
+(e.g. because the catalogue does not have a method it needs)
+is reported as failing, with the error in the explanation.
 
 **Where a check goes decides what happens when it fails**, which is the point of
 attaching them at three levels:
@@ -289,7 +295,7 @@ attaching them at three levels:
 
 Shipped checks:
 
-- **`Covers(role, target, align="branch" | "calendar", pad_years=, ideal_pad_years=)`** — e.g. the control covers the dataset's span, mapped through branch times along the whole chain. `pad_years=None` makes it soft. `role` and `target` name datasets **as the lineage names them**, which is why a lineage's `role` is required: `Covers(role="control")` and `Ancestors(role="control")` are visibly the same thing. `"self"` is the anchor, `"chain.<i>"` an intermediate parent, `"end"` works without knowing the name.
+- **`Covers(role, target, align="branch" | "calendar", pad_years=, ideal_pad_years=)`** — e.g. the control covers the dataset's span, mapped through branch times along the whole chain. Times are fractional years, and calendars are not handled. Nothing records time ranges yet, so against `DatabaseCatalogue` it always fails (saying why). `pad_years=None` makes it soft. `role` and `target` name datasets **as the lineage names them**, which is why a lineage's `role` is required: `Covers(role="control")` and `Ancestors(role="control")` are visibly the same thing. `"self"` is the anchor, `"chain.<i>"` an intermediate parent, `"end"` works without knowing the name.
 - **`SameTimeRange(roles)`** — a cross-leaf check: a Gregory regression uses temperature and radiation together, so ECS puts this on its scope. Identical periods pass, overlapping ones degrade (naming the overlap), disjoint ones fail.
 
 **Serialisation:** constraints are stored with their import path, so they must be pydantic models if their requirement is to be stored in a database. Solving does not need this.
