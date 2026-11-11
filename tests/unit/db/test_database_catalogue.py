@@ -48,7 +48,6 @@ from esmporium.requirements import (
     Catalogue,
     CatalogueEntry,
     InMemoryCatalogue,
-    MetadataUnavailableError,
     ParentLookup,
     ParentStatus,
     UnloadedFacetError,
@@ -1408,53 +1407,3 @@ def test_a_walk_writes_links_a_solve_can_read(engine, a_dataset_version, entry_o
     assert sorted(group.roles) == ["chain.0.field", "control.field", "field"]
     assert group.one("chain.0.field").experiment == "historical"
     assert group.one("control.field").experiment == "piControl"
-
-
-# ------------------------------------------------------- DatabaseCatalogue.metadata
-
-
-@pytest.mark.parametrize(
-    "key",
-    ["time_range", "branch_time_in_parent", "calendar", "anything_at_all"],
-)
-def test_metadata_is_unavailable_for_every_key(key, engine, store):
-    # Not a placeholder: no column anywhere holds the span of a time axis, a calendar
-    # or units, so "nothing has recorded this" is the true answer rather than a gap in
-    # this method. A requirement whose checks need such a fact reports its groups
-    # `undetermined`, which says the work has not been done -- not that the data failed.
-    store("only-one", variable="tas")
-    (entry,) = DatabaseCatalogue(engine).find(Query(variable="tas"))
-
-    with pytest.raises(MetadataUnavailableError) as excinfo:
-        DatabaseCatalogue(engine).metadata(entry, key)
-
-    assert excinfo.value.key == key
-    assert excinfo.value.entry_id == entry.id
-    assert "No column records a fact of this kind" in str(excinfo.value)
-
-
-def test_a_check_which_needs_metadata_leaves_the_group_undetermined(engine, store):
-    # The two halves joined up, which is what makes the answer above tolerable: a check
-    # against the real database gets a status which sends someone to do the work, rather
-    # than one which says the dataset does not qualify.
-    class NeedsTimeRange:
-        def evaluate(self, view, catalogue):
-            for entries in view.roles.values():
-                # Never returns against this catalogue, which is the point of the test.
-                catalogue.metadata(entries[0], "time_range")
-
-            raise AssertionError
-
-    store("tas-dataset", variable="tas")
-    checked = requirement(
-        name="needs-a-time-range",
-        tree=leaf(Query(variable="tas"), "tas").with_constraints(NeedsTimeRange()),
-        group_by=("model", "variant_label"),
-    )
-
-    result = solve(checked, DatabaseCatalogue(engine))
-
-    assert len(result.undetermined) == 1
-    assert not result.satisfied
-    assert not result.unsatisfied
-    assert "nobody has recorded" in result.explain()

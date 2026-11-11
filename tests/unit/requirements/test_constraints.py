@@ -9,7 +9,10 @@ ships could not tell that apart from the solver knowing about that one.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Protocol
 
 import pytest
 from pydantic import BaseModel, ConfigDict
@@ -19,12 +22,13 @@ import esmporium.requirements
 from esmporium.query import Query
 from esmporium.requirements import (
     Ancestors,
+    Catalogue,
+    CatalogueEntry,
+    ConstraintView,
     Degraded,
-    ExplanationStatusNotOk,
     ExplanationStatusOk,
     Fail,
     InMemoryCatalogue,
-    MetadataUnavailableError,
     NotAConstraintError,
     NotSerialisableConstraintError,
     Outcome,
@@ -56,14 +60,32 @@ FACETS = {
 ONLY_GROUP = tuple((facet, FACETS[facet]) for facet in GROUP_BY)
 """The group every dataset below falls in"""
 
-YEARS = "years_on_record"
-"""
-A fact no column records and no constraint of ours reads
 
-Invented here, which is the part worth noticing: `metadata` is keyed by a string so
-that a check can ask for something esmporium has never heard of, and a test is the first
-place that matters.
-"""
+class CatalogueWithYears(Catalogue, Protocol):
+    """
+    A catalogue which can say how many years of data a dataset has
+
+    Defined right beside the constraints which need it,
+    which is the pattern for any information the
+    [Catalogue][esmporium.requirements.Catalogue] protocol does not provide:
+    see [esmporium.requirements.constraints][].
+    """
+
+    def get_years_on_record(self, entry: CatalogueEntry) -> float:
+        """Get how many years of data a dataset has"""
+        ...
+
+
+@dataclass(frozen=True)
+class InMemoryCatalogueWithYears(InMemoryCatalogue):
+    """An in-memory catalogue which also knows how many years each dataset has"""
+
+    years_on_record: Mapping[int, float] = field(default_factory=dict)
+    """Entry ID -> how many years of data it has"""
+
+    def get_years_on_record(self, entry: CatalogueEntry) -> float:
+        """Get how many years of data a dataset has"""
+        return self.years_on_record[entry.id]
 
 
 class AtLeastNYears(BaseModel):
@@ -80,9 +102,9 @@ class AtLeastNYears(BaseModel):
     years: float
     ideal_years: float | None = None
 
-    def evaluate(self, view, catalogue) -> Outcome:
+    def evaluate(self, view: ConstraintView, catalogue: CatalogueWithYears) -> Outcome:
         for entry in view.roles[self.role]:
-            have = catalogue.metadata(entry, YEARS)
+            have = catalogue.get_years_on_record(entry)
             if have < self.years:
                 return Fail(f"#{entry.id} has {have:g} yr, needs {self.years:g}")
 
@@ -106,9 +128,9 @@ class SameYears(BaseModel):
 
     roles: tuple[str, ...]
 
-    def evaluate(self, view, catalogue) -> Outcome:
+    def evaluate(self, view: ConstraintView, catalogue: CatalogueWithYears) -> Outcome:
         found = {
-            role: catalogue.metadata(entry, YEARS)
+            role: catalogue.get_years_on_record(entry)
             for role in self.roles
             for entry in view.roles.get(role, ())
         }
@@ -130,12 +152,13 @@ class ControlIsLonger(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    def evaluate(self, view, catalogue) -> Outcome:
+    def evaluate(self, view: ConstraintView, catalogue: CatalogueWithYears) -> Outcome:
         for role, chains in view.lineages.items():
             for chain in chains:
                 anchor = chain.members[0]
                 end = chain.members[chain.index_of("end")]
-                if catalogue.metadata(end, YEARS) <= catalogue.metadata(anchor, YEARS):
+                years = catalogue.get_years_on_record
+                if years(end) <= years(anchor):
                     return Fail(f"{role}: #{end.id} is not longer than #{anchor.id}")
 
         return Pass()
@@ -170,25 +193,21 @@ def tas_requirement(*constraints, **overrides) -> Requirement:
     return requirement(**settings)
 
 
-def catalogue_of(dataset, **years) -> InMemoryCatalogue:
+def catalogue_of(dataset, years: float | None = None) -> InMemoryCatalogueWithYears:
     """Get a catalogue of one dataset, with however many years recorded for it."""
-    return InMemoryCatalogue(
+    return InMemoryCatalogueWithYears(
         entries=(dataset(1),),
-        metadata_by_id={1: dict(years)} if years else {},
+        years_on_record={1: years} if years is not None else {},
     )
 
 
 def test_user_defined_constraint(dataset):
     # The whole claim of this step, in one test: a check esmporium has never heard of,
-    # reading a fact no column records, decides whether the group is satisfied.
+    # reading information no column records, decides whether the group is satisfied.
     long_enough = AtLeastNYears(role="tas", years=150)
 
-    plenty = solve(
-        tas_requirement(long_enough), catalogue_of(dataset, **{YEARS: 800.0})
-    )
-    too_short = solve(
-        tas_requirement(long_enough), catalogue_of(dataset, **{YEARS: 40.0})
-    )
+    plenty = solve(tas_requirement(long_enough), catalogue_of(dataset, years=800.0))
+    too_short = solve(tas_requirement(long_enough), catalogue_of(dataset, years=40.0))
 
     assert list(plenty.satisfied) == [ONLY_GROUP]
     assert list(too_short.unsatisfied) == [ONLY_GROUP]
@@ -200,7 +219,7 @@ def test_a_failed_check_still_says_what_was_found(dataset):
     # first half would read as though nothing matched the query.
     result = solve(
         tas_requirement(AtLeastNYears(role="tas", years=150)),
-        catalogue_of(dataset, **{YEARS: 40.0}),
+        catalogue_of(dataset, years=40.0),
     )
 
     rendered = result.explain()
@@ -208,44 +227,15 @@ def test_a_failed_check_still_says_what_was_found(dataset):
     assert "[satisfied] tas: #1" in rendered
 
 
-def test_missing_metadata_is_undetermined_not_passed(dataset):
-    # The distinction the status exists for. Nobody has measured this dataset, so
-    # neither "it qualifies" nor "it does not" is a true thing to say about it.
-    result = solve(
-        tas_requirement(AtLeastNYears(role="tas", years=150)), catalogue_of(dataset)
-    )
-
-    assert list(result.undetermined) == [ONLY_GROUP]
-    assert not result.satisfied
-    assert not result.unsatisfied
-    assert result.undetermined[ONLY_GROUP].status is ExplanationStatusNotOk.UNDETERMINED
-    assert "nobody has recorded" in result.explain()
-    assert YEARS in result.explain()
-
-
-def test_a_constraint_may_not_swallow_missing_metadata(dataset):
-    # A check which caught it and returned `Fail` would report a dataset nobody has
-    # looked at as one which does not qualify. The solver can only tell the two apart
-    # because the exception reaches it, so this is a test of the contract rather than
-    # of the code: the exception has to be the exact class, so a check cannot defeat it
-    # by raising a subclass either.
-    class Sneaky(BaseModel):
-        model_config = ConfigDict(frozen=True, extra="forbid")
-
-        def evaluate(self, view, catalogue) -> Outcome:
-            try:
-                catalogue.metadata(view.roles["tas"][0], YEARS)
-            except MetadataUnavailableError:
-                return Fail("decided for itself")
-
-            return Pass()
-
-    result = solve(tas_requirement(Sneaky()), catalogue_of(dataset))
-
-    # Nothing stops a check doing this, and the point of the test is to pin that it is
-    # the check's choice and visibly so, rather than something the solver did.
-    assert list(result.unsatisfied) == [ONLY_GROUP]
-    assert "decided for itself" in result.explain()
+def test_a_catalogue_without_the_information_raises(dataset):
+    # The constraint's type hint says it needs a catalogue
+    # which can provide years of data.
+    # A catalogue which cannot raises, and the solver lets that propagate.
+    with pytest.raises(AttributeError, match="get_years_on_record"):
+        solve(
+            tas_requirement(AtLeastNYears(role="tas", years=150)),
+            InMemoryCatalogue(entries=(dataset(1),)),
+        )
 
 
 def test_degraded_is_satisfied_with_a_note(dataset):
@@ -253,7 +243,7 @@ def test_degraded_is_satisfied_with_a_note(dataset):
     # the solution and in the explanation.
     result = solve(
         tas_requirement(AtLeastNYears(role="tas", years=150, ideal_years=500)),
-        catalogue_of(dataset, **{YEARS: 300.0}),
+        catalogue_of(dataset, years=300.0),
     )
 
     (solution,) = result.satisfied.values()
@@ -264,7 +254,7 @@ def test_degraded_is_satisfied_with_a_note(dataset):
 def test_a_met_check_leaves_no_note(dataset):
     (solution,) = solve(
         tas_requirement(AtLeastNYears(role="tas", years=150, ideal_years=200)),
-        catalogue_of(dataset, **{YEARS: 800.0}),
+        catalogue_of(dataset, years=800.0),
     ).satisfied.values()
 
     assert solution.notes == ()
@@ -293,8 +283,8 @@ def test_notes_from_several_leaves_are_kept(make_entry):
 
     (solution,) = solve(
         needs_both,
-        InMemoryCatalogue(
-            entries=entries, metadata_by_id={1: {YEARS: 300.0}, 2: {YEARS: 200.0}}
+        InMemoryCatalogueWithYears(
+            entries=entries, years_on_record={1: 300.0, 2: 200.0}
         ),
     ).satisfied.values()
 
@@ -321,9 +311,9 @@ def test_requirement_level_constraint_sees_every_role(make_entry):
     def solved(tas_years, rlut_years):
         return solve(
             compared,
-            InMemoryCatalogue(
+            InMemoryCatalogueWithYears(
                 entries=entries,
-                metadata_by_id={1: {YEARS: tas_years}, 2: {YEARS: rlut_years}},
+                years_on_record={1: tas_years, 2: rlut_years},
             ),
         )
 
@@ -348,10 +338,10 @@ def test_a_leaf_constraint_sees_the_chain(dataset):
     def solved(control_years):
         return solve(
             traced,
-            InMemoryCatalogue(
+            InMemoryCatalogueWithYears(
                 entries=(dataset(1), dataset(2, experiment="piControl")),
                 parents={1: 2, 2: None},
-                metadata_by_id={1: {YEARS: 150.0}, 2: {YEARS: control_years}},
+                years_on_record={1: 150.0, 2: control_years},
             ),
         )
 
@@ -370,7 +360,7 @@ def test_checks_run_in_the_order_they_were_given(dataset):
             AtLeastNYears(role="tas", years=100),
             AtLeastNYears(role="tas", years=1000),
         ),
-        catalogue_of(dataset, **{YEARS: 500.0}),
+        catalogue_of(dataset, years=500.0),
     )
 
     assert "needs 1000" in result.explain()

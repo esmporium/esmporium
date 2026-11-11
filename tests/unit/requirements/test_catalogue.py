@@ -32,7 +32,6 @@ from esmporium.requirements import (
     DuplicateEntryIDError,
     InMemoryCatalogue,
     Lineage,
-    MetadataUnavailableError,
     ParentLookup,
     ParentStatus,
     UnknownReferenceError,
@@ -577,74 +576,6 @@ def test_duplicate_ids_are_reported_before_dangling_references(make_entry):
     # fundamental complaint, so it is the one to fix first.
     with pytest.raises(DuplicateEntryIDError):
         InMemoryCatalogue(entries=(make_entry(1), make_entry(1)), parents={1: 99})
-
-
-# ------------------------------------------------------------- Catalogue.metadata
-
-
-def test_metadata_answers_what_was_recorded(make_entry):
-    entry = make_entry(1)
-    catalogue = InMemoryCatalogue(
-        entries=(entry,), metadata_by_id={1: {"time_range": (1850.0, 2015.0)}}
-    )
-
-    assert catalogue.metadata(entry, "time_range") == (1850.0, 2015.0)
-
-
-def test_metadata_keys_are_not_ours_to_know(make_entry):
-    # The reason this is keyed by a string: a check can ask for a fact esmporium has
-    # never heard of, so a catalogue has to be able to hold one.
-    entry = make_entry(1)
-    catalogue = InMemoryCatalogue(
-        entries=(entry,), metadata_by_id={1: {"whatever_a_user_wants": object()}}
-    )
-
-    assert catalogue.metadata(entry, "whatever_a_user_wants") is not None
-
-
-@pytest.mark.parametrize(
-    "recorded",
-    [
-        pytest.param({}, id="nothing at all"),
-        pytest.param({1: {}}, id="the dataset, with nothing about it"),
-        pytest.param({1: {"something_else": 1.0}}, id="a different fact"),
-    ],
-)
-def test_metadata_which_was_never_recorded_raises(recorded, make_entry):
-    # Raising rather than answering `None`, which a check could not tell apart from a
-    # recorded value of nothing. The solver turns this into `undetermined`.
-    entry = make_entry(1)
-    catalogue = InMemoryCatalogue(entries=(entry,), metadata_by_id=recorded)
-
-    with pytest.raises(MetadataUnavailableError) as excinfo:
-        catalogue.metadata(entry, "time_range")
-
-    assert excinfo.value.entry_id == 1
-    assert excinfo.value.key == "time_range"
-    assert "No 'time_range' recorded for dataset 1" in str(excinfo.value)
-
-
-def test_metadata_can_be_asked_of_a_narrowed_entry(make_entry):
-    # Only the ID is read, so an entry a lookup built for a few facets can still be
-    # asked -- which is what solving hands a constraint.
-    catalogue = InMemoryCatalogue(
-        entries=(make_entry(1),), metadata_by_id={1: {"time_range": (0.0, 1.0)}}
-    )
-    narrowed = make_entry(1, facets_loaded={"variable"})
-
-    assert catalogue.metadata(narrowed, "time_range") == (0.0, 1.0)
-
-
-def test_metadata_about_a_dataset_the_catalogue_does_not_hold(make_entry):
-    # Recorded against a dataset which is not here to have facts about, which is a
-    # different mistake from a relation pointing nowhere and is reported as its own.
-    with pytest.raises(UnknownReferenceError) as excinfo:
-        InMemoryCatalogue(
-            entries=(make_entry(1),), metadata_by_id={99: {"time_range": (0.0, 1.0)}}
-        )
-
-    assert excinfo.value.unknown == (99,)
-    assert excinfo.value.field_name == "metadata_by_id"
 
 
 # ----------------------------------------------------------------------- Lineage

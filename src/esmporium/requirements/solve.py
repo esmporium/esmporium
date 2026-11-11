@@ -37,7 +37,6 @@ from esmporium.query import QueryProtocol, project_specific_facet_names
 from esmporium.requirements.catalogue import (
     Catalogue,
     CatalogueEntry,
-    MetadataUnavailableError,
     ParentStatus,
     VersionFilter,
     asked_facets,
@@ -109,21 +108,6 @@ class ExplanationStatusNotOk(str, Enum):
     AMBIGUOUS = "ambiguous"
     """There are too many datasets and nothing to choose between them"""
 
-    UNDETERMINED = "undetermined"
-    """
-    A question nobody has answered yet, so neither yes nor no is honest
-
-    Two things produce it, and both mean the same kind of work is outstanding: a
-    constraint which needs a fact nothing has recorded, and a lineage whose next parent
-    has never been looked for
-    ([ParentStatus.NOT_LOOKED_FOR][esmporium.requirements.ParentStatus]).
-
-    Kept apart from `unsatisfied` because what to do about them differs. Unsatisfied
-    says the data is not there, so go and search. This says we have not looked, so go
-    and read -- and reporting it as unsatisfied would turn a job on the to-do list into
-    a dead end.
-    """
-
 
 ExplanationStatus = ExplanationStatusOk | ExplanationStatusNotOk
 """
@@ -136,7 +120,6 @@ and there is no ambiguity about which is which.
 _STATUS_PRIORITY: dict[ExplanationStatusNotOk, int] = {
     ExplanationStatusNotOk.UNSATISFIED: 0,
     ExplanationStatusNotOk.AMBIGUOUS: 1,
-    ExplanationStatusNotOk.UNDETERMINED: 2,
 }
 """
 Which status a group takes when its parts fail in different ways, lowest first
@@ -145,11 +128,6 @@ Which status a group takes when its parts fail in different ways, lowest first
 however the ambiguity is settled, so the missing dataset is the honest headline. The
 explanation still carries both, because nothing short-circuits -- see
 [_eval_all_of][(m)._eval_all_of].
-
-`"undetermined"` ranks last for the same reason read the other way round: a group with a
-dataset missing stays unsatisfiable however many questions get answered, so settling
-those questions is not the work which would change the answer. Settle the headline
-first.
 """
 
 
@@ -566,15 +544,6 @@ class SolveResult:
     ambiguous: Mapping[GroupKey, UnsolvedGroup] = field(default_factory=dict)
     """Groups where a role had several candidates and nothing to choose between them"""
 
-    undetermined: Mapping[GroupKey, UnsolvedGroup] = field(default_factory=dict)
-    """
-    Groups which turned on a question nobody has answered yet
-
-    These are the ones to come back to after doing the work the explanation names,
-    rather than the ones to give up on: see
-    [ExplanationStatusNotOk.UNDETERMINED][(m).ExplanationStatusNotOk].
-    """
-
     def explain(self) -> str:
         """
         Explain every group
@@ -596,7 +565,6 @@ class SolveResult:
             *self.satisfied.values(),
             *self.unsatisfied.values(),
             *self.ambiguous.values(),
-            *self.undetermined.values(),
         ]
         if not groups:
             # `_no_groups` names the requirement itself, so it needs no title.
@@ -1020,37 +988,6 @@ class _Hop:
     """
 
 
-def _lineage_status(status: ParentStatus) -> ExplanationStatusNotOk:
-    """
-    Decide what a lineage which could not take its next step makes of the group
-
-    Parameters
-    ----------
-    status
-        What the catalogue answered. Never
-        [ParentStatus.FOUND][esmporium.requirements.ParentStatus], which is not a
-        failure.
-
-    Returns
-    -------
-    :
-        `"undetermined"` when nobody has read a parent for the dataset yet, since that
-        says the question has not been asked rather than that the answer is no, and
-        `"unsatisfied"` for every other reason a chain stops
-    """
-    # A note on the one which is deliberately not here. `UNRESOLVED` means a parent is
-    # named and has not been matched to a dataset we hold, and its own documentation
-    # says that covers two situations: nothing has searched for it yet, or it was
-    # searched for and had not been stored at the time. The first is undetermined and
-    # the second is not, and nothing here can tell them apart, so it stays
-    # `unsatisfied` -- the status which sends someone to look rather than the one which
-    # says the work is already queued. Splitting it belongs with whatever records it.
-    if status is ParentStatus.NOT_LOOKED_FOR:
-        return ExplanationStatusNotOk.UNDETERMINED
-
-    return ExplanationStatusNotOk.UNSATISFIED
-
-
 def _no_parent_message(
     current: CatalogueEntry, ancestors: Ancestors, status: ParentStatus
 ) -> str:
@@ -1188,13 +1125,11 @@ def _ancestor_lineage(
             needs_facets=ctx.needs_facets,
         )
         if lookup.parent is None:
-            status = _lineage_status(lookup.status)
-
             return NodeResultNotOk(
-                status,
+                ExplanationStatusNotOk.UNSATISFIED,
                 Explanation(
                     subject,
-                    status,
+                    ExplanationStatusNotOk.UNSATISFIED,
                     _no_parent_message(current, ancestors, lookup.status),
                 ),
             )
@@ -1428,10 +1363,17 @@ def _evaluate_constraints(
     """
     Run the constraints attached to a node against what it resolved to
 
-    Every constraint is run in order, and the first which fails or cannot be answered
-    ends it: unlike [_eval_all_of][(m)._eval_all_of], which evaluates every child so
-    that the explanation says everything wrong with a group, a failed check means the
-    datasets the later checks would judge are not the ones which will be used.
+    Every constraint is run in order, and the first which fails ends it.
+    This is unlike [_eval_all_of][(m)._eval_all_of],
+    which evaluates every child
+    so that the explanation says everything wrong with a group,
+    because a failed check means the datasets the later checks would judge
+    are not the ones which will be used.
+
+    Anything a constraint raises propagates.
+    (This is probably not that smart as it crashes the whole solve,
+    we should really catch the error and mark the result as failing.
+    Fix this while implementing `Covers`.)
 
     Parameters
     ----------
@@ -1461,26 +1403,7 @@ def _evaluate_constraints(
 
     for constraint in constraints:
         name = type(constraint).__name__
-        try:
-            outcome = constraint.evaluate(view, ctx.catalogue)
-        # The exact class rather than its subclasses, so that a constraint which raises
-        # a `LookupError` of its own by accident crashes rather than being reported as a
-        # question nobody has answered.
-        except MetadataUnavailableError as exc:
-            if type(exc) is not MetadataUnavailableError:
-                raise
-
-            status = ExplanationStatusNotOk.UNDETERMINED
-
-            return NodeResultNotOk(
-                status,
-                Explanation(
-                    subject,
-                    status,
-                    f"{name} needs something nobody has recorded: {exc}",
-                    parts=(result.explanation, *degraded),
-                ),
-            )
+        outcome = constraint.evaluate(view, ctx.catalogue)
 
         if isinstance(outcome, Fail):
             status = ExplanationStatusNotOk.UNSATISFIED
@@ -2022,7 +1945,6 @@ def solve(requirement: Requirement, catalogue: Catalogue) -> SolveResult:
     unsatisfied: dict[ExplanationStatusNotOk, dict[GroupKey, UnsolvedGroup]] = {
         ExplanationStatusNotOk.UNSATISFIED: {},
         ExplanationStatusNotOk.AMBIGUOUS: {},
-        ExplanationStatusNotOk.UNDETERMINED: {},
     }
 
     needs = facets_read(requirement)
@@ -2078,5 +2000,4 @@ def solve(requirement: Requirement, catalogue: Catalogue) -> SolveResult:
         satisfied=satisfied,
         unsatisfied=unsatisfied[ExplanationStatusNotOk.UNSATISFIED],
         ambiguous=unsatisfied[ExplanationStatusNotOk.AMBIGUOUS],
-        undetermined=unsatisfied[ExplanationStatusNotOk.UNDETERMINED],
     )

@@ -1,26 +1,51 @@
 """
 Constraints: judgements about the datasets a requirement selected
 
-A query selects datasets by matching facets, which answers "is there one?". A constraint
-answers the questions a facet cannot: whether the control a simulation branched from
-covers the years being analysed, whether two variables span the same period, whether
-there is enough of a run to regress against. Those are judgements about what is *in* the
-data rather than about which dataset it is.
+A query selects datasets by matching facets, which answers "is there one?".
+A constraint answers the questions a facet cannot:
+e.g. whether the control a simulation branched from covers the years being analysed,
+whether two variables span the same period,
+whether there is enough of a run to regress against.
+Those are judgements about what is *in* the data rather than about which dataset it is.
 
-[Constraint][(m).Constraint] is the extension point, and it is a protocol rather than a
-base class on purpose: anything with an `evaluate` method counts, and the solver never
-asks which constraint it is holding. A constraint is attached to a
+[Constraint][(m).Constraint] is the extension point,
+and it is a protocol rather than a base class on purpose:
+anything with an `evaluate` method counts,
+and the solver never asks which constraint it is holding.
+A constraint is attached to a
 [Leaf][esmporium.requirements.Leaf] or to a
-[Requirement][esmporium.requirements.Requirement], and **where it is attached decides
-what its failure costs**:
+[Requirement][esmporium.requirements.Requirement],
+and **where it is attached decides what its failure costs**:
 
-- on a leaf, it sees that dataset and the chain behind it, and a failure makes that leaf
-  unsatisfied
+- on a leaf, it sees that dataset and the chain behind it,
+  and a failure makes that leaf unsatisfied
 - on the requirement, it sees every role in the group, and a failure fails the group
 
-A constraint is also part of what a requirement *is*, so it has to survive being written
-to the database and read back. That is why a constraint has to be a pydantic model: see
-[Constraints][(m).Constraints].
+A constraint is also part of what a requirement *is*,
+so storing a requirement in the database that esmporium ships
+means writing its constraints down and reading them back.
+That is why a constraint has to be a pydantic model
+if you want to be able to save its requirement to that database:
+see [Constraints][(m).Constraints].
+Solving does not need this,
+so any object with an `evaluate` method works there.
+
+## Information which is not in the database
+
+For now, a constraint can only use what the
+[Catalogue][esmporium.requirements.Catalogue] protocol provides.
+Once we start needing metadata which isn't from the database,
+constraints will need a way to specify that they need to be able to get it.
+For example, a time range constraint will need to specify
+that it requires a catalogue which can provide that information.
+This will probably be done by defining a protocol locally,
+which has e.g. a `get_time_range_info` method,
+and using that protocol in the type hint of the constraint's `evaluate`.
+This keeps everything local and easy to trace.
+At runtime, if the catalogue which is actually passed doesn't have the right method,
+an error will be raised, which the solver can catch if needed.
+There is no need for a general "this metadata is unavailable" error
+nor for a catalogue method which can return any kind of metadata.
 """
 
 from __future__ import annotations
@@ -89,11 +114,9 @@ Outcome = Pass | Degraded | Fail
 """
 What a constraint answers
 
-Three members and no fourth, because "I cannot tell" is not something a constraint
-decides. A check which needs something nobody has recorded raises
-[MetadataUnavailableError][esmporium.requirements.MetadataUnavailableError], and the
-solver turns that into `undetermined` -- see
-[Constraint][(m).Constraint].
+A constraint which cannot be evaluated raises,
+and the error propagates out of the solver
+-- see [Constraint][(m).Constraint].
 """
 
 
@@ -102,10 +125,11 @@ class ConstraintView:
     """
     What a constraint can see of the datasets chosen so far
 
-    Named for who it is for rather than for what it holds, because what it holds depends
-    on where the constraint was attached: a leaf's check sees that leaf's roles, the
-    requirement's sees every role in the group. "What this constraint can see" is the
-    one description which is true in both places.
+    Named for who it is for rather than for what it holds,
+    because what it holds depends on where the constraint was attached:
+    a leaf's check sees that leaf's roles,
+    the requirement's sees every role in the group.
+    "What this constraint can see" is the one description which is true in both places.
 
     Role names given to and returned by this view are relative to
     [prefix][(m).ConstraintView.prefix].
@@ -124,19 +148,19 @@ class ConstraintView:
     Role path (relative to `prefix`) -> the datasets filling it
 
     Always a tuple, whatever the
-    [cardinality][esmporium.requirements.Requirement.cardinality], so that a constraint
-    has one shape to handle.
+    [cardinality][esmporium.requirements.Requirement.cardinality],
+    so that a constraint has one shape to handle.
     """
 
     lineages: Mapping[str, tuple[Lineage, ...]]
     """
     Leaf role (relative to `prefix`) -> the chain behind each dataset in that role
 
-    A leaf which asked for no lineage is absent rather than present and empty, so a
-    check which needs one can say so instead of quietly passing. The datasets in these
-    chains are in `roles` too, under the paths the lineage names; this is the same
-    datasets in the shape a check reads them, where the order of the chain and which end
-    is which are what matter.
+    A leaf which asked for no lineage is absent rather than present and empty,
+    so a check which needs one can say so instead of quietly passing.
+    The datasets in these chains are in `roles` too, under the paths the lineage names;
+    this is the same datasets in the shape a check reads them,
+    where the order of the chain and which end is which are what matter.
     """
 
 
@@ -144,23 +168,19 @@ class Constraint(Protocol):
     """
     A judgement about the datasets a requirement selected
 
-    The extension point for constraints: implement `evaluate` and the solver will run
-    it, without knowing or caring what it is. A constraint must also be a pydantic model
-    to be stored with its requirement -- see [Constraints][(m).Constraints].
+    The extension point for constraints:
+    implement `evaluate` and the solver will run it,
+    without knowing or caring what it is.
+    A constraint must also be a pydantic model
+    for it to be able to be stored with its requirement in an esmporium database
+    -- see [Constraints][(m).Constraints].
     """
 
     def evaluate(self, view: ConstraintView, catalogue: Catalogue) -> Outcome:
         """
-        Judge the datasets in view
+        Evaluate whether the constraint is met
 
-        Anything beyond the facets of the datasets themselves is asked of `catalogue`.
-        When it has no answer it raises
-        [MetadataUnavailableError][esmporium.requirements.MetadataUnavailableError], and
-        the right thing to do with that is nothing: let it propagate. The solver turns
-        it into `undetermined`, which says the question was never asked rather than that
-        the answer is no. Catching it and returning
-        [Fail][(m).Fail] would report a dataset nobody has looked at as a dataset which
-        does not qualify, and the two want different work doing about them.
+        If the constraint cannot be evaluated, raise.
 
         Parameters
         ----------
@@ -168,12 +188,17 @@ class Constraint(Protocol):
             The datasets chosen so far, and the chains behind them
 
         catalogue
-            The datasets available, asked for anything which is not a facet
+            Catalogue, which can be asked for further information if needed
+
+            A constraint which needs information
+            beyond what [Catalogue][esmporium.requirements.Catalogue] provides
+            should say so in its type hint for this argument.
+            See the module's documentation.
 
         Returns
         -------
         :
-            The judgement
+            The result of evaluating the constraint
         """
         ...
 
@@ -250,6 +275,11 @@ class NotAConstraintError(TypeError):
 class NotSerialisableConstraintError(TypeError):
     """
     A constraint cannot be written down, so its requirement cannot be stored
+
+    Only raised when a requirement is serialised,
+    e.g. to store it in a database or to compute its
+    [requirement_hash][esmporium.requirements.Requirement.requirement_hash].
+    Solving a requirement does not serialise it.
     """
 
     def __init__(self, constraint: object) -> None:
@@ -508,12 +538,17 @@ Constraints = Annotated[
 """
 Field type for holding constraints on a pydantic model
 
-A requirement is stored as canonical JSON and identified by the hash of it
-([requirement_hash][esmporium.requirements.Requirement.requirement_hash]), which is what
-makes "has this become satisfiable since?" a question about new data rather than about
-somebody having quietly edited what was asked for. A constraint is part of what was
-asked for, so it has to be in that JSON -- hence the two halves here, and hence a
-constraint having to be a pydantic model.
+When a requirement is stored in a database,
+it is stored as canonical JSON and identified by the hash of it
+([requirement_hash][esmporium.requirements.Requirement.requirement_hash]).
+This is what makes "has this become satisfiable since?"
+a question about new data
+rather than about somebody having quietly edited what was asked for.
+A constraint is part of what was asked for, so it has to be in that JSON
+-- hence the two halves here,
+and hence a constraint having to be a pydantic model if its requirement is to be stored.
+Solving never serialises a requirement,
+so a constraint which is not a pydantic model can still be used there.
 
 JSON cannot hold behaviour, so each constraint is written with the class to rebuild it
 as, under [CONSTRAINT_TYPE_KEY][(m).CONSTRAINT_TYPE_KEY], as `"module:QualName"`.
