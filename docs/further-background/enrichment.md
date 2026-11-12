@@ -58,7 +58,8 @@ list that can be passed straight back to the enricher.
 | 6 | **One pair of value columns plus a `units` column**, not a natural column group and a rich column group. No half-empty rows. |
 | 7 | A corrected branch time is a **`FIX`-sourced row**, not a Python-level catalogue wrapper. |
 | 8 | A version whose files have a gap gets start and end recorded **plus a contiguity flag**, and `Covers` refuses a gapped range rather than treating it as continuous. |
-| 9 | **Full containment** stays a first-class mode, and the default. |
+| 9 | **`Covers` defaults nothing.** Both modes are first-class and the user states which one they mean, in full, every time. This follows the rule `Requirement` already sets for `group_by` — *"a grouping decides what one group is, so it is stated rather than defaulted"* — and it is forced anyway, because containment cannot be written as a number: nobody knows a dataset's extent until we have measured it. |
+| 9b | **Time ranges are stored half-open, `[start, end_exclusive)`, and the field is named for it.** See "The half-open convention" below. |
 | 10a | **A requirement may be stated in years or months only, for now.** `min_overlap` and `pad` in days or hours get `MISSING_FEATURE_PLEASE_RAISE_ISSUE`. This is a decision about the *API surface*, and says nothing about which data we support — see "Frequency, units, and what needs a header". |
 | 10b | **Data at any frequency is supported, including daily and sub-daily** — but anything finer than monthly needs a calendar to unambiguously calculate the extent, so it needs a header read, so it reports `NEEDS_ENRICHMENT` until enriched. Monthly and yearly data never need a file opened to calculate their extent in natural units (they will need files opened to calculate extent in other units). |
 | 11 | A **sibling** pair whose axes do not align is a **loud `Fail`** naming the constraint, not a raise: it is a question we can answer, and the answer is no. |
@@ -70,44 +71,149 @@ list that can be passed straight back to the enricher.
 | 17 | An unsupported requirement unit is **reported as a group that failed to solve**, with a status along the lines of `MISSING_FEATURE_PLEASE_RAISE_ISSUE` pointing at the issue tracker — *not* an exception that aborts the solve. |
 | 18 | The actionable list is **`enrichment_inputs`** — it names what you pass to the enricher. |
 | 19 | `SolveResult` stays at **four mappings**: `satisfied`, `unsatisfied`, `ambiguous`, `couldnt_answer`. The fourth holds every group we could not answer, **with the reasoning** — each group carries which status applied and why. (`couldn't_answer` cannot be a Python identifier, so the apostrophe is dropped.) |
-| 20 | **Calendar arithmetic is hand-rolled on the standard library**, confined to one module. `cftime` is not added: the job is year and month offsets on a date in a named CF calendar, and this repo is deliberately conservative about dependencies (`numpy` is commented out, and `h5py` carries a paragraph justifying itself). `cftime` is the escape hatch if the scope ever grows past that. |
+| 20 | **Calendar arithmetic uses `cftime`, from a new optional extra. We do not roll our own.** Six CF calendars with six sets of leap rules is exactly the job that looks small and is not. It is an *extra* rather than a dependency, following `h5py`: monthly and yearly requirements never need it, because twelve months is a year in every calendar, so only the sub-monthly path pays. See "Where `cftime` can live" below for the one architectural consequence. |
 
 ## The `Covers` question, settled
 
-Two modes over the same stored start and end values.
+Two modes over the same stored values, and the user names which one they mean —
+nothing is defaulted (settled decision 9):
 
-### Mode 1 — containment (today's behaviour, and the default)
+```
+Covers(align="branch", mode="containment", pad=(10, 10))
+Covers(align="branch", mode="overlap", min_overlap=100, pad=(10, 10))
+```
 
-The control must span the run's whole extent, mapped into the control's axis through
-the branch points, plus `pad` either side.
+One class with a required `mode` rather than two classes, because `align` and the
+lineage mapping are common to both and two classes would duplicate that surface.
+`mode` is required rather than inferred from whether `min_overlap` was given, because
+inferring it is exactly the kind of default decision 9 rules out — and because
+containment cannot be written as a number anyway.
 
-### Mode 2 — minimum overlap with padding
+### The one piece of arithmetic
 
-> *Does the child have at least `min_overlap` of data overlapping the parent, and does
-> the parent have `pad` of data either side of that overlap?*
+The simplification that makes this readable: **after mapping, the child's start *is*
+the branch point.** `_needed_span` computes `start' = branch + (start - step_start)`,
+so the mapped child start equals `branch` by construction. Everything below is in the
+control's axis, after that mapping.
 
-Pad is measured **on the control**, either side of the analysis window. Whether the
+```
+child_extent = child_end_exclusive - child_start
+
+PASS iff  child_extent >= min_overlap
+     AND  control_start          <= branch_point - pad_before
+     AND  control_end_exclusive  >= branch_point + min_overlap + pad_after
+```
+
+Three independent comparisons, and the analysis window is **anchored at the branch
+point**: it is the child's first `min_overlap` of data, which is the window an anomaly
+actually uses. The pad is control data either side of that window, and whether the
 child also has data in the pad region is irrelevant.
 
+Anchoring is the part worth not losing. An earlier draft of this note let the window
+slide anywhere inside the overlap, which passes cases where the control does not reach
+the branch point at all:
+
 ```
-lo = max(control_start + pad_before, child_start)
-hi = min(control_end   - pad_after,  child_end)
+            0        100       150        250            400
+control                        |===========================|
+child mapped      |=============================|
+branch            ^
 
-PASS  iff  (hi - lo) >= min_overlap
+sliding window   finds 90 yr of overlap further right   -> PASS
+anchored         control_start 150 <= 100-10 = 90 false -> FAIL   <- the right answer
 ```
 
-Verified against both worked examples — control `[0, 200)`, child mapped
-`[100, 250)`, raw overlap 100 years:
+There is no control data at the branch, so there is nothing to take an anomaly
+against. The anchored form is both stricter and easier to explain.
 
-| Requirement | `lo` | `hi` | `hi - lo` | Verdict | Expected |
-|---|---|---|---|---|---|
-| `min_overlap=100`, pad 10 either side | `max(10, 100)` = 100 | `min(190, 250)` = 190 | 90 | **Fail** | fail — "control doesn't have the 10 years beyond the minimum 100" |
-| `min_overlap=10`, pad 10 either side | 100 | 190 | 90 | **Pass** | pass |
+Verified against two worked examples — control `[0, 200)`, child mapped `[100, 250)`,
+`branch_point = 100`, pad 10 either side, so `child_extent = 150`:
 
-It degenerates to Mode 1 exactly: set `min_overlap` to the child's own length and the
-formula reduces, term for term, to the existing
-`have_start <= need_start - pad[0] and have_end >= need_end + pad[1]`. One
-implementation, two modes, and nothing written against #69 changes meaning.
+| Requirement | extent ≥ overlap | control reaches back | control reaches forward | Verdict |
+|---|---|---|---|---|
+| `min_overlap=100` | 150 ≥ 100 ✓ | 0 ≤ 90 ✓ | 200 ≥ 210 ✗ | **Fail** — short on the far side |
+| `min_overlap=10` | 150 ≥ 10 ✓ | 0 ≤ 90 ✓ | 200 ≥ 120 ✓ | **Pass** |
+
+Containment is the same arithmetic with `min_overlap` set to the covered run's own
+extent: conditions two and three become `control_start <= child_start - pad_before`
+and `control_end_exclusive >= child_end_exclusive + pad_after`, which is `_covers()`
+as #69 already implements it. So one private function serves both modes.
+
+### The half-open convention
+
+Settled decision 5 notes that an extent is sometimes `end - start` and sometimes
+`end - start + 1`, and that this has tripped over many people. **Storing half-open is
+how we stop it being "sometimes".**
+
+A range is `[start, end_exclusive)`, and the field is *named* `end_exclusive` rather
+than `end`, so the convention travels to every call site, query and log line instead
+of living in a docstring somebody read once. That is the same move this repo already
+made with `reporting_interval` over `frequency`, and with
+`branch_time_in_parent` / `branch_time_in_child`.
+
+Decision 5's own example, stored this way:
+
+```
+yearly data published as 1850 to 1860
+
+  end_raw          "1860"      what the filename said
+  start            1850
+  end_exclusive    1861        the first year NOT in the data
+  extent           1861 - 1850 = 11      <- no correction term, ever
+```
+
+Three things follow, and the third is why the convention is chosen rather than merely
+documented:
+
+1. `extent = end_exclusive - start`, with no `+1` anywhere.
+2. `min_overlap` and `pad` are *lengths, not positions*, so the convention does not
+   touch them: `min_overlap=100` against monthly data means one hundred months.
+3. Two files are adjacent exactly when `previous.end_exclusive == next.start`. That
+   *is* gap detection (settled decision 8). With inclusive ends it would be
+   `previous.end + 1 == next.start`, and that `+1` has to know the unit.
+
+The off-by-one is confined to one named conversion, so there is exactly one place to
+get it right and one place to look when it is wrong:
+
+```
+filename  "…_320001-325012.nc"
+   │
+   ├─ PublishedRange(start_raw="320001", end_raw="325012", unit="mon")   inclusive, as published
+   │
+   └─ to_half_open(...)        <- the ONLY place the +1 lives
+         │
+         └─ TimeRange(start=38400, end_exclusive=39012, unit="mon")      half-open
+```
+
+The value type owns the arithmetic — `extent`, `contains`, `is_adjacent_to` — so no
+caller ever subtracts by hand. The docstring explains the convention; the type is what
+enforces it.
+
+Drafted wording for the stored field:
+
+> **`end_exclusive`** — the first step *not* in the data, counted in `units`.
+>
+> Half-open, so that `end_exclusive - start` is the extent with no correction term,
+> and two files are adjacent exactly when
+> `previous.end_exclusive == next.start`. That second property is what gap detection
+> is, so the convention is chosen for it rather than merely documented.
+>
+> Note that this is **not** what the filename says. A monthly file named
+> `…_320001-325012.nc` contains December 325012, so `end_exclusive` is January
+> 325101 — one step past it. `end_raw` keeps `"325012"` as published, which is the
+> value to quote back to a user, and the value to re-parse from if this conversion
+> ever turns out to be wrong.
+
+and for `Covers`:
+
+> `min_overlap` and `pad` are lengths, not positions, so the half-open convention
+> does not apply to them: `min_overlap=100` against monthly data means one hundred
+> months.
+
+The test that catches a wrong conversion is the **single-step dataset**: a monthly
+file named `…_320001-320001.nc` holds one month, so its extent must be 1. Subtracting
+the published values gives 0. That case goes first in PR A's table, beside two
+adjacent files satisfying `is_adjacent_to` and a one-month gap failing it.
 
 ### Covers vs SameTimeRange — why both exist
 
@@ -187,10 +293,70 @@ already settles it two ways:
   versions"*. Everything else is explicit `select`s. Adding relationship fields to
   `Dataset` would reverse a deliberate choice, so it is out.
 
-So nothing is being decoupled. `CatalogueEntry` keeps mirroring `Dataset`'s columns,
-and the time range joins the category the entry *already* has for facts resolved
-through a version — which is what `project_facets` and `other_terms` are, per the
-same note ("built *from* a particular version's documents").
+So nothing is being decoupled, and in particular the entry does **not** start
+mirroring `DatasetVersion` instead. It has none of that table's columns — no
+`version`, `is_latest` or `retracted` — and `entry.id` is a `Dataset.id`. Saying
+otherwise would contradict the note quoted above and break
+`test_catalogue_entry_mirrors_dataset_columns`
+(`tests/unit/test_schema.py`), which asserts
+`list(mirrored) == list(Dataset.model_fields)`: same names, same order, same declared
+types.
+
+What changes is that the entry's **two tiers get named.** That test already has the
+mechanism — an explicit allowlist of fields with no column behind them:
+
+```python
+CATALOGUE_ENTRY_ONLY_FIELDS = {"project_facets", "other_terms", "facets_loaded"}
+```
+
+and its comment already distinguishes kinds within it, noting that `facets_loaded`
+*"differs from the two mappings in kind rather than in where its values come from"*.
+So `time_range` is a two-line change plus a comment, and it opens a **third
+category**: facts resolved through the describing version. It will not be the only
+member — `linked`, for `Aux` at step 16, lands in the same place.
+
+The entry's own docstring currently says *"The fields mirror the columns of `Dataset`,
+so that the two cannot drift apart unnoticed"*, which read strictly is **already**
+untrue of the three fields in that allowlist. `time_range` only makes the
+overstatement visible, so the fix is to split the sentence rather than weaken the
+promise that matters:
+
+> An entry is one `Dataset` row — its id and its facet columns, mirrored field for
+> field and held to that by `test_catalogue_entry_mirrors_dataset_columns` — **plus**
+> what else is known about that dataset once a version has been chosen to speak for
+> it. `VersionFilter` chooses and `describing_version` is where; `project_facets`,
+> `other_terms` and `time_range` are all on that second footing.
+
+That keeps the invariant that earns its keep — *"a facet added to `Dataset` and not to
+the entry means requirements silently cannot select on it"* — exactly as strong.
+
+### Where `cftime` can live
+
+Settled decision 20 takes `cftime` as an optional extra. It has one architectural
+consequence worth stating before anyone starts.
+
+`esmporium.datasets` is imported by everything, and `esmporium.requirements` may
+import only `esmporium.query`, `esmporium.datasets` and `esmporium.formatting`. But
+`Covers` needs calendar arithmetic **at solve time** for sub-monthly data: turning
+"20 years of pad" into a position on a daily axis depends on the calendar. So:
+
+- the **value types** stay in `esmporium.datasets`, standard library only — they hold
+  numbers, a unit and a calendar name, and do no calendar arithmetic;
+- the **arithmetic** lives in its own module and imports `cftime` at point of use,
+  exactly as `headers/hdf5.py` does with `h5py`:
+  `import h5py  # the optional headers extra, imported on use`, inside a
+  `try` / `except ImportError`.
+
+The consequence is that `requirements` picks up an optional third-party dependency it
+did not have before. That breaks no rule here — this package's import restrictions are
+about esmporium cycles, not third parties — but it is a real change to its footprint
+and belongs in the PR description.
+
+Practically: monthly and yearly requirements work with nothing extra installed. Daily
+and sub-daily need `esmporium[calendars]`, and without it the arithmetic should raise
+a plain `ImportError` naming the extra, as `hdf5.py` does. That is an *environment*
+problem rather than a data or feature one, so it must not become a solve status
+alongside `NEEDS_ENRICHMENT` and `MISSING_FEATURE_PLEASE_RAISE_ISSUE`.
 
 ## Where the numbers come from
 
@@ -289,7 +455,7 @@ src/esmporium/enrich/
                        NO_TIME_AXIS_INTERVALS_BY_PROJECT
                        reader_for_project(project, readers=...)
     headers.py         read_time_axis(attributes) -> TimeAxis   (project-independent)
-    calendars.py       year and month offsets per CF calendar, stdlib only
+    calendars.py       year and month offsets per CF calendar, via cftime
     measure.py         per-file ranges -> per-version range + contiguity
 ```
 
@@ -356,9 +522,9 @@ every previous piece of the requirements system: prove it in memory, then wire i
   registry, laid out under "What is project-specific, and where it lives" above. All
   of them take plain values and return value types; none touches a session or a
   socket.
-- `calendars.py` is the one piece with real arithmetic in it, and it is deliberately
-  small: year and month offsets on a date in a named CF calendar, standard library
-  only (settled decision 20).
+- `calendars.py` is the one piece with real arithmetic in it, and it is a thin wrapper
+  over `cftime` rather than our own leap rules (settled decision 20), importing it at
+  point of use so the monthly and yearly paths need nothing installed.
 - Unit tests only, and this is where the awkwardness gets pinned down: real CMIP5,
   CMIP6 and CORDEX filenames; `monC`; a single-file dataset; a version whose files
   disagree or leave a gap; an `fx` dataset with no time axis; 31 January plus one
@@ -406,7 +572,7 @@ every previous piece of the requirements system: prove it in memory, then wire i
 
   | Column | Why |
   |---|---|
-  | `start`, `end` | the numbers; no extent column (settled decision 5) |
+  | `start`, `end_exclusive` | the numbers, half-open; no extent column (settled decisions 5 and 9b). Named `end_exclusive` so the convention reaches every call site |
   | `units` | udunits-style, e.g. `months since 0001-01` or `days since 1850-01-01`. One column serves both natural and rich, so no half-empty rows (settled decision 6). Precedent: `parent_time_units` already stores this shape |
   | `calendar` | nullable, and `NULL` *means* something: we didn't have the calendar when we ingested this information |
   | `source` | `FILENAME` / `FILE_HEADER` / `FIX` |
