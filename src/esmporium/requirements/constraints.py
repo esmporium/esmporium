@@ -8,10 +8,7 @@ whether two variables span the same period,
 whether there is enough of a run to regress against.
 Those are judgements about what is *in* the data rather than about which dataset it is.
 
-[Constraint][(m).Constraint] is the extension point,
-and it is a protocol rather than a base class on purpose:
-anything with an `evaluate` method counts,
-and the solver never asks which constraint it is holding.
+[Constraint][(m).Constraint] is the extension point.
 A constraint is attached to a
 [Leaf][esmporium.requirements.Leaf] or to a
 [Requirement][esmporium.requirements.Requirement],
@@ -20,15 +17,6 @@ and **where it is attached decides what its failure costs**:
 - on a leaf, it sees that dataset and the chain behind it,
   and a failure makes that leaf unsatisfied
 - on the requirement, it sees every role in the group, and a failure fails the group
-
-A constraint is also part of what a requirement *is*,
-so storing a requirement in the database that esmporium ships
-means writing its constraints down and reading them back.
-That is why a constraint has to be a pydantic model
-if you want to be able to save its requirement to that database:
-see [Constraints][(m).Constraints].
-Solving does not need this,
-so any object with an `evaluate` method works there.
 
 ## Constraints which need more than the catalogue protocol provides
 
@@ -244,13 +232,6 @@ class NotAConstraintError(TypeError):
             one. Named in the message, because a path which resolves to the wrong thing
             is a different mistake from a bad value handed in directly, and the path is
             what has to be corrected.
-
-        Notes
-        -----
-        There are four ways to not be a constraint and the message says which: a stored
-        path pointing at the wrong thing, a class where an instance was wanted, one
-        constraint where a sequence of them was wanted, and something with no
-        `evaluate` at all. Each wants a different thing done about it.
         """
         self.value = value
         self.path = path
@@ -297,11 +278,6 @@ class NotAConstraintError(TypeError):
 class NotSerialisableConstraintError(TypeError):
     """
     A constraint cannot be written down, so its requirement cannot be stored
-
-    Only raised when a requirement is serialised,
-    e.g. to store it in a database or to compute its
-    [requirement_hash][esmporium.requirements.Requirement.requirement_hash].
-    Solving a requirement does not serialise it.
     """
 
     def __init__(self, constraint: object) -> None:
@@ -355,9 +331,7 @@ def check_constraint(value: object) -> AnyConstraint:
     Check that something can act as a constraint, and give it back
 
     Duck-typed rather than `isinstance(value, Constraint)`, because a `Protocol` is only
-    checkable at runtime when it says so, and this one does not -- the same reason
-    [accept_any_query_style][esmporium.requirements.accept_any_query_style] checks for
-    an attribute.
+    checkable at runtime when it says so, and this one does not.
 
     Parameters
     ----------
@@ -562,10 +536,9 @@ Constraints = Annotated[
 """
 Field type for holding constraints on a pydantic model
 
-When a requirement is stored in a database,
-it is stored as canonical JSON and identified by the hash of it
-([requirement_hash][esmporium.requirements.Requirement.requirement_hash]).
-This is what makes "has this become satisfiable since?"
+A requirement is stored as canonical JSON and identified by the hash of it
+([requirement_hash][esmporium.requirements.Requirement.requirement_hash]),
+which is what makes "has this become satisfiable since?"
 a question about new data
 rather than about somebody having quietly edited what was asked for.
 A constraint is part of what was asked for, so it has to be in that JSON
@@ -582,16 +555,12 @@ Two consequences are worth knowing before relying on this.
 **Loading imports the module the stored text names**, so only load requirements you
 trust: a requirement read from a database you do not control is code you do not control.
 
-**The path is part of the question**, so moving or renaming a constraint class changes
-the hash of every stored requirement which uses it, and a renamed class makes those
-requirements stop loading
-([UnresolvableConstraintError][(m).UnresolvableConstraintError]). Keep a constraint
-where it is, or expect to re-stem what is stored against it.
+**The path is part of the hash**, so moving or renaming a constraint class changes the
+hash of every stored requirement which uses it, and those requirements then stop
+loading ([UnresolvableConstraintError][(m).UnresolvableConstraintError]).
 
-One wart to know when reading a traceback: both halves run inside pydantic, which wraps
-whatever they raise. So
+Both halves run inside pydantic, which wraps whatever they raise:
 [NotSerialisableConstraintError][(m).NotSerialisableConstraintError] surfaces inside a
-`PydanticSerializationError` and the loading errors inside a `ValidationError`. The
-message is carried through intact, which is what a user needs, so this is left as it is
-rather than pre-checked somewhere a caller might not go through.
+`PydanticSerializationError`, and the loading errors inside a `ValidationError`. The
+message is carried through intact, so there is no pre-check.
 """
