@@ -85,7 +85,7 @@ def is_worth_retrying(exc: BaseException) -> bool:
     return exc.outcome.is_worth_retrying
 
 
-def _wait(state: RetryCallState) -> float:
+def _wait(retry_state: RetryCallState) -> float:
     """
     Work out how long to wait before the next attempt
 
@@ -94,7 +94,7 @@ def _wait(state: RetryCallState) -> float:
 
     Parameters
     ----------
-    state
+    retry_state
         Tenacity's record of what has happened so far
 
     Returns
@@ -102,7 +102,7 @@ def _wait(state: RetryCallState) -> float:
     :
         How long to wait, in seconds
     """
-    exc = state.outcome.exception() if state.outcome is not None else None
+    exc = retry_state.outcome.exception() if retry_state.outcome is not None else None
 
     asked_for = getattr(exc, "retry_after_seconds", None)
     if isinstance(exc, HeaderNodeBlockedError) and asked_for is not None:
@@ -113,7 +113,7 @@ def _wait(state: RetryCallState) -> float:
     # `attempt_number` is 1-based, so the first wait is the base.
     delay = min(
         DEFAULT_BACKOFF_CAP_SECONDS,
-        DEFAULT_BACKOFF_BASE_SECONDS * (2 ** (state.attempt_number - 1)),
+        DEFAULT_BACKOFF_BASE_SECONDS * (2 ** (retry_state.attempt_number - 1)),
     )
 
     jitter = random.uniform(0.0, DEFAULT_JITTER)  # noqa: S311 - jitter, not crypto
