@@ -820,7 +820,7 @@ plots = [
 [package.dev-dependencies]
 all-dev = [
     { name = "attrs" },
-    { name = "h5py" },
+    { name = "h5py", marker = "python_full_version < '3.14'" },
     { name = "hypothesis" },
     { name = "jupyterlab" },
     { name = "jupytext" },
@@ -880,7 +880,7 @@ docs = [
     { name = "ruff" },
 ]
 tests = [
-    { name = "h5py" },
+    { name = "h5py", marker = "python_full_version < '3.14'" },
     { name = "hypothesis" },
     { name = "pytest" },
     { name = "pytest-cov" },
@@ -890,7 +890,7 @@ tests-full = [
     { name = "pytest-cov" },
 ]
 tests-min = [
-    { name = "h5py" },
+    { name = "h5py", marker = "python_full_version < '3.14'" },
     { name = "hypothesis" },
     { name = "pytest" },
     { name = "pytest-regressions" },
@@ -913,7 +913,7 @@ provides-extras = ["plots", "headers", "full"]
 [package.metadata.requires-dev]
 all-dev = [
     { name = "attrs", specifier = "==25.3.0" },
-    { name = "h5py", specifier = "==3.14.0" },
+    { name = "h5py", marker = "python_full_version < '3.14'", specifier = "==3.14.0" },
     { name = "hypothesis", specifier = "==6.165.3" },
     { name = "jupyterlab", specifier = "==4.4.5" },
     { name = "jupytext", specifier = "==1.17.2" },
@@ -973,7 +973,7 @@ docs = [
     { name = "ruff", specifier = "==0.15.12" },
 ]
 tests = [
-    { name = "h5py", specifier = "==3.14.0" },
+    { name = "h5py", marker = "python_full_version < '3.14'", specifier = "==3.14.0" },
     { name = "hypothesis", specifier = "==6.165.3" },
     { name = "pytest", specifier = "==8.3.4" },
     { name = "pytest-cov", specifier = "==6.0.0" },
@@ -981,7 +981,7 @@ tests = [
 ]
 tests-full = [{ name = "pytest-cov", specifier = "==6.0.0" }]
 tests-min = [
-    { name = "h5py", specifier = "==3.14.0" },
+    { name = "h5py", marker = "python_full_version < '3.14'", specifier = "==3.14.0" },
     { name = "hypothesis", specifier = "==6.165.3" },
     { name = "pytest", specifier = "==8.3.4" },
     { name = "pytest-regressions", specifier = "==2.11.0" },

@@ -8,7 +8,7 @@ exceptiongroup==1.3.1 ; python_full_version < '3.11'
     # via
     #   hypothesis
     #   pytest
-h5py==3.14.0
+h5py==3.14.0 ; python_full_version < '3.14'
 hypothesis==6.165.3
 iniconfig==2.3.0
     # via pytest
@@ -16,7 +16,7 @@ numpy==2.2.6 ; python_full_version < '3.11'
     # via h5py
 numpy==2.4.6 ; python_full_version == '3.11.*'
     # via h5py
-numpy==2.5.1 ; python_full_version >= '3.12'
+numpy==2.5.1 ; python_full_version >= '3.12' and python_full_version < '3.14'
     # via h5py
 packaging==26.3
     # via pytest

@@ -139,7 +139,13 @@ tests-min = [
     # ----------------
     # The `headers` extra, so the netCDF-4/HDF5 reader is covered. Pinned like
     # everything else here; a test run should not change because a wheel did.
-    "h5py==3.14.0",
+    #
+    # Excluded on 3.14, where no h5py release ships a wheel: installing one there
+    # builds it from source, which needs an HDF5 library the runners do not have. The
+    # netCDF-4 reader's tests skip themselves without h5py (`pytest.importorskip` in
+    # `tests/conftest.py`), so 3.14 covers everything else and 3.10-3.13 cover that
+    # reader. Drop the marker once h5py publishes a 3.14 wheel.
+    "h5py==3.14.0 ; python_full_version < '3.14'",
     "hypothesis==6.165.3",
     "pytest==8.3.4",
     "pytest-regressions==2.11.0",

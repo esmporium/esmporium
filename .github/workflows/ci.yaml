@@ -117,7 +117,11 @@ jobs:
           # when people try to run without installing optional dependencies,
           # we should add a CI step that runs the tests without optional dependencies too.
           # We don't have that right now, because we're not sure this pain point exists.
-          uv-dependency-install-flags: "--group tests --all-extras"
+          # `--all-extras` everywhere except 3.14, where the `headers` extra cannot be
+          # installed: no h5py release ships a 3.14 wheel, so it would be built from
+          # source against an HDF5 library the runner does not have. See the note on
+          # h5py in pyproject.toml's `tests-min` group.
+          uv-dependency-install-flags: ${{ matrix.python-version == '3.14' && '--group tests --extra plots' || '--group tests --all-extras' }}
       - name: Run tests
         env:
           # Don't need interactive plots
