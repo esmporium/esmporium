@@ -28,7 +28,7 @@ defining whether we found a solution or not.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 
 from esmporium.datasets import DATASET_FACET_COLUMNS
@@ -42,6 +42,12 @@ from esmporium.requirements.catalogue import (
     asked_facets,
     matches,
     set_facets,
+)
+from esmporium.requirements.constraints import (
+    AnyConstraint,
+    ConstraintView,
+    Degraded,
+    Fail,
 )
 from esmporium.requirements.relations import Ancestors, Lineage, Relation
 from esmporium.requirements.roles import ROLE_SEPARATOR
@@ -67,9 +73,8 @@ A value can be `None` because a facet can be: CMIP5 has no concept of a grid, so
 
 
 # TODO future:
-# Two more join this later: `"degraded"` when a check passes with a complaint, and
-# `"absent"` when an optional part is dropped. Nothing here can produce either yet,
-# so they are deliberately absent rather than defined and unreachable.
+# One more joins these later: `"absent"`, when an optional part is dropped. Nothing here
+# can produce it yet, so it is deliberately absent rather than defined and unreachable.
 class ExplanationStatusOk(str, Enum):
     """
     Ways in which (part of) a requirement can be met
@@ -78,12 +83,17 @@ class ExplanationStatusOk(str, Enum):
     SATISFIED = "satisfied"
     """Everything asked for was found"""
 
+    DEGRADED = "degraded"
+    """
+    A constraint was met, but not as well as it could be
 
-# TODO future:
-# A third, `"undetermined"`, arrives with constraints: a check which needs metadata the
-# catalogue cannot supply can neither pass nor fail, and answering "no" on its behalf
-# would be a lie. Nothing here can produce that yet, because no check exists to need it,
-# so it is deliberately absent rather than defined and unreachable.
+    On the *ok* side, deliberately: the group is satisfied and the analysis can be run.
+    This marks the line in the explanation which says what is not ideal about it, and
+    the same message is on the solution's
+    [notes][(m).Solution.notes] for anything which wants to act on it.
+    """
+
+
 class ExplanationStatusNotOk(str, Enum):
     """
     Ways in which (part of) a requirement can fail to be met
@@ -93,7 +103,7 @@ class ExplanationStatusNotOk(str, Enum):
     """
 
     UNSATISFIED = "unsatisfied"
-    """There is no dataset"""
+    """There is no dataset, or one was found and a constraint ruled it out"""
 
     AMBIGUOUS = "ambiguous"
     """There are too many datasets and nothing to choose between them"""
@@ -355,10 +365,9 @@ class Explanation:
 
 
 # TODO future as tree grows:
-# Two more fields join `roles` and `lineages` as the tree grows, each carrying what its
-# own node type produces: `choices` (which alternative an `any_of` used) and `notes` (an
-# optional part dropped, a check which passed with a complaint). Neither is here yet,
-# because nothing can put anything in them yet.
+# One more field joins `roles`, `lineages` and `notes` as the tree grows: `choices`,
+# which alternative an `any_of` used. It is not here yet, because nothing can put
+# anything in it yet.
 @dataclass(frozen=True)
 class NodeResultOk:
     """
@@ -371,14 +380,30 @@ class NodeResultOk:
     explanation: Explanation
     """How this node was satisfied"""
 
-    lineages: tuple[Lineage, ...] = ()
+    lineages: Mapping[str, tuple[Lineage, ...]] = field(default_factory=dict)
     """
-    The chains behind the datasets below this node, one per dataset which has one
+    Role path of a leaf -> the chain behind each dataset filling it
 
     Empty when no leaf below asked for a lineage, which is every requirement that does
     not mention one. The datasets in these chains are also in `roles`, under the paths
     the lineage names; this is the same datasets in the shape a check reads them, where
     the order of the chain and which end is which are what matter.
+
+    Keyed rather than a flat tuple, which [Solution.lineages][(m).Solution.lineages] is,
+    because a check names the role it is talking about and so has to be handed the
+    chains under those names. Working the key back out from the chains would mean
+    searching `roles` for each anchor, which two leaves holding the same dataset would
+    make ambiguous.
+    """
+
+    notes: tuple[str, ...] = ()
+    """
+    What is not ideal about this node, where it is satisfied anyway
+
+    The same messages appear in the explanation, on the lines marked
+    [ExplanationStatusOk.DEGRADED][(m).ExplanationStatusOk]. They are collected flat
+    here as well so that a caller can read them without walking the tree, which is the
+    difference between acting on them and only printing them.
     """
 
 
@@ -426,6 +451,16 @@ class Solution:
     The chains behind the datasets in this group, one per dataset which has one
 
     See [NodeResultOk.lineages][(m).NodeResultOk.lineages].
+    """
+
+    notes: tuple[str, ...] = ()
+    """
+    What is not ideal about this solution, which is satisfied regardless
+
+    Empty for a group which met every constraint outright. A non-empty one is still a
+    solution -- the datasets in `roles` are the answer and the analysis can be run --
+    with something worth recording alongside the result. See
+    [NodeResultOk.notes][(m).NodeResultOk.notes].
     """
 
     def one(self, role: str) -> CatalogueEntry:
@@ -484,7 +519,7 @@ class SolveResult:
     """
     The result of solving a requirement: every group, sorted into what became of it
 
-    Every group which was discovered appears in exactly one of the three mappings,
+    Every group which was discovered appears in exactly one of the four mappings,
     one per status.
     """
 
@@ -691,7 +726,44 @@ def _differing_facets(candidates: Sequence[CatalogueEntry]) -> tuple[str, ...]:
     )
 
 
-def _ambiguous_message(candidates: Sequence[CatalogueEntry], ctx: _Context) -> str:
+def _pending_constraints(constraints: Sequence[AnyConstraint]) -> str:
+    """
+    Say that constraints were never reached, when there were any
+
+    Parameters
+    ----------
+    constraints
+        The constraints attached to whatever could not be narrowed down
+
+    Returns
+    -------
+    :
+        A sentence to append to an ambiguity message, or `""` when there is nothing to
+        say
+    """
+    if not constraints:
+        return ""
+
+    named = readable_list([type(each).__name__ for each in constraints])
+
+    return (
+        f" Note that {named} was not evaluated, because a check judges the dataset "
+        "which was chosen and nothing was: one of these candidates may well be the one "
+        "that passes."
+        if len(constraints) == 1
+        else (
+            f" Note that {named} were not evaluated, because a check judges the "
+            "dataset which was chosen and nothing was: one of these candidates may "
+            "well be the one that passes."
+        )
+    )
+
+
+def _ambiguous_message(
+    candidates: Sequence[CatalogueEntry],
+    ctx: _Context,
+    pending: Sequence[AnyConstraint] = (),
+) -> str:
     """
     Explain an ambiguity in terms of what the user can do about it
 
@@ -703,11 +775,17 @@ def _ambiguous_message(candidates: Sequence[CatalogueEntry], ctx: _Context) -> s
     ctx
         What is being solved
 
+    pending
+        Constraints attached to what was being filled, which were therefore never
+        reached. Named in the message, because "narrow this down and the checks will
+        run" is the actionable part and is not otherwise visible.
+
     Returns
     -------
     :
         The message
     """
+    unreached = _pending_constraints(pending)
     differing = _differing_facets(candidates)
     if not differing:
         listed = ", ".join(_describe_entry(candidate) for candidate in candidates)
@@ -728,7 +806,7 @@ def _ambiguous_message(candidates: Sequence[CatalogueEntry], ctx: _Context) -> s
                 "at. Name it in the requirement to have it read -- in "
                 "`group_by_other_terms` or `prefer_other_terms` for a facet only a "
                 "search document knows -- or use `cardinality=Cardinality.ALL` to "
-                "keep them all."
+                f"keep them all.{unreached}"
             )
 
         # The issue tracker rather than advice, because a catalogue backed by our
@@ -749,7 +827,7 @@ def _ambiguous_message(candidates: Sequence[CatalogueEntry], ctx: _Context) -> s
             "which tells these apart exists but has not reached the solver. Please "
             "raise an issue at https://github.com/esmporium/esmporium/issues quoting "
             "the message above. `cardinality=Cardinality.ALL` keeps them all in "
-            "the meantime."
+            f"the meantime.{unreached}"
         )
 
     listed = ", ".join(
@@ -774,7 +852,7 @@ def _ambiguous_message(candidates: Sequence[CatalogueEntry], ctx: _Context) -> s
         return (
             f"{lead}. Nothing was given to choose between them: set `prefer` on the "
             f"requirement (e.g. `prefer={{{example!r}: (...)}}`), narrow the query, or "
-            "use `cardinality=Cardinality.ALL` to keep them all."
+            f"use `cardinality=Cardinality.ALL` to keep them all.{unreached}"
         )
 
     preferences = "; ".join(
@@ -785,7 +863,7 @@ def _ambiguous_message(candidates: Sequence[CatalogueEntry], ctx: _Context) -> s
     return (
         f"{lead}. Preferring {preferences} did not narrow this to one, since the "
         "candidates left over are equally preferred: add the facet they differ on to "
-        "`prefer`, or narrow the query."
+        f"`prefer`, or narrow the query.{unreached}"
     )
 
 
@@ -794,6 +872,7 @@ def _choose(
     ctx: _Context,
     subject: str,
     cardinality: Cardinality,
+    pending: Sequence[AnyConstraint] = (),
 ) -> tuple[CatalogueEntry, ...] | NodeResultNotOk:
     """
     Narrow candidates to the datasets which fill a role
@@ -811,6 +890,12 @@ def _choose(
 
     cardinality
         How many datasets may fill the role
+
+    pending
+        Constraints which will judge whatever is chosen, named in the message if
+        nothing is. They are not applied here: a check judges the dataset which was
+        picked rather than deciding which to pick, so an ambiguity is reported rather
+        than resolved by them.
 
     Returns
     -------
@@ -880,7 +965,7 @@ def _choose(
             Explanation(
                 subject,
                 ExplanationStatusNotOk.AMBIGUOUS,
-                _ambiguous_message(remaining, ctx),
+                _ambiguous_message(remaining, ctx, pending),
             ),
         )
 
@@ -1236,6 +1321,130 @@ def _in_group(entry: CatalogueEntry, ctx: _Context) -> bool:
     return all(entry.facet(facet) == value for facet, value in ctx.group.items())
 
 
+def _constraint_view(result: NodeResultOk, role_prefix: str) -> ConstraintView:
+    """
+    Get what a constraint attached at a prefix can see
+
+    Parameters
+    ----------
+    result
+        What the node below it resolved to
+
+    role_prefix
+        Prefix of the part of the tree being checked
+
+    Returns
+    -------
+    :
+        The view, with role names relative to `role_prefix`
+    """
+    return ConstraintView(
+        prefix=role_prefix,
+        roles={
+            path.removeprefix(role_prefix): entries
+            for path, entries in result.roles.items()
+            if path.startswith(role_prefix)
+        },
+        lineages={
+            path.removeprefix(role_prefix): chains
+            for path, chains in result.lineages.items()
+            if path.startswith(role_prefix)
+        },
+    )
+
+
+def _evaluate_constraints(
+    constraints: Sequence[AnyConstraint],
+    result: NodeResultOk,
+    ctx: _Context,
+    subject: str,
+    role_prefix: str,
+) -> NodeResult:
+    """
+    Run the constraints attached to a node against what it resolved to
+
+    Every constraint is run in order, and the first which fails ends it.
+    This is unlike [_eval_all_of][(m)._eval_all_of],
+    which evaluates every child
+    so that the explanation says everything wrong with a group,
+    because a failed check means the datasets the later checks would judge
+    are not the ones which will be used.
+
+    A constraint which raises is treated as failing,
+    with the error in the explanation.
+    Letting it propagate would crash the whole solve over one group,
+    and the most common cause is expected to be a catalogue
+    which cannot provide what the constraint needs
+    (see [Constraint][esmporium.requirements.Constraint]),
+    which is a fact about this solve rather than a bug.
+
+    Parameters
+    ----------
+    constraints
+        The constraints attached at this node, in the order they were given
+
+    result
+        What the node resolved to, which is what they judge
+
+    ctx
+        What is being solved
+
+    subject
+        What is being judged, used in the explanation
+
+    role_prefix
+        Prefix of the part of the tree being checked
+
+    Returns
+    -------
+    :
+        `result`, with any degraded notes added, or why a constraint was not met
+    """
+    view = _constraint_view(result, role_prefix)
+    notes = list(result.notes)
+    degraded: list[Explanation] = []
+
+    for constraint in constraints:
+        name = type(constraint).__name__
+        try:
+            outcome = constraint.evaluate(view, ctx.catalogue)
+        except Exception as exc:
+            outcome = Fail(f"could not be evaluated: {type(exc).__name__}: {exc}")
+
+        if isinstance(outcome, Fail):
+            status = ExplanationStatusNotOk.UNSATISFIED
+
+            return NodeResultNotOk(
+                status,
+                Explanation(
+                    subject,
+                    status,
+                    f"{name}: {outcome.message}",
+                    parts=(result.explanation, *degraded),
+                ),
+            )
+
+        if isinstance(outcome, Degraded):
+            notes.append(f"{subject}: {name}: {outcome.message}")
+            degraded.append(
+                Explanation(name, ExplanationStatusOk.DEGRADED, outcome.message)
+            )
+
+    if not degraded:
+        return result
+
+    # The degraded lines hang off the explanation of the thing they judged, rather than
+    # that explanation being nested under a new one of its own. Both would carry the
+    # same information; this way the tree does not gain a level, and the complaint about
+    # a dataset reads directly underneath it.
+    return NodeResultOk(
+        result.roles,
+        replace(result.explanation, parts=(*result.explanation.parts, *degraded)),
+        lineages=result.lineages,
+        notes=tuple(notes),
+    )
+
+
 def _eval_leaf(leaf: Leaf, ctx: _Context, role_prefix: str) -> NodeResult:
     path = f"{role_prefix}{leaf.role}"
     query = effective_query(leaf, ctx.requirement.where)
@@ -1254,33 +1463,40 @@ def _eval_leaf(leaf: Leaf, ctx: _Context, role_prefix: str) -> NodeResult:
             ),
         )
 
-    chosen = _choose(candidates, ctx, path, ctx.requirement.cardinality)
+    chosen = _choose(
+        candidates, ctx, path, ctx.requirement.cardinality, leaf.constraints
+    )
     if isinstance(chosen, NodeResultNotOk):
         return chosen
 
     described = ", ".join(_describe_entry(entry) for entry in chosen)
     if leaf.lineage is None:
-        return NodeResultOk(
+        filled = NodeResultOk(
             {path: chosen},
             Explanation(path, ExplanationStatusOk.SATISFIED, described),
         )
+    else:
+        resolved = _eval_lineage(leaf, leaf.lineage, chosen, ctx, role_prefix)
+        if isinstance(resolved, NodeResultNotOk):
+            return resolved
 
-    resolved = _eval_lineage(leaf, leaf.lineage, chosen, ctx, role_prefix)
-    if isinstance(resolved, NodeResultNotOk):
-        return resolved
+        lineage_roles, lineages, parts = resolved
+        filled = NodeResultOk(
+            {path: chosen, **lineage_roles},
+            Explanation(
+                path,
+                ExplanationStatusOk.SATISFIED,
+                described,
+                parts=tuple(parts),
+            ),
+            lineages={path: tuple(lineages)},
+        )
 
-    lineage_roles, lineages, parts = resolved
-
-    return NodeResultOk(
-        {path: chosen, **lineage_roles},
-        Explanation(
-            path,
-            ExplanationStatusOk.SATISFIED,
-            described,
-            parts=tuple(parts),
-        ),
-        lineages=tuple(lineages),
-    )
+    # After the lineage, because a leaf's checks see the chain as well as the dataset:
+    # "the control covers this run" is a fact about both ends of it. The view holds only
+    # what this leaf filled -- its own role and the roles its lineage named -- which is
+    # what makes a failure here local to this leaf.
+    return _evaluate_constraints(leaf.constraints, filled, ctx, path, role_prefix)
 
 
 def _label(node: Node) -> str:
@@ -1318,14 +1534,18 @@ def _label(node: Node) -> str:
 # would be a bad way to find that out.
 def _merge(results: Sequence[NodeResultOk], explanation: Explanation) -> NodeResultOk:
     roles: dict[str, tuple[CatalogueEntry, ...]] = {}
-    lineages: list[Lineage] = []
+    lineages: dict[str, tuple[Lineage, ...]] = {}
+    notes: list[str] = []
     for result in results:
         for role, entries in result.roles.items():
             roles[role] = (*roles.get(role, ()), *entries)
 
-        lineages.extend(result.lineages)
+        for role, chains in result.lineages.items():
+            lineages[role] = (*lineages.get(role, ()), *chains)
 
-    return NodeResultOk(roles, explanation, lineages=tuple(lineages))
+        notes.extend(result.notes)
+
+    return NodeResultOk(roles, explanation, lineages=lineages, notes=tuple(notes))
 
 
 def _worst(results: Sequence[NodeResultNotOk]) -> ExplanationStatusNotOk:
@@ -1751,6 +1971,13 @@ def solve(requirement: Requirement, catalogue: Catalogue) -> SolveResult:
 
         evaluated = _eval_tree(requirement.tree, ctx, role_prefix="")
         if isinstance(evaluated, NodeResultOk):
+            # The requirement's own checks run last and see the whole group, which is
+            # the only place a check comparing one role against another can stand.
+            evaluated = _evaluate_constraints(
+                requirement.constraints, evaluated, ctx, subject, ""
+            )
+
+        if isinstance(evaluated, NodeResultOk):
             satisfied[key] = Solution(
                 key=key,
                 roles=evaluated.roles,
@@ -1759,7 +1986,10 @@ def solve(requirement: Requirement, catalogue: Catalogue) -> SolveResult:
                     ExplanationStatusOk.SATISFIED,
                     parts=(evaluated.explanation,),
                 ),
-                lineages=evaluated.lineages,
+                lineages=tuple(
+                    chain for chains in evaluated.lineages.values() for chain in chains
+                ),
+                notes=evaluated.notes,
             )
 
         else:

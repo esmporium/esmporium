@@ -352,6 +352,43 @@ def test_ambiguous_grids_and_prefer(dataset):
     assert preferred.satisfied[ONLY_GROUP].one("tas").grid_label == "gn"
 
 
+def test_ambiguity_names_the_unevaluated_constraints(dataset):
+    # A check judges the dataset which was chosen, and in a tie nothing is, so the
+    # checks never run. Saying so is the whole of what makes the ambiguity actionable:
+    # one of these two candidates may well be the one that would have passed, and
+    # without this the user has no way to know a check was even involved.
+    class Enough:
+        def evaluate(self, view, catalogue):
+            raise NotImplementedError
+
+    checked = tas_requirement(
+        tree=leaf(Query(variable="tas"), "tas").with_constraints(Enough())
+    )
+    catalogue = InMemoryCatalogue(
+        entries=(dataset(1, grid_label="gn"), dataset(2, grid_label="gr"))
+    )
+
+    result = solve(checked, catalogue)
+
+    assert list(result.ambiguous) == [ONLY_GROUP]
+    (explanation,) = result.ambiguous[ONLY_GROUP].explanation.parts
+    assert "'Enough' was not evaluated" in explanation.message
+    assert "may well be the one that passes" in explanation.message
+
+
+def test_an_ambiguity_with_no_constraints_says_nothing_about_them(dataset):
+    # The counterpart, because a sentence about checks in a requirement which has none
+    # would be noise in the message every user sees most often.
+    catalogue = InMemoryCatalogue(
+        entries=(dataset(1, grid_label="gn"), dataset(2, grid_label="gr"))
+    )
+
+    result = solve(tas_requirement(), catalogue)
+
+    (explanation,) = result.ambiguous[ONLY_GROUP].explanation.parts
+    assert "not evaluated" not in explanation.message
+
+
 def test_ambiguous_despite_prefer_says_what_was_preferred(dataset):
     # Both candidates are on the preferred grid, so `prefer` ranked them equally
     # and the tie survives. The message has to say that, rather than repeat the

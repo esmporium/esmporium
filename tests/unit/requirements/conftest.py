@@ -7,8 +7,10 @@ from __future__ import annotations
 import pytest
 
 from esmporium.datasets import DATASET_FACET_COLUMNS
-from esmporium.requirements import CatalogueEntry, InMemoryCatalogue, asked_facets
+from esmporium.requirements import CatalogueEntry, asked_facets
 from esmporium.requirements.tree import effective_query, walk_leaves
+
+from .catalogues import InMemoryCatalogueWithTimeInfo
 
 
 @pytest.fixture
@@ -79,6 +81,10 @@ def satisfying_catalogue(make_entry):
     That parent is recorded as a root, so a requirement which traced its lineage one
     hop further would be `unsatisfied` here rather than running off the end.
 
+    Every entry also has a time range, and every child a branch time,
+    chosen so that a parent covers its child with plenty to spare,
+    so [Covers][esmporium.requirements.Covers] is met without being degraded.
+
     The known limit, and the part which grows as the tree does: a requirement
     which groups on a facet no leaf's query names has nothing here to answer for it,
     so solving it raises
@@ -138,6 +144,20 @@ def satisfying_catalogue(make_entry):
             parents[entry.id] = parent.id
             parents.setdefault(parent.id, None)
 
-        return InMemoryCatalogue(entries=tuple(entries.values()), parents=parents)
+        # A child spans 150 years, branching 100 years into its parent,
+        # so its parent has to cover [100, 250) and covers [0, 1000).
+        return InMemoryCatalogueWithTimeInfo(
+            entries=tuple(entries.values()),
+            parents=parents,
+            time_ranges={
+                entry.id: (0.0, 1000.0)
+                if parents.get(entry.id, 0) is None
+                else (0.0, 150.0)
+                for entry in entries.values()
+            },
+            branch_times_in_parent={
+                child: 100.0 for child, parent in parents.items() if parent is not None
+            },
+        )
 
     return factory

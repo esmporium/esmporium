@@ -271,7 +271,18 @@ Picking *which* areacella dataset to link is also strict by default, with fallba
 
 ## Constraints
 
-A `Constraint` declares the metadata it needs and returns `Pass`, `Degraded(msg)` or `Fail(msg)`.
+A `Constraint` returns `Pass`, `Degraded(msg)` or `Fail(msg)`.
+`Constraint` is generic in the catalogue it needs.
+A constraint which needs information the `Catalogue` protocol does not provide
+defines a protocol next to itself which adds the methods it needs,
+and is a constraint over that protocol:
+`Covers` is a `Constraint[CatalogueWithTimeInfo]`,
+which adds `get_time_range` and `get_branch_time_in_parent`.
+A type checker can check a constraint against a catalogue,
+but not a requirement, whose constraints can each need a different catalogue.
+So at runtime, a constraint which raises
+(e.g. because the catalogue does not have a method it needs)
+is reported as failing, with the error in the explanation.
 
 **Where a check goes decides what happens when it fails**, which is the point of
 attaching them at three levels:
@@ -284,10 +295,10 @@ attaching them at three levels:
 
 Shipped checks:
 
-- **`Covers(role, target, align="branch" | "calendar", pad_years=, ideal_pad_years=)`** — e.g. the control covers the dataset's span, mapped through branch times along the whole chain. `pad_years=None` makes it soft. `role` and `target` name datasets **as the lineage names them**, which is why a lineage's `role` is required: `Covers(role="control")` and `Ancestors(role="control")` are visibly the same thing. `"self"` is the anchor, `"chain.<i>"` an intermediate parent, `"end"` works without knowing the name.
+- **`Covers(role, target, align="branch" | "calendar", pad_years=, ideal_pad_years=)`** — e.g. the control covers the dataset's span, mapped through branch times along the whole chain. Times are fractional years, and calendars are not handled. Nothing records time ranges yet, so against `DatabaseCatalogue` it always fails (saying why). `pad_years=None` makes it soft. `role` and `target` name datasets **as the lineage names them**, which is why a lineage's `role` is required: `Covers(role="control")` and `Ancestors(role="control")` are visibly the same thing. `"self"` is the anchor, `"chain.<i>"` an intermediate parent, `"end"` works without knowing the name.
 - **`SameTimeRange(roles)`** — a cross-leaf check: a Gregory regression uses temperature and radiation together, so ECS puts this on its scope. Identical periods pass, overlapping ones degrade (naming the overlap), disjoint ones fail.
 
-**Serialisation:** constraints are stored with their import path, so they must be pydantic models to serialise.
+**Serialisation:** constraints are stored with their import path, so they must be pydantic models if their requirement is to be stored in a database. Solving does not need this.
 
 ## Solving
 
@@ -295,15 +306,15 @@ Shipped checks:
 
 - **Groups** are the union of `group_by` values over every leaf's candidates.
 - **Leaves** apply `prefer`, then work out their lineage, auxiliary data and own checks. If several candidates remain, the group is `ambiguous`.
-- **Ambiguous and undetermined results are never skipped**: `any_of` stops at them, and `optional` passes them on.
-- **Output:** satisfied, unsatisfied, ambiguous and undetermined groups, each with an explanation tree (`SolveResult.explain()`). Per node, `NodeResultOk` and `NodeResultNotOk` carry the roles, lineages, choices and notes that are merged upwards.
+- **Ambiguous results are never skipped**: `any_of` stops at them, and `optional` passes them on.
+- **Output:** satisfied, unsatisfied and ambiguous groups, each with an explanation tree (`SolveResult.explain()`). Per node, `NodeResultOk` and `NodeResultNotOk` carry the roles, lineages, choices and notes that are merged upwards.
 
-`Catalogue` is a protocol with `find`, `parent_of`, `linked` and `metadata`.
+`Catalogue` is a protocol with `find`, `parent_of` and `linked`.
 `find` and `parent_of` each have two implementations: `InMemoryCatalogue`, written out
 by hand, and `esmporium.db.DatabaseCatalogue`, which answers from the `Dataset` rows a
 search saved and the parent links a parent walk recorded. The two have to agree, and a
 test holds them to it; the in-memory one is how each new piece of this design gets
-written and is expected to stay. `linked` and `metadata` are still ahead of us, on both.
+written and is expected to stay. `linked` is still ahead of us, on both.
 
 `parent_of` answers with a reason as well as a parent, because "nobody has read a parent
 for this dataset yet" and "this dataset declares no parent" are different facts and only
@@ -336,13 +347,12 @@ flowchart LR
     Q --> SEARCH["search(requirement)<br/>one search per leaf per project"]
     SEARCH --> SAVE["save everything found<br/>(build_result_processor_factory)"]
     SAVE --> LINK["add parent links<br/>from file headers (PR6)"]
-    LINK --> CAT[("Catalogue<br/>find · parent_of · linked · metadata")]
+    LINK --> CAT[("Catalogue<br/>find · parent_of · linked")]
     REQ --> SOLVE["solve(requirement, catalogue)<br/><i>greedy, no backtracking</i>"]
     CAT --> SOLVE
     SOLVE --> RES["satisfied"]
     SOLVE --> UNS["unsatisfied"]
     SOLVE --> AMB["ambiguous"]
-    SOLVE --> UND["undetermined"]
 ```
 
 One thing to know before comparing two runs: **groups are discovered, so a group can
