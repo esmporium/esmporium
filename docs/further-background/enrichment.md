@@ -26,10 +26,10 @@ its calendar, or an interpreted branch point. `PLAN.md` step 13 says so outright
 The failure is also silent in the wrong direction. The `Constraint` protocol says
 "raise if you cannot evaluate", `solve._evaluate_constraints` catches **any**
 exception and returns `Fail`, and the group lands in `SolveResult.unsatisfied` — the
-same bucket as "no such dataset was ever published". *"Nobody has measured this
+same bucket as "no such dataset was ever published". *"Nobody has got this information/enriched the database
 yet"* is being reported as *"there is no data"*.
 
-ESGF's search APIs do not publish start and end times or branch points, so esmporium
+ESGF's search APIs do not guarantee publication of start and end times or branch points, so esmporium
 has to fill that gap itself. The decision taken is to **store** the information
 rather than derive it during `solve`, because (a) lookups then cost nothing, (b) a
 value set by a fix is recorded rather than recomputed every run, and (c) it is where
@@ -51,16 +51,16 @@ list that can be passed straight back to the enricher.
 | # | Decision |
 |---|---|
 | 1 | The step is **`enrich`** / enrichment. `src/esmporium/enrich/`, `enrich_datasets(...)`, PLAN step "Enrichment". |
-| 2 | The new outcome is **`NeedsEnrichment`**, not `Undetermined` — "undetermined" implies we might look and still not know, when in fact we just have to go and fetch the answer. |
-| 3 | **Store both** natural and rich values. Natural comes from the filename and is free; rich comes from a file header and is fetched only where needed. |
+| 2 | The new outcome is **`NeedsEnrichment`**, not `Undetermined` — "undetermined" implies we might look and still not know, when in fact we just have to go and do the work so that the answer is available. |
+| 3 | **Store both** natural and rich time values. Natural values are ones in the dataset's own frequency and come from the filename, which is basically free to parse and is free (natural values match the dataset's frequency e.g. for yearly datasets you get values like 2024, 1840, for monthly datasets values like 1850-01, 2023-12); rich comes from a file header and is fetched only where needed (rich means information that allows you to create a full datetime object without guessing i.e. values like 2023-01-01 00:00:00, you don't get this from the filenames alone). |
 | 4 | **Never store fractional years, and never convert to them.** Natural units are the data's own frequency; rich values are datetimes with a calendar. No year conversion at solve time, and none at enrich time. |
-| 5 | **Store start and end, not extents.** An extent is `end - start`, computed outside the database when wanted. Storing both would be the same fact twice, with a consistency burden. |
+| 5 | **Store start and end, not extents.** An extent is `end - start` (or `end - start + 1` sometimes because of how the indexing/conversion works e.g. the extent of a dataset that goes from 1850 to 1860 when its natural units are years is 11 years, not 10, because the actual bounds can be assumed to be 1850-01-01 to 1860-12-31, this has tripped over many people, hopefully not us), computed outside the database when wanted. Storing both would be the same fact twice, with a consistency burden (that is impossible to get right given that the correct answer depends on assumptions/context that we don't have at enrichment time). |
 | 6 | **One pair of value columns plus a `units` column**, not a natural column group and a rich column group. No half-empty rows. |
 | 7 | A corrected branch time is a **`FIX`-sourced row**, not a Python-level catalogue wrapper. |
 | 8 | A version whose files have a gap gets start and end recorded **plus a contiguity flag**, and `Covers` refuses a gapped range rather than treating it as continuous. |
 | 9 | **Full containment** stays a first-class mode, and the default. |
 | 10a | **A requirement may be stated in years or months only, for now.** `min_overlap` and `pad` in days or hours get `MISSING_FEATURE_PLEASE_RAISE_ISSUE`. This is a decision about the *API surface*, and says nothing about which data we support — see "Frequency, units, and what needs a header". |
-| 10b | **Data at any frequency is supported, including daily and sub-daily** — but anything finer than monthly needs a calendar, so it needs a header read, so it reports `NEEDS_ENRICHMENT` until enriched. Monthly and yearly data never need a file opened. |
+| 10b | **Data at any frequency is supported, including daily and sub-daily** — but anything finer than monthly needs a calendar to unambiguously calculate the extent, so it needs a header read, so it reports `NEEDS_ENRICHMENT` until enriched. Monthly and yearly data never need a file opened to calculate their extent in natural units (they will need files opened to calculate extent in other units). |
 | 11 | A **sibling** pair whose axes do not align is a **loud `Fail`** naming the constraint, not a raise: it is a question we can answer, and the answer is no. |
 | 12 | An **uninterpretable raw CMIP5 branch time** is `NeedsEnrichment` pointing at a fix. |
 | 13 | **`SameTimeRange` is deferred** (PLAN step 15), with a comment in the code recording this decision so it is not lost when step 15 lands. |
@@ -408,7 +408,7 @@ every previous piece of the requirements system: prove it in memory, then wire i
   |---|---|
   | `start`, `end` | the numbers; no extent column (settled decision 5) |
   | `units` | udunits-style, e.g. `months since 0001-01` or `days since 1850-01-01`. One column serves both natural and rich, so no half-empty rows (settled decision 6). Precedent: `parent_time_units` already stores this shape |
-  | `calendar` | nullable, and `NULL` *means* something: months and years need no calendar |
+  | `calendar` | nullable, and `NULL` *means* something: we didn't have the calendar when we ingested this information |
   | `source` | `FILENAME` / `FILE_HEADER` / `FIX` |
   | `is_contiguous`, `n_files` | settled decision 8 |
   | `file_id`, `recorded_at` | provenance, as every other table here carries |
