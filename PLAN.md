@@ -836,8 +836,9 @@ What landed differently from the sketch above, and why:
   (`ParentStatus`, `ParentLookup`). Step 10 was careful to distinguish "nobody has read
   a parent for this" from "this declares no parent", and collapsing the two here would
   have thrown that away -- a user told "no parent" would go looking for data rather than
-  running `find_parents`. `NOT_LOOKED_FOR` is the natural home for step 12's
-  `undetermined`.
+  running `find_parents`. `NOT_LOOKED_FOR` is the natural home for
+  step 12.5's `NEEDS_ENRICHMENT` -- step 12's `undetermined`, which this once pointed
+  at, never landed.
 - **A satisfied lineage says how it was resolved**, in its explanation only
   (`ParentLookup.provenance`). A chain which rests on a hand fix, or on our own rule for
   which release of the parent to use, reads differently from one the archive published.
@@ -966,6 +967,17 @@ here is only the shape and the reasons the shape is what it is.
   fetched only where needed -- which is nowhere, for monthly and yearly data, because a
   month count is calendar-independent. **No fractional years are ever stored or
   computed**, at either end.
+- **Ranges are half-open, and the column says so**: `[start, end_exclusive)`, so the
+  extent is one subtraction with no `+1` and two files are adjacent exactly when
+  `previous.end_exclusive == next.start` -- which is what gap detection is. The
+  off-by-one lives in one named conversion, and `end_raw` keeps what the filename
+  actually said. This is the trap the note calls out as having caught many people
+  before: a yearly dataset published as 1850 to 1860 is eleven years, not ten.
+- **`cftime`, from a new optional extra**, does the calendar arithmetic. We do not
+  write our own leap rules. Imported at point of use, as `headers/hdf5.py` already
+  does with `h5py`, so the monthly and yearly paths need nothing installed and only
+  the sub-monthly path pays. Note the consequence: `requirements` gains an optional
+  third-party dependency, because `Covers` does this arithmetic at solve time.
 - **Two new tables**, `DatasetTimeRange` and `DatasetBranchPoint`, both following
   `DatasetVersionParent`'s one-row-per-source shape so `SOURCE_PRECEDENCE` is inherited
   rather than rebuilt. Start and end, not extents. One `units` column rather than a
@@ -1021,11 +1033,15 @@ with `Covers` refusing a gapped range, and no fractional years anywhere.
 Two things about the constraint itself change when it meets real data, and both are in
 that note:
 
-- **`Covers` grows a second mode.** Full containment stays the default; `min_overlap`
-  adds "at least this much overlap, with this much of the control either side of it".
-  Setting `min_overlap` to the covered run's own length reduces, term for term, to the
-  containment check already implemented, so one implementation serves both and nothing
-  written against #69 changes meaning.
+- **`Covers` grows a second mode, and stops defaulting anything.** `mode` is stated
+  explicitly -- `"containment"`, or `"overlap"` with `min_overlap` -- because
+  containment cannot be written as a number and inferring the mode from which
+  arguments were given is the kind of default `group_by` already refuses. Setting
+  `min_overlap` to the covered run's own extent reduces, term for term, to the
+  containment check already implemented, so one private function serves both modes.
+  **This is a breaking change to #69's signature**: every `Covers(...)` in
+  `use_cases.py` and `test_covers.py` gets rewritten. The soft `ideal_*` thresholds
+  carry over, because they are `Degraded`'s only producer.
 - **`fx` is refused out loud.** Coverage does not apply to a dataset with no time axis,
   and rather than hoping nobody attaches `Covers` to an `fx` leaf, this follows
   `LineageStartsAtTargetError`'s two tiers: refused when the requirement is built if
@@ -1047,10 +1063,12 @@ a catalogue wrapper, so it is recorded once instead of re-applied every run.
   optional has to be searched for, because we cannot know which one exists until we look.
 
 Two things become visible here and belong in the PR description. First, the third kind of "or"
-— alias, fan-out, alternative — is complete. Second, **ambiguous and undetermined results are
-never skipped**: `any_of` stops at them rather than trying the next alternative, and `optional`
-passes them on rather than treating them as absent, so a question we cannot answer is never
-silently read as "no".
+— alias, fan-out, alternative — is complete. Second, **ambiguous results, and ones we could not answer,
+are never skipped**: `any_of` stops at them rather than trying the next alternative, and
+`optional` passes them on rather than treating them as absent, so a question we cannot
+answer is never silently read as "no". (Step 12.5 is what gives "could not answer" a
+name: `couldnt_answer`, carrying `NEEDS_ENRICHMENT` or
+`MISSING_FEATURE_PLEASE_RAISE_ISSUE` as its reason.)
 
 Tests: `test_alternative_chosen_in_order`, `test_alternative_applies_to_whole_lineage`,
 `test_ambiguity_is_not_skipped_by_any_of`, `test_optional_run_with_too_short_control_is_absent`,
@@ -1342,7 +1360,11 @@ Not steps of their own, but written down so they are not lost:
 - **Narrowing auxiliary searches.** Auxiliary queries inherit nothing, so they find fx data for
   every model. If that proves too broad, narrow first and widen only when nothing is found, the
   way `ancestry_until` is handled. [I'm not convinced the logic of this is right, let's see when we get to auxiliary]
-- **Calendars.** `time_range` and `branch_time_in_parent` stay plain fractional years. [Fine and probably simplest]
+- **Calendars.** ~~`time_range` and `branch_time_in_parent` stay plain fractional
+  years.~~ **Decided the other way at step 12.5**, which stores natural units and, where
+  a header gives us one, a calendar -- and never fractional years, at rest or in
+  flight. Fractional years looked simplest but quietly assumes every year is the same
+  length, which is false in four of the six CF calendars. `cftime` does the arithmetic.
 - **Trust when loading.** Loading a serialised requirement imports constraint classes by name,
   so only load requirements you trust. Worth a docstring note, not a mechanism, for now.
   [We might be able to do something a bit safer with a specific loading function in the DB, let's see]

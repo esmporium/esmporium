@@ -89,6 +89,23 @@ lineage mapping are common to both and two classes would duplicate that surface.
 inferring it is exactly the kind of default decision 9 rules out — and because
 containment cannot be written as a number anyway.
 
+**The soft thresholds survive, and have to.** `ideal_pad_years` is today the *only*
+producer of `Degraded`, which is #69's "the analysis can be run, with something to say
+in the write-up" outcome. Dropping it would quietly remove that outcome's only source,
+so it carries over as `ideal_pad` (and `ideal_min_overlap` in overlap mode):
+
+```
+Covers(align="branch", mode="overlap",
+       min_overlap=100, pad=(10, 10),            # hard: Fail if not met
+       ideal_min_overlap=150, ideal_pad=(20, 20))  # soft: Degraded if not met
+```
+
+These stay genuinely optional, and that is not a breach of decision 9. "I have no
+ideal" is a coherent thing to mean, and `None` says exactly that rather than standing
+in for a decision the user did not make. The hard thresholds are the ones that must
+always be stated. The old `pad_years=None` spelling for "nothing required, check only
+the ideal" becomes explicit in the same way.
+
 ### The one piece of arithmetic
 
 The simplification that makes this readable: **after mapping, the child's start *is*
@@ -533,8 +550,10 @@ every previous piece of the requirements system: prove it in memory, then wire i
 
 ### PR B — the new `Covers`, proven in memory
 
-- `src/esmporium/requirements/covers.py`: `min_overlap`, the formula above, Mode 1 as
-  the default, comparison in stored units with no year conversion, the `fx` refusal,
+- `src/esmporium/requirements/covers.py`: a required `mode` with `min_overlap` and
+  `pad` beside it and nothing defaulted (settled decision 9), the soft `ideal_*`
+  thresholds kept so `Degraded` still has a producer, the arithmetic above,
+  comparison in stored units with no year conversion, the `fx` refusal,
   and an unsupported-unit outcome carrying
   `https://github.com/esmporium/esmporium/issues`. Per settled decision 17 this is a
   *returned outcome*, not a raise — so the solve finishes and the other groups still
