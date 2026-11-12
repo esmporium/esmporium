@@ -93,6 +93,7 @@ and then downloading what it finds).
 | 10 | Dataset ancestry | PR6 | 2 |
 | 11 | `Ancestors` lineage in requirements | R5 | 2 |
 | 12 | The `Constraint` protocol, nothing shipped | R6 | 3 |
+| 12.5 | Enrichment: the time information ESGF does not publish | new | 3 |
 | 13 | `Covers` | R7 | 3 |
 | 14 | `any_of`, `optional` | R8 | 3 |
 | 15 | `scope` and `SameTimeRange` | R9 (`namespace`) | 3 |
@@ -167,7 +168,8 @@ The numbered steps of this plan, as they have landed:
 | 8 | Download parallelisation and per-data-node caps | [#64](https://github.com/esmporium/esmporium/pull/64) |
 | 10 | Dataset ancestry (`find_parents`, `esmporium.headers`, `esmporium.fixes`) | [#65](https://github.com/esmporium/esmporium/pull/65), [#66](https://github.com/esmporium/esmporium/pull/66) |
 | 11 | `Ancestors` lineage in requirements | [#67](https://github.com/esmporium/esmporium/pull/67) |
-| 12 | The `Constraint` protocol, nothing shipped | _this PR_ |
+| 12 | The `Constraint` protocol, plus `Covers` itself | [#69](https://github.com/esmporium/esmporium/pull/69) |
+| 12.5 | The enrichment design note, [docs/further-background/enrichment.md](docs/further-background/enrichment.md) | [#70](https://github.com/esmporium/esmporium/pull/70) |
 
 So **phase 1 is done except step 5** (the live pattern-effect watch on the server),
 and **phase 2 is done except step 9** (the deployment).
@@ -917,20 +919,77 @@ What landed differently from the sketch above, and why:
   flat tuple it was). A check names the role it is talking about, so it has to be handed
   the chains under those names; recovering the key by searching `roles` for each chain's
   anchor is ambiguous when two leaves hold the same dataset.
-- **`ParentStatus.NOT_LOOKED_FOR` now reports `undetermined`.** This was a step-11
-  mismatch with nowhere to land until the status existed: `_no_parent_message` already
-  said "work waiting to be done rather than missing data" while filing it as
-  unsatisfied. `UNRESOLVED` deliberately stays `unsatisfied` -- it blurs "not asked"
-  with "asked, wasn't there", and nothing here can tell those apart, so splitting it
-  belongs with whatever records it.
-- **`DatabaseCatalogue.metadata` raises for every key**, which is what the schema
-  supports: see the note under step 13.
+- **There is no `metadata` API.** The sketch above has `Catalogue.metadata`,
+  `MetadataUnavailableError` and `InMemoryCatalogue.metadata_by_id`; none of them
+  landed. What landed instead is the pattern described in `constraints.py`'s module
+  docstring: a constraint needing more than `Catalogue` provides declares a protocol
+  beside itself, so `Covers` is a `Constraint[CatalogueWithTimeInfo]` with
+  `get_time_range` and `get_branch_time_in_parent` on it. That is the better shape --
+  one generic `metadata(key)` would have been stringly-typed and uncheckable -- but
+  see step 12.5, which moves it again.
+- **The `undetermined` status did not land either**, and nor did
+  `ParentStatus.NOT_LOOKED_FOR` reporting as it. `ExplanationStatus` is still
+  `SATISFIED`/`DEGRADED` and `UNSATISFIED`/`AMBIGUOUS`, `SolveResult` still has three
+  mappings (its docstring says four), and `_evaluate_constraints` turns *any*
+  exception into `Fail`. So "nobody has recorded this yet" is still reported as "there
+  is no data", which is the step-11 mismatch this bullet claimed to have closed.
+  Step 12.5 closes it for real, under a clearer name.
 - **`requirement()` grew a `constraints` argument.** The field alone was not enough --
   the factory is the documented way to build one, so a requirement-level check would
   have been unreachable through it.
 - **Every stored `requirement_hash` changed again**, as at step 11: `Leaf` and
   `Requirement` each gained a field and `identity_json` is a complete dump. Clear or
   re-stem any tracked search before its next run.
+
+## 12.5. Enrichment: the time information ESGF does not publish
+
+*New. The design note landed as [#70](https://github.com/esmporium/esmporium/pull/70);
+the implementation is still ahead of us.*
+
+Step 13 cannot be finished without a source of start and end times, and step 12 left
+that open. This step is that source, and it is a new pipeline step rather than a piece
+of either neighbour:
+
+```text
+Requirement --> search --> database --> ENRICH --> solve --> outcome
+```
+
+**Read [docs/further-background/enrichment.md](docs/further-background/enrichment.md)
+before starting any of it.** It settles twenty decisions and five PRs; what belongs
+here is only the shape and the reasons the shape is what it is.
+
+- **Why store rather than compute during `solve`.** Lookups become free; a value set by
+  a fix is recorded instead of recomputed every run; and it is where the information
+  belongs. ESGF's search index not carrying it is a gap in ESGF, which we fill.
+- **Natural and rich, both.** Start and end in the data's own frequency come from the
+  filename and cost nothing. Calendars and datetimes come from a file header and are
+  fetched only where needed -- which is nowhere, for monthly and yearly data, because a
+  month count is calendar-independent. **No fractional years are ever stored or
+  computed**, at either end.
+- **Two new tables**, `DatasetTimeRange` and `DatasetBranchPoint`, both following
+  `DatasetVersionParent`'s one-row-per-source shape so `SOURCE_PRECEDENCE` is inherited
+  rather than rebuilt. Start and end, not extents. One `units` column rather than a
+  natural column group and a rich one.
+- **The branch point goes on the edge**, not on either dataset -- a deliberate
+  departure from ESGF, whose data model has no edges. The facts come from the child,
+  which is where they are published and where `DatasetVersionParent` already stores
+  them raw; this step adds the interpreted value.
+- **Constraints switch from asking the catalogue to asking the entry.** The note argues
+  this out, including what it costs: `CatalogueWithTimeInfo` is vacated (not deleted --
+  it still suits anything that is a *lookup* rather than a dataset fact, such as an
+  aggregate over the catalogue), and `CatalogueEntry`'s "mirrors `Dataset`'s columns"
+  docstring has to be rewritten rather than quietly broken.
+- **`couldnt_answer` is the fourth `SolveResult` mapping**, which is what its docstring
+  has always promised, carrying `NEEDS_ENRICHMENT` ("go and fetch it", with
+  `enrichment_inputs` ready to hand back to the enricher) and
+  `MISSING_FEATURE_PLEASE_RAISE_ISSUE` ("a fair thing to want, not supported yet") as
+  reasons. This is the step-12 bullet above, done properly.
+- **`download_by_id`**, which falls out of the same work: `plan_downloads` already
+  reduces its query to `dataset_ids` before planning, so the split is one line. Worth
+  recording why it is needed at all -- a facet query cannot name a list, because
+  `facet_filters` refuses anything outside `DATASET_FACET_COLUMNS` (and
+  `id_project_specific` is deliberately excluded from it), and because a facet query is
+  a cross-product, so asking for two specific datasets returns four.
 
 ## 13. `Covers`
 
@@ -948,20 +1007,33 @@ Tests: `test_covers_calendar`, `test_covers_branch_needs_ancestor`, `test_covers
 Use cases: `01-tcr`, `03-tcre-flat10`, `04-tcre-1pct`, `05-zec-flat10`,
 `11-tas-scenario-anomalies`, plus `TO_CONTROL`, `CONTROL_COVERS` and `CONTROL_IDEALLY_COVERS`.
 
-**This step needs a source of `time_range`, and we have none.** Step 12 reads as though
-phase 2 unlocked it, and it did not. What is stored about a dataset beyond its facets is
-its parent links (`DatasetVersionParent`, which carries the branch times), its versions,
-its files (`File`: filename, size, checksum, tracking ID) and its access routes. No
-column anywhere holds the span of a time axis, a calendar or units. So `Covers` against
-`DatabaseCatalogue` reports every group `undetermined` until something records one.
+**This step needed a source of `time_range`, and step 12.5 is it.** `Covers` itself
+shipped with #69 but has only ever run against a 35-line test-only catalogue answering
+from two hand-written dicts, so what is left here is not the constraint but everything
+that makes it work on real data. The questions this section used to leave open --
+which convention per project, what a version whose files disagree or have gaps spans,
+and which calendar the numbers are in -- are answered in
+[docs/further-background/enrichment.md](docs/further-background/enrichment.md), and the
+answers are: filename for start and end, header for the calendar, per-project readers
+registered the way `PARENT_HEADER_READERS_BY_PROJECT` already are, a contiguity flag
+with `Covers` refusing a gapped range, and no fractional years anywhere.
 
-The cheapest route is the filename, which already encodes it --
-`tas_Amon_MIROC6_abrupt-4xCO2_r1i1p1f1_gn_320001-325012.nc` -- and `File.filename` is
-stored for every file we have seen, so it needs no new fetching. Reading it out of
-headers instead is more work and more trustworthy. Either way it wants deciding before
-this step rather than inside it, since it brings its own questions: which convention per
-project, what a dataset whose files disagree or have gaps spans, and which calendar the
-numbers are in (the branch-time note above applies here too).
+Two things about the constraint itself change when it meets real data, and both are in
+that note:
+
+- **`Covers` grows a second mode.** Full containment stays the default; `min_overlap`
+  adds "at least this much overlap, with this much of the control either side of it".
+  Setting `min_overlap` to the covered run's own length reduces, term for term, to the
+  containment check already implemented, so one implementation serves both and nothing
+  written against #69 changes meaning.
+- **`fx` is refused out loud.** Coverage does not apply to a dataset with no time axis,
+  and rather than hoping nobody attaches `Covers` to an `fx` leaf, this follows
+  `LineageStartsAtTargetError`'s two tiers: refused when the requirement is built if
+  the leaf can only select `fx`, failed when solved if it selects one among others.
+
+The in-code note about branch-time handling needing to become clearer still stands, and
+step 12.5 is where it is answered: a correction becomes a `FIX`-sourced row rather than
+a catalogue wrapper, so it is recorded once instead of re-applied every run.
 
 ## 14. `any_of`, `optional`
 
