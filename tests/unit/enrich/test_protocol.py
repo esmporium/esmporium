@@ -64,9 +64,6 @@ def test_a_single_step_range_has_an_extent_of_one():
 
 
 def test_yearly_data_is_eleven_years_not_ten():
-    """
-    The example the design note records as having caught many people
-    """
     published = PublishedRange("1850", "1860", TimeStep.YEARS, YEARLY)
     half_open = published.to_half_open()
 

@@ -1,9 +1,5 @@
 """
 Tests of reading a time range out of a filename
-
-The filenames here are real shapes, not invented ones: every one is a name a data node
-actually serves, because the thing most likely to be wrong about a filename parser is
-its idea of what a filename looks like.
 """
 
 from __future__ import annotations
@@ -88,8 +84,6 @@ def test_reading_a_monthly_or_yearly_filename(
 def test_a_single_month_file_holds_one_month():
     """
     The case which catches a conversion that subtracted the published values
-
-    First in this file for the same reason it is first in the design note.
     """
     read = read_trailing_range(
         "tas_Amon_GFDL-ESM4_piControl_r1i1p1f1_gr1_320001-320001.nc",
@@ -115,12 +109,10 @@ def test_a_climatology_keeps_its_range_and_is_marked_as_one():
 
 def test_a_cmip5_climatology_is_read_the_same_way():
     """
-    `-clim` is not CMIP6's, so one reader strips it for every project
+    One reader strips `-clim` for every project
 
     CMIP5 spells the interval `monClim` where CMIP6 spells it `monC`, but the suffix
-    on the filename is the same. This is the test which fails if someone concludes
-    from the CMIP6-shaped case above that `CLIMATOLOGY_SUFFIX` should be keyed by
-    project.
+    on the filename is the same.
     """
     read = read_trailing_range(
         "difvho_Oclim_HadGEM2-ES_historical_r1i1p1_185001-185012-clim.nc",

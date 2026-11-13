@@ -1,9 +1,5 @@
 """
 Tests of the time value types
-
-The off-by-one cases come first, because they are the ones this module exists to stop:
-a single-step dataset, and the eleven-not-ten year that
-`docs/further-background/enrichment.md` records as having caught many people before.
 """
 
 from __future__ import annotations
