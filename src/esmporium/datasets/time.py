@@ -522,6 +522,45 @@ class TimeRange:
             raise MismatchedTimeAxisError(self.axis, other.axis)
 
 
+@dataclass(frozen=True)
+class VersionTimeRange:
+    """
+    What one version's files add up to
+
+    The span, and whether the files actually fill it. Both are recorded because they
+    are different facts: a version whose files leave a gap still has a first and a last
+    step, and [Covers][esmporium.requirements.Covers] refuses it on the strength of the
+    flag rather than on the strength of a missing range.
+
+    Here rather than beside the measurement which produces it
+    ([measure_version][esmporium.enrich.measure_version]) because
+    `Covers` reads one *at solve time*, and
+    `esmporium.requirements` may import `esmporium.datasets` and not
+    `esmporium.enrich`.
+    """
+
+    range: TimeRange
+    """Earliest start to latest `end_exclusive` across the files"""
+
+    is_contiguous: bool
+    """
+    Whether the files fill the span with no gap and no overlap
+
+    `True` when each file's `end_exclusive` is the next one's `start`, which is what
+    adjacency is under the half-open convention. An overlap counts as a failure too:
+    two files covering the same month is as much a sign that something is wrong with
+    the publication as a month nobody published.
+    """
+
+    n_files: int
+    """
+    How many files were measured
+
+    Kept so that a stored row can be judged without re-reading anything: a version
+    which gained a file since it was measured is a row to measure again.
+    """
+
+
 class NegativeSpanError(ValueError):
     """
     Raised when a length of time is given as a negative number

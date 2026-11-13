@@ -406,12 +406,20 @@ def test_an_other_terms_facet_reaches_the_solver_group_key(searched, catalogue):
 
     result = solve(req, catalogue)
 
-    discovered = set(result.satisfied) | set(result.unsatisfied) | set(result.ambiguous)
+    discovered = (
+        set(result.satisfied)
+        | set(result.unsatisfied)
+        | set(result.ambiguous)
+        | set(result.couldnt_answer)
+    )
     assert discovered, "rows were saved but the solver discovered no groups"
 
     # Every group lands in exactly one of the three, so none is double-counted.
     assert len(discovered) == (
-        len(result.satisfied) + len(result.unsatisfied) + len(result.ambiguous)
+        len(result.satisfied)
+        + len(result.unsatisfied)
+        + len(result.ambiguous)
+        + len(result.couldnt_answer)
     )
 
     for key in discovered:
@@ -451,7 +459,12 @@ def test_an_other_terms_facet_nothing_records_groups_as_none(catalogue):
 
     result = solve(req, catalogue)
 
-    discovered = set(result.satisfied) | set(result.unsatisfied) | set(result.ambiguous)
+    discovered = (
+        set(result.satisfied)
+        | set(result.unsatisfied)
+        | set(result.ambiguous)
+        | set(result.couldnt_answer)
+    )
     assert discovered, "rows were saved but the solver discovered no groups"
 
     answers = {dict(key)[typo] for key in discovered}

@@ -304,13 +304,21 @@ def test_every_group_lands_in_exactly_one_bucket(dataset):
         catalogue,
     )
 
-    buckets = (result.satisfied, result.unsatisfied, result.ambiguous)
+    # Every bucket there is, so that this stays a statement about the groups being
+    # partitioned rather than about three of the four mappings.
+    buckets = (
+        result.satisfied,
+        result.unsatisfied,
+        result.ambiguous,
+        result.couldnt_answer,
+    )
     keys = [key for bucket in buckets for key in bucket]
     assert len(keys) == len(set(keys)) == 3
     assert [[dict(key)["experiment"] for key in bucket] for bucket in buckets] == [
         ["historical"],
         ["ssp126"],
         ["ssp585"],
+        [],
     ]
 
 

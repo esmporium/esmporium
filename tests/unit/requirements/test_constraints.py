@@ -24,11 +24,17 @@ from esmporium.requirements import (
     Ancestors,
     Catalogue,
     CatalogueEntry,
+    ConstraintNotEvaluableError,
     ConstraintView,
     Degraded,
+    EnrichmentInput,
+    ExplanationStatusNotOk,
     ExplanationStatusOk,
     Fail,
     InMemoryCatalogue,
+    MissingFeature,
+    MissingTimeFact,
+    NeedsEnrichment,
     NotAConstraintError,
     NotSerialisableConstraintError,
     Outcome,
@@ -103,6 +109,16 @@ class AtLeastNYears(BaseModel):
     ideal_years: float | None = None
 
     def evaluate(self, view: ConstraintView, catalogue: CatalogueWithYears) -> Outcome:
+        # What a constraint which needs more than the `Catalogue` protocol provides
+        # has to do for itself, now that the solver no longer catches everything: say
+        # it cannot answer, in the one way the solver listens for.
+        if not callable(getattr(catalogue, "get_years_on_record", None)):
+            msg = (
+                f"{type(catalogue).__name__} has no `get_years_on_record`, so it "
+                "cannot say how long a dataset is"
+            )
+            raise ConstraintNotEvaluableError(msg)
+
         for entry in view.roles[self.role]:
             have = catalogue.get_years_on_record(entry)
             if have < self.years:
@@ -162,6 +178,49 @@ class ControlIsLonger(BaseModel):
                     return Fail(f"{role}: #{end.id} is not longer than #{anchor.id}")
 
         return Pass()
+
+
+class NeedsTheYears(BaseModel):
+    """
+    A check which cannot answer until somebody records how long a dataset is
+
+    The shape of a check whose facts are not in yet: it names the datasets it would
+    need measured, so one call to whatever does the measuring clears every group.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    role: str
+
+    def evaluate(self, view: ConstraintView, catalogue: CatalogueWithYears) -> Outcome:
+        unmeasured = [
+            entry
+            for entry in view.roles[self.role]
+            if entry.id not in getattr(catalogue, "years_on_record", {})
+        ]
+        if unmeasured:
+            listed = ", ".join(f"#{entry.id}" for entry in unmeasured)
+
+            return NeedsEnrichment(
+                f"nothing has measured {listed}",
+                inputs=tuple(
+                    EnrichmentInput(
+                        dataset_id=entry.id, missing=MissingTimeFact.TIME_RANGE
+                    )
+                    for entry in unmeasured
+                ),
+            )
+
+        return Pass()
+
+
+class AsksInAUnitWeDoNotHave(BaseModel):
+    """A check which is a fair thing to want and is not supported"""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    def evaluate(self, view: ConstraintView, catalogue: Catalogue) -> Outcome:
+        return MissingFeature("nobody has written this yet, please raise an issue")
 
 
 class NotAModel:
@@ -228,9 +287,10 @@ def test_a_failed_check_still_says_what_was_found(dataset):
 
 
 def test_a_catalogue_without_the_information_is_unsatisfied(dataset):
-    # The constraint needs a catalogue which can provide years of data.
-    # One which cannot makes the constraint raise,
-    # which the solver reports as a failure rather than crashing the whole solve.
+    # The constraint needs a catalogue which can provide years of data. One which
+    # cannot is a fact about this solve rather than a bug, so the constraint says so
+    # with `ConstraintNotEvaluableError` and the solver reports that as a failure
+    # rather than crashing the whole solve.
     result = solve(
         tas_requirement(AtLeastNYears(role="tas", years=150)),
         InMemoryCatalogue(entries=(dataset(1),)),
@@ -238,8 +298,31 @@ def test_a_catalogue_without_the_information_is_unsatisfied(dataset):
 
     assert list(result.unsatisfied) == [ONLY_GROUP]
     rendered = result.explain()
-    assert "AtLeastNYears: could not be evaluated: AttributeError" in rendered
+    assert "AtLeastNYears: could not be evaluated" in rendered
     assert "get_years_on_record" in rendered
+
+
+def test_a_bug_in_a_constraint_is_not_reported_as_missing_data(dataset):
+    """
+    Anything but the named escape hatch propagates, deliberately
+    """
+
+    class Buggy(BaseModel):
+        """A check with an ordinary bug in it"""
+
+        model_config = ConfigDict(frozen=True, extra="forbid")
+
+        role: str
+
+        def evaluate(self, view: ConstraintView, catalogue: Catalogue) -> Outcome:
+            # A typo, standing in for any bug: this is not a role of the requirement.
+            return Pass(str(view.roles["taz"]))
+
+    with pytest.raises(KeyError, match="taz"):
+        solve(
+            tas_requirement(Buggy(role="tas")),
+            InMemoryCatalogue(entries=(dataset(1),)),
+        )
 
 
 def test_degraded_is_satisfied_with_a_note(dataset):
@@ -547,3 +630,126 @@ def test_nothing_in_the_package_special_cases_covers():
     )
 
     assert naming == ["__init__.py", "constraints.py", "covers.py"]
+
+
+# ------------------------------------------------- the two ways of not answering
+
+
+def test_a_check_which_cannot_answer_is_not_reported_as_missing_data(dataset):
+    """
+    The distinction the fourth bucket exists for
+
+    "Nobody has recorded this" and "there is no such data" used to be one bucket, so
+    work waiting to be done read as data which does not exist. They are now apart, and
+    the group carries which of the two applied.
+    """
+    result = solve(
+        tas_requirement(NeedsTheYears(role="tas")),
+        catalogue_of(dataset, years=None),
+    )
+
+    assert not result.unsatisfied
+    assert not result.satisfied
+    (group,) = result.couldnt_answer.values()
+    assert group.status is ExplanationStatusNotOk.NEEDS_ENRICHMENT
+    assert "nothing has measured #1" in result.explain()
+
+
+def test_an_unsupported_check_is_in_the_same_bucket_for_a_different_reason(dataset):
+    # Same bucket, different status: the remedy is an issue rather than something to
+    # run, which is why the status rather than the mapping carries the reason.
+    result = solve(
+        tas_requirement(AsksInAUnitWeDoNotHave()), catalogue_of(dataset, years=300.0)
+    )
+
+    (group,) = result.couldnt_answer.values()
+    assert group.status is ExplanationStatusNotOk.MISSING_FEATURE_PLEASE_RAISE_ISSUE
+    # Nothing to go and fetch: no amount of measuring makes a feature exist.
+    assert result.enrichment_inputs == ()
+
+
+def test_enrichment_inputs_are_deduplicated(dataset):
+    """
+    One dataset two checks both need measured is named once
+    """
+    result = solve(
+        requirement(
+            name="twice",
+            tree=all_of(
+                leaf(Query(variable="tas"), "first").with_constraints(
+                    NeedsTheYears(role="first")
+                ),
+                leaf(Query(variable="tas"), "second").with_constraints(
+                    NeedsTheYears(role="second")
+                ),
+            ),
+            group_by=GROUP_BY,
+        ),
+        InMemoryCatalogueWithYears(entries=(dataset(1),), years_on_record={}),
+    )
+
+    (group,) = result.couldnt_answer.values()
+    # Both checks reported it, and nothing threw either report away...
+    assert len(group.enrichment_inputs) == 2
+    # ...but what you hand the enricher names it once.
+    assert result.enrichment_inputs == (
+        EnrichmentInput(dataset_id=1, missing=MissingTimeFact.TIME_RANGE),
+    )
+
+
+def test_enrichment_inputs_come_out_in_a_stable_order(dataset):
+    # The order is the order of the groups, which is sorted, so the same solve twice
+    # hands back the same list. A set would make it depend on `PYTHONHASHSEED`.
+    over_two_models = requirement(
+        name="pair",
+        tree=leaf(Query(variable="tas"), "tas").with_constraints(
+            NeedsTheYears(role="tas")
+        ),
+        group_by=("model",),
+    )
+    catalogue = InMemoryCatalogueWithYears(
+        entries=(dataset(1, model="ModelB"), dataset(2, model="ModelA")),
+        years_on_record={},
+    )
+
+    inputs = solve(over_two_models, catalogue).enrichment_inputs
+
+    # ModelA's dataset first, because the groups are sorted and ModelA sorts first.
+    assert [each.dataset_id for each in inputs] == [2, 1]
+    assert solve(over_two_models, catalogue).enrichment_inputs == inputs
+
+
+def test_a_definite_failure_outranks_something_we_could_not_answer(dataset):
+    """
+    `_STATUS_PRIORITY`, where two parts of one group fail differently
+
+    A group missing a dataset cannot be satisfied however much is enriched, so the
+    missing dataset is the honest headline -- but the enrichment inputs survive
+    anyway, because the next solve is what says whether they help.
+    """
+    result = solve(
+        requirement(
+            name="pair",
+            tree=all_of(
+                leaf(Query(variable="tas"), "tas").with_constraints(
+                    AtLeastNYears(role="tas", years=10_000)
+                ),
+                leaf(Query(variable="rlut"), "rlut").with_constraints(
+                    NeedsTheYears(role="rlut")
+                ),
+            ),
+            group_by=GROUP_BY,
+        ),
+        InMemoryCatalogueWithYears(
+            entries=(dataset(1), dataset(2, variable="rlut")),
+            years_on_record={1: 300.0},
+        ),
+    )
+
+    assert list(result.unsatisfied) == [ONLY_GROUP]
+    assert not result.couldnt_answer
+    # Still worth measuring, even though this group has a worse problem than that.
+    (unsolved,) = result.unsatisfied.values()
+    assert unsolved.enrichment_inputs == (
+        EnrichmentInput(dataset_id=2, missing=MissingTimeFact.TIME_RANGE),
+    )

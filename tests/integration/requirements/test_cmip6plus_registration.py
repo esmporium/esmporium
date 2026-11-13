@@ -316,10 +316,18 @@ def test_a_cmip6plus_requirement_is_searched_saved_and_solved(searched):
 
     result = solve(req, DatabaseCatalogue(engine))
 
-    discovered = set(result.satisfied) | set(result.unsatisfied) | set(result.ambiguous)
+    discovered = (
+        set(result.satisfied)
+        | set(result.unsatisfied)
+        | set(result.ambiguous)
+        | set(result.couldnt_answer)
+    )
     assert discovered, "the search saved rows but the solver discovered no groups"
     assert len(discovered) == (
-        len(result.satisfied) + len(result.unsatisfied) + len(result.ambiguous)
+        len(result.satisfied)
+        + len(result.unsatisfied)
+        + len(result.ambiguous)
+        + len(result.couldnt_answer)
     )
 
     # One dataset per model and variant in this slice, so every group is satisfied and

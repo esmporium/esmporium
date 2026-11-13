@@ -8,11 +8,6 @@ fills the gap itself, between searching and solving:
 ```text
 Requirement --> search --> database --> ENRICH --> solve --> outcome
 ```
-
-The value types themselves are in [esmporium.datasets.time][], and the calendar
-arithmetic in [esmporium.datasets.calendars][], because
-[Covers][esmporium.requirements.Covers] needs both at solve time and
-`esmporium.requirements` may not import this package.
 """
 
 from esmporium.enrich.headers import (
@@ -22,21 +17,14 @@ from esmporium.enrich.headers import (
 )
 from esmporium.enrich.known_readers import (
     FILENAME_TIME_READERS_BY_PROJECT,
-    NO_TIME_AXIS_INTERVALS_BY_PROJECT,
     SPAN_BY_REPORTING_INTERVAL,
     UnknownProjectFilenameTimeReaderError,
-    UnknownProjectTimeAxisError,
     UnknownReportingIntervalError,
-    has_no_time_axis,
     read_trailing_range,
     reader_for_project,
     span_of_reporting_interval,
 )
-from esmporium.enrich.measure import (
-    NoFilesToMeasureError,
-    VersionTimeRange,
-    measure_version,
-)
+from esmporium.enrich.measure import NoFilesToMeasureError, measure_version
 from esmporium.enrich.protocol import (
     CalendarRequiredError,
     FilenameTimeReader,
@@ -48,7 +36,6 @@ from esmporium.enrich.protocol import (
 __all__ = [
     "CF_DEFAULT_CALENDAR",
     "FILENAME_TIME_READERS_BY_PROJECT",
-    "NO_TIME_AXIS_INTERVALS_BY_PROJECT",
     "SPAN_BY_REPORTING_INTERVAL",
     "CalendarRequiredError",
     "FilenameTimeReader",
@@ -56,11 +43,8 @@ __all__ = [
     "NoTimeUnitsError",
     "PublishedRange",
     "UnknownProjectFilenameTimeReaderError",
-    "UnknownProjectTimeAxisError",
     "UnknownReportingIntervalError",
     "UnreadableTimestampError",
-    "VersionTimeRange",
-    "has_no_time_axis",
     "measure_version",
     "read_time_axis",
     "read_trailing_range",

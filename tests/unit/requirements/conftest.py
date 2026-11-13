@@ -10,7 +10,11 @@ from esmporium.datasets import DATASET_FACET_COLUMNS
 from esmporium.requirements import CatalogueEntry, asked_facets
 from esmporium.requirements.tree import effective_query, walk_leaves
 
-from .catalogues import InMemoryCatalogueWithTimeInfo
+from .catalogues import (
+    InMemoryCatalogueWithTimeInfo,
+    branched_at,
+    measured,
+)
 
 
 @pytest.fixture
@@ -81,9 +85,11 @@ def satisfying_catalogue(make_entry):
     That parent is recorded as a root, so a requirement which traced its lineage one
     hop further would be `unsatisfied` here rather than running off the end.
 
-    Every entry also has a time range, and every child a branch time,
+    Every entry also has a measured time range, and every child a branch point,
     chosen so that a parent covers its child with plenty to spare,
     so [Covers][esmporium.requirements.Covers] is met without being degraded.
+    Every range is contiguous, because a gap is a thing `Covers` refuses and this
+    fixture is the one which is meant to satisfy everything.
 
     The known limit, and the part which grows as the tree does: a requirement
     which groups on a facet no leaf's query names has nothing here to answer for it,
@@ -144,19 +150,26 @@ def satisfying_catalogue(make_entry):
             parents[entry.id] = parent.id
             parents.setdefault(parent.id, None)
 
-        # A child spans 150 years, branching 100 years into its parent,
-        # so its parent has to cover [100, 250) and covers [0, 1000).
+        # Measured in months, because the analyses ask for `reporting_interval="mon"`
+        # and that is the axis their data would really be measured on. So a child
+        # spans 150 years (1800 months), branching 100 years (1200 months) into its
+        # parent: the parent has to cover [1200, 3000) and covers [0, 12000). That
+        # leaves 100 years of slack before the branch point and 750 after the child's
+        # end, which is what keeps `CONTROL_COVERS`'s 20-year ideal padding met --
+        # the whole promise of this fixture.
         return InMemoryCatalogueWithTimeInfo(
             entries=tuple(entries.values()),
             parents=parents,
             time_ranges={
-                entry.id: (0.0, 1000.0)
+                entry.id: measured(0, 12000)
                 if parents.get(entry.id, 0) is None
-                else (0.0, 150.0)
+                else measured(0, 1800)
                 for entry in entries.values()
             },
             branch_times_in_parent={
-                child: 100.0 for child, parent in parents.items() if parent is not None
+                child: branched_at(1200)
+                for child, parent in parents.items()
+                if parent is not None
             },
         )
 

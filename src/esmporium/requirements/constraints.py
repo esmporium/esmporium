@@ -1,43 +1,36 @@
 """
 Constraints: judgements about the datasets a requirement selected
 
-A query selects datasets by matching facets, which answers "is there one?".
-A constraint answers the questions a facet cannot:
-e.g. whether the control a simulation branched from covers the years being analysed,
-whether two variables span the same period,
-whether there is enough of a run to regress against.
-Those are judgements about what is *in* the data rather than about which dataset it is.
+A query selects datasets by matching facets, which answers "is there one?". A
+constraint answers the questions a facet cannot: whether the control a simulation
+branched from covers the years being analysed, whether there is enough of a run to
+regress against. Those are judgements about what is *in* the data rather than about
+which dataset it is.
 
-[Constraint][(m).Constraint] is the extension point.
-A constraint is attached to a
+[Constraint][(m).Constraint] is the extension point. A constraint is attached to a
 [Leaf][esmporium.requirements.Leaf] or to a
-[Requirement][esmporium.requirements.Requirement],
-and **where it is attached decides what its failure costs**:
+[Requirement][esmporium.requirements.Requirement], and **where it is attached decides
+what its failure costs**:
 
-- on a leaf, it sees that dataset and the chain behind it,
-  and a failure makes that leaf unsatisfied
-- on the requirement, it sees every role in the group, and a failure fails the group
+- on a leaf, it sees that dataset and the chain behind it, and a failure makes that
+  leaf unsatisfied;
+- on the requirement, it sees every role in the group, and a failure fails the group.
 
-## Constraints which need more than the catalogue protocol provides
+It is generic in the catalogue it needs. One which needs no more than the
+[Catalogue][esmporium.requirements.Catalogue] protocol provides is a
+`Constraint[Catalogue]`; one which needs more defines a protocol beside itself and is
+a constraint over that instead, as [Covers][esmporium.requirements.Covers] does with
+`CatalogueWithTimeInfo`.
 
-[Constraint][(m).Constraint] is generic in the catalogue it needs.
-A constraint which only needs what the
-[Catalogue][esmporium.requirements.Catalogue] protocol provides
-is a `Constraint[Catalogue]`.
-A constraint which needs more, e.g. the time range of a dataset,
-defines a protocol next to itself which adds the methods it needs
-and is a constraint over that protocol instead.
-[Covers][esmporium.requirements.Covers] is the worked example:
-it is a `Constraint[CatalogueWithTimeInfo]`.
-This keeps everything local and easy to trace,
-and a type checker can tell whether a catalogue can be used with a constraint.
+A constraint which cannot answer says so in one of three ways:
 
-What a type checker cannot check is a requirement:
-it holds constraints which may each need a different catalogue.
-So at runtime, if the catalogue passed to the solver doesn't have a method
-a constraint needs, the constraint raises,
-and the solver reports the part of the requirement it was attached to
-as unsatisfied, with the error in the explanation.
+- [NeedsEnrichment][(m).NeedsEnrichment] -- the fact is not recorded yet. It carries
+  [EnrichmentInput][(m).EnrichmentInput]s, which name what to hand the enricher.
+- [MissingFeature][(m).MissingFeature] -- the question is a fair one to ask and we
+  have not built it, so the message carries the issue tracker.
+- [ConstraintNotEvaluableError][(m).ConstraintNotEvaluableError] -- raised rather
+  than returned, and reported as unsatisfied with its message in the explanation.
+  The narrow escape hatch: **anything else a constraint raises ends the solve**.
 """
 
 from __future__ import annotations
@@ -45,12 +38,23 @@ from __future__ import annotations
 import importlib
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Annotated, Any, Protocol, TypeVar, cast
+from enum import Enum
+from typing import Annotated, Any, Protocol, TypeVar, cast, runtime_checkable
 
 from pydantic import BaseModel, PlainSerializer, PlainValidator
 
+from esmporium.query import QueryCanonical
 from esmporium.requirements.catalogue import Catalogue, CatalogueEntry
 from esmporium.requirements.relations import Lineage
+
+ISSUE_TRACKER_URL = "https://github.com/esmporium/esmporium/issues"
+"""
+Where to report a requirement we do not support yet
+
+Named here because [MissingFeature][(m).MissingFeature] is the outcome which carries
+it, and a link which is right in one message and stale in another is worse than no
+link.
+"""
 
 CatalogueT_contra = TypeVar("CatalogueT_contra", bound=Catalogue, contravariant=True)
 """
@@ -112,14 +116,109 @@ class Fail:
     """Why it is not met"""
 
 
-Outcome = Pass | Degraded | Fail
+class MissingTimeFact(str, Enum):
+    """
+    Which piece of time information is not recorded yet
+
+    What an [EnrichmentInput][(m).EnrichmentInput] names, because it decides how much
+    work clearing it takes: a range comes off the filenames and is free, a calendar
+    needs a file header fetched.
+    """
+
+    TIME_RANGE = "time_range"
+    """When the data is -- its start and end. Read from the filenames."""
+
+    BRANCH_POINT = "branch_point"
+    """
+    Where the run branched from its parent
+
+    Published by the child for CMIP6 and CMIP7; a CMIP5 branch time needs a fix before
+    it can be interpreted at all.
+    """
+
+    CALENDAR = "calendar"
+    """
+    Which CF calendar the numbers are in, and what they count from
+
+    Only daily and sub-daily data needs this: twelve months is a year in every
+    calendar, so a monthly or yearly range is answerable without it. Read from a file
+    header.
+    """
+
+
+@dataclass(frozen=True)
+class EnrichmentInput:
+    """
+    One dataset, and one fact about it which has to be recorded
+
+    What [SolveResult.enrichment_inputs][esmporium.requirements.SolveResult] hands
+    back, shaped to pass straight to the enricher rather than to be read and retyped.
+    Frozen and hashable so that the same dataset asked for by two groups deduplicates
+    to one.
+    """
+
+    dataset_id: int
+    """
+    The dataset, as [CatalogueEntry.id][esmporium.requirements.CatalogueEntry.id]
+
+    A `Dataset` row's id. Which *version* of it to measure is the enricher's question,
+    answered the same way the rest of the solve answers it -- through the describing
+    version -- rather than something a constraint is in a position to say.
+    """
+
+    missing: MissingTimeFact
+    """Which fact is not recorded"""
+
+
+@dataclass(frozen=True)
+class NeedsEnrichment:
+    """
+    The constraint could be evaluated, once somebody records the facts it needs
+    """
+
+    message: str
+    """What is not recorded, and what recording it would take"""
+
+    inputs: tuple[EnrichmentInput, ...] = ()
+    """
+    What to hand the enricher to clear this
+
+    Empty is allowed and means only that this outcome could not name the datasets, not
+    that there is nothing to do.
+    """
+
+
+@dataclass(frozen=True)
+class MissingFeature:
+    """
+    The requirement is a fair thing to want and we have not built it
+
+    The sibling of [NeedsEnrichment][(m).NeedsEnrichment], and the pair is worth
+    keeping apart: that one says "go and fetch it", this one says "nothing you can do
+    will help, please tell us you wanted it". So the message carries
+    [ISSUE_TRACKER_URL][(m).ISSUE_TRACKER_URL].
+    """
+
+    message: str
+    """What is not supported, and where to say you wanted it"""
+
+
+Outcome = Pass | Degraded | Fail | NeedsEnrichment | MissingFeature
 """
 What a constraint answers
-
-A constraint which cannot be evaluated raises instead,
-and the solver reports that as a failure
--- see [Constraint][(m).Constraint].
 """
+
+
+class ConstraintNotEvaluableError(Exception):
+    """
+    Raised by a constraint which cannot answer, for a reason which is not a bug
+
+    The narrow escape hatch for a constraint whose "I cannot answer" is neither
+    [NeedsEnrichment][(m).NeedsEnrichment] nor
+    [MissingFeature][(m).MissingFeature]. The solver catches it and reports the part of
+    the requirement the constraint was attached to as unsatisfied, with the message in
+    the explanation.
+    """
 
 
 @dataclass(frozen=True)
@@ -185,8 +284,12 @@ class Constraint(Protocol[CatalogueT_contra]):
         """
         Evaluate whether the constraint is met
 
-        If the constraint cannot be evaluated, raise.
-        The solver reports that as a failure.
+        A constraint which cannot answer **returns** why
+        -- [NeedsEnrichment][(m).NeedsEnrichment] if the facts are not recorded yet,
+        [MissingFeature][(m).MissingFeature] if the question is one we have not built
+        -- rather than raising. Raise
+        [ConstraintNotEvaluableError][(m).ConstraintNotEvaluableError] for anything
+        else which is not a bug; anything else raised ends the solve.
 
         Parameters
         ----------
@@ -200,6 +303,72 @@ class Constraint(Protocol[CatalogueT_contra]):
         -------
         :
             The result of evaluating the constraint
+        """
+        ...
+
+
+@runtime_checkable
+class ChecksItsLeaf(Protocol):
+    """
+    A constraint which can refuse the leaf it is attached to, before any data
+
+    Optional: implement `check_leaf` and the requirement calls it as it is built; do
+    not, and nothing happens.
+
+    For a check which cannot judge some datasets at all, this is the first of the two
+    places to say so. A leaf which can *only* select those datasets is a mistake in
+    the requirement, so it is refused here; a leaf which selects one among others is a
+    fact about the data, so that candidate fails when it is solved.
+
+    Examples
+    --------
+    A check which only means anything for data on a time axis, refusing a leaf which
+    asks for fixed fields and nothing else:
+
+    >>> from esmporium.query import Query
+    >>> from esmporium.requirements.catalogue import set_facets
+    >>> class NeedsATimeAxis:
+    ...     def check_leaf(self, role, query):
+    ...         if set_facets(query).get("reporting_interval") == ("fx",):
+    ...             msg = f"{role!r} selects only fixed fields, which have no time axis"
+    ...             raise ValueError(msg)
+    ...
+    ...     def evaluate(self, view, catalogue):
+    ...         return Pass()
+
+    >>> NeedsATimeAxis().check_leaf("areas", Query(reporting_interval="fx"))
+    Traceback (most recent call last):
+    ...
+    ValueError: 'areas' selects only fixed fields, which have no time axis
+
+    A leaf which could select them among others is left alone, to be judged when it is
+    solved:
+
+    >>> NeedsATimeAxis().check_leaf("tas", Query(variable="tas")) is None
+    True
+    """
+
+    def check_leaf(self, role: str, query: QueryCanonical) -> None:
+        """
+        Refuse a leaf this constraint cannot judge
+
+        Returns nothing: this is here to raise.
+
+        Parameters
+        ----------
+        role
+            Role of the leaf, to name in the error
+
+        query
+            The query the leaf will be solved with, i.e. including any facets the
+            requirement adds. See
+            [effective_query][esmporium.requirements.effective_query].
+
+        Raises
+        ------
+        Exception
+            The leaf can only select datasets this constraint cannot judge. The type is
+            the constraint's own to choose, and should be named for the mistake.
         """
         ...
 

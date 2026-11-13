@@ -12,6 +12,7 @@ than any example invented to exercise one feature.
 
 from __future__ import annotations
 
+from esmporium.datasets import Span, TimeStep
 from esmporium.query import Query
 from esmporium.requirements import (
     Ancestors,
@@ -21,6 +22,17 @@ from esmporium.requirements import (
     leaf,
     requirement,
 )
+
+NO_PAD = (Span(0, TimeStep.YEARS), Span(0, TimeStep.YEARS))
+"""No padding either side, i.e. the covered span and not one step more"""
+
+TWENTY_YEARS_EITHER_SIDE = (Span(20, TimeStep.YEARS), Span(20, TimeStep.YEARS))
+"""
+Twenty years before the branch point and after the end of the covered run
+
+What an anomaly wants either side of the window it uses, so that the baseline is not
+being read off the very edge of the control.
+"""
 
 # -------------------------------------------------------------- shared vocabulary
 
@@ -57,18 +69,36 @@ baseline, and because the role it files the control under -- `control` -- is the
 checks will refer to.
 """
 
-CONTROL_COVERS = Covers(role="control", target="self", ideal_pad_years=(20.0, 20.0))
+CONTROL_COVERS = Covers(
+    role="control",
+    target="self",
+    align="branch",
+    mode="containment",
+    pad=NO_PAD,
+    ideal_pad=TWENTY_YEARS_EITHER_SIDE,
+)
 """
 The control has to cover the dataset, and ideally 20 years either side of it
 
-What an anomaly from the control needs.
+What an anomaly from the control needs. `mode="containment"` because the window the
+anomaly uses is the whole of the forced run rather than a fixed number of years of it,
+which is the thing a number cannot say.
 """
 
 CONTROL_IDEALLY_COVERS = Covers(
-    role="control", target="self", pad_years=None, ideal_pad_years=(0.0, 0.0)
+    role="control",
+    target="self",
+    align="branch",
+    mode="containment",
+    pad=None,
+    ideal_pad=NO_PAD,
 )
 """
 The control should cover the dataset, but there are workarounds if it does not
+
+`pad=None` is how "nothing is required" is said: only `ideal_pad` is judged, so a
+control which falls short is
+[Degraded][esmporium.requirements.Degraded] rather than a failure.
 """
 
 MONTHLY = Query(reporting_interval="mon")
@@ -156,6 +186,12 @@ Zero emissions commitment, from esm-flat10-zec
 esm-flat10-zec branches from esm-flat10, not from the control,
 so the lineage passes through esm-flat10 on its way back,
 and the control has to cover both.
+
+Note that **`Covers` only checks the direct parent for now**, so what it judges here
+is the control against esm-flat10, not against the ZEC run two branches below. The
+chain rule is a step of its own; until it lands, "and the control has to cover both"
+is what this analysis needs rather than what is checked. See
+`docs/further-background/enrichment.md`.
 """
 
 TAS_SCENARIO_ANOMALIES = requirement(
@@ -176,6 +212,9 @@ The scenarios branch from historical,
 so the control would ideally cover both,
 but an analysis can work around it if it does not,
 hence only ideally.
+
+As with `05-zec-flat10`, "both" is what the analysis needs rather than what is
+checked: `Covers` judges the direct parent only until the chain rule lands.
 """
 
 

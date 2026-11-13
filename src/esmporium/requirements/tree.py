@@ -49,6 +49,7 @@ from esmporium.requirements.catalogue import (
 )
 from esmporium.requirements.constraints import (
     AnyConstraint,
+    ChecksItsLeaf,
     Constraints,
     check_constraint,
 )
@@ -554,6 +555,12 @@ class Leaf(BaseModel):
 
         return self
 
+    @model_validator(mode="after")
+    def _constraints_accept_this_leaf(self) -> Leaf:
+        check_constraints_accept_a_leaf(self.role, self.query, self.constraints)
+
+        return self
+
     def where(self, query: QueryProtocol) -> Leaf:
         """
         Add a query's facets to this leaf's query
@@ -591,6 +598,11 @@ class Leaf(BaseModel):
         LineageStartsAtTargetError
             The added facets leave this leaf selecting only datasets which match
             where its lineage says to stop
+
+        Exception
+            The added facets leave this leaf selecting only datasets one of its
+            constraints cannot judge. The type is that constraint's own -- see
+            [ChecksItsLeaf][esmporium.requirements.ChecksItsLeaf].
         """
         # Checked here as well as in the model validator which backs it up, for the
         # reason `with_lineage` says: `model_copy` runs no validators. Checked against
@@ -598,6 +610,8 @@ class Leaf(BaseModel):
         combined = add_facets(self.query, to_stored_query(query), self.role, "where")
         if self.lineage is not None:
             check_lineage_does_not_start_at_target(self.role, combined, self.lineage)
+
+        check_constraints_accept_a_leaf(self.role, combined, self.constraints)
 
         return self.model_copy(update={"query": combined})
 
@@ -661,10 +675,16 @@ class Leaf(BaseModel):
         ------
         NotAConstraintError
             One of `constraints` cannot act as one
+
+        Exception
+            One of `constraints` refuses this leaf, because the leaf can only select
+            datasets it cannot judge. The type is that constraint's own -- see
+            [ChecksItsLeaf][esmporium.requirements.ChecksItsLeaf].
         """
         # Checked here as well as by the field's own validator, for the reason
         # `with_lineage` gives: `model_copy` runs no validators at all.
         added = tuple(check_constraint(each) for each in constraints)
+        check_constraints_accept_a_leaf(self.role, self.query, added)
 
         return self.model_copy(update={"constraints": (*self.constraints, *added)})
 
@@ -1028,6 +1048,7 @@ class Requirement(BaseModel):
         check_roles_are_distinct(self.tree)
         check_where_agrees_with_leaves(self.tree, self.where)
         check_lineages_do_not_start_at_their_target(self.tree, self.where)
+        check_constraints_accept_their_leaves(self.tree, self.where)
         check_grouping_facets_are_modelled(self.group_by, self.prefer)
 
         return self
@@ -1442,6 +1463,88 @@ def check_lineages_do_not_start_at_their_target(
             check_lineage_does_not_start_at_target(
                 leaf.role, effective_query(leaf, where), leaf.lineage
             )
+
+
+def check_constraints_accept_a_leaf(
+    role: str, query: QueryCanonical, constraints: Iterable[AnyConstraint]
+) -> None:
+    """
+    Let each of a leaf's checks refuse it, before any data is involved
+
+    A check which can refuse one says so by implementing
+    [ChecksItsLeaf][esmporium.requirements.ChecksItsLeaf]; one which does not is
+    simply not asked.
+
+    Returns nothing: this is here to raise, with whatever the check chose to raise.
+
+    Parameters
+    ----------
+    role
+        Role of the leaf, which the check names in its error
+
+    query
+        The query the leaf will be solved with. Which query that is depends on where
+        this is called from: a leaf's own, or its effective one once a requirement's
+        `where` is folded in -- see
+        [check_constraints_accept_their_leaves][(m).check_constraints_accept_their_leaves].
+
+    constraints
+        The checks attached to the leaf
+
+    Raises
+    ------
+    Exception
+        A check refused the leaf. The type is the check's own, named for the mistake.
+    """
+    for constraint in constraints:
+        if isinstance(constraint, ChecksItsLeaf):
+            constraint.check_leaf(role, query)
+
+
+def check_constraints_accept_their_leaves(
+    tree: Node, where: QueryCanonical | None
+) -> None:
+    """
+    Check every leaf of a tree against the checks attached to it
+
+    [check_constraints_accept_a_leaf][(m).check_constraints_accept_a_leaf] is the one
+    which does the asking; this is it applied to a whole tree, with each leaf's
+    *effective* query.
+
+    Returns nothing: this is here to raise, with whatever a check chose to raise.
+
+    Called when a requirement is built, and *not* only when a leaf is, because a
+    requirement's `where` is part of what each leaf selects -- the same reason
+    [check_lineages_do_not_start_at_their_target][(m).check_lineages_do_not_start_at_their_target]
+    is. See [effective_query][(m).effective_query].
+
+    A leaf checks its own constraints against its own query as it is built, so the
+    common mistake is refused unwrapped at the point it is written; this is the half
+    which needs the requirement in hand.
+
+    Parameters
+    ----------
+    tree
+        The tree whose leaves to check
+
+    where
+        Facets the requirement adds to every leaf, if any
+
+    Raises
+    ------
+    Exception
+        A check refused its leaf. The type is the check's own, named for the mistake.
+    """
+    # Only the checks on the leaves themselves. A check attached higher up judges
+    # several leaves at once, so "the leaf it is attached to" is not a thing it has,
+    # and asking it about each leaf below would refuse requirements where one leaf is
+    # fine and another is the subject.
+    for role_prefix, each_leaf in walk_leaves(tree):
+        check_constraints_accept_a_leaf(
+            f"{role_prefix}{each_leaf.role}",
+            effective_query(each_leaf, where),
+            each_leaf.constraints,
+        )
 
 
 def check_grouping_facets_are_modelled(
