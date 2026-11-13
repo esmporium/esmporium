@@ -55,13 +55,13 @@ list that can be passed straight back to the enricher.
 | 3 | **Store both** natural and rich time values. Natural values are ones in the dataset's own frequency and come from the filename, which is basically free to parse and is free (natural values match the dataset's frequency e.g. for yearly datasets you get values like 2024, 1840, for monthly datasets values like 1850-01, 2023-12); rich comes from a file header and is fetched only where needed (rich means information that allows you to create a full datetime object without guessing i.e. values like 2023-01-01 00:00:00, you don't get this from the filenames alone). |
 | 4 | **Never store fractional years, and never convert to them.** Natural units are the data's own frequency; rich values are datetimes with a calendar. No year conversion at solve time, and none at enrich time. |
 | 5 | **Store start and end, not extents.** An extent is `end - start` (or `end - start + 1` sometimes because of how the indexing/conversion works e.g. the extent of a dataset that goes from 1850 to 1860 when its natural units are years is 11 years, not 10, because the actual bounds can be assumed to be 1850-01-01 to 1860-12-31, this has tripped over many people, hopefully not us), computed outside the database when wanted. Storing both would be the same fact twice, with a consistency burden (that is impossible to get right given that the correct answer depends on assumptions/context that we don't have at enrichment time). |
-| 6 | **One pair of value columns plus a `units` column**, not a natural column group and a rich column group. No half-empty rows. |
+| 6 | **One pair of value columns plus a `units` column**, not a natural column group and a rich column group. No half-empty rows. Natural values are a 1-based ordinal step count with no epoch, rich values carry one; see "Natural units are an ordinal count" below. |
 | 7 | A corrected branch time is a **`FIX`-sourced row**, not a Python-level catalogue wrapper. |
 | 8 | A version whose files have a gap gets start and end recorded **plus a contiguity flag**, and `Covers` refuses a gapped range rather than treating it as continuous. |
 | 9 | **`Covers` defaults nothing.** Both modes are first-class and the user states which one they mean, in full, every time. This follows the rule `Requirement` already sets for `group_by` — *"a grouping decides what one group is, so it is stated rather than defaulted"* — and it is forced anyway, because containment cannot be written as a number: nobody knows a dataset's extent until we have measured it. |
 | 9b | **Time ranges are stored half-open, `[start, end_exclusive)`, and the field is named for it.** See "The half-open convention" below. |
 | 10a | **A requirement may be stated in years or months only, for now.** `min_overlap` and `pad` in days or hours get `MISSING_FEATURE_PLEASE_RAISE_ISSUE`. This is a decision about the *API surface*, and says nothing about which data we support — see "Frequency, units, and what needs a header". |
-| 10b | **Data at any frequency is supported, including daily and sub-daily** — but anything finer than monthly needs a calendar to unambiguously calculate the extent, so it needs a header read, so it reports `NEEDS_ENRICHMENT` until enriched. Monthly and yearly data never need a file opened to calculate their extent in natural units (they will need files opened to calculate extent in other units). |
+| 10b | **Data at any frequency is supported, including daily and sub-daily** — but anything finer than monthly needs a calendar to unambiguously calculate the extent, so it needs a header read, so it reports `NEEDS_ENRICHMENT` until enriched. Monthly and yearly data never need a file opened to calculate their extent in natural units (they will need files opened to calculate extent in other units). The consequence for storage is sharper than it looks: a daily filename gives *dates*, not a count, so `start` and `end_exclusive` are **nullable** and the status says which fact is missing. |
 | 11 | A **sibling** pair whose axes do not align is a **loud `Fail`** naming the constraint, not a raise: it is a question we can answer, and the answer is no. |
 | 12 | An **uninterpretable raw CMIP5 branch time** is `NeedsEnrichment` pointing at a fix. |
 | 13 | **`SameTimeRange` is deferred** (PLAN step 15), with a comment in the code recording this decision so it is not lost when step 15 lands. |
@@ -72,6 +72,9 @@ list that can be passed straight back to the enricher.
 | 18 | The actionable list is **`enrichment_inputs`** — it names what you pass to the enricher. |
 | 19 | `SolveResult` stays at **four mappings**: `satisfied`, `unsatisfied`, `ambiguous`, `couldnt_answer`. The fourth holds every group we could not answer, **with the reasoning** — each group carries which status applied and why. (`couldn't_answer` cannot be a Python identifier, so the apostrophe is dropped.) |
 | 20 | **Calendar arithmetic uses `cftime`, from a new optional extra. We do not roll our own.** Six CF calendars with six sets of leap rules is exactly the job that looks small and is not. It is an *extra* rather than a dependency, following `h5py`: monthly and yearly requirements never need it, because twelve months is a year in every calendar, so only the sub-monthly path pays. See "Where `cftime` can live" below for the one architectural consequence. |
+| 21 | **The calendar and the time units are attributes of the *time variable*, not global attributes.** Measured, not assumed — see "Where the numbers come from". `esmporium.headers` reads globals only today, so reaching them is a new slice of that package rather than a call to `read_global_attributes`. |
+| 22 | **`Covers` ships for a direct parent first; the chain is its own step.** "The control covers this experiment *and every parent back up to the control*" is the rule the scenario and ZEC analyses actually need, and it takes thinking that should not happen next to new value types and a new table. So `Covers` raises `NotImplementedError` when the covering role is not the target's direct parent, and the chain rule is settled in a PR of its own, starting from an agreed picture. |
+| 23 | **Natural values are a 1-based ordinal step count, with no epoch.** `0001-01` is month 1, not month 0, which a udunits `since` epoch cannot give because `since` counts *elapsed* steps. See "Natural units are an ordinal count". |
 
 ## The `Covers` question, settled
 
@@ -111,24 +114,58 @@ the ideal" becomes explicit in the same way.
 The simplification that makes this readable: **after mapping, the child's start *is*
 the branch point.** `_needed_span` computes `start' = branch + (start - step_start)`,
 so the mapped child start equals `branch` by construction. Everything below is in the
-control's axis, after that mapping.
+control's axis, after that mapping, and `BP` is the branch point.
+
+**Case 1 — an overlap is asked for (`mode="overlap"`, `min_overlap=A`).** The control
+has to hold `A` of data from the branch point — the window an anomaly actually uses —
+plus padding either side:
+
+```
+                     BP
+                      │
+  piControl    |──────┼───────────────|
+                      │
+  1pctCO2             |═══════════════════════════|
+                      │
+         ◄── pad B ───┤◄───── A ─────►├─ pad C ─►
+                      │
+  needed:  [ BP - B ,  BP + A + C )
+```
+
+**Case 2 — no overlap is asked for (`mode="containment"`).** The control has to hold
+everything the covered run covers, plus padding either side:
+
+```
+                     BP
+                      │
+  piControl    |──────┼───────────────────────────────|
+                      │
+  1pctCO2             |═══════════════════════════|
+                      │                           │
+         ◄── pad B ───┤                           ├─ pad C ─►
+                      │                           │
+  needed:  [ BP - B ,  end(1pctCO2) + C )
+```
+
+Written as comparisons, which is one function with the upper bound swapped:
 
 ```
 child_extent = child_end_exclusive - child_start
 
-PASS iff  child_extent >= min_overlap
+PASS iff  child_extent >= min_overlap                        (overlap mode only)
      AND  control_start          <= branch_point - pad_before
-     AND  control_end_exclusive  >= branch_point + min_overlap + pad_after
+     AND  control_end_exclusive  >= needed_end + pad_after
+
+     where needed_end is  branch_point + min_overlap   in overlap mode
+                      or  child_end_exclusive          in containment mode
 ```
 
-Three independent comparisons, and the analysis window is **anchored at the branch
-point**: it is the child's first `min_overlap` of data, which is the window an anomaly
-actually uses. The pad is control data either side of that window, and whether the
-child also has data in the pad region is irrelevant.
+Case 2 is `_covers()` exactly as #69 implements it, so one private function serves
+both modes.
 
-Anchoring is the part worth not losing. An earlier draft of this note let the window
-slide anywhere inside the overlap, which passes cases where the control does not reach
-the branch point at all:
+The analysis window being **anchored at the branch point** is the part worth not
+losing. An earlier draft of this note let the window slide anywhere inside the
+overlap, which passes cases where the control does not reach the branch point at all:
 
 ```
             0        100       150        250            400
@@ -151,10 +188,37 @@ Verified against two worked examples — control `[0, 200)`, child mapped `[100,
 | `min_overlap=100` | 150 ≥ 100 ✓ | 0 ≤ 90 ✓ | 200 ≥ 210 ✗ | **Fail** — short on the far side |
 | `min_overlap=10` | 150 ≥ 10 ✓ | 0 ≤ 90 ✓ | 200 ≥ 120 ✓ | **Pass** |
 
-Containment is the same arithmetic with `min_overlap` set to the covered run's own
-extent: conditions two and three become `control_start <= child_start - pad_before`
-and `control_end_exclusive >= child_end_exclusive + pad_after`, which is `_covers()`
-as #69 already implements it. So one private function serves both modes.
+### Along a chain, which is deferred
+
+Both pictures above put the control one branch below the covered run. The rule the
+scenario and ZEC analyses actually need is the chain version: *the control must span
+the covered run **and every parent back up to the control**, plus padding before the
+branch point and after the end of the covered run* — where the branch point is the one
+between the control and the **first** experiment that branches off it, the bottom of
+the chain.
+
+```
+                     BP = where historical branches off piControl
+                      │
+  piControl    |──────┼─────────────────────────────────────────|
+                      │
+  historical          |═══════════════════|
+  ssp245                                  |═══════════════════|
+                      │                                       │
+         ◄── pad B ───┤                                       ├─ pad C ─►
+
+  case 2 (no A):   [ BP - B , max(end of ssp245, end of historical) + C )
+  case 1 (A given):[ BP - B , BP + A + C )
+```
+
+Per settled decision 22 this does **not** ship with `Covers`: a covering role which is
+not the target's direct parent raises `NotImplementedError`, and the chain rule gets a
+step of its own, agreed as a picture before any code. The questions it has to settle,
+recorded here so they are not rediscovered: what happens when an intermediate run's
+mapped end exceeds the covered run's; whether `A` is ever measured anywhere but the
+bottom branch point; and what a gapped intermediate does, given decision 8 refuses a
+gapped range. The mapping machinery is not the hard part — `_needed_span` already
+walks every member one branch at a time — the *rule* is.
 
 ### The half-open convention
 
@@ -167,6 +231,24 @@ than `end`, so the convention travels to every call site, query and log line ins
 of living in a docstring somebody read once. That is the same move this repo already
 made with `reporting_interval` over `frequency`, and with
 `branch_time_in_parent` / `branch_time_in_child`.
+
+"Half-open" is the one word in this note that reads as jargon, so: it means we store
+the first step *not* in the data rather than the last step in it. Count the boxes, not
+the posts.
+
+```
+ yearly data published as "1850 to 1860"
+
+        1850   1851   ...    1859   1860
+      ┌──────┬──────┬──────┬──────┬──────┐
+      │      │      │      │      │      │
+      └──────┴──────┴──────┴──────┴──────┘
+      ▲                                  ▲
+      start = 1850                       end_exclusive = 1861
+                                         the first year NOT in the data
+
+ extent = 1861 - 1850 = 11 years
+```
 
 Decision 5's own example, stored this way:
 
@@ -193,14 +275,31 @@ The off-by-one is confined to one named conversion, so there is exactly one plac
 get it right and one place to look when it is wrong:
 
 ```
-filename  "…_320001-325012.nc"
+filename  "…_320001-325012.nc"   + reporting_interval "mon"
    │
-   ├─ PublishedRange(start_raw="320001", end_raw="325012", unit="mon")   inclusive, as published
+   ├─ PublishedRange(start_raw="320001", end_raw="325012",
+   │                 precision=MONTHS, reports_every=1 month)   inclusive, as published
    │
    └─ to_half_open(...)        <- the ONLY place the +1 lives
          │
-         └─ TimeRange(start=38400, end_exclusive=39012, unit="mon")      half-open
+         └─ TimeRange(start=38389, end_exclusive=39001, axis=months)     half-open
 ```
+
+The numbers come from decision 23's ordinal: `(3200 - 1) * 12 + 1 = 38389` for January
+3200, and `(3250 - 1) * 12 + 12 = 39000` for December 3250, whose half-open end is
+`39001`. The extent is `39001 - 38389 = 612` months, i.e. 51 years, which is what
+fifty-one calendar years of monthly data should come to.
+
+Note the second input. **The half-open end is the last stamp advanced by one
+*reporting* step**, not by one of whatever the filename was written to, and those are
+not the same thing: a CMIP6 `3hr` file is stamped to the minute
+(`185001010300-185101010000`, twelve digits) and runs three hours past its last stamp,
+to midnight. Taking the filename's own precision as the step would quietly lose two
+hours off every sub-daily dataset. The reporting interval is a facet we already hold,
+so asking for it costs nothing, and one rule — *end exclusive is the last stamp plus
+one reporting step* — then gives an exact answer at every frequency from `dec` down to
+`1hr`. `subhr` is the one interval with no answer: it says the data is finer than
+hourly without saying how much finer, so there is no step to add.
 
 The value type owns the arithmetic — `extent`, `contains`, `is_adjacent_to` — so no
 caller ever subtracts by hand. The docstring explains the convention; the type is what
@@ -231,6 +330,41 @@ The test that catches a wrong conversion is the **single-step dataset**: a month
 file named `…_320001-320001.nc` holds one month, so its extent must be 1. Subtracting
 the published values gives 0. That case goes first in PR A's table, beside two
 adjacent files satisfying `is_adjacent_to` and a one-month gap failing it.
+
+### Natural units are an ordinal count
+
+Decision 6 said "one `units` column, udunits-style", and the obvious reading — natural
+monthly values as `"months since 0001-01"` — is wrong by one. A udunits `since` counts
+*elapsed* steps, so `0001-01` would be month **0**. What we want is the ordinal: the
+first month of year 1 is month 1.
+
+So a natural value carries a step and **no epoch**, and the arithmetic is plain:
+
+```
+ YEARS    value = year                        1850      ->  1850
+ MONTHS   value = (year - 1) * 12 + month     0001-01   ->  1
+                                              1850-01   ->  22189
+                                              1861-01   ->  22321
+                                              extent 22321 - 22189 = 132 months = 11 years
+```
+
+An epoch is exactly what a natural value does not have, and saying so is the point: a
+count of years or months is the same count in every CF calendar, which is why monthly
+and yearly data never need a header. An epoch date would imply a calendar the value
+does not carry.
+
+Rich values, from a header, do carry one, and keep udunits' own spelling —
+`days since 1850-01-01` — because that is the string the file wrote and
+`parent_time_units` already stores that shape. One column holds either:
+
+```
+  natural   "months"                    epoch is None
+  rich      "days since 1850-01-01"     epoch is "1850-01-01"
+```
+
+`DAYS` and `HOURS` have no calendar-free ordinal at all — two dates are a count of
+days only once leap rules are known — so a sub-monthly filename fills `start_raw` and
+`end_raw` and nothing else, which is what decision 10b's nullability is for.
 
 ### Covers vs SameTimeRange — why both exist
 
@@ -359,10 +493,12 @@ import only `esmporium.query`, `esmporium.datasets` and `esmporium.formatting`. 
 
 - the **value types** stay in `esmporium.datasets`, standard library only — they hold
   numbers, a unit and a calendar name, and do no calendar arithmetic;
-- the **arithmetic** lives in its own module and imports `cftime` at point of use,
-  exactly as `headers/hdf5.py` does with `h5py`:
+- the **arithmetic** lives in its own module, `esmporium.datasets.calendars`, and
+  imports `cftime` at point of use, exactly as `headers/hdf5.py` does with `h5py`:
   `import h5py  # the optional headers extra, imported on use`, inside a
-  `try` / `except ImportError`.
+  `try` / `except ImportError`. It sits in `datasets` rather than `enrich` because
+  `requirements` may import the one and not the other, and the only rule `datasets`
+  has to keep — no esmporium imports — is untouched by a third party.
 
 The consequence is that `requirements` picks up an optional third-party dependency it
 did not have before. That breaks no rule here — this package's import restrictions are
@@ -381,7 +517,7 @@ alongside `NEEDS_ENRICHMENT` and `MISSING_FEATURE_PLEASE_RAISE_ISSUE`.
 |---|---|---|---|
 | start, end, natural units | the filename — `…_320001-325012.nc` | free, `File.filename` already stored | every file we have seen |
 | contiguity / gaps | the set of filenames for a version | free | every version |
-| calendar, time units | file header global attributes | one byte-range read per *simulation* | anything we can reach a data node for |
+| calendar, time units | file header, the **time variable's** attributes — *not* global ones | one byte-range read per *simulation*, plus a new reader (see below) | anything we can reach a data node for |
 | start, end, rich (datetimes) | file header | same read | ditto |
 | branch point, raw | already stored — `DatasetVersionParent.branch_time_in_parent` | already paid | CMIP6/7 reliably; CMIP5 not usable as published |
 | branch point, interpreted | enrich, or a `FIX` | — | settled decisions 7 and 12 |
@@ -390,11 +526,36 @@ Two things worth stating plainly, because both were nearly got wrong:
 
 - **The filename does not give rich values.** It gives natural-unit start and end and
   nothing else — no calendar, no time units. Rich values require opening a file.
-- **A header read cannot cheaply give start and end.** `read_global_attributes`
-  returns *global* attributes only; the time coordinate's values live in the data
-  section, interleaved by record, not in the first 64 KiB. The header is the source
-  for *calendar and units*; the filename is the source for *start and end*. They are
-  complements, not alternatives.
+- **A header read cannot cheaply give start and end.** The time coordinate's *values*
+  live in the data section, interleaved by record, not in the first 64 KiB. The header
+  is the source for *calendar and units*; the filename is the source for *start and
+  end*. They are complements, not alternatives.
+
+- **And the calendar is not a global attribute**, which is settled decision 21 and was
+  measured rather than assumed. Against this repository's own captured prefixes:
+
+  | File | `calendar` present? | Where |
+  |---|---|---|
+  | `tests/test-data/headers/cmip5-netcdf3-prefix.bin` (6,364 B, enough for every global) | **no** — nor `days since`, not one byte of either | the globals end before the variable list begins |
+  | `tests/test-data/headers/cmip6-netcdf4-prefix.bin` (42,487 B) | yes — `calendar`, `noleap`, `days since` | byte ~24,900, inside the 64 KiB `DEFAULT_WANT_BYTES` ask |
+
+  `read_global_attributes` returns globals only, and
+  `read_netcdf3_global_attributes` stops at the end of the global attribute section
+  without parsing the variable list at all. So reaching the calendar is a **new slice
+  of `esmporium.headers`** — `read_variable_attributes(prefix, "time", file_size=…)`
+  — and not a call to something that exists.
+
+  Worth recording why that reader cannot just be h5py. h5py reads HDF5; classic
+  netCDF is a different format, beginning `CDF\x01`, and h5py refuses it outright
+  (`OSError: file signature not found`, confirmed against the CMIP5 prefix above).
+  Classic is most of CMIP5, so "h5py for everything" would mean no CMIP5 calendars at
+  all. `netCDF4` can read both, and is rejected for the reason `headers/hdf5.py`'s
+  docstring already gives: it does its own HTTP inside the C library, so a stalled
+  read cannot be timed out from Python and an HTTP status arrives as text inside an
+  `OSError`. So `netcdf3.py` grows a variable-list walk instead — the list sits
+  directly after the global attributes and reuses the same `NC_ATTRIBUTE` structure
+  the parser already reads, so it is a short addition rather than a new parser. The
+  one trap is `CDF\x02`, where `begin` widens to eight bytes.
 
 No filename date parsing exists anywhere in the repository today — all new code. What
 is project-specific about it, and where each piece lives, is set out in "What is
@@ -454,27 +615,43 @@ forking anything. Its docstring already documents the idiom —
 
 **Not project-specific, so one implementation each:**
 
-3. **Reading calendar and time units out of a header.** These are CF attributes, and
-   this repo has already found that *formats are per-file, not per-project* — the same
-   reason `esmporium.headers` sniffs the layout rather than keying on project.
+3. **Reading calendar and time units out of a header.** These are CF attributes on the
+   time variable (decision 21), and this repo has already found that *formats are
+   per-file, not per-project* — the same reason `esmporium.headers` sniffs the layout
+   rather than keying on project.
 4. **Calendar arithmetic, gap detection, combining per-file ranges into a per-version
    range, and choosing which files to read.**
 
 ```
 src/esmporium/datasets/
-    time.py            TimeRange, TimeAxis, BranchPoint value types
+    time.py            TimeStep, TimeUnits, TimeAxis, TimeRange, Span,
+                       BranchPoint value types
                        (here because requirements and db both need them
                         and neither may import the other)
+    calendars.py       year and month offsets per CF calendar, via cftime
+                       (here, not in enrich/, because `Covers` needs it at
+                        solve time and `requirements` may not import `enrich`)
 
 src/esmporium/enrich/
     protocol.py        FilenameTimeReader, and the raw range it returns
     known_readers.py   FILENAME_TIME_READERS_BY_PROJECT
                        NO_TIME_AXIS_INTERVALS_BY_PROJECT
                        reader_for_project(project, readers=...)
-    headers.py         read_time_axis(attributes) -> TimeAxis   (project-independent)
-    calendars.py       year and month offsets per CF calendar, via cftime
+    headers.py         read_time_axis(attributes) -> TimeAxis   (project-independent;
+                       `attributes` are the time variable's, per decision 21)
     measure.py         per-file ranges -> per-version range + contiguity
+
+src/esmporium/headers/
+    netcdf3.py         grows a variable-list walk, so that
+    hdf5.py            read_variable_attributes(prefix, "time", ...) exists at all
+    parsing.py         (decision 21; lands with the storage step, where reads happen)
 ```
+
+`calendars.py` sitting in `datasets` rather than `enrich` is forced, not stylistic:
+`tests/unit/requirements/test_package.py` asserts the *exact* set of esmporium packages
+`requirements` imports, and `datasets` is on it while `enrich` is not. The rule
+`datasets` has to keep is "imports nothing else *from esmporium*", which a third-party
+`cftime` does not breach.
 
 An unknown project raises `NotImplementedError(project)`, matching
 `search_api_facade/store.py`.
@@ -524,37 +701,42 @@ PR A's pure functions take catalogue entries and have no ids at all, giving
 reproducibility across machines, and PR C adds the id-driven entry point for speed
 against a database you already hold.
 
-## Plan, as five PRs
+## Plan, as six PRs
 
 PRs A and B need no database and no network, which is the order this repo has built
 every previous piece of the requirements system: prove it in memory, then wire it up.
 
 ### PR A — time information as a first-class dataset fact
 
-- `src/esmporium/datasets/time.py` gains the value types: a time range, a time axis
-  (calendar and units) and a branch point. This package imports nothing else from
-  esmporium, so it can never be half of an import cycle — the same reason
-  `DATASET_FACET_COLUMNS` and `AccessService` already live there.
+- **This note goes first**, in its own commit: decisions 21 to 23, the pictures above
+  and the scope split all land before any code, because every later PR gets read
+  against it.
+- `src/esmporium/datasets/time.py` gains the value types: a step, units, a time axis
+  (calendar and units), a time range, a span and a branch point. This package imports
+  nothing else from esmporium, so it can never be half of an import cycle — the same
+  reason `DATASET_FACET_COLUMNS` and `AccessService` already live there.
 - `src/esmporium/enrich/` gains the pure measurement functions and the per-project
   registry, laid out under "What is project-specific, and where it lives" above. All
   of them take plain values and return value types; none touches a session or a
   socket.
-- `calendars.py` is the one piece with real arithmetic in it, and it is a thin wrapper
-  over `cftime` rather than our own leap rules (settled decision 20), importing it at
-  point of use so the monthly and yearly paths need nothing installed.
+- `src/esmporium/datasets/calendars.py` is the one piece with real arithmetic in it,
+  and it is a thin wrapper over `cftime` rather than our own leap rules (settled
+  decision 20), importing it at point of use so the monthly and yearly paths need
+  nothing installed.
 - Unit tests only, and this is where the awkwardness gets pinned down: real CMIP5,
   CMIP6 and CORDEX filenames; `monC`; a single-file dataset; a version whose files
   disagree or leave a gap; an `fx` dataset with no time axis; 31 January plus one
   month; 29 February plus one year in a `standard` calendar; and the same offset in a
   `360_day` calendar.
 
-### PR B — the new `Covers`, proven in memory
+### PR B — the new `Covers`, proven in memory, direct parent only
 
 - `src/esmporium/requirements/covers.py`: a required `mode` with `min_overlap` and
   `pad` beside it and nothing defaulted (settled decision 9), the soft `ideal_*`
-  thresholds kept so `Degraded` still has a producer, the arithmetic above,
+  thresholds kept so `Degraded` still has a producer, the two cases drawn above,
   comparison in stored units with no year conversion, the `fx` refusal,
-  and an unsupported-unit outcome carrying
+  **`NotImplementedError` when the covering role is not the target's direct parent**
+  (settled decision 22), and an unsupported-unit outcome carrying
   `https://github.com/esmporium/esmporium/issues`. Per settled decision 17 this is a
   *returned outcome*, not a raise — so the solve finishes and the other groups still
   get answered. The wording to borrow is the developer note above
@@ -578,8 +760,28 @@ every previous piece of the requirements system: prove it in memory, then wire i
   value types instead of floats.
 - **Breaking**: `Covers` gains fields, so every stored requirement's hash changes —
   the same note #67 and #69 both carried.
+- The two tests which solve a two-hop chain —
+  `test_branch_chain_back_to_the_control` and
+  `test_branch_chain_control_must_cover_child_and_parents` — become assertions that a
+  longer chain raises, and PR B2 restores them. `test_use_cases.py` is untouched,
+  because its `satisfying_catalogue` fixture fabricates exactly one hop by design, so
+  `05-zec-flat10` and `11-tas-scenario-anomalies` keep solving; their docstrings gain
+  a note that the intermediate run is only covered once B2 lands.
+
+### PR B2 — coverage along a chain
+
+Settled decision 22's other half, and the one piece of this whole step whose *rule* is
+not yet written down. It starts with the picture under "Along a chain, which is
+deferred" above, agreed before any code, and it answers the three questions recorded
+there. Nothing else moves in it: no new value types, no new table, no new column — so
+the only thing under discussion is the rule.
 
 ### PR C — storage and the enrich step
+
+- **First**, decision 21's reader: `netcdf3.py` grows a variable-list walk, `hdf5.py`
+  grows the matching path, and `read_variable_attributes(prefix, name, file_size=…)`
+  joins `read_global_attributes` in `parsing.py`. Without it nothing can record a
+  calendar for a classic netCDF file, which is most of CMIP5.
 
 - `src/esmporium/db/schema.py`: `DatasetTimeRange` and `DatasetBranchPoint`, plus a
   `TimeInfoSource` enum (`FILENAME`, `FILE_HEADER`, `FIX`). `DatasetTimeRange` is
@@ -591,8 +793,8 @@ every previous piece of the requirements system: prove it in memory, then wire i
 
   | Column | Why |
   |---|---|
-  | `start`, `end_exclusive` | the numbers, half-open; no extent column (settled decisions 5 and 9b). Named `end_exclusive` so the convention reaches every call site |
-  | `units` | udunits-style, e.g. `months since 0001-01` or `days since 1850-01-01`. One column serves both natural and rich, so no half-empty rows (settled decision 6). Precedent: `parent_time_units` already stores this shape |
+  | `start`, `end_exclusive` | the numbers, half-open; no extent column (settled decisions 5 and 9b). Named `end_exclusive` so the convention reaches every call site. **Nullable**, because a sub-monthly filename gives dates rather than a count (settled decision 10b), and then `status` says which fact is missing |
+  | `units` | `months` or `years` for a natural value, which carries no epoch (settled decision 23), and udunits' own `days since 1850-01-01` for a rich one. One column serves both, so no half-empty rows (settled decision 6). Precedent: `parent_time_units` already stores the rich shape |
   | `calendar` | nullable, and `NULL` *means* something: we didn't have the calendar when we ingested this information |
   | `source` | `FILENAME` / `FILE_HEADER` / `FIX` |
   | `is_contiguous`, `n_files` | settled decision 8 |
@@ -673,6 +875,7 @@ group is in `couldnt_answer` with status `NEEDS_ENRICHMENT` rather than in
 ## Out of scope
 
 `SameTimeRange` (`PLAN.md` step 15), with a code comment recording why it was left
-until then. Each PR carries its own `changelog/` fragment, as every other change
-here does; PRs B and C are `breaking`, because a requirement's hash covers its
+until then. Coverage along a chain, which is PR B2 rather than part of `Covers` itself
+(settled decision 22). Each PR carries its own `changelog/` fragment, as every other
+change here does; PRs B and C are `breaking`, because a requirement's hash covers its
 constraints.

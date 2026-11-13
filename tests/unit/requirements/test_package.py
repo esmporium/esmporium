@@ -152,8 +152,16 @@ for name in sys.modules:
 
     assert outside == {
         "esmporium.datasets",
+        # `datasets.calendars` imports `cftime` at point of use rather than here, so
+        # loading it costs nothing and needs nothing installed. It is in this closure
+        # because `datasets/__init__.py` exports from it, and it is allowed to be
+        # because `Covers` needs calendar arithmetic at solve time -- which is why it
+        # lives in `datasets` rather than in `esmporium.enrich`, a package this one may
+        # not import at all.
+        "esmporium.datasets.calendars",
         "esmporium.datasets.data_access",
         "esmporium.datasets.facets",
+        "esmporium.datasets.time",
         "esmporium.formatting",
         "esmporium.query",
         "esmporium.query.canonical_query",

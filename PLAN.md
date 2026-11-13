@@ -996,6 +996,19 @@ here is only the shape and the reasons the shape is what it is.
   `enrichment_inputs` ready to hand back to the enricher) and
   `MISSING_FEATURE_PLEASE_RAISE_ISSUE` ("a fair thing to want, not supported yet") as
   reasons. This is the step-12 bullet above, done properly.
+- **The calendar is not a global attribute.** Measured against this repo's own captured
+  header prefixes, not assumed: `calendar` and the time units are attributes of the
+  *time variable*, and `esmporium.headers` reads globals only. The CMIP5 netCDF3 prefix
+  does not contain the word `calendar` anywhere. So this step also grows
+  `read_variable_attributes` -- a variable-list walk in `netcdf3.py` and the matching
+  h5py path -- and no, h5py cannot replace the hand-rolled classic parser: h5py reads
+  HDF5, and classic netCDF is a different format which it refuses outright.
+- **`Covers` ships for a direct parent, and the chain is its own PR.** "The control
+  covers this experiment *and every parent back up to the control*" is what the
+  scenario and ZEC analyses need, and it is a rule we have not written down yet, so it
+  is not settled next to new value types and a new table. `Covers` raises
+  `NotImplementedError` for a covering role which is not the target's direct parent;
+  the chain rule gets a PR of its own, agreed as a picture first.
 - **`download_by_id`**, which falls out of the same work: `plan_downloads` already
   reduces its query to `dataset_ids` before planning, so the split is one line. Worth
   recording why it is needed at all -- a facet query cannot name a list, because
@@ -1042,6 +1055,13 @@ that note:
   **This is a breaking change to #69's signature**: every `Covers(...)` in
   `use_cases.py` and `test_covers.py` gets rewritten. The soft `ideal_*` thresholds
   carry over, because they are `Degraded`'s only producer.
+- **Only a direct parent, to begin with.** #69's `_needed_span` walks a whole chain,
+  but the *rule* for a chain -- which branch point an overlap is measured from, what a
+  parent running past its child means, what a gapped intermediate does -- has never
+  been written down. So a covering role which is not the target's direct parent raises
+  `NotImplementedError`, and the chain gets its own PR under step 12.5, started from an
+  agreed picture. `05-zec-flat10` and `11-tas-scenario-anomalies` are the two use cases
+  waiting on it.
 - **`fx` is refused out loud.** Coverage does not apply to a dataset with no time axis,
   and rather than hoping nobody attaches `Covers` to an `fx` leaf, this follows
   `LineageStartsAtTargetError`'s two tiers: refused when the requirement is built if

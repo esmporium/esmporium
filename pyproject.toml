@@ -67,9 +67,21 @@ headers = [
     # lowest-direct CI job would have to build HDF5 from source to install one.
     "h5py>=3.6",
 ]
+# Calendar arithmetic on a daily or sub-daily time axis, which is how "twenty years of
+# overlap" becomes a position when the data is finer than monthly. An extra rather than
+# a dependency because monthly and yearly data -- which is nearly every requirement we
+# have -- needs none of it: twelve months is a year in all six CF calendars, so
+# `esmporium.datasets.calendars` answers those with integer arithmetic and never reaches
+# the import. See the module docstring of `esmporium.datasets.calendars`.
+calendars = [
+    # 1.6 is the floor because it is the first release with wheels for Python 3.10,
+    # the oldest version we support.
+    "cftime>=1.6",
+]
 full = [
     "esmporium[plots]",
     "esmporium[headers]",
+    "esmporium[calendars]",
 ]
 
 [dependency-groups]
@@ -212,6 +224,14 @@ follow_imports = "normal"
 # plain Python object before it leaves that module.
 [[tool.mypy.overrides]]
 module = ["h5py"]
+ignore_missing_imports = true
+
+# cftime ships no `py.typed` marker. It is the optional `calendars` extra, imported in
+# one function in `esmporium.datasets.calendars`, and nothing it returns reaches a
+# signature -- that function reduces every value it hands back to an `int` before it
+# leaves the module, the same discipline `esmporium.headers.hdf5` keeps with h5py.
+[[tool.mypy.overrides]]
+module = ["cftime"]
 ignore_missing_imports = true
 
 [tool.ty.environment]
