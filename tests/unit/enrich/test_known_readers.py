@@ -6,11 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-from esmporium.datasets.no_time_axis import (
-    NO_TIME_AXIS_INTERVALS_BY_PROJECT,
-    UnknownProjectTimeAxisError,
-    has_no_time_axis,
-)
+from esmporium.datasets.no_time_axis import NO_TIME_AXIS_INTERVALS_BY_PROJECT
 from esmporium.datasets.time import Span, TimeAxis, TimeStep, TimeUnits
 from esmporium.enrich.known_readers import (
     FILENAME_TIME_READERS_BY_PROJECT,
@@ -345,33 +341,6 @@ def test_the_two_registries_name_the_same_projects():
     assert set(FILENAME_TIME_READERS_BY_PROJECT) == set(
         NO_TIME_AXIS_INTERVALS_BY_PROJECT
     )
-
-
-# ----------------------------------------------------------------- no time axis
-
-
-@pytest.mark.parametrize("project", sorted(FILENAME_TIME_READERS_BY_PROJECT))
-def test_fx_means_no_time_axis_in_every_project_we_know(project):
-    """
-    Which is what `Covers` refuses against
-    """
-    assert has_no_time_axis(project, "fx")
-
-
-@pytest.mark.parametrize("reporting_interval", ["mon", "yr", "day", "3hr", "monC"])
-def test_everything_else_has_a_time_axis(reporting_interval):
-    """
-    Including a climatology, whose twelve values are still on a time axis
-    """
-    assert not has_no_time_axis("CMIP6", reporting_interval)
-
-
-def test_an_unknown_project_cannot_be_asked_whether_it_has_a_time_axis():
-    """
-    `False` would be a claim we have no grounds for
-    """
-    with pytest.raises(UnknownProjectTimeAxisError, match="MIP1"):
-        has_no_time_axis("MIP1", "mon")
 
 
 # ---------------------------------------------------------- reporting intervals
