@@ -1,23 +1,18 @@
 """
 Moving along a time axis by a length of time
 
-The one module here with real arithmetic in it, and a thin wrapper over `cftime`
-rather than our own leap rules: six CF calendars with six sets of leap rules is
+A thin wrapper over `cftime` rather than our own leap rules:
+six CF calendars with six sets of leap rules is
 exactly the job which looks small and is not.
 
-`cftime` comes from the optional `calendars` extra and is imported at point of use,
-the way [esmporium.headers.hdf5][] does with `h5py`. Monthly and yearly axes never
-reach that import, because twelve months is a year in every calendar -- so the common
-path needs nothing installed, and only the sub-monthly path pays. Following the same
-discipline as `hdf5.py`: nothing `cftime` returns reaches a signature, public or
-private. Every value it hands back is reduced to an `int` before it leaves the two
-private functions which touch it at all.
+`cftime` comes from the optional `calendars` extra and is imported at point of use.
+Monthly and yearly axes never reach that import, because twelve months is a year in
+every calendar -- so the common path needs nothing installed, and only the
+sub-monthly path pays.
 
 This lives in `esmporium.datasets` rather than beside the rest of enrichment because
 [Covers][esmporium.requirements.Covers] needs it *at solve time*, and
 `esmporium.requirements` may import `esmporium.datasets` and not `esmporium.enrich`.
-The one rule `esmporium.datasets` has to keep is that it imports nothing else from
-esmporium, which a third-party package does not breach.
 """
 
 from __future__ import annotations
@@ -40,10 +35,9 @@ class MissingCalendarsExtraError(ImportError):
     """
     Raised when calendar arithmetic is needed and `cftime` is not installed
 
-    An `ImportError` rather than anything of ours, because that is what it is: an
-    environment missing a package. It is not a fact about the data and not a feature
-    we have not written, so it must never become a solve status beside
-    `NEEDS_ENRICHMENT`.
+    An `ImportError` rather than anything of ours, because it is not a fact about
+    the data and not a feature we have not written, so it must never become a
+    solve status beside `NEEDS_ENRICHMENT`.
     """
 
     def __init__(self) -> None:
@@ -139,17 +133,6 @@ def advance(position: int, by: Span, axis: TimeAxis) -> int:
         `by` is finer than the axis' own step, e.g. days of padding against a yearly
         axis
 
-    Notes
-    -----
-    Years and months are exact on a yearly or monthly axis with no calendar at all,
-    which is the case nearly every requirement is: "twenty years after month `m`" is
-    `m + 240` in all six CF calendars.
-
-    They are also exact on a *daily* axis, given a calendar: "twenty years after
-    1850-03-01" is 1870-03-01, unambiguously. The ambiguity people expect here only
-    appears if you try to turn "twenty years" into a fixed number of days detached
-    from a position on the axis, and there is never a reason to do that.
-
     Examples
     --------
     Twenty years of padding on a monthly axis, with nothing installed:
@@ -202,13 +185,6 @@ def retreat(position: int, by: Span, axis: TimeAxis) -> int:
     ValueError
         `by` is finer than the axis' own step
 
-    Notes
-    -----
-    A function of its own rather than a negative [Span][esmporium.datasets.Span],
-    because a span is a *length* and lengths are not negative. It also keeps the
-    end-of-month rule honest in both directions: "one month before 31 March" needs the
-    same clamp as "one month after 31 January", and one function per direction means
-    neither has to guess which way the other rounded.
 
     Examples
     --------
@@ -465,9 +441,6 @@ def _advance_on_a_dated_axis(
 
     Notes
     -----
-    Every `cftime` value stays inside this function, exactly as `hdf5.py` keeps every
-    `h5py` value inside its own: the only thing which leaves is an `int`.
-
     Day-of-month is clamped to the length of the month landed in, which is the rule
     every calendar library uses and the only one which keeps the answer inside the
     month asked for -- 31 January plus one month is 28, 29 or 30 February depending on

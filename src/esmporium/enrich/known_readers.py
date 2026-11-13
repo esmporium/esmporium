@@ -33,8 +33,8 @@ CLIMATOLOGY_SUFFIX = "-clim"
 """
 What a climatology appends to its time range, e.g. `185001-185012-clim`
 
-Pooled across projects rather than keyed by one. The DRS defines this suffix
-for CMIP5 and CMIP6 alike, and a project which never emits it simply never matches.
+Pooled across projects rather than keyed by one: the suffix is the same wherever it
+appears, and a project which never emits it simply never matches.
 The suffix is not part of the range, so it comes off before the stamps are read
 -- but it is recorded, because twelve monthly values labelled 1850-1850 are
 not a twelve-month run.
@@ -255,7 +255,7 @@ def read_trailing_range(
     """
     Read a time range written as the last underscore-separated field of a filename
 
-    The convention CMIP5, CMIP6, CMIP6Plus, CMIP7 and CORDEX-CMIP6 all share.
+    The convention every project in `FILENAME_TIME_READERS_BY_PROJECT` shares.
 
     Parameters
     ----------

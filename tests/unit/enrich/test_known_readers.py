@@ -201,6 +201,15 @@ def test_a_hyphenated_model_name_is_not_mistaken_for_a_range():
             365 * 24,
         ),
         (
+            # The same twelve-digit stamp in CMIP5's spelling, which has no grid
+            # label and no `f` in its ensemble member. The digit ladder is read off
+            # the string, so one reader serves both.
+            "pr_3hr_IPSL-CM5A-LR_historical_r1i1p1_197901010300-198001010000.nc",
+            "3hr",
+            HOURLY_NOLEAP,
+            365 * 24,
+        ),
+        (
             "pr_EUR-12_MPI-M-MPI-ESM1-2-HR_historical_r1i1p1f1_GERICS_REMO2020"
             "_v1_1hr_195001010030-195001312330.nc",
             "1hr",
@@ -238,7 +247,7 @@ def test_a_daily_filename_without_a_calendar_says_what_it_needs():
 
 def test_a_sub_daily_filename_is_read_to_the_minute():
     """
-    Twelve-digit stamps are the ordinary spelling for CMIP6 sub-daily data
+    Twelve-digit stamps are the ordinary spelling for sub-daily data
     """
     read = read_trailing_range(
         "pr_3hr_ACCESS-ESM1-5_historical_r1i1p1f1_gn_185001010300-185101010000.nc",

@@ -24,9 +24,13 @@ STEP_BY_STAMP_LENGTH: dict[int, TimeStep] = {
 """
 How precisely a filename's timestamp is written, by how many digits it has
 
-`YYYY`, `YYYYMM`, `YYYYMMDD`, `YYYYMMDDHH`, `YYYYMMDDHHmm`. Twelve digits is the
-ordinary spelling for CMIP6 sub-daily data, not an edge case: a `3hr` file is stamped
-`185001010300-185101010000`.
+`YYYY`, `YYYYMM`, `YYYYMMDD`, `YYYYMMDDHH`, `YYYYMMDDHHmm`. Pooled across projects
+rather than keyed by one: a truncated datetime is the shared spelling, so the
+precision is read off the string's own length and no project has to declare which
+lengths it writes. Twelve digits is the ordinary spelling for sub-daily data, not an
+edge case -- a `3hr` file is stamped `185001010300-185101010000` whoever published
+it. A project which spells its stamps some other way needs its own
+`FilenameTimeReader`, not another entry here.
 
 Fourteen digits -- seconds, which `subhr` data uses -- is deliberately absent, because
 we do not know how wide one `subhr` step is either, so such a file cannot have its
@@ -64,11 +68,6 @@ class UnreadableTimestampError(ValueError):
 class CalendarRequiredError(ValueError):
     """
     Raised when a range cannot be made half-open without knowing the calendar
-
-    Work waiting to be done rather than a question with no answer: a daily filename
-    gives two *dates*, and how many days lie between two dates is exactly what the six
-    CF calendars disagree about. The calendar comes from a file header, so the answer
-    is to enrich the dataset and ask again.
     """
 
     def __init__(self, published: PublishedRange) -> None:
@@ -127,12 +126,7 @@ class PublishedRange:
 
     is_climatology: bool = False
     """
-    Whether the file is a climatology, which CMIP6 marks with a `-clim` suffix
-
-    Recorded rather than acted on. A `monC` dataset's twelve values describe the
-    climatology period its filename names, so its span is that period and the
-    arithmetic is unchanged -- but a reader of the stored row should know that the
-    twelve months are not twelve months of a simulation.
+    Whether the file is a climatology, which a `-clim` suffix on the range marks
     """
 
     def to_half_open(self, *, axis: TimeAxis | None = None) -> TimeRange:

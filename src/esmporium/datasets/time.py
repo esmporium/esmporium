@@ -1,7 +1,7 @@
 """
 When a dataset's data is, and where a run branched from its parent
 
-The information ESGF's search APIs do not publish, as values. Everything here holds
+The information ESGF's search APIs may not publish, as values. Everything here holds
 numbers, a unit and a calendar name and does no calendar arithmetic -- that is
 [esmporium.datasets.calendars][], which is separate because it needs `cftime` and
 these types must not.
@@ -29,20 +29,12 @@ if TYPE_CHECKING:
 MONTHS_PER_YEAR = 12
 """
 How many months there are in a year, in every CF calendar
-
-The reason monthly and yearly data never need a calendar read: this number is not one
-of the things the six CF calendars disagree about.
 """
 
 
 class TimeStep(str, Enum):
     """
     The size of one step along a time axis
-
-    `str`-valued so a stored column reads as the name rather than an integer nobody
-    can interpret, matching [AccessService][esmporium.datasets.AccessService]. The
-    values are udunits' own plural spellings, so they can be written straight into a
-    units string.
     """
 
     YEARS = "years"
@@ -613,8 +605,9 @@ class BranchPoint:
     Where a run branched from its parent
 
     A property of the (child to parent) edge rather than of either dataset, which is a
-    deliberate departure from ESGF, whose data model has no edges. The facts come from
-    the child, which is where they are published; the place they belong is the link.
+    deliberate departure from ESGF, whose data model has no edges. The facts are the
+    child's -- its header publishes the number, and for CMIP7 its search record
+    publishes the units -- but the place they belong is the link.
 
     The one piece of arithmetic coverage needs is that **after mapping, the child's
     start is the branch point**: a position `p` on the child's axis is
@@ -625,9 +618,13 @@ class BranchPoint:
     """
     Where the child's data starts, as a position on the *parent's* axis
 
-    Interpreted, not raw: the published value is on
-    [DatasetVersionParent.branch_time_in_parent][esmporium.db.schema.DatasetVersionParent.branch_time_in_parent]
-    and is unusable as published for CMIP5.
+    Interpreted, not raw, in two senses. The published number is on
+    [DatasetVersionParent.branch_time_in_parent][esmporium.db.schema.DatasetVersionParent.branch_time_in_parent],
+    a float, so building one of these floors it to a whole step rather than rounding.
+    And the axis it counts on is published only by some projects: a CMIP6 header gives
+    `parent_time_units` beside it, CMIP7 publishes them in the search index, and CMIP5
+    publishes a bare `branch_time` with no units at all -- which is why a CMIP5 branch
+    point needs a fix before one of these can be built.
     """
 
     parent_axis: TimeAxis
@@ -637,10 +634,10 @@ class BranchPoint:
     """
     Where the child's data starts, as a position on the child's own axis
 
-    `None` when the file did not say. Published as `branch_time_in_child` for CMIP6,
-    and kept because it is a check rather than an input: it should equal the child's
-    measured start, and a disagreement is a fact about the data worth noticing rather
-    than a number to compute with.
+    `None` when the file did not say. Published as `branch_time_in_child` by a header
+    which carries one, and kept because it is a check rather than an input: it should
+    equal the child's measured start, and a disagreement is a fact about the data
+    worth noticing rather than a number to compute with.
     """
 
 
