@@ -5,51 +5,22 @@ A version is what a time range hangs off -- not a dataset, because a time range 
 per-version fact, and not a file, because a requirement asks about a run and not about
 one of the pieces it was published in. So the files have to be combined, and the one
 thing that must not be smoothed over while combining them is a gap.
+
+The measurement is here; the value it produces is
+[VersionTimeRange][esmporium.datasets.VersionTimeRange], which lives in
+`esmporium.datasets` because [Covers][esmporium.requirements.Covers] reads one at
+solve time and `esmporium.requirements` may not import this package.
 """
 
 from __future__ import annotations
 
 import itertools
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from esmporium.datasets.time import TimeRange, spanned
+from esmporium.datasets.time import TimeRange, VersionTimeRange, spanned
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
-
-
-@dataclass(frozen=True)
-class VersionTimeRange:
-    """
-    What one version's files add up to
-
-    The span, and whether the files actually fill it. Both are recorded because they
-    are different facts: a version whose files leave a gap still has a first and a
-    last step, and `Covers` refuses it on the strength of the flag rather than on the
-    strength of a missing range.
-    """
-
-    range: TimeRange
-    """Earliest start to latest `end_exclusive` across the files"""
-
-    is_contiguous: bool
-    """
-    Whether the files fill the span with no gap and no overlap
-
-    `True` when each file's `end_exclusive` is the next one's `start`, which is what
-    adjacency is under the half-open convention. An overlap counts as a failure too:
-    two files covering the same month is as much a sign that something is wrong with
-    the publication as a month nobody published.
-    """
-
-    n_files: int
-    """
-    How many files were measured
-
-    Kept so that a stored row can be judged without re-reading anything: a version
-    which gained a file since it was measured is a row to measure again.
-    """
 
 
 class NoFilesToMeasureError(ValueError):

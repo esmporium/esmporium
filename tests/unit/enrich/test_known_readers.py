@@ -6,13 +6,12 @@ from __future__ import annotations
 
 import pytest
 
+from esmporium.datasets.no_time_axis import NO_TIME_AXIS_INTERVALS_BY_PROJECT
 from esmporium.datasets.time import Span, TimeAxis, TimeStep, TimeUnits
 from esmporium.enrich.known_readers import (
     FILENAME_TIME_READERS_BY_PROJECT,
     UnknownProjectFilenameTimeReaderError,
-    UnknownProjectTimeAxisError,
     UnknownReportingIntervalError,
-    has_no_time_axis,
     read_trailing_range,
     reader_for_project,
     span_of_reporting_interval,
@@ -60,12 +59,18 @@ HOURLY_NOLEAP = TimeAxis(TimeUnits(TimeStep.HOURS, "1850-01-01"), "noleap")
             612,
         ),
         (
-            "CORDEX-CMIP6",
+            # A CMIP6-shaped name under its own experiment, because a CMIP6Plus
+            # document *is* a CMIP6 document -- same DRS, same facet names, read by
+            # CMIP6's naming table with nothing invented. That is pinned against a
+            # live document in
+            # `tests/integration/requirements/test_cmip6plus_registration.py`; what
+            # is pinned here is only that the key reaches a reader.
+            "CMIP6Plus",
             "mon",
-            "tas_EUR-12_MPI-M-MPI-ESM1-2-HR_historical_r1i1p1f1"
-            "_GERICS_REMO2020_v1_mon_195001-195012.nc",
-            ("195001", "195012"),
-            12,
+            "tas_Amon_MIROC6_esm-hist_r1i1p1f1_gn_185001-202012.nc",
+            ("185001", "202012"),
+            # 1850 to 2020 inclusive is 171 years
+            2052,
         ),
     ],
 )
@@ -141,11 +146,13 @@ def test_a_monthly_file_is_not_a_climatology():
     [
         ("CMIP5", "areacella_fx_HadGEM2-ES_historical_r0i0p0.nc"),
         ("CMIP6", "areacella_fx_ACCESS-ESM1-5_historical_r1i1p1f1_gn.nc"),
-        (
-            "CORDEX-CMIP6",
-            "orog_EUR-12_MPI-M-MPI-ESM1-2-HR_historical_r1i1p1f1"
-            "_GERICS_REMO2020_v1_fx.nc",
-        ),
+        ("CMIP6Plus", "areacella_fx_MIROC6_esm-hist_r1i1p1f1_gn.nc"),
+        # No CMIP7 row: every CMIP7 filename recorded in `tests/test-data/search` is
+        # daily, so there is no `fx` one to copy and inventing its branding would be
+        # the guess this registry exists to avoid. That CMIP7 reads `fx` as having no
+        # time axis is covered by
+        # `test_fx_means_no_time_axis_in_every_project_we_know`, which needs no
+        # filename.
     ],
 )
 def test_a_fixed_field_has_no_range_and_says_so_quietly(project, filename):
@@ -160,7 +167,9 @@ def test_a_hyphenated_model_name_is_not_mistaken_for_a_range():
     Only the last field is split on `-`, never the whole name
 
     `MPI-M-MPI-ESM1-2-HR` and `EUR-12` are both full of hyphens, and a parser which
-    split the stem would find a "range" in either.
+    split the stem would find a "range" in either. A CORDEX-shaped name because it is
+    the worst case to hand; this calls the reader directly, rather than through
+    `reader_for_project`, which has no reader for that project.
     """
     assert (
         read_trailing_range(
@@ -202,6 +211,23 @@ def test_a_hyphenated_model_name_is_not_mistaken_for_a_range():
             365 * 24,
         ),
         (
+            # A real CMIP7 filename, off a recorded ESGF-NG response
+            # (`tests/test-data/search/esgf-ng-stac-cmip7-east-search.json`). Its DRS
+            # looks nothing like CMIP6's -- a branded variable, a region, a grid label
+            # where CMIP6 puts none -- and the range is still the last field, which is
+            # why one reader serves every project we know.
+            "tas_tavg-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1"
+            "_18500101-18601231.nc",
+            "day",
+            DAILY_NOLEAP,
+            # 1850 to 1860 inclusive is eleven noleap years
+            11 * 365,
+        ),
+        (
+            # A CORDEX-shaped name, here because its half-hour stamps and
+            # hyphen-laden fields are the hardest thing the parser is asked to cope
+            # with. Called directly rather than through `reader_for_project`, which
+            # has no reader for that project.
             "pr_EUR-12_MPI-M-MPI-ESM1-2-HR_historical_r1i1p1f1_GERICS_REMO2020"
             "_v1_1hr_195001010030-195001312330.nc",
             "1hr",
@@ -304,31 +330,17 @@ def test_a_project_can_be_added_without_forking_anything():
     assert read.to_half_open().extent == 12
 
 
-# ----------------------------------------------------------------- no time axis
-
-
-@pytest.mark.parametrize("project", sorted(FILENAME_TIME_READERS_BY_PROJECT))
-def test_fx_means_no_time_axis_in_every_project_we_know(project):
+def test_the_two_registries_name_the_same_projects():
     """
-    Which is what `Covers` refuses against
-    """
-    assert has_no_time_axis(project, "fx")
+    Or a project would read its filenames and then not know what `fx` means
 
-
-@pytest.mark.parametrize("reporting_interval", ["mon", "yr", "day", "3hr", "monC"])
-def test_everything_else_has_a_time_axis(reporting_interval):
+    They are separate mappings because they answer separate questions, and a project
+    in one and not the other is a half-registered project: the thing to notice is
+    that adding one entry means adding both.
     """
-    Including a climatology, whose twelve values are still on a time axis
-    """
-    assert not has_no_time_axis("CMIP6", reporting_interval)
-
-
-def test_an_unknown_project_cannot_be_asked_whether_it_has_a_time_axis():
-    """
-    `False` would be a claim we have no grounds for
-    """
-    with pytest.raises(UnknownProjectTimeAxisError, match="MIP1"):
-        has_no_time_axis("MIP1", "mon")
+    assert set(FILENAME_TIME_READERS_BY_PROJECT) == set(
+        NO_TIME_AXIS_INTERVALS_BY_PROJECT
+    )
 
 
 # ---------------------------------------------------------- reporting intervals

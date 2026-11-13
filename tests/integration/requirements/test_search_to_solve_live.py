@@ -119,11 +119,19 @@ def test_a_cmip7_requirement_is_searched_saved_and_solved_live(engine):
 
     result = solve(req, DatabaseCatalogue(engine))
 
-    discovered = set(result.satisfied) | set(result.unsatisfied) | set(result.ambiguous)
+    discovered = (
+        set(result.satisfied)
+        | set(result.unsatisfied)
+        | set(result.ambiguous)
+        | set(result.couldnt_answer)
+    )
     assert discovered, "the search saved rows but the solver discovered no groups"
     # Every group lands in exactly one of the three, so none can be double-counted.
     assert len(discovered) == (
-        len(result.satisfied) + len(result.unsatisfied) + len(result.ambiguous)
+        len(result.satisfied)
+        + len(result.unsatisfied)
+        + len(result.ambiguous)
+        + len(result.couldnt_answer)
     )
     # Groups are discovered from what is *available*, which is a subset of what was
     # saved, so this is an upper bound rather than an equality.
@@ -181,5 +189,10 @@ def test_a_requirement_whose_leaves_span_two_projects_saves_both_live(engine):
     # way, and is asserted because it shows the solver reading both projects' rows.
     result = solve(req, DatabaseCatalogue(engine))
 
-    discovered = set(result.satisfied) | set(result.unsatisfied) | set(result.ambiguous)
+    discovered = (
+        set(result.satisfied)
+        | set(result.unsatisfied)
+        | set(result.ambiguous)
+        | set(result.couldnt_answer)
+    )
     assert {dict(key)["project"] for key in discovered} == {"CMIP5", "CMIP6"}

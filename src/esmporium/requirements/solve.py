@@ -45,9 +45,14 @@ from esmporium.requirements.catalogue import (
 )
 from esmporium.requirements.constraints import (
     AnyConstraint,
+    ConstraintNotEvaluableError,
     ConstraintView,
     Degraded,
+    EnrichmentInput,
     Fail,
+    MissingFeature,
+    NeedsEnrichment,
+    Pass,
 )
 from esmporium.requirements.relations import Ancestors, Lineage, Relation
 from esmporium.requirements.roles import ROLE_SEPARATOR
@@ -108,6 +113,25 @@ class ExplanationStatusNotOk(str, Enum):
     AMBIGUOUS = "ambiguous"
     """There are too many datasets and nothing to choose between them"""
 
+    NEEDS_ENRICHMENT = "needs_enrichment"
+    """
+    A check could have answered, and the facts it needs are not recorded yet
+
+    Not a failure. A dataset nobody has measured
+    and a dataset nobody has published used to land in the same bucket, so "we have
+    not looked yet" was reported as "there is no data" and whoever read it went
+    looking for data which was there all along.
+
+    The remedy is concrete: run the enricher over
+    [SolveResult.enrichment_inputs][(m).SolveResult.enrichment_inputs] and solve
+    again.
+    """
+
+    MISSING_FEATURE_PLEASE_RAISE_ISSUE = "missing_feature_please_raise_issue"
+    """
+    The requirement is a fair thing to want and we have not built it
+    """
+
 
 ExplanationStatus = ExplanationStatusOk | ExplanationStatusNotOk
 """
@@ -120,14 +144,26 @@ and there is no ambiguity about which is which.
 _STATUS_PRIORITY: dict[ExplanationStatusNotOk, int] = {
     ExplanationStatusNotOk.UNSATISFIED: 0,
     ExplanationStatusNotOk.AMBIGUOUS: 1,
+    ExplanationStatusNotOk.MISSING_FEATURE_PLEASE_RAISE_ISSUE: 2,
+    ExplanationStatusNotOk.NEEDS_ENRICHMENT: 3,
 }
 """
 Which status a group takes when its parts fail in different ways, lowest first
 
-`"unsatisfied"` wins over `"ambiguous"`: a group missing a dataset cannot be satisfied
-however the ambiguity is settled, so the missing dataset is the honest headline. The
-explanation still carries both, because nothing short-circuits -- see
-[_eval_all_of][(m)._eval_all_of].
+One rule orders all four: **the status which wins is the one the others' remedies
+would not clear.** A group missing a dataset cannot be satisfied however the ambiguity
+is settled, nor however much is enriched, so the missing dataset is the honest
+headline. By the same reasoning an ambiguity outranks the two "could not answer"
+statuses, and an unsupported requirement outranks enrichment -- fetching facts will
+not make a feature exist.
+"""
+
+_COULDNT_ANSWER_STATUSES: tuple[ExplanationStatusNotOk, ...] = (
+    ExplanationStatusNotOk.MISSING_FEATURE_PLEASE_RAISE_ISSUE,
+    ExplanationStatusNotOk.NEEDS_ENRICHMENT,
+)
+"""
+The statuses which mean we did not answer, rather than answering "no"
 """
 
 
@@ -419,6 +455,17 @@ class NodeResultNotOk:
     explanation: Explanation
     """Explanation"""
 
+    enrichment_inputs: tuple[EnrichmentInput, ...] = ()
+    """
+    What has to be recorded before this node can be judged
+
+    Empty for every status but
+    [NEEDS_ENRICHMENT][(m).ExplanationStatusNotOk], and carried flat rather than left
+    in the explanation because the whole value of it is being handed to the enricher
+    unread. See
+    [SolveResult.enrichment_inputs][(m).SolveResult.enrichment_inputs].
+    """
+
 
 NodeResult = NodeResultOk | NodeResultNotOk
 """The result of evaluating one node of the tree, within one group"""
@@ -502,6 +549,11 @@ class Solution:
 class UnsolvedGroup:
     """
     A group for which no solution was found
+
+    "Not found" rather than "does not exist": a group in
+    [SolveResult.couldnt_answer][(m).SolveResult.couldnt_answer] is one we did not
+    answer for, and [status][(m).UnsolvedGroup.status] is what says which of the two
+    this is.
     """
 
     key: GroupKey
@@ -512,6 +564,13 @@ class UnsolvedGroup:
 
     explanation: Explanation
     """Explanation"""
+
+    enrichment_inputs: tuple[EnrichmentInput, ...] = ()
+    """
+    What has to be recorded before this group can be judged
+
+    See [NodeResultNotOk.enrichment_inputs][(m).NodeResultNotOk.enrichment_inputs].
+    """
 
 
 @dataclass(frozen=True)
@@ -544,6 +603,51 @@ class SolveResult:
     ambiguous: Mapping[GroupKey, UnsolvedGroup] = field(default_factory=dict)
     """Groups where a role had several candidates and nothing to choose between them"""
 
+    couldnt_answer: Mapping[GroupKey, UnsolvedGroup] = field(default_factory=dict)
+    """
+    Groups we did not answer for, each carrying which status applied and why
+
+    The fourth bucket, and the one which is not a verdict. The other three say what
+    became of a group; this one says we did not get that far, and
+    [UnsolvedGroup.status][(m).UnsolvedGroup.status] says which of the two reasons
+    applied -- the facts are not recorded yet
+    ([NEEDS_ENRICHMENT][(m).ExplanationStatusNotOk]), or the requirement is one we
+    have not built
+    ([MISSING_FEATURE_PLEASE_RAISE_ISSUE][(m).ExplanationStatusNotOk]).
+    """
+
+    @property
+    def enrichment_inputs(self) -> tuple[EnrichmentInput, ...]:
+        """
+        Get what to hand the enricher to clear every group we could not judge
+
+        Returns
+        -------
+        :
+            One entry per (dataset, missing fact), deduplicated, in group order
+
+            Flat and deduplicated on purpose: a dataset which two groups both need
+            measured is measured once. It names *which* fact is missing, so the
+            enricher knows whether it has a filename to parse or a header to fetch,
+            and it is shaped to pass straight back rather than to be read and retyped.
+
+        Examples
+        --------
+        The round trip this exists for, written out:
+
+        ```python
+        result = solve(requirement, catalogue)
+        if result.enrichment_inputs:
+            enrich_datasets(result.enrichment_inputs)
+            result = solve(requirement, catalogue)
+        ```
+        """
+        found: dict[EnrichmentInput, None] = {}
+        for group in self.couldnt_answer.values():
+            found.update(dict.fromkeys(group.enrichment_inputs))
+
+        return tuple(found)
+
     def explain(self) -> str:
         """
         Explain every group
@@ -565,6 +669,7 @@ class SolveResult:
             *self.satisfied.values(),
             *self.unsatisfied.values(),
             *self.ambiguous.values(),
+            *self.couldnt_answer.values(),
         ]
         if not groups:
             # `_no_groups` names the requirement itself, so it needs no title.
@@ -1370,13 +1475,10 @@ def _evaluate_constraints(
     because a failed check means the datasets the later checks would judge
     are not the ones which will be used.
 
-    A constraint which raises is treated as failing,
-    with the error in the explanation.
-    Letting it propagate would crash the whole solve over one group,
-    and the most common cause is expected to be a catalogue
-    which cannot provide what the constraint needs
-    (see [Constraint][esmporium.requirements.Constraint]),
-    which is a fact about this solve rather than a bug.
+    A constraint which cannot answer **says so as an outcome** and is reported under
+    its own status: the facts it needs are not recorded yet
+    ([NEEDS_ENRICHMENT][(m).ExplanationStatusNotOk]), or the requirement is one we have
+    not built ([MISSING_FEATURE_PLEASE_RAISE_ISSUE][(m).ExplanationStatusNotOk]).
 
     Parameters
     ----------
@@ -1408,19 +1510,21 @@ def _evaluate_constraints(
         name = type(constraint).__name__
         try:
             outcome = constraint.evaluate(view, ctx.catalogue)
-        except Exception as exc:
-            outcome = Fail(f"could not be evaluated: {type(exc).__name__}: {exc}")
+        except ConstraintNotEvaluableError as exc:
+            outcome = Fail(f"could not be evaluated: {exc}")
 
-        if isinstance(outcome, Fail):
-            status = ExplanationStatusNotOk.UNSATISFIED
-
+        not_ok = _not_ok_status(outcome)
+        if not_ok is not None:
             return NodeResultNotOk(
-                status,
+                not_ok,
                 Explanation(
                     subject,
-                    status,
+                    not_ok,
                     f"{name}: {outcome.message}",
                     parts=(result.explanation, *degraded),
+                ),
+                enrichment_inputs=(
+                    outcome.inputs if isinstance(outcome, NeedsEnrichment) else ()
                 ),
             )
 
@@ -1443,6 +1547,53 @@ def _evaluate_constraints(
         lineages=result.lineages,
         notes=tuple(notes),
     )
+
+
+def _not_ok_status(outcome: object) -> ExplanationStatusNotOk | None:
+    """
+    Get the status an outcome which is not ok reports under
+
+    One place, so that an outcome added to
+    [Outcome][esmporium.requirements.Outcome] without a status here fails loudly at
+    the point it is returned rather than being read as `Pass`.
+
+    Parameters
+    ----------
+    outcome
+        What a constraint answered
+
+    Returns
+    -------
+    :
+        The status, or `None` for an outcome which does not stop the node being
+        satisfied -- which is
+        [Pass][esmporium.requirements.Pass] and
+        [Degraded][esmporium.requirements.Degraded]
+
+    Raises
+    ------
+    TypeError
+        `outcome` is not an outcome this knows
+    """
+    if isinstance(outcome, Fail):
+        return ExplanationStatusNotOk.UNSATISFIED
+
+    if isinstance(outcome, NeedsEnrichment):
+        return ExplanationStatusNotOk.NEEDS_ENRICHMENT
+
+    if isinstance(outcome, MissingFeature):
+        return ExplanationStatusNotOk.MISSING_FEATURE_PLEASE_RAISE_ISSUE
+
+    if isinstance(outcome, (Pass, Degraded)):
+        return None
+
+    # The same bargain the node dispatches make: a member added to the union without a
+    # branch here fails loudly instead of being quietly treated as having passed.
+    msg = (
+        f"Expected an outcome, got {type(outcome).__name__}: {outcome!r}. "
+        "Every member of `Outcome` needs a branch here."
+    )
+    raise TypeError(msg)
 
 
 def _eval_leaf(leaf: Leaf, ctx: _Context, role_prefix: str) -> NodeResult:
@@ -1563,7 +1714,16 @@ def _eval_all_of(node: AllOf, ctx: _Context, role_prefix: str) -> NodeResult:
     if failures:
         status = _worst(failures)
 
-        return NodeResultNotOk(status, Explanation(label, status, parts=explanations))
+        # Every failure's inputs, not just those of the one whose status won: a group
+        # which is unsatisfied *and* needs enrichment still has datasets worth
+        # measuring, and the next solve is the one which will say whether they help.
+        return NodeResultNotOk(
+            status,
+            Explanation(label, status, parts=explanations),
+            enrichment_inputs=tuple(
+                each for failure in failures for each in failure.enrichment_inputs
+            ),
+        )
 
     # Everything left is `NodeResultOk`,
     # because `failures` returned above if anything was not.
@@ -1928,8 +2088,13 @@ def solve(requirement: Requirement, catalogue: Catalogue) -> SolveResult:
     Returns
     -------
     :
-        Every group which was discovered, sorted into satisfied, unsatisfied and
-        ambiguous, each with an explanation
+        Every group which was discovered, sorted into satisfied, unsatisfied,
+        ambiguous and couldn't-answer, each with an explanation
+
+        A group in the fourth bucket is one we did not answer for rather than one we
+        answered "no" about, and
+        [SolveResult.enrichment_inputs][(m).SolveResult.enrichment_inputs] is what
+        clears the ones which are only waiting on facts nobody has recorded.
 
     Raises
     ------
@@ -1948,9 +2113,10 @@ def solve(requirement: Requirement, catalogue: Catalogue) -> SolveResult:
 
     """
     satisfied: dict[GroupKey, Solution] = {}
-    unsatisfied: dict[ExplanationStatusNotOk, dict[GroupKey, UnsolvedGroup]] = {
-        ExplanationStatusNotOk.UNSATISFIED: {},
-        ExplanationStatusNotOk.AMBIGUOUS: {},
+    # Keyed by every status there is, discovered from the enum rather than listed, so
+    # that a status added to it cannot be dropped on the floor here.
+    unsolved: dict[ExplanationStatusNotOk, dict[GroupKey, UnsolvedGroup]] = {
+        status: {} for status in ExplanationStatusNotOk
     }
 
     needs = facets_read(requirement)
@@ -1993,17 +2159,23 @@ def solve(requirement: Requirement, catalogue: Catalogue) -> SolveResult:
             )
 
         else:
-            unsatisfied[evaluated.status][key] = UnsolvedGroup(
+            unsolved[evaluated.status][key] = UnsolvedGroup(
                 key=key,
                 status=evaluated.status,
                 explanation=Explanation(
                     subject, evaluated.status, parts=(evaluated.explanation,)
                 ),
+                enrichment_inputs=evaluated.enrichment_inputs,
             )
 
     return SolveResult(
         requirement=requirement,
         satisfied=satisfied,
-        unsatisfied=unsatisfied[ExplanationStatusNotOk.UNSATISFIED],
-        ambiguous=unsatisfied[ExplanationStatusNotOk.AMBIGUOUS],
+        unsatisfied=unsolved[ExplanationStatusNotOk.UNSATISFIED],
+        ambiguous=unsolved[ExplanationStatusNotOk.AMBIGUOUS],
+        couldnt_answer={
+            key: group
+            for status in _COULDNT_ANSWER_STATUSES
+            for key, group in unsolved[status].items()
+        },
     )

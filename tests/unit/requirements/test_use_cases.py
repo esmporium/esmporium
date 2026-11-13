@@ -31,6 +31,10 @@ def test_use_case(requirement, satisfying_catalogue):
     assert len(result.satisfied) == 1, result.explain()
     assert not result.unsatisfied, result.explain()
     assert not result.ambiguous, result.explain()
+    # The fourth bucket too, or a use case whose checks could not be evaluated at all
+    # would pass this quietly: nothing would be unsatisfied, because nothing was
+    # answered.
+    assert not result.couldnt_answer, result.explain()
 
     # Every role is filled: a requirement can be satisfied as a whole and still
     # have left a role out if the roles and the merged result disagree.

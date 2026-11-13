@@ -161,6 +161,12 @@ for name in sys.modules:
         "esmporium.datasets.calendars",
         "esmporium.datasets.data_access",
         "esmporium.datasets.facets",
+        # Which frequencies mean a dataset has no time axis at all, which `Covers`
+        # refuses against. Project knowledge, so it would sit beside the rest of it
+        # in `esmporium.enrich` -- except that the refusal happens both when a
+        # requirement is built and when it is solved, and this package may not import
+        # that one. Same reason as `datasets.calendars` above.
+        "esmporium.datasets.no_time_axis",
         "esmporium.datasets.time",
         "esmporium.formatting",
         "esmporium.query",

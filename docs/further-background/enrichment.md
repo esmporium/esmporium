@@ -608,10 +608,29 @@ forking anything. Its docstring already documents the idiom —
 
 1. **The filename time convention.** CMIP5/6/7 put the range in the last
    underscore-separated field (`…_320001-325012.nc`), but its precision varies with
-   frequency and CORDEX differs. → `FILENAME_TIME_READERS_BY_PROJECT`.
+   frequency and other projects may differ. → `FILENAME_TIME_READERS_BY_PROJECT`.
 2. **Which `reporting_interval` values mean "no time axis"** (`fx`, `Ofx`, and CMIP5's
    own spelling). → `NO_TIME_AXIS_INTERVALS_BY_PROJECT`, which is what settled
-   decision 15 checks against.
+   decision 15 checks against. It lives in `esmporium.datasets` rather than beside the
+   other two, for the reason the layout below gives.
+
+**Both are keyed to the projects esmporium has a query class for, and no others**:
+CMIP5, CMIP6, CMIP6Plus and CMIP7. An entry is a claim about a convention we have
+seen, so a project we cannot search is one we do not register a reader for either,
+however likely it is that the shared reader would work. CORDEX-CMIP6 is the case which
+makes the rule worth stating: its trailing field looks like everyone else's, and
+`tests/integration/requirements/test_cordex_other_terms_live.py` searches it end to
+end — but only by injecting a facade, a selector and a query mapping, none of which
+ship, and no CORDEX filename has ever been recorded in this repository to check a
+reader against. These two registries are simply two more mappings to inject beside the
+others.
+
+The asymmetry in the cost is what settles it. A missing project is an
+`UnknownProjectFilenameTimeReaderError` naming the override to pass. A *wrong* project
+is silent: `read_trailing_range` answers `None` for any filename whose last field is
+not two numbers, and `None` means "this file carries no range", which is the ordinary
+answer for a fixed field. A convention we had misread would be recorded as a dataset
+with no time axis.
 
 **Not project-specific, so one implementation each:**
 
@@ -625,17 +644,20 @@ forking anything. Its docstring already documents the idiom —
 ```
 src/esmporium/datasets/
     time.py            TimeStep, TimeUnits, TimeAxis, TimeRange, Span,
-                       BranchPoint value types
+                       BranchPoint, VersionTimeRange value types
                        (here because requirements and db both need them
                         and neither may import the other)
     calendars.py       year and month offsets per CF calendar, via cftime
                        (here, not in enrich/, because `Covers` needs it at
                         solve time and `requirements` may not import `enrich`)
+    no_time_axis.py    NO_TIME_AXIS_INTERVALS_BY_PROJECT, has_no_time_axis
+                       (here for the same reason: `Covers` refuses `fx` data
+                        both when a requirement is built and when it is solved)
 
 src/esmporium/enrich/
     protocol.py        FilenameTimeReader, and the raw range it returns
     known_readers.py   FILENAME_TIME_READERS_BY_PROJECT
-                       NO_TIME_AXIS_INTERVALS_BY_PROJECT
+                       SPAN_BY_REPORTING_INTERVAL
                        reader_for_project(project, readers=...)
     headers.py         read_time_axis(attributes) -> TimeAxis   (project-independent;
                        `attributes` are the time variable's, per decision 21)
@@ -652,6 +674,23 @@ src/esmporium/headers/
 `requirements` imports, and `datasets` is on it while `enrich` is not. The rule
 `datasets` has to keep is "imports nothing else *from esmporium*", which a third-party
 `cftime` does not breach.
+
+Two entries above were moved into `datasets` while PR B was built, by that same force
+rather than by new reasoning, and the rule is worth stating once because the next piece
+of project knowledge a constraint needs will hit it too: **anything a constraint reads
+at solve time has to live in `datasets`**, whatever else it has in common with its
+neighbours in `enrich`.
+
+- `VersionTimeRange` is a value, and `Covers` reads one to get at the contiguity flag
+  decision 8 turns on, so it belongs beside the other values. `measure_version`, which
+  produces it, stays in `enrich/measure.py`: the measurement is enrichment's, the value
+  is not.
+- The no-time-axis vocabulary is project knowledge, which would put it beside the other
+  two registries, except that decision 15's refusal happens inside `requirements` --
+  at solve time *and* when a requirement is built.
+
+Both are re-exported from `esmporium.enrich`, so the three registries are still
+reachable from one place.
 
 An unknown project raises `NotImplementedError(project)`, matching
 `search_api_facade/store.py`.
@@ -724,10 +763,11 @@ every previous piece of the requirements system: prove it in memory, then wire i
   decision 20), importing it at point of use so the monthly and yearly paths need
   nothing installed.
 - Unit tests only, and this is where the awkwardness gets pinned down: real CMIP5,
-  CMIP6 and CORDEX filenames; `monC`; a single-file dataset; a version whose files
-  disagree or leave a gap; an `fx` dataset with no time axis; 31 January plus one
-  month; 29 February plus one year in a `standard` calendar; and the same offset in a
-  `360_day` calendar.
+  CMIP6 and CMIP7 filenames, the last taken off a recorded ESGF-NG response; `monC`; a
+  single-file dataset; a version whose files disagree or leave a gap; an `fx` dataset
+  with no time axis; a project we do not read being refused rather than guessed at; 31
+  January plus one month; 29 February plus one year in a `standard` calendar; and the
+  same offset in a `360_day` calendar.
 
 ### PR B — the new `Covers`, proven in memory, direct parent only
 

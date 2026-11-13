@@ -1,19 +1,26 @@
 """
 The projects we know how to read a time range out of, and how
 
-Two kinds of project knowledge live here, and they are registries: every
-public function takes the mapping as a defaulted argument, so a caller
-can add a project, or override one of ours, without forking anything.
+Two registries live here:
+
+- [FILENAME_TIME_READERS_BY_PROJECT][(m).FILENAME_TIME_READERS_BY_PROJECT] -- where a
+  project's filenames put their time range;
+- [SPAN_BY_REPORTING_INTERVAL][(m).SPAN_BY_REPORTING_INTERVAL] -- how wide one step of
+  a frequency is.
+
+A third is [esmporium.datasets.no_time_axis][] -- which frequencies mean a dataset has
+no time axis at all -- which is over there rather than here because
+[Covers][esmporium.requirements.Covers] reads it at solve time and
+`esmporium.requirements` may not import this package.
+
+Every public function takes its mapping as a defaulted argument, so a caller can add a
+project, or override one of ours, without forking anything:
 
 ```python
 reader_for_project(
     "MIP1", readers={**FILENAME_TIME_READERS_BY_PROJECT, "MIP1": my_reader}
 )
 ```
-
-What is *not* project-specific stays out: how a published range becomes a half-open
-one is [esmporium.enrich.protocol][], and the calendar arithmetic is
-[esmporium.datasets.calendars][].
 """
 
 from __future__ import annotations
@@ -66,22 +73,10 @@ last stamp in the filename advanced by one of these. A `3hr` file whose last sta
 `...2100` runs to midnight, not to 22:00.
 
 Pooled across projects rather than keyed by one, because the vocabulary is shared --
-`mon` means the same thing in CMIP5, CMIP6 and CORDEX. `monClim` is CMIP5's spelling
-of what CMIP6 calls `monC`, which is why both are here.
-"""
-
-NO_TIME_AXIS_INTERVALS_BY_PROJECT: Mapping[str, frozenset[str]] = {
-    "CMIP5": frozenset({"fx"}),
-    "CMIP6": frozenset({"fx"}),
-    "CMIP6Plus": frozenset({"fx"}),
-    "CMIP7": frozenset({"fx"}),
-    "CORDEX-CMIP6": frozenset({"fx"}),
-}
-"""
-Which reporting intervals mean "this dataset has no time axis at all", per project
-
-What [Covers][esmporium.requirements.Covers] refuses against: coverage is not a
-question you can ask of a auxiliary variables, such as cell area.
+`mon` means the same thing wherever it appears. `monClim` is CMIP5's spelling of what
+CMIP6 calls `monC`, which is why both are here. An interval a project uses and we do
+not list is an [UnknownReportingIntervalError][(m).UnknownReportingIntervalError],
+which is the point: there is no width to guess at.
 """
 
 
@@ -111,34 +106,6 @@ class UnknownProjectFilenameTimeReaderError(NotImplementedError):
             f"convention, so there is no generic fallback -- pass your own `readers` "
             f"mapping, e.g. "
             f"{{**FILENAME_TIME_READERS_BY_PROJECT, {project!r}: my_reader}}."
-        )
-
-
-class UnknownProjectTimeAxisError(NotImplementedError):
-    """
-    Raised when we cannot say whether a project's dataset has a time axis
-    """
-
-    def __init__(self, project: str, intervals: Mapping[str, frozenset[str]]) -> None:
-        """
-        Initialise the error
-
-        Parameters
-        ----------
-        project
-            The project we know nothing about
-
-        intervals
-            The per-project vocabularies which were available
-        """
-        self.project = project
-        self.intervals = intervals
-        known = ", ".join(sorted(intervals)) or "none"
-        super().__init__(
-            f"Do not know which of project {project!r}'s reporting intervals mean a "
-            f"dataset has no time axis. Known projects: {known}. Answering 'it has "
-            f"one' would be a claim we have no grounds for, so pass your own "
-            f"`intervals` mapping instead."
         )
 
 
@@ -200,53 +167,6 @@ def span_of_reporting_interval(
         return spans[reporting_interval]
     except KeyError as error:
         raise UnknownReportingIntervalError(reporting_interval) from error
-
-
-def has_no_time_axis(
-    project: str,
-    reporting_interval: str,
-    intervals: Mapping[str, frozenset[str]] = NO_TIME_AXIS_INTERVALS_BY_PROJECT,
-) -> bool:
-    """
-    Determine whether a dataset has no time axis at all
-
-    Parameters
-    ----------
-    project
-        The project the dataset belongs to
-
-    reporting_interval
-        The dataset's reporting interval
-
-    intervals
-        Which intervals mean "no time axis", per project
-
-    Returns
-    -------
-    :
-        `True` if this dataset cannot have a time range, e.g. an `fx` dataset
-
-    Raises
-    ------
-    UnknownProjectTimeAxisError
-        We know nothing about that project, so we cannot say
-
-    Notes
-    -----
-    Raising for an unknown project rather than answering `False` is deliberate: `False`
-    would read as "this dataset does have a time axis", which we have no grounds to
-    say, and the cost of being wrong is a header fetched for a file that has no time
-    in it at all.
-
-    Examples
-    --------
-    >>> has_no_time_axis("CMIP6", "fx"), has_no_time_axis("CMIP6", "mon")
-    (True, False)
-    """
-    if project not in intervals:
-        raise UnknownProjectTimeAxisError(project, intervals)
-
-    return reporting_interval in intervals[project]
 
 
 def read_trailing_range(
@@ -337,13 +257,15 @@ FILENAME_TIME_READERS_BY_PROJECT: Mapping[str, FilenameTimeReader] = {
     "CMIP6": read_trailing_range,
     "CMIP6Plus": read_trailing_range,
     "CMIP7": read_trailing_range,
-    "CORDEX-CMIP6": read_trailing_range,
 }
 """
 Which [FilenameTimeReader][esmporium.enrich.FilenameTimeReader] reads each project
 
 Every project we know shares one convention today -- the range is the last
-underscore-separated field -- so they share one reader rather than five copies of it.
+underscore-separated field -- so they share one reader rather than four copies of it.
+That holds across a change of DRS: a CMIP7 filename looks nothing like a CMIP6 one
+(`tas_tavg-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_18500101-18601231.nc`)
+and its range is still the last field.
 """
 
 
