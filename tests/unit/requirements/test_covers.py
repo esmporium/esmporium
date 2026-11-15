@@ -762,7 +762,7 @@ def test_an_unsupported_unit_does_not_stop_the_other_groups(dataset):
     assert result.enrichment_inputs == ()
 
 
-# ------------------------------------------------------------ one hop, and no more
+# ------------------------------------------------------------------- along a chain
 
 
 BRANCH_REQUIREMENT = requirement(
@@ -772,7 +772,7 @@ BRANCH_REQUIREMENT = requirement(
     .with_constraints(containment()),
     group_by=GROUP_BY,
 )
-"""A dataset two hops from its control, which `Covers` cannot judge yet"""
+"""A dataset two hops from its control"""
 
 
 def branch_chain_catalogue(dataset, control_end: int):
@@ -803,25 +803,26 @@ def branch_chain_catalogue(dataset, control_end: int):
     )
 
 
-# Note:
-# Settled decision 22, and the two tests PR B2 restores
+def test_branch_chain_back_to_the_control(dataset):
+    result = solve(BRANCH_REQUIREMENT, branch_chain_catalogue(dataset, 300))
+
+    (group,) = result.satisfied.values()
+    assert group.one("chain.0.tas").experiment == "1pctCO2"
+    assert group.one("control.tas").variant_label == "r1i1p2f1"
 
 
-# These used to assert that the control covered the ZEC run *and* the 1pctCO2 run it
-# branched through. The arithmetic for that is easy; the rule is not -- which branch
-# point an overlap is measured from, what an intermediate run outlasting its child
-# means, what a gapped intermediate does -- and none of it has been written down. So
-# this raises until it has been, rather than answering a question nobody has agreed
-# the shape of.
-@pytest.mark.parametrize("control_end", [300, 260])
-def test_a_longer_chain_says_so_rather_than_guessing(dataset, control_end):
-    with pytest.raises(NotImplementedError, match="coverage along a chain"):
-        solve(BRANCH_REQUIREMENT, branch_chain_catalogue(dataset, control_end))
+def test_branch_chain_control_must_cover_child_and_parents(dataset):
+    # Covering the ZEC run alone, [170, 270), would be enough at 270, but the analysis
+    # needs the control over 1pctCO2 too, so the window starts where 1pctCO2 branched.
+    result = solve(BRANCH_REQUIREMENT, branch_chain_catalogue(dataset, 260))
+
+    assert list(result.unsatisfied) == [ONLY_GROUP]
+    assert "needs [100, 270)" in result.explain()
 
 
-def test_the_direct_parent_of_a_longer_chain_can_still_be_asked(dataset):
-    # Which is what makes the refusal above a limit rather than a wall: the hop which
-    # *is* a direct parent is judged as usual.
+def test_a_hop_of_the_chain_can_be_asked_about_on_its_own(dataset):
+    # The chain is what `role` and `target` name, not the whole lineage: naming the
+    # direct parent asks about that hop alone.
     one_hop = requirement(
         name="zec",
         tree=leaf(Query(variable="tas", experiment="esm-1pct-brch-1000PgC"), "tas")

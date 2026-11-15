@@ -73,7 +73,7 @@ list that can be passed straight back to the enricher.
 | 19 | `SolveResult` stays at **four mappings**: `satisfied`, `unsatisfied`, `ambiguous`, `couldnt_answer`. The fourth holds every group we could not answer, **with the reasoning** — each group carries which status applied and why. (`couldn't_answer` cannot be a Python identifier, so the apostrophe is dropped.) |
 | 20 | **Calendar arithmetic uses `cftime`, from a new optional extra. We do not roll our own.** Six CF calendars with six sets of leap rules is exactly the job that looks small and is not. It is an *extra* rather than a dependency, following `h5py`: monthly and yearly requirements never need it, because twelve months is a year in every calendar, so only the sub-monthly path pays. See "Where `cftime` can live" below for the one architectural consequence. |
 | 21 | **The calendar and the time units are attributes of the *time variable*, not global attributes.** Measured, not assumed — see "Where the numbers come from". `esmporium.headers` reads globals only today, so reaching them is a new slice of that package rather than a call to `read_global_attributes`. |
-| 22 | **`Covers` ships for a direct parent first; the chain is its own step.** "The control covers this experiment *and every parent back up to the control*" is the rule the scenario and ZEC analyses actually need, and it takes thinking that should not happen next to new value types and a new table. So `Covers` raises `NotImplementedError` when the covering role is not the target's direct parent, and the chain rule is settled in a PR of its own, starting from an agreed picture. |
+| 22 | **Coverage along a chain is a stitch.** "The control covers this experiment *and every parent back up to the control*" is the rule the scenario and ZEC analyses actually need, and the target and its parents are judged as *one continuous series* mapped onto the covering dataset's axis a branch at a time. The anchor is the bottom branch point, the needed end is the target's mapped end, and a break anywhere in the series — a gap inside a member, or a run which branched where its parent holds no data — is a failure. See "Along a chain" below. |
 | 23 | **Natural values are a 1-based ordinal step count, with no epoch.** `0001-01` is month 1, not month 0, which a udunits `since` epoch cannot give because `since` counts *elapsed* steps. See "Natural units are an ordinal count". |
 
 ## The `Covers` question, settled
@@ -116,9 +116,9 @@ the branch point.** `_needed_span` computes `start' = branch + (start - step_sta
 so the mapped child start equals `branch` by construction. Everything below is in the
 control's axis, after that mapping, and `BP` is the branch point.
 
-**Case 1 — an overlap is asked for (`mode="overlap"`, `min_overlap=A`).** The control
-has to hold `A` of data from the branch point — the window an anomaly actually uses —
-plus padding either side:
+**Overlap mode — a window is asked for (`min_overlap=A`).** The control has to hold
+`A` of data from the branch point — the window an anomaly actually uses — plus padding
+either side:
 
 ```
                      BP
@@ -132,8 +132,8 @@ plus padding either side:
   needed:  [ BP - B ,  BP + A + C )
 ```
 
-**Case 2 — no overlap is asked for (`mode="containment"`).** The control has to hold
-everything the covered run covers, plus padding either side:
+**Containment mode — the whole covered run.** The control has to hold everything
+the covered run covers, plus padding either side:
 
 ```
                      BP
@@ -160,7 +160,7 @@ PASS iff  child_extent >= min_overlap                        (overlap mode only)
                       or  child_end_exclusive          in containment mode
 ```
 
-Case 2 is `_covers()` exactly as #69 implements it, so one private function serves
+Containment is `_covers()` exactly as #69 implements it, so one private function serves
 both modes.
 
 The analysis window being **anchored at the branch point** is the part worth not
@@ -188,7 +188,7 @@ Verified against two worked examples — control `[0, 200)`, child mapped `[100,
 | `min_overlap=100` | 150 ≥ 100 ✓ | 0 ≤ 90 ✓ | 200 ≥ 210 ✗ | **Fail** — short on the far side |
 | `min_overlap=10` | 150 ≥ 10 ✓ | 0 ≤ 90 ✓ | 200 ≥ 120 ✓ | **Pass** |
 
-### Along a chain, which is deferred
+### Along a chain
 
 Both pictures above put the control one branch below the covered run. The rule the
 scenario and ZEC analyses actually need is the chain version: *the control must span
@@ -207,18 +207,56 @@ the chain.
                       │                                       │
          ◄── pad B ───┤                                       ├─ pad C ─►
 
-  case 2 (no A):   [ BP - B , max(end of ssp245, end of historical) + C )
-  case 1 (A given):[ BP - B , BP + A + C )
+  containment:  [ BP - B , end of ssp245 mapped + C )
+  overlap:      [ BP - B , BP + A + C )
 ```
 
-Per settled decision 22 this does **not** ship with `Covers`: a covering role which is
-not the target's direct parent raises `NotImplementedError`, and the chain rule gets a
-step of its own, agreed as a picture before any code. The questions it has to settle,
-recorded here so they are not rediscovered: what happens when an intermediate run's
-mapped end exceeds the covered run's; whether `A` is ever measured anywhere but the
-bottom branch point; and what a gapped intermediate does, given decision 8 refuses a
-gapped range. The mapping machinery is not the hard part — `_needed_span` already
-walks every member one branch at a time — the *rule* is.
+The model is a **stitch**: the covered run and every parent up to the covering one are
+one continuous series, mapped onto the covering dataset's axis a branch at a time.
+Each run in between contributes how far into its own parent it branched, measured from
+that parent's own start, so the covered run's start lands wherever the chain of
+branches puts it. That makes the comparison the same one as for a single hop, with the
+anchor and the mapped end composed rather than read off one branch point.
+
+The three questions this left open, and the answers:
+
+- **An intermediate which outlasts its child does not raise the bar.** The needed end
+  is the covered run's mapped end, not `max` over every member. The analysis never
+  uses 1pctCO2's years after the ZEC run left it, and because each child's mapped start
+  *is* its parent's branch point, the path through the chain is exactly
+  `[BP, covered run's mapped end)` — one span, no maximum. Wanting the control over the
+  whole of an intermediate as well is a second `Covers` with `target="chain.0"`, which
+  composes; folding it into one check would answer two questions with one verdict.
+- **`A` is measured from the bottom branch point, and nowhere else.** The overlap
+  window is the baseline an anomaly is taken against, and for a scenario that baseline
+  is the control concurrent with the *start* of the chain. The consequence worth
+  stating: the companion test — that there is something to overlap *with* — is then
+  about the stitched series rather than the covered run alone, so a covered run shorter
+  than `A` still meets it when the parents in between fill the window. Measuring `A`
+  from the covered run's own mapped start instead is coherent and unsupported; saying
+  which is a field, so it waits for somebody to ask.
+- **A gapped member fails, and so does a broken join.** Decision 8 refuses a gapped
+  range because a gap treated as continuous reports a missing decade as covered, and
+  that reasoning does not weaken along a chain: the whole premise is that a continuous
+  series can be stitched. The stitch also has *joins*, which contiguity does not catch
+  — a run which branched after its parent's data ends leaves a hole, and one which
+  branched before its parent's data starts has no parent data at the branch at all.
+  The second is the worse of the two, because the mapping is computed from the
+  intermediate's own start, so a missing leading file shifts every position above it
+  while nothing about the arithmetic looks wrong. Both are a failure naming the hop.
+  The join onto the covering dataset itself is not checked separately: whether *it*
+  holds data at the branch point is the coverage question, and it is answered with the
+  window it needed in the message.
+
+One more thing the chain decides, which a single hop never had to: **which datasets
+are in the stitch.** It is the inclusive run from `target` up to `role` and nothing
+else, so a member of the lineage below `target` or above `role` is neither mapped, nor
+gap-checked, nor named as something to enrich. A `target="chain.0"` check which
+reported `NEEDS_ENRICHMENT` for the leaf below it would send somebody to fetch headers
+for a dataset the check never reads.
+
+The mapping machinery was never the hard part — the arithmetic walks every member one
+branch at a time — the *rule* was.
 
 ### The half-open convention
 
@@ -773,7 +811,7 @@ every previous piece of the requirements system: prove it in memory, then wire i
 
 - `src/esmporium/requirements/covers.py`: a required `mode` with `min_overlap` and
   `pad` beside it and nothing defaulted (settled decision 9), the soft `ideal_*`
-  thresholds kept so `Degraded` still has a producer, the two cases drawn above,
+  thresholds kept so `Degraded` still has a producer, both modes drawn above,
   comparison in stored units with no year conversion, the `fx` refusal,
   **`NotImplementedError` when the covering role is not the target's direct parent**
   (settled decision 22), and an unsupported-unit outcome carrying
@@ -810,11 +848,30 @@ every previous piece of the requirements system: prove it in memory, then wire i
 
 ### PR B2 — coverage along a chain
 
-Settled decision 22's other half, and the one piece of this whole step whose *rule* is
-not yet written down. It starts with the picture under "Along a chain, which is
-deferred" above, agreed before any code, and it answers the three questions recorded
-there. Nothing else moves in it: no new value types, no new table, no new column — so
-the only thing under discussion is the rule.
+Settled decision 22's other half: the rule under "Along a chain" above, and nothing
+else. No new value types, no new table, no new column, no new field — so `Covers`'
+signature is untouched and no stored requirement's hash changes, which makes this the
+one PR here that is not `breaking`.
+
+- `covers.py`: the covering role has to be an *ancestor* of the target rather than its
+  direct parent, and the datasets this check reads become the inclusive run from
+  `target` up to `role`. The no-time-axis check, the ranges and the contiguity check
+  all run over that run rather than over a pair; the mapping composes a branch point
+  per hop; and two new checks join it — one per hop that the branch point and the two
+  runs it joins are on one axis, and one that each run in between branched where its
+  own parent holds data.
+- The order the facts are asked for matters, and is: every range, then gaps, then every
+  branch point. Ranges and branch points each name *all* the datasets missing them, so
+  one run of the enricher clears the lot, and the gap check sits between the two
+  because a gap is a definite answer — enriching branch points first would cost a round
+  trip and still fail.
+- A chain solve can therefore return `NEEDS_ENRICHMENT` naming a dataset which is
+  neither the covering nor the covered one, which no single-hop solve ever did.
+- The two tests PR B's assertions parked come back —
+  `test_branch_chain_back_to_the_control` and
+  `test_branch_chain_control_must_cover_child_and_parents` — and the notes on
+  `05-zec-flat10` and `11-tas-scenario-anomalies` saying the intermediate run is not
+  covered yet come off, because now it is.
 
 ### PR C — storage and the enrich step
 
@@ -915,7 +972,5 @@ group is in `couldnt_answer` with status `NEEDS_ENRICHMENT` rather than in
 ## Out of scope
 
 `SameTimeRange` (`PLAN.md` step 15), with a code comment recording why it was left
-until then. Coverage along a chain, which is PR B2 rather than part of `Covers` itself
-(settled decision 22). Each PR carries its own `changelog/` fragment, as every other
-change here does; PRs B and C are `breaking`, because a requirement's hash covers its
-constraints.
+until then. Each PR carries its own `changelog/` fragment, as every other change here
+does; PRs B and C are `breaking`, because a requirement's hash covers its constraints.

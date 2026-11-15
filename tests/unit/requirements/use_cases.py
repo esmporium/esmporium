@@ -186,12 +186,6 @@ Zero emissions commitment, from esm-flat10-zec
 esm-flat10-zec branches from esm-flat10, not from the control,
 so the lineage passes through esm-flat10 on its way back,
 and the control has to cover both.
-
-Note that **`Covers` only checks the direct parent for now**, so what it judges here
-is the control against esm-flat10, not against the ZEC run two branches below. The
-chain rule is a step of its own; until it lands, "and the control has to cover both"
-is what this analysis needs rather than what is checked. See
-`docs/further-background/enrichment.md`.
 """
 
 TAS_SCENARIO_ANOMALIES = requirement(
@@ -212,9 +206,6 @@ The scenarios branch from historical,
 so the control would ideally cover both,
 but an analysis can work around it if it does not,
 hence only ideally.
-
-As with `05-zec-flat10`, "both" is what the analysis needs rather than what is
-checked: `Covers` judges the direct parent only until the chain rule lands.
 """
 
 
