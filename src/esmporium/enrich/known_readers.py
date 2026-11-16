@@ -47,6 +47,9 @@ The suffix is not part of the range, so it comes off before the stamps are read
 not a twelve-month run.
 """
 
+# This is a guess.
+# Also support using the time bounds to figure this out
+# as a "higher tier" source.
 SPAN_BY_REPORTING_INTERVAL: Mapping[str, Span] = {
     "dec": Span(10, TimeStep.YEARS),
     "yr": Span(1, TimeStep.YEARS),

@@ -300,9 +300,22 @@ class TimeAxis:
         if self.units != other.units:
             return False
 
+        # TODO (PR R1 in docs/further-background/enrichment-storage.md):
+        # a `None` calendar matching anything is a default in disguise.
+        # Natural axes need no calendar; dated axes need a known, identical one,
+        # and may differ in epoch once converted.
         if self.calendar is None or other.calendar is None:
             return True
 
+        # Strict on purpose: different calendars are never comparable,
+        # so nothing slips through by accident.
+        # We may have to loosen this once we work with real data at scale,
+        # because some models use different calendars for a control and its experiments.
+        # Sometimes that can be worked around
+        # (with monthly data you usually don't care which calendar each run used),
+        # and sometimes it is a real problem,
+        # so any loosening has to say which case it allows,
+        # rather than dropping the check.
         return self.calendar == other.calendar
 
 
@@ -653,6 +666,10 @@ class BranchPoint:
     `in_parent + (p - child_start)` on the parent's.
     """
 
+    # TODO (PR R1 in docs/further-background/enrichment-storage.md):
+    # stop flooring here: placing a published float on a natural axis
+    # is the enricher's explicit, recorded conversion, not this type's.
+    # Also give `in_child` its own axis (it is in the child's units and calendar).
     in_parent: int
     """
     Where the child's data starts, as a position on the *parent's* axis

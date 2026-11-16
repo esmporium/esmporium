@@ -8,6 +8,31 @@ implementation, so that every later PR can be read against a stated target.
 
 Written: 2026-11-12.
 
+/// note | Status, 2026-11-16
+PRs A, B and B2 below are built
+([#71](https://github.com/esmporium/esmporium/pull/71),
+[#72](https://github.com/esmporium/esmporium/pull/72),
+[#73](https://github.com/esmporium/esmporium/pull/73)).
+Building them, and reviewing them, changed parts of this note.
+It is kept as the record of why things were built the way they were,
+and these parts are superseded:
+
+- **Where the numbers come from** is replaced by
+  [part two](enrichment-sources.md), which adds search records as a source,
+  separates header, variable attributes and variable values,
+  and settles which tools read them.
+- **PRs C, D and E** are replaced by
+  [part three](enrichment-storage.md#the-plan-from-here),
+  which also adds three corrective PRs (R1 to R3) to what is built.
+- **Does `Dataset` grow the same fields?** is revised:
+  a catalogue entry becomes one *version* of a dataset, chosen once when it is found
+  (part three, decision 32).
+- **Decision 4** is narrowed (published numbers stay as published, see below),
+  `Covers`' **`align`** argument goes (part three, decision 33),
+  and the mapping goes through `branch_time_in_child`
+  rather than the child's own start (part three, PR R2).
+///
+
 Cross-references are written as plain code spans rather than `mkdocstrings`
 links, because most of what they name does not exist yet and a strict docs
 build would fail on them. They become links as each piece lands.
@@ -53,7 +78,7 @@ list that can be passed straight back to the enricher.
 | 1 | The step is **`enrich`** / enrichment. `src/esmporium/enrich/`, `enrich_datasets(...)`, PLAN step "Enrichment". |
 | 2 | The new outcome is **`NeedsEnrichment`**, not `Undetermined` — "undetermined" implies we might look and still not know, when in fact we just have to go and do the work so that the answer is available. |
 | 3 | **Store both** natural and rich time values. Natural values are ones in the dataset's own frequency and come from the filename, which is basically free to parse and is free (natural values match the dataset's frequency e.g. for yearly datasets you get values like 2024, 1840, for monthly datasets values like 1850-01, 2023-12); rich comes from a file header and is fetched only where needed (rich means information that allows you to create a full datetime object without guessing i.e. values like 2023-01-01 00:00:00, you don't get this from the filenames alone). |
-| 4 | **Never store fractional years, and never convert to them.** Natural units are the data's own frequency; rich values are datetimes with a calendar. No year conversion at solve time, and none at enrich time. |
+| 4 | **Never store fractional years, and never convert to them.** Natural units are the data's own frequency; rich values are datetimes with a calendar. No year conversion at solve time, and none at enrich time. *Narrowed 2026-11-16:* this is about how extents are stated and compared, not about published data. A branch time published as a float is stored as that float with its units ([part three](enrichment-storage.md), decision 31), and the `BranchPoint` built in PR A, which floors it to an `int`, is corrected in PR R1. |
 | 5 | **Store start and end, not extents.** An extent is `end - start` (or `end - start + 1` sometimes because of how the indexing/conversion works e.g. the extent of a dataset that goes from 1850 to 1860 when its natural units are years is 11 years, not 10, because the actual bounds can be assumed to be 1850-01-01 to 1860-12-31, this has tripped over many people, hopefully not us), computed outside the database when wanted. Storing both would be the same fact twice, with a consistency burden (that is impossible to get right given that the correct answer depends on assumptions/context that we don't have at enrichment time). |
 | 6 | **One pair of value columns plus a `units` column**, not a natural column group and a rich column group. No half-empty rows. Natural values are a 1-based ordinal step count with no epoch, rich values carry one; see "Natural units are an ordinal count" below. |
 | 7 | A corrected branch time is a **`FIX`-sourced row**, not a Python-level catalogue wrapper. |
@@ -115,6 +140,17 @@ The simplification that makes this readable: **after mapping, the child's start 
 the branch point.** `_needed_span` computes `start' = branch + (start - step_start)`,
 so the mapped child start equals `branch` by construction. Everything below is in the
 control's axis, after that mapping, and `BP` is the branch point.
+
+> *Revised 2026-11-16.* The `step_start` above became, in the built code, the child's own
+> first data step: a child position `p` maps to `in_parent + (p - child_start)`. That
+> assumes the child's data starts exactly at its branch, which is false whenever a leading
+> file is missing. The mapping CMIP defines is through `branch_time_in_child`:
+> `in_parent + (p - in_child)`, with units checked at each step. Where `in_child` is
+> not published (CMIP5) it is assumed to be the child's first time bound, and the
+> assumption is named in every answer that uses it. PR R2 in
+> [part three](enrichment-storage.md#pr-r2-covers-checks-units-where-it-computes-and-maps-through-branch_time_in_child)
+> makes that change. The pictures below are unaffected, because they draw a child whose
+> data does start at its branch.
 
 **Overlap mode — a window is asked for (`min_overlap=A`).** The control has to hold
 `A` of data from the branch point — the window an anomaly actually uses — plus padding
@@ -339,6 +375,13 @@ one reporting step* — then gives an exact answer at every frequency from `dec`
 `1hr`. `subhr` is the one interval with no answer: it says the data is finer than
 hourly without saying how much finer, so there is no step to add.
 
+> *Revised 2026-11-16.* "Exact" overstates it. The rule is an *assumption*: that the
+> data runs to the end of its last time bound, and that the bound is one reporting
+> interval wide. That holds when the bounds are contiguous and regular, and is only a
+> convention for point data (`…Pt`), whose values are instants. So a filename's end is
+> recorded as derived under that assumption, and the time bounds are what check it.
+> See [part two](enrichment-sources.md#filenames).
+
 The value type owns the arithmetic — `extent`, `contains`, `is_adjacent_to` — so no
 caller ever subtracts by hand. The docstring explains the convention; the type is what
 enforces it.
@@ -419,6 +462,12 @@ something is wrong with the data. `Covers(align="calendar")` already never reads
 branch time, so the distinction exists in code today and must not be optimised away.
 A code comment records this, per settled decision 13.
 
+> *Revised 2026-11-16.* The distinction stands, but it is drawn between two classes
+> rather than inside one: `Covers` loses its `align` argument and is only ever
+> branch-aligned, and comparing on a shared calendar waits for `SameTimeRange`
+> ([part three](enrichment-storage.md), decision 33). The developer note in
+> `covers.py` is kept and re-pointed so step 15 still finds it.
+
 ## The design switch this forces
 
 Moving time information onto catalogue entries changes how constraints get their
@@ -463,6 +512,14 @@ is argued out here rather than assumed.
    because two machines answer differently for the same one.
 
 ### Does `Dataset` grow the same fields?
+
+> *Revised 2026-11-16.* The conclusion below, that an entry stays one `Dataset` row
+> and every lookup resolves its describing version, is reversed. Resolving the version
+> in each lookup means a time lookup, which is handed no `VersionFilter`, cannot know
+> which version the rest of the solve read. So an entry becomes one *version* of a
+> dataset, chosen once when it is found, and `VersionFilter` is used only by `find` and
+> `parent_of`. `id` becomes the `DatasetVersion` id. See PR R3 in
+> [part three](enrichment-storage.md#pr-r3-a-catalogue-entry-is-a-version).
 
 The symmetry instinct is right, but the answer is not `Dataset`, and the repository
 already settles it two ways:
@@ -551,6 +608,15 @@ alongside `NEEDS_ENRICHMENT` and `MISSING_FEATURE_PLEASE_RAISE_ISSUE`.
 
 ## Where the numbers come from
 
+> *Superseded 2026-11-16* by [part two](enrichment-sources.md). In short: the table
+> below misses search records, which carry a version's first and last time value for
+> free; it runs together the file header, the time variable's attributes and the time
+> variable's values, which differ in cost and in how far they can be believed; and
+> "a header read cannot cheaply give start and end" is true of the header but not of
+> the time bounds, whose first and last values are a few small reads away. The reader
+> discussion at the end of this section is also replaced: `netCDF4` is not used, and
+> netCDF-4 files are read through `h5netcdf`.
+
 | Fact | Source | Cost | Available for |
 |---|---|---|---|
 | start, end, natural units | the filename — `…_320001-325012.nc` | free, `File.filename` already stored | every file we have seen |
@@ -612,7 +678,7 @@ The thing that makes this tractable: **given a calendar, year and month arithmet
 a date is exact at any frequency.** "20 years after 1850-03-01" is 1870-03-01,
 unambiguously, in every CF calendar. Ambiguity only appears if you try to turn
 "20 years" into a *fixed number of days* detached from a position on the axis — and
-there is never a reason to do that. So:
+there is never a reason to do that right now, based on the use cases we have. So:
 
 | What we hold | Data frequency | Requirement in years/months | Requirement in days or finer |
 |---|---|---|---|
@@ -700,6 +766,8 @@ src/esmporium/enrich/
     headers.py         read_time_axis(attributes) -> TimeAxis   (project-independent;
                        `attributes` are the time variable's, per decision 21)
     measure.py         per-file ranges -> per-version range + contiguity
+                       (renamed combine_files_to_datasets.py in PR R1:
+                        nothing is measured, information is retrieved and parsed)
 
 src/esmporium/headers/
     netcdf3.py         grows a variable-list walk, so that
@@ -779,6 +847,11 @@ reproducibility across machines, and PR C adds the id-driven entry point for spe
 against a database you already hold.
 
 ## Plan, as six PRs
+
+> *Status 2026-11-16.* A, B and B2 are built (#71 to #73). C, D and E are superseded by
+> [the plan in part three](enrichment-storage.md#the-plan-from-here), which first
+> corrects what A to B2 built (PRs R1 to R3) and then splits C into readers, parsers,
+> storage and the enrich step. They are kept below as the record of what was planned.
 
 PRs A and B need no database and no network, which is the order this repo has built
 every previous piece of the requirements system: prove it in memory, then wire it up.

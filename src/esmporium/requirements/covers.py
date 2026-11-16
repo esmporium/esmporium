@@ -85,6 +85,9 @@ the soft check is never looser than the hard one.
 # "misaligned, which means something is wrong with the data".
 
 
+# TODO (PR R3 in docs/further-background/enrichment-storage.md):
+# once an entry is a version (`entry.id` is a `DatasetVersion` id),
+# these answer for that version and no `VersionFilter` is needed here.
 # TODO future:
 # What [Covers][(m).Covers] needs. Neither
 # [InMemoryCatalogue][esmporium.requirements.InMemoryCatalogue] nor
@@ -920,6 +923,10 @@ class Covers(BaseModel):
             child_axis = measured[index].range.axis
             parent_axis = measured[index + 1].range.axis
 
+            # A control and an experiment on different calendars fail here,
+            # because the calendar check is strict.
+            # That may need loosening for real data at scale:
+            # see the note in `TimeAxis.is_comparable_with`.
             if not branch.parent_axis.is_comparable_with(parent_axis):
                 # The branch point and the parent's own data disagree about the axis
                 # the parent is on, which is the data disagreeing with itself rather
@@ -1193,6 +1200,12 @@ def _aligned_through(
     :
         The alignment point and the covered run's mapped `end_exclusive`
     """
+    # TODO (PR R2 in docs/further-background/enrichment-storage.md):
+    # this maps through each run's own first step,
+    # which assumes its data starts exactly at its branch
+    # and shifts everything above it when a leading file is missing.
+    # Map through `branch_time_in_child` instead,
+    # checking the axes of what is combined at each step.
     anchor = branches[-1].in_parent
 
     position = anchor
