@@ -11,6 +11,7 @@ See https://oprypin.github.io/mkdocs-literate-nav/
     - [Dependency pinning and testing](further-background/dependency-pinning-and-testing.md)
     - [Expressing analysis data requirements](further-background/data-requirements.md)
     - [Enrichment: the time information ESGF does not publish](further-background/enrichment.md)
+    - [Enrichment, part two: storing it, and where the numbers really come from](further-background/enrichment-storage.md)
 - [Development](development.md)
 - [API reference](api/esmporium/)
 - [Changelog](changelog.md)
