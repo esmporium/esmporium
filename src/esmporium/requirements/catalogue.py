@@ -860,55 +860,62 @@ class ParentStatus(str, Enum):
 
     NOT_LOOKED_FOR = "not_looked_for"
     """
-    Nothing has read a parent for this dataset yet
+    Nothing has looked for a parent for this dataset yet
 
-    Not an answer about the data: it says the question has not been asked.
-    [esmporium.db.find_parents][] is what asks it.
+    This is not an answer about the data.
+    Rather, it says that the question has not been asked.
+    Use [esmporium.db.find_parents][] to find the parents
+    (a separate function because it can require network access,
+    and we don't our requirements solving step to start firing off network requests
+    without an explicit opt in).
     """
 
     ROOT = "root"
     """
     The dataset was read for a parent and declares none, so it is a root of the tree
 
-    Distinct from [NOT_LOOKED_FOR][(c).NOT_LOOKED_FOR] and the distinction is the
-    point: this one is settled.
+    Distinct from [NOT_LOOKED_FOR][(c).NOT_LOOKED_FOR]
+    and the distinction is the point: don't look for a parent, there isn't one.
     """
 
     UNRESOLVED = "unresolved"
     """
     A parent is named, and has not been matched to a dataset we hold
 
-    Either nothing has searched for it yet, or it was searched for and had not been
-    stored at the time. Searching again can change this.
+    Either nothing has searched for the parent yet,
+    or it was searched for but not stored at the time.
+    Searching again can change this.
     """
 
     PARENT_NOT_FOUND = "parent_not_found"
     """
     The named parent was searched for and the archive published nothing for it
 
-    A real case rather than a defensive one: a chain can end in a parent which is
-    named and does not exist, which is not the same as ending in a dataset which
-    declares no parent.
+    A real case rather than a defensive one:
+    a chain can end in a parent which is named but does not exist,
+    which is not the same as ending in a dataset which declares no parent.
     """
 
     VARIABLE_MISSING = "variable_missing"
     """
-    The named parent exists and does not publish this dataset's variable
+    The named parent exists but does not publish this dataset's variable
 
-    A parent link joins like to like -- the same variable, frequency and grid -- so a
-    control which never published the variable being analysed cannot fill the role,
-    even though the simulation is there.
+    A parent link joins like to like -- the same variable, frequency and grid --
+    so a control which never published the variable being analysed cannot fill the role,
+    even though data for other variables from a parent simulation
+    (which likely also produced this variable) is there.
     """
 
     NO_USABLE_VERSION = "no_usable_version"
     """
-    The parent is a dataset we hold, and no version of it passes the version filter
+    The parent is a dataset we hold, but no version of it passes the version filter
 
-    The one answer which is about the question rather than the data: the parent is
-    there, and was excluded by the [VersionFilter][(m).VersionFilter] the lookup was
-    given -- every release of it retracted, say, when the caller asked for
-    [NOT_RETRACTED][(m).VersionFilter.NOT_RETRACTED]. Asking with
-    [ANY][(m).VersionFilter.ANY] finds it.
+    The one answer which is about the question rather than the data:
+    the parent is there, and was excluded by the [VersionFilter][(m).VersionFilter]
+    the lookup was given -- every release of it retracted,
+    say, when the caller asked for [NOT_RETRACTED][(m).VersionFilter.NOT_RETRACTED].
+    Asking differently e.g. with [ANY][(m).VersionFilter.ANY]
+    can change this into finding a parent.
     """
 
 

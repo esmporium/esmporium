@@ -26,6 +26,9 @@ CF_UNITS_ATTRIBUTE = "units"
 CF_CALENDAR_ATTRIBUTE = "calendar"
 """The CF attribute naming which calendar a time coordinate's values are in"""
 
+# TODO (PR R1 in docs/further-background/enrichment-storage.md):
+# no default calendar. A missing `calendar` becomes an error listing what was found,
+# and a fix can supply it.
 CF_DEFAULT_CALENDAR = "standard"
 """
 The calendar CF says to assume when a time coordinate does not name one
