@@ -57,7 +57,7 @@ they are reused here for the revised set, and "What changed in review" maps old 
 | 33 | **`Covers` is only ever about branch alignment.** Its `align` argument goes; aligning on the calendar is `SameTimeRange`'s job (PLAN step 15). |
 | 34 | **A parent which has not been looked for is "not yet", not "no".** `NOT_LOOKED_FOR` (and `UNRESOLVED`) put a group in `couldnt_answer` pointing at `esmporium.db.find_parents`, as `NEEDS_ENRICHMENT` points at the enricher, rather than in `unsatisfied`. |
 | 35 | **`read_variable_attributes` returns the attributes it was asked for, and reports every attribute it found when it cannot find the ones it is looking for.** |
-| 36 | **Expensive retrievals are asked for, never defaulted into.** Time bounds and reading from local copies are each opt-in, per call. The default path is search records, filenames, and one 64 KiB prefix per simulation where a header is needed. |
+| 36 | **Expensive retrievals are asked for, never defaulted into.** Reading time bounds is opt-in, per call. The default path is search records, filenames, and one 64 KiB prefix per simulation where a header is needed, read from a local copy where one exists (`prefer_local=True`, the default) and from a data node otherwise. |
 | 36b | **Enrichment reads only the first and last time bounds of a file, never every value.** Checking a file's contents for gaps, irregular steps or missing values is a different and much more expensive thing, and not enrichment. |
 | 36c | **A fast path may guess, if the guess is named and the slow path can check it.** Filename ends, search-record points, the width of a reporting interval and a missing `branch_time_in_child` all rest on an assumption; each stored value names its assumption, and each answer built on one says so. See [part two](enrichment-sources.md#fast-paths-that-guess-and-the-slow-path-that-checks). |
 | 37 | **Parallel enrichment is pluggable per kind of retrieval**, with a default for each, because what is slow depends on the system (local reads included). See "Parallel enrichment". |
@@ -330,13 +330,13 @@ and `branch_time_in_child` that does not match the child's first bound.
 ## The enrich step (PRs C1 to C4)
 
 ```text
-enrich_datasets(session, inputs, *, sources=…, prefer_local=False, executors=…)
+enrich_datasets(session, inputs, *, sources=…, prefer_local=True, executors=…)
      │
      ├─ plan_enrichment            which versions, which files, which retrievals
      │      ├─ from_database          search records and filenames: no I/O
      │      ├─ prefixes_to_read       one 64 KiB prefix per simulation, or per file when bounds are read
      │      ├─ bounds_to_read         first and last time bounds, per file, when asked for (36, 36b)
-     │      └─ cannot_retrieve        nothing fetchable, or local copies asked for and absent
+     │      └─ cannot_retrieve        nothing fetchable, locally or from a data node
      │
      ├─ retrieve                   bytes, from data nodes or local files (parallel: see below)
      │
@@ -358,8 +358,12 @@ enrich_datasets(session, inputs, *, sources=…, prefer_local=False, executors=�
   that is the one place a `VersionFilter` meets enrichment.
 - **`sources`** says which sources may be used, defaulting to the cheap ones.
   This is also how a user double-checks: `sources={VARIABLE_VALUES}` for datasets whose answer looked wrong.
-- **`prefer_local`** reads local copies (from the downloads step) instead of data nodes. Opt-in,
-  because on some systems local reads are slower than the network.
+- **`prefer_local`**, on by default, reads a local copy (from the downloads step) where one exists,
+  and goes to a data node only for files with no local copy.
+  A local copy is the file we would otherwise fetch from, it needs no data node to be up,
+  and it puts no load on anyone else's server.
+  Pass `prefer_local=False` on a system where local reads are slower than the network,
+  which on some shared filesystems they are (see "Parallel enrichment").
 - **Prefixes per simulation by default.** A calendar and a parent belong to the run,
   the argument `HeaderReadPlanItem.dataset_version_ids` already makes for parents.
   When values are being read, every file's prefix is read anyway, and all of it is parsed.
@@ -563,6 +567,7 @@ Asked and answered on 2026-11-16, recorded so they are not asked again:
 - **CMIP5 has no `branch_time_in_child`.** Assume the child's first time bound, name the assumption,
   let a fix override it (PR R2, decision 36c).
 - **Status name.** `RECORDED`.
+- **Local copies.** Preferred by default (`prefer_local=True`), falling back to data nodes.
 - **Convert at enrich time, or at solve time?** Both the raw value and the converted one are stored,
   the conversion at enrich time (decision 31, `DatasetVersionBranchPoint`),
   so monthly solves stay free of `cftime`.
@@ -583,7 +588,7 @@ Against the draft reviewed in #74:
 | 31 | 35, reworded | |
 | `DatasetTimeRange` with raw columns and one `file_id` | `FileTimeRange` (raw, per file) and `DatasetVersionTimeRange` | a version's range comes from many files |
 | `DatasetBranchPoint`, interpreted, `int`, one set of units | `DatasetVersionBranchPoint`: derived positions for *both* ends, each with its own units and calendar, the raw floats untouched on `DatasetVersionParentInfo`, and re-derived when an input improves | 31 |
-| 32: whole files per question | 36, 36b: expensive retrievals opt-in, and only first and last bounds ever read | |
+| 32: whole files per question | 36, 36b: expensive retrievals opt-in, and only first and last bounds ever read; local copies preferred by default | |
 | status `MEASURED` | `RECORDED` | trust is the source's job, not the status's |
 | a fix-less `0.0` branch time "unfixable" | fixable with evidence from outside the file | |
 | `describing_version` resolved in each lookup | 32: entries are versions | the time lookups could not have known which version the solve meant |

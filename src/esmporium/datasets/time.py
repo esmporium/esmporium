@@ -307,6 +307,15 @@ class TimeAxis:
         if self.calendar is None or other.calendar is None:
             return True
 
+        # Strict on purpose: different calendars are never comparable,
+        # so nothing slips through by accident.
+        # We may have to loosen this once we work with real data at scale,
+        # because some models use different calendars for a control and its experiments.
+        # Sometimes that can be worked around
+        # (with monthly data you usually don't care which calendar each run used),
+        # and sometimes it is a real problem,
+        # so any loosening has to say which case it allows,
+        # rather than dropping the check.
         return self.calendar == other.calendar
 
 

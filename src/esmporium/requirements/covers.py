@@ -923,6 +923,10 @@ class Covers(BaseModel):
             child_axis = measured[index].range.axis
             parent_axis = measured[index + 1].range.axis
 
+            # A control and an experiment on different calendars fail here,
+            # because the calendar check is strict.
+            # That may need loosening for real data at scale:
+            # see the note in `TimeAxis.is_comparable_with`.
             if not branch.parent_axis.is_comparable_with(parent_axis):
                 # The branch point and the parent's own data disagree about the axis
                 # the parent is on, which is the data disagreeing with itself rather
