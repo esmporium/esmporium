@@ -126,8 +126,9 @@ Steps 5 and 9 live in the `CMIP-Output-Tracking` repository rather than here, wh
 why they carry no esmporium PR: this package is the library, and the watched searches
 and the nightly downloads are a deployment of it.
 
-**12a, 12b and 12c were steps 12, 13 and 12.5**, and 13 to 22 were 14 to 23. Older
-changelog fragments and PR descriptions use the old numbers.
+**12a, 12b and 12c were steps 12, 13 and 12.5**, and 13 to 22 were 14 to 23. No
+changelog fragment cites a step number, so nothing there needed changing; PR
+descriptions written before 2026-11-24 use the old numbers.
 
 ## The work, in the order we are doing it
 
@@ -144,7 +145,7 @@ the constraint at once.
 | [#73](https://github.com/esmporium/esmporium/pull/73) | **PR B2** — coverage along a chain | 12c, 12b | done |
 | [#74](https://github.com/esmporium/esmporium/pull/74) | the design notes [part two](docs/further-background/enrichment-sources.md) and [part three](docs/further-background/enrichment-storage.md) | 12c | done |
 | this one | `PLAN.md` and part one brought back in step with parts two and three | 12c | in progress |
-| **R1** | the values carry their units and only say what was published: `extent` returns a `Span`, axes checked inline, `BranchPoint` stops flooring floats, no default calendar, no guessing in the stamp reader, `measure` renamed | 12c, 12b | **next** |
+| **R1** | the values carry their units and only say what was published: `extent` returns a `Span`, axes checked inline, `BranchPoint` stops flooring floats, no default calendar, no guessing in the stamp reader, `measure` renamed. Also edits `changelog/71.feature.md`, whose `measure_version` cross-reference CI resolves | 12c, 12b | **next** |
 | **R2** | `Covers` checks units where it computes, maps through `branch_time_in_child`, and loses `align` | 12c, 12b, 14 | after R1 |
 | **R3** | a catalogue entry is a version; an unresolved parent reports "not yet" | 12c, 11, 16 | before C3 |
 | **C1** | readers: the range-backed byte source, the classic variable-list walk, `h5netcdf` for netCDF-4, the time-bounds read | 12c, 10 | after R1-R3 |

@@ -116,6 +116,11 @@ Each is `breaking` where it touches a requirement's hash or a public signature.
   and `measure_version` becomes `combine_file_ranges`;
   "measured" leaves messages and docstrings (e.g. `Covers`' "nothing has measured when …"),
   because nothing is measured: information is retrieved and parsed.
+  One place outside `src/` has to move with it: `changelog/71.feature.md` links
+  `[measure_version][esmporium.enrich.measure_version]`, and CI builds the pending
+  fragments into the docs strictly (`towncrier build --yes`, then
+  `properdocs build --strict`), so leaving it behind fails the build in a file nobody
+  thinks to look at.
 
 ### PR R2 — `Covers` checks units where it computes, and maps through `branch_time_in_child`
 
