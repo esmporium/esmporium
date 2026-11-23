@@ -2,7 +2,7 @@
 
 What we are building, in the order we mean to build it.
 
-Last updated: 2026-11-02
+Last updated: 2026-11-24
 
 ## What changed about this document
 
@@ -61,7 +61,7 @@ breaking the current database logic. Please keep this in mind for all future pro
                                      │
                                      ▼
                        SolveResult: satisfied / unsatisfied
-                                   / ambiguous
+                                   / ambiguous / couldnt_answer
 ```
 
 Everything still to do either **widens that loop** (more tables below `Dataset`: file
@@ -69,46 +69,102 @@ access, ancestry, downloads) or **sharpens the left-hand side** (more node types
 checks above `Leaf`), or **runs the loop for real** (a watched search on the server,
 and then downloading what it finds).
 
+One stage joins the loop rather than widening it: **`enrich`**, between the database
+and `solve`, which records the time information ESGF's search APIs do not publish.
+That is step 12c, and it is why `SolveResult` has a fourth mapping: a group we could
+not answer yet is not a group with no data.
+
 ```text
   Phase 1 ─────────► Phase 2 ─────────► Phase 3 ─────────► Phase 4
   watch what         get the data       say what we        load it, and
   changes                               need precisely     tidy up
 
-  steps 1–5          steps 6–11         steps 12–17        steps 18–23
+  steps 1–5          steps 6–11         steps 12a–16       steps 17–22
 ```
 
-## Roadmap at a glance
+Phases are groupings rather than gates. Phases 1 and 2 are complete, and phase 3 is
+where the work is, but phase 4's steps 18, 19 and 20 are ready whenever we want them.
 
-| # | Step | Was | Phase |
+## The steps
+
+What each step is for, and whether it is done. Step numbers are what changelog
+fragments, code comments and the design notes cite, so they are stable: 12a, 12b and
+12c are one body of work with three deliverables, and they share PRs.
+
+`Needs` is what has to land first. Everything not done is either **ready** (nothing
+blocks it) or **blocked by** something named, so "not started" never has to be
+interpreted.
+
+| # | Step | Phase | Needs | Status |
+|---|---|---|---|---|
+| 1 | CORDEX integration test: `other_terms` from search to solve | 1 | — | done · [#57](https://github.com/esmporium/esmporium/pull/57) |
+| 2 | Make `find` ~6x cheaper (`needs_facets`) | 1 | — | done · [#58](https://github.com/esmporium/esmporium/pull/58) |
+| 3 | Track changes in search results | 1 | — | done · [#59](https://github.com/esmporium/esmporium/pull/59) |
+| 4 | Nice summaries of results and of changes | 1 | — | done · [#61](https://github.com/esmporium/esmporium/pull/61) |
+| 5 | A live pattern-effect watch on the server, emailing us | 1 | 3, 4 | done · in `CMIP-Output-Tracking` |
+| 6 | Data access tracking (`DataAccess`, `File`) | 2 | — | done · [#62](https://github.com/esmporium/esmporium/pull/62) |
+| 7 | Downloads, and the data-node access layer | 2 | 6 | done · [#63](https://github.com/esmporium/esmporium/pull/63) |
+| 8 | Download parallelisation and per-data-node caps | 2 | 7 | done · [#64](https://github.com/esmporium/esmporium/pull/64) |
+| 9 | Deploy downloading off the watched searches | 2 | 5, 7, 10 | done · in `CMIP-Output-Tracking` |
+| 10 | Dataset ancestry | 2 | 6, 7 | done · [#65](https://github.com/esmporium/esmporium/pull/65), [#66](https://github.com/esmporium/esmporium/pull/66) |
+| 11 | `Ancestors` lineage in requirements | 2 | 10 | done · [#67](https://github.com/esmporium/esmporium/pull/67) |
+| **12a** | The `Constraint` protocol, nothing shipped | 3 | 11 | done · [#69](https://github.com/esmporium/esmporium/pull/69) |
+| **12b** | `Covers`: the constraint itself | 3 | 12c PR D | shipped, unfinished · [#69](https://github.com/esmporium/esmporium/pull/69), [#72](https://github.com/esmporium/esmporium/pull/72), [#73](https://github.com/esmporium/esmporium/pull/73) |
+| **12c** | Enrichment: the time information ESGF does not publish | 3 | 12a | **in progress** · R1 next |
+| 13 | `any_of`, `optional` | 3 | — | ready |
+| 14 | `scope` and `SameTimeRange` | 3 | 12c PR R2 | blocked by R2 |
+| 15 | `Aux` | 3 | — | ready |
+| 16 | Rework `prefer` | 3 | 15 | blocked by 15 |
+| 17 | Data loading | 4 | — | needs a design pass first |
+| 18 | `Sibling` | 4 | — | ready |
+| 19 | Dataset clash handling | 4 | — | ready |
+| 20 | Ingesting from a local source | 4 | 10 | ready |
+| 21 | Daily CMIP5/CMIP6 downloads, using what is already local | 4 | 20 | blocked by 20 |
+| 22 | Clean up, including retiring the prototype | 4 | 15 | blocked by 15 |
+
+Steps 5 and 9 live in the `CMIP-Output-Tracking` repository rather than here, which is
+why they carry no esmporium PR: this package is the library, and the watched searches
+and the nightly downloads are a deployment of it.
+
+**12a, 12b and 12c were steps 12, 13 and 12.5**, and 13 to 22 were 14 to 23. No
+changelog fragment cites a step number, so nothing there needed changing; PR
+descriptions written before 2026-11-24 use the old numbers.
+
+## The work, in the order we are doing it
+
+One row per PR. `Steps` is a list, because this is where the steps interleave: `#69`
+shipped the protocol and its first constraint together, and PR D finishes the data and
+the constraint at once.
+
+| PR | What it does | Steps | Status |
 |---|---|---|---|
-| 1 | CORDEX integration test: `other_terms` from search to solve | new | 1 |
-| 2 | Make `find` ~6x cheaper (`needs_facets`) | new | 1 |
-| 3 | Track changes in search results | PR4 | 1 |
-| 4 | Nice summaries of results and of changes | PR5 | 1 |
-| 5 | A live pattern-effect watch on the server, emailing us | PR4 live tests | 1 |
-| 6 | Data access tracking (`DataAccess`, `File`) | PR7 | 2 |
-| 7 | Downloads, and the data-node access layer | PR8 | 2 |
-| 8 | Download parallelisation and per-data-node caps | new | 2 |
-| 9 | Deploy downloading off the watched searches | new | 2 |
-| 10 | Dataset ancestry | PR6 | 2 |
-| 11 | `Ancestors` lineage in requirements | R5 | 2 |
-| 12 | The `Constraint` protocol, nothing shipped | R6 | 3 |
-| 12.5 | Enrichment: the time information ESGF does not publish | new | 3 |
-| 13 | `Covers` | R7 | 3 |
-| 14 | `any_of`, `optional` | R8 | 3 |
-| 15 | `scope` and `SameTimeRange` | R9 (`namespace`) | 3 |
-| 16 | `Aux` | R11 | 3 |
-| 17 | Rework `prefer` | new | 3 |
-| 18 | Data loading | PR9 | 4 |
-| 19 | `Sibling` | R10 | 4 |
-| 20 | Dataset clash handling | PR5.5 | 4 |
-| 21 | Ingesting from a local source | new | 4 |
-| 22 | Daily CMIP5/CMIP6 downloads, using what is already local | new | 4 |
-| 23 | Clean up, including retiring the prototype | R13 + new | 4 |
+| [#69](https://github.com/esmporium/esmporium/pull/69) | the `Constraint` protocol, with `Covers` as its first implementation | 12a, 12b | done |
+| [#70](https://github.com/esmporium/esmporium/pull/70) | the enrichment design note, part one | 12c | done |
+| [#71](https://github.com/esmporium/esmporium/pull/71) | **PR A** — the time value types, the per-project filename readers, calendar arithmetic over `cftime` | 12c | done |
+| [#72](https://github.com/esmporium/esmporium/pull/72) | **PR B** — the new `Covers` (explicit `mode`, no fractional years, `fx` refused out loud), `couldnt_answer`, `enrichment_inputs` | 12c, 12b | done |
+| [#73](https://github.com/esmporium/esmporium/pull/73) | **PR B2** — coverage along a chain | 12c, 12b | done |
+| [#74](https://github.com/esmporium/esmporium/pull/74) | the design notes [part two](docs/further-background/enrichment-sources.md) and [part three](docs/further-background/enrichment-storage.md) | 12c | done |
+| this one | `PLAN.md` and part one brought back in step with parts two and three | 12c | in progress |
+| **R1** | the values carry their units and only say what was published: `extent` returns a `Span`, axes checked inline, `BranchPoint` stops flooring floats, no default calendar, no guessing in the stamp reader, `measure` renamed. Also edits `changelog/71.feature.md`, whose `measure_version` cross-reference CI resolves | 12c, 12b | **next** |
+| **R2** | `Covers` checks units where it computes, maps through `branch_time_in_child`, and loses `align` | 12c, 12b, 14 | after R1 |
+| **R3** | a catalogue entry is a version; an unresolved parent reports "not yet" | 12c, 11, 16 | before C3 |
+| **C1** | readers: the range-backed byte source, the classic variable-list walk, `h5netcdf` for netCDF-4, the time-bounds read | 12c, 10 | after R1-R3 |
+| **C2** | the `parse_*` functions, pure, one per source, plus the consistency comparison | 12c | after C1 |
+| **C3** | storage: the five tables, the `DatasetVersionParentInfo` rename, one alembic revision | 12c | after R3 |
+| **C4** | `enrich_datasets`, serial: plan, retrieve, parse, record, back-fill, fixes | 12c | after C1-C3 |
+| **D** | the catalogue serves it, and the integration tests that were the point | 12c, 12b | after C4 — **this is what finishes 12b** |
+| **P** | parallel enrichment: an executor per kind of retrieval | 12c | after D |
+| **E** | `download_by_id`, splitting `plan_downloads` where it already reduces a query to ids | 7, 21 | after R3 |
 
-Three things about this order are not obvious, and all are worth knowing about. The
-numbers run in the order we mean to work, so these are the reasons the sequence is
-what it is rather than the other way round:
+R1 to E are [step 12c](#12c-enrichment-the-time-information-esgf-does-not-publish)'s,
+and that section says what each one is for. A PR joins this table when it is planned
+and is marked done when it lands.
+
+## Why the order is what it is
+
+Four things about this order are not obvious, and all are worth knowing about. The
+`Needs` column says *what* blocks what; these are the reasons the sequence is what it
+is rather than the other way round:
 
 - **Data access tracking (step 6) comes before ancestry (step 10).** The obvious
   order is the reverse, with ancestry throwing file information away and `File`
@@ -133,13 +189,38 @@ what it is rather than the other way round:
   Note the consequence for step 9: the deployment it describes wants to follow
   parents back to `historical`, which is ancestry, so that part of it has to wait for
   step 10 even though the downloading itself does not.
-- **`Sibling` (step 19) is late, and `Ancestors` (step 11) is early.** Ancestors is
+- **`Sibling` (step 18) is late, and `Ancestors` (step 11) is early.** Ancestors is
   what the live searches need (parents back to `historical`); siblings are not needed
   until the ERF use cases.
+- **12a, 12b and 12c are one body of work split three ways**, which is why single PRs
+  move several of them and why the three share a number. The split is by *kind*, not
+  by order: 12a is the extension point (a protocol, with nothing shipped through it,
+  which is what proves it is one), 12b is the constraint users actually want, and 12c
+  is the information the archive does not publish and without which 12b can only ever
+  answer against a hand-written catalogue. Building them in that order was right --
+  the protocol could be proven without a constraint, and the constraint could be
+  proven in memory without a database -- but none of the three is finished until
+  12c's PR D runs 12b against a real one.
 
-## Done so far
+## Where we are, in a paragraph
 
-The search-and-database track:
+**Phases 1 and 2 are complete.** Searching every API with every query class, recording
+their health, parsing results into `Dataset`s, tracking what changes between searches,
+summarising it, data access routes, downloads with node health and ranking, ancestry,
+and `Ancestors` in requirements all work -- and the watched searches and the nightly
+downloads off them run in `CMIP-Output-Tracking`, which is steps 5 and 9.
+
+**Phase 3 is the requirement language, and step 12c is the work in hand.** Its three
+design notes and its pure half are built; three corrective PRs (R1 to R3) come next,
+then the readers, the parsers, the storage, the enrich step, and the integration tests
+that finish 12b. Steps 13, 15 and 18 are ready whenever we want them; 14 and 16 are
+waiting on R2 and on 15. **Phase 4 has not started**, and step 17 (data loading)
+wants a design pass of its own before it is picked up.
+
+## Before the two plans merged
+
+Everything below landed before this file became one numbered sequence, so it is
+recorded by its old track number rather than by a step. The search-and-database track:
 
 | Was | What landed | PR |
 |---|---|---|
@@ -155,34 +236,8 @@ The search-and-database track:
 | — | Facade fixes, `get_n_matches` moved onto the APIs | [#49](https://github.com/esmporium/esmporium/pull/49) |
 | — | Keep both ESGF-NG mirrors' documents (`search_host`) | [#54](https://github.com/esmporium/esmporium/pull/54) |
 
-The numbered steps of this plan, as they have landed:
-
-| Step | What landed | PR |
-|---|---|---|
-| 1 | CORDEX integration test: `other_terms` from search to solve | [#57](https://github.com/esmporium/esmporium/pull/57) |
-| 2 | Make `find` ~6x cheaper (`needs_facets`) | [#58](https://github.com/esmporium/esmporium/pull/58) |
-| 3 | Track changes in search results | [#59](https://github.com/esmporium/esmporium/pull/59) |
-| 4 | Nice summaries of results and of changes (`summarise_search`) | [#61](https://github.com/esmporium/esmporium/pull/61) |
-| 6 | Data access tracking (`File`, `DataAccess`) | [#62](https://github.com/esmporium/esmporium/pull/62) |
-| 7 | Downloads, and the data-node access layer | [#63](https://github.com/esmporium/esmporium/pull/63) |
-| 8 | Download parallelisation and per-data-node caps | [#64](https://github.com/esmporium/esmporium/pull/64) |
-| 10 | Dataset ancestry (`find_parents`, `esmporium.headers`, `esmporium.fixes`) | [#65](https://github.com/esmporium/esmporium/pull/65), [#66](https://github.com/esmporium/esmporium/pull/66) |
-| 11 | `Ancestors` lineage in requirements | [#67](https://github.com/esmporium/esmporium/pull/67) |
-| 12 | The `Constraint` protocol, plus `Covers` itself | [#69](https://github.com/esmporium/esmporium/pull/69) |
-| 12.5 | The enrichment design note, [docs/further-background/enrichment.md](docs/further-background/enrichment.md) | [#70](https://github.com/esmporium/esmporium/pull/70) |
-
-So **phase 1 is done except step 5** (the live pattern-effect watch on the server),
-and **phase 2 is done except step 9** (the deployment).
-
-**Step 9 is now fully unblocked**, which is the nearest thing to a live archive: step 5
-watches, step 7 can download, and step 10 can follow parents back to `historical` --
-which was its one remaining caveat. Wiring those together is the only thing between us
-and data arriving on disk by itself.
-
-The PR numbers above are taken from the `changelog/<PR>.<type>.md` fragment names, so
-they should be right, but they were not checked against GitHub -- worth a glance.
-
-The requirements track:
+The requirements track, whose `R` numbers are its own and have **nothing** to do with
+step 12c's corrective PRs R1 to R3:
 
 | Was | What landed | PR |
 |---|---|---|
@@ -199,6 +254,10 @@ requirement's name with a timestamp — is no longer wanted:
 `Requirement.name` is required and chosen by
 the user, so there is nothing to generate. What is left of `PR3.7` is the name-clash
 handling, which is part of step 3.
+
+Every PR number in this file is taken from the `changelog/<PR>.<type>.md` fragment
+names, so they should be right, but they were not checked against GitHub -- worth a
+glance.
 
 ---
 
@@ -371,15 +430,17 @@ Integration tests:
 
 ## 5. A live pattern-effect watch on the server, emailing us
 
+DONE: in the `CMIP-Output-Tracking` repository, not here.
+
 *Was PR4's live tests, narrowed to one search.*
 
 Set up a search for pattern effect on the server and start emailing ourselves and see
 what happens. One search, running for real, is what will tell us whether steps 3 and 4
 produced something useful — and it is cheap to extend once it works.
 
-- [ ] set up a new repo and, on the CMIP6 server, set up the pattern effect search as
+- [x] set up a new repo and, on the CMIP6 server, set up the pattern effect search as
       a 'watched' search. Once a day, re-run it. If there are changes, email you and me
-- [ ] see what happens: the formatters in step 4 should be driven by what these emails
+- [x] see what happens: the formatters in step 4 should be driven by what these emails
       make us wish for
 
 Then: we will add other searches as our requirement specification functionality
@@ -619,7 +680,8 @@ Integration tests:
     - [x] pick files/datasets we know are small (e.g. areacella files or setting this up in a way that means we only need to download two years of EC Earth data, which is in one year files that are tiny)
     - [x] actually download them
     - [x] check that the data is there, the database state is as expected etc.
-    - **in parallel** is the one part outstanding, because parallelism is the next PR.
+    - **in parallel** was the one part outstanding when this was written, and step 8
+      ([#64](https://github.com/esmporium/esmporium/pull/64)) is it.
       Everything else is done sequentially in
       `tests/integration/downloads/test_download_live.py`, opt-in behind
       `--run-downloads-data` / `make test-downloads`. `areacella` turned out to be the
@@ -670,10 +732,14 @@ measurements ask for it.
 
 ## 9. Deploy downloading off the watched searches
 
+DONE: in the `CMIP-Output-Tracking` repository, not here, like step 5. What esmporium
+owes it is the library half, and the notes below are that: they are what the deployment
+relies on, so they are the things not to break.
+
 *New step.* Step 5 watches; step 7 can download; this is the two wired together on the
 server, triggered off what the watch finds.
 
-*Now unblocked, as of step 7.* The download half is `db.download(engine, query, root)`,
+*Unblocked as of step 7.* The download half is `db.download(engine, query, root)`,
 which plans, queues, fetches and records in one call -- the twin of
 `search_and_track`. Three things about it matter for a server deployment:
 
@@ -689,18 +755,27 @@ which plans, queues, fetches and records in one call -- the twin of
   its own next refresh reads, so it moves away from nodes that go bad while it is
   running.
 
-Still missing for a real deployment: **parallelism** (the next PR), and a decision
-about disk. Nothing here caps total size, and `plan_downloads` will happily plan a
-petabyte -- the only guard is that it tells you how many files first, and
-`download_summary` tells you what is outstanding.
+Still missing for a real deployment: a decision about disk. Nothing here caps total
+size, and `plan_downloads` will happily plan a petabyte -- the only guard is that it
+tells you how many files first, and `download_summary` tells you what is outstanding.
+(Parallelism was the other gap, and step 8
+([#64](https://github.com/esmporium/esmporium/pull/64)) closed it.)
 
-We're going to be a bit stupid about this and just do a clean archive. The reason is that the logic for ingesting data that is already available locally will be tricky and I don't want us to get delayed worrying about that headache: downloading is not that expensive and we have to do it for CMIP7 anyway. We just need to be a bit careful to not re-download anything really expensive i.e. let's not start downloading any daily CMIP6 data until we have the 'ingest from local' functionality working (steps 21 and 22).
+One convenience this will want: **`download_by_id`**, which is
+[step 12c](#12c-enrichment-the-time-information-esgf-does-not-publish)'s **PR E**.
+`plan_downloads` takes the same query object a search takes, and a facet query cannot
+name a list -- `facet_filters` refuses anything outside `DATASET_FACET_COLUMNS`, and a
+facet query is a cross-product, so asking for two specific datasets returns four. An
+id-based entry point is the only correct answer, and after PR R3 the ids it takes are
+version ids, which is what a download is of.
+
+We're going to be a bit stupid about this and just do a clean archive. The reason is that the logic for ingesting data that is already available locally will be tricky and I don't want us to get delayed worrying about that headache: downloading is not that expensive and we have to do it for CMIP7 anyway. We just need to be a bit careful to not re-download anything really expensive i.e. let's not start downloading any daily CMIP6 data until we have the 'ingest from local' functionality working (steps 20 and 21).
 
 As soon as this and downloading lands, I would like to spin up and start doing tracking and downloading for scenario tas
 (but only following parents back up to historical, not piControl):
 I'm going to need it for a paper and it's a nice simple use case.
 
-- [ ] download data for the live searches in step 5 (except for Malte's daily data,
+- [x] download data for the live searches in step 5 (except for Malte's daily data,
       let's check with him before we start downloading anything as we might actually
       run out of space if we do that)
 
@@ -804,7 +879,7 @@ them.
 - `relations.py` (new): `RELATION_MODEL_CONFIG`, `Ancestors`, and `Lineage` with `index_of`.
   `Lineage` lives here rather than in `constraints.py` (which does not exist yet) because it is
   the resolved form of `Ancestors`/`Sibling` and solving needs it before any constraint exists;
-  `constraints.py` imports it from here at step 12.
+  `constraints.py` imports it from here at step 12a.
 - `catalogue.py`: `Catalogue.parent_of`, `InMemoryCatalogue.parents`, reference checking in
   `__post_init__`, and the `DatabaseCatalogue` implementation reading the links step 10 stored.
 - `tree.py`: `LineageRelation` (one member for now), `Leaf.lineage`, `.with_lineage()`,
@@ -836,19 +911,21 @@ What landed differently from the sketch above, and why:
   (`ParentStatus`, `ParentLookup`). Step 10 was careful to distinguish "nobody has read
   a parent for this" from "this declares no parent", and collapsing the two here would
   have thrown that away -- a user told "no parent" would go looking for data rather than
-  running `find_parents`. `NOT_LOOKED_FOR` is the natural home for
-  step 12.5's `NEEDS_ENRICHMENT` -- step 12's `undetermined`, which this once pointed
-  at, never landed.
+  running `find_parents`. Step 12c keeps that distinction rather than folding it into
+  `NEEDS_ENRICHMENT`: by its decision 34, `NOT_LOOKED_FOR` and `UNRESOLVED` put a group
+  in `couldnt_answer` with a status pointing at `esmporium.db.find_parents`, the way
+  `NEEDS_ENRICHMENT` points at the enricher. Today both still report `UNSATISFIED`;
+  **PR R3** is where that changes.
 - **A satisfied lineage says how it was resolved**, in its explanation only
   (`ParentLookup.provenance`). A chain which rests on a hand fix, or on our own rule for
   which release of the parent to use, reads differently from one the archive published.
-  Nothing is modelled, so step 13's `Covers` is still free to decide whether that counts
+  Nothing is modelled, so step 12b's `Covers` is still free to decide whether that counts
   as degraded.
 - **`SearchPlan.ancestry_until` landed here too**, which `planning.py`'s own note always
   said belonged to this step. `search()` is deliberately *not* wired to `find_parents`:
   populating the links stays an explicit call.
 - **Every stored requirement's hash changed**, because `Leaf` gained a field and
-  `identity_json` is a complete dump. Accepted while there are no users; step 17 owns
+  `identity_json` is a complete dump. Accepted while there are no users; step 16 owns
   the question of what the hash should cover.
 - `Resolved.lineages` is `NodeResultOk.lineages` and `Solution.lineages`, the names
   those classes ended up with at step 3.
@@ -856,7 +933,8 @@ What landed differently from the sketch above, and why:
 # Phase 3 — say what we need precisely
 
 This is the rest of the requirement language. Three things make these steps cheap, and
-they are why the phase can run as a straight line:
+they are why the phase can *mostly* run as a straight line -- the exception being 12a,
+12b and 12c, which are one body of work split three ways and share their PRs:
 
 - **The node types are purely additive.** The `Node` union has two members today
   (`Leaf`, `AllOf`). Each new node type is one more entry in that union plus one more
@@ -874,9 +952,12 @@ One thing has changed since this was written, and it affects every step below:
 needs the `to_search_plan` branch and test that the old R12 would have added at the
 end. The old R12's `test_gcmagicc_includes_every_alternative_and_optional`,
 `test_erf_includes_sibling_query` and `test_carbon_closure` are the shape of those
-tests; they belong to steps 14, 19 and 15 respectively.
+tests; they belong to steps 13, 18 and 14 respectively.
 
-## 12. The `Constraint` protocol, with nothing shipped
+## 12a. The `Constraint` protocol, with nothing shipped
+
+DONE: See PR #69. Nothing is outstanding here; 12b and 12c are the other two
+deliverables of the same body of work.
 
 *Was R6.*
 
@@ -912,10 +993,10 @@ What landed differently from the sketch above, and why:
 - **`GroupView` is `ConstraintView`.** At a leaf it holds that leaf's roles and its
   chain, not the group's, so the old name was true only at the root. Named for who it is
   for instead, which is the one description true at all three attachment levels.
-- **`notes` arrived here rather than at step 14.** `Degraded` needs somewhere to put its
+- **`notes` arrived here rather than at step 13.** `Degraded` needs somewhere to put its
   message, and a caller asking "which of my forty groups are degraded?" should not have
   to walk the explanation tree to find out. `NodeResultOk`, `Solution` and `_merge` all
-  carry it. `choices` is still step 14's.
+  carry it. `choices` is still step 13's.
 - **`NodeResultOk.lineages` is keyed by role path** (`Solution.lineages` is still the
   flat tuple it was). A check names the role it is talking about, so it has to be handed
   the chains under those names; recovering the key by searching `roles` for each chain's
@@ -927,14 +1008,18 @@ What landed differently from the sketch above, and why:
   beside itself, so `Covers` is a `Constraint[CatalogueWithTimeInfo]` with
   `get_time_range` and `get_branch_time_in_parent` on it. That is the better shape --
   one generic `metadata(key)` would have been stringly-typed and uncheckable -- but
-  see step 12.5, which moves it again.
+  see step 12c, which moves it again.
 - **The `undetermined` status did not land either**, and nor did
-  `ParentStatus.NOT_LOOKED_FOR` reporting as it. `ExplanationStatus` is still
-  `SATISFIED`/`DEGRADED` and `UNSATISFIED`/`AMBIGUOUS`, `SolveResult` still has three
-  mappings (its docstring says four), and `_evaluate_constraints` turns *any*
-  exception into `Fail`. So "nobody has recorded this yet" is still reported as "there
-  is no data", which is the step-11 mismatch this bullet claimed to have closed.
-  Step 12.5 closes it for real, under a clearer name.
+  `ParentStatus.NOT_LOOKED_FOR` reporting as it, so "nobody has recorded this yet" was
+  reported as "there is no data" -- the step-11 mismatch this bullet claimed to have
+  closed. **Step 12c's PR B
+  ([#72](https://github.com/esmporium/esmporium/pull/72)) closed it**, under a clearer
+  name: `ExplanationStatusNotOk` gained `NEEDS_ENRICHMENT` and
+  `MISSING_FEATURE_PLEASE_RAISE_ISSUE`, `SolveResult` gained its fourth mapping
+  `couldnt_answer` and `enrichment_inputs`, and `_evaluate_constraints` now catches
+  `ConstraintNotEvaluableError` rather than every exception, so a typo inside a
+  constraint is a bug again instead of an unsatisfied group. The parent half of it --
+  an unresolved parent reported as "not yet" -- is PR R3's.
 - **`requirement()` grew a `constraints` argument.** The field alone was not enough --
   the factory is the documented way to build one, so a requirement-level check would
   have been unreachable through it.
@@ -942,81 +1027,11 @@ What landed differently from the sketch above, and why:
   `Requirement` each gained a field and `identity_json` is a complete dump. Clear or
   re-stem any tracked search before its next run.
 
-## 12.5. Enrichment: the time information ESGF does not publish
+## 12b. `Covers`
 
-*New. The design note landed as [#70](https://github.com/esmporium/esmporium/pull/70);
-the implementation is still ahead of us.*
-
-Step 13 cannot be finished without a source of start and end times, and step 12 left
-that open. This step is that source, and it is a new pipeline step rather than a piece
-of either neighbour:
-
-```text
-Requirement --> search --> database --> ENRICH --> solve --> outcome
-```
-
-**Read [docs/further-background/enrichment.md](docs/further-background/enrichment.md)
-before starting any of it.** It settles twenty decisions and five PRs; what belongs
-here is only the shape and the reasons the shape is what it is.
-
-- **Why store rather than compute during `solve`.** Lookups become free; a value set by
-  a fix is recorded instead of recomputed every run; and it is where the information
-  belongs. ESGF's search index not carrying it is a gap in ESGF, which we fill.
-- **Natural and rich, both.** Start and end in the data's own frequency come from the
-  filename and cost nothing. Calendars and datetimes come from a file header and are
-  fetched only where needed -- which is nowhere, for monthly and yearly data, because a
-  month count is calendar-independent. **No fractional years are ever stored or
-  computed**, at either end.
-- **Ranges are half-open, and the column says so**: `[start, end_exclusive)`, so the
-  extent is one subtraction with no `+1` and two files are adjacent exactly when
-  `previous.end_exclusive == next.start` -- which is what gap detection is. The
-  off-by-one lives in one named conversion, and `end_raw` keeps what the filename
-  actually said. This is the trap the note calls out as having caught many people
-  before: a yearly dataset published as 1850 to 1860 is eleven years, not ten.
-- **`cftime`, from a new optional extra**, does the calendar arithmetic. We do not
-  write our own leap rules. Imported at point of use, as `headers/hdf5.py` already
-  does with `h5py`, so the monthly and yearly paths need nothing installed and only
-  the sub-monthly path pays. Note the consequence: `requirements` gains an optional
-  third-party dependency, because `Covers` does this arithmetic at solve time.
-- **Two new tables**, `DatasetTimeRange` and `DatasetBranchPoint`, both following
-  `DatasetVersionParent`'s one-row-per-source shape so `SOURCE_PRECEDENCE` is inherited
-  rather than rebuilt. Start and end, not extents. One `units` column rather than a
-  natural column group and a rich one.
-- **The branch point goes on the edge**, not on either dataset -- a deliberate
-  departure from ESGF, whose data model has no edges. The facts come from the child,
-  which is where they are published and where `DatasetVersionParent` already stores
-  them raw; this step adds the interpreted value.
-- **Constraints switch from asking the catalogue to asking the entry.** The note argues
-  this out, including what it costs: `CatalogueWithTimeInfo` is vacated (not deleted --
-  it still suits anything that is a *lookup* rather than a dataset fact, such as an
-  aggregate over the catalogue), and `CatalogueEntry`'s "mirrors `Dataset`'s columns"
-  docstring has to be rewritten rather than quietly broken.
-- **`couldnt_answer` is the fourth `SolveResult` mapping**, which is what its docstring
-  has always promised, carrying `NEEDS_ENRICHMENT` ("go and fetch it", with
-  `enrichment_inputs` ready to hand back to the enricher) and
-  `MISSING_FEATURE_PLEASE_RAISE_ISSUE` ("a fair thing to want, not supported yet") as
-  reasons. This is the step-12 bullet above, done properly.
-- **The calendar is not a global attribute.** Measured against this repo's own captured
-  header prefixes, not assumed: `calendar` and the time units are attributes of the
-  *time variable*, and `esmporium.headers` reads globals only. The CMIP5 netCDF3 prefix
-  does not contain the word `calendar` anywhere. So this step also grows
-  `read_variable_attributes` -- a variable-list walk in `netcdf3.py` and the matching
-  h5py path -- and no, h5py cannot replace the hand-rolled classic parser: h5py reads
-  HDF5, and classic netCDF is a different format which it refuses outright.
-- **`Covers` ships for a direct parent, and the chain is its own PR.** "The control
-  covers this experiment *and every parent back up to the control*" is what the
-  scenario and ZEC analyses need, and it is a rule we have not written down yet, so it
-  is not settled next to new value types and a new table. `Covers` raises
-  `NotImplementedError` for a covering role which is not the target's direct parent;
-  the chain rule gets a PR of its own, agreed as a picture first.
-- **`download_by_id`**, which falls out of the same work: `plan_downloads` already
-  reduces its query to `dataset_ids` before planning, so the split is one line. Worth
-  recording why it is needed at all -- a facet query cannot name a list, because
-  `facet_filters` refuses anything outside `DATASET_FACET_COLUMNS` (and
-  `id_project_specific` is deliberately excluded from it), and because a facet query is
-  a cross-product, so asking for two specific datasets returns four.
-
-## 13. `Covers`
+SHIPPED, UNFINISHED: the constraint landed across #69, #72 and #73. What is left is
+not constraint code but the data under it: **12c's PR D** is what finishes this step,
+and 12c's R1 and R2 pass through `covers.py` on the way.
 
 *Was R7.*
 
@@ -1032,19 +1047,29 @@ Tests: `test_covers_calendar`, `test_covers_branch_needs_ancestor`, `test_covers
 Use cases: `01-tcr`, `03-tcre-flat10`, `04-tcre-1pct`, `05-zec-flat10`,
 `11-tas-scenario-anomalies`, plus `TO_CONTROL`, `CONTROL_COVERS` and `CONTROL_IDEALLY_COVERS`.
 
-**This step needed a source of `time_range`, and step 12.5 is it.** `Covers` itself
-shipped with #69 but has only ever run against a 35-line test-only catalogue answering
-from two hand-written dicts, so what is left here is not the constraint but everything
-that makes it work on real data. The questions this section used to leave open --
-which convention per project, what a version whose files disagree or have gaps spans,
-and which calendar the numbers are in -- are answered in
-[docs/further-background/enrichment.md](docs/further-background/enrichment.md), and the
-answers are: filename for start and end, header for the calendar, per-project readers
-registered the way `PARENT_HEADER_READERS_BY_PROJECT` already are, a contiguity flag
-with `Covers` refusing a gapped range, and no fractional years anywhere.
+**The constraint has shipped; what is left is the data under it.** `Covers` landed
+with [#69](https://github.com/esmporium/esmporium/pull/69), was rewritten by
+[#72](https://github.com/esmporium/esmporium/pull/72) and learned the chain in
+[#73](https://github.com/esmporium/esmporium/pull/73). It has still only ever run
+against a 35-line test-only catalogue answering from two hand-written dicts, so this
+step is finished not by writing a constraint but by
+[step 12c](#12c-enrichment-the-time-information-esgf-does-not-publish)'s **PR D**,
+which runs it against `DatabaseCatalogue`. Two of 12c's corrective PRs land here
+first: **R1** gives the value types their units, and **R2** checks those units at every
+computation, maps through `branch_time_in_child` rather than the child's own start, and
+removes `align`.
 
-Two things about the constraint itself change when it meets real data, and both are in
-that note:
+The questions this section used to leave open -- which convention per project, what a
+version whose files disagree or have gaps spans, and which calendar the numbers are in
+-- are answered across the three enrichment notes, and the answers are: per-project
+filename readers registered the way `PARENT_HEADER_READERS_BY_PROJECT` already are;
+the time bounds for an exact start and end and the time variable's attributes for the
+calendar, with filenames and search records as the cheap paths that they check; a
+contiguity flag with `Covers` refusing a gapped range; and no fractional years in any
+extent we state or compare.
+
+Three things about the constraint itself changed when it met real data, and all three
+are in those notes:
 
 - **`Covers` grows a second mode, and stops defaulting anything.** `mode` is stated
   explicitly -- `"containment"`, or `"overlap"` with `min_overlap` -- because
@@ -1052,26 +1077,170 @@ that note:
   arguments were given is the kind of default `group_by` already refuses. Setting
   `min_overlap` to the covered run's own extent reduces, term for term, to the
   containment check already implemented, so one private function serves both modes.
-  **This is a breaking change to #69's signature**: every `Covers(...)` in
-  `use_cases.py` and `test_covers.py` gets rewritten. The soft `ideal_*` thresholds
-  carry over, because they are `Degraded`'s only producer.
-- **Only a direct parent, to begin with.** #69's `_needed_span` walks a whole chain,
-  but the *rule* for a chain -- which branch point an overlap is measured from, what a
-  parent running past its child means, what a gapped intermediate does -- has never
-  been written down. So a covering role which is not the target's direct parent raises
-  `NotImplementedError`, and the chain gets its own PR under step 12.5, started from an
-  agreed picture. `05-zec-flat10` and `11-tas-scenario-anomalies` are the two use cases
-  waiting on it.
+  **This was a breaking change to #69's signature**: every `Covers(...)` in
+  `use_cases.py` and `test_covers.py` was rewritten. The soft `ideal_*` thresholds
+  carry over, because they are `Degraded`'s only producer. *Done in
+  [#72](https://github.com/esmporium/esmporium/pull/72).*
+- **A direct parent first, then the chain.** #69's `_needed_span` walked a whole chain
+  without the *rule* for one -- which branch point an overlap is measured from, what a
+  parent running past its child means, what a gapped intermediate does -- having been
+  written down, so #72 raised `NotImplementedError` beyond a direct parent until it
+  was. The rule is part one's "Along a chain": the covered run and every parent up to
+  the covering one are one continuous series, mapped a branch at a time, anchored at
+  the bottom branch point. *Done in
+  [#73](https://github.com/esmporium/esmporium/pull/73)*, which is what let
+  `05-zec-flat10` and `11-tas-scenario-anomalies` cover their intermediate runs.
 - **`fx` is refused out loud.** Coverage does not apply to a dataset with no time axis,
   and rather than hoping nobody attaches `Covers` to an `fx` leaf, this follows
   `LineageStartsAtTargetError`'s two tiers: refused when the requirement is built if
   the leaf can only select `fx`, failed when solved if it selects one among others.
+  *Done in [#72](https://github.com/esmporium/esmporium/pull/72).*
 
 The in-code note about branch-time handling needing to become clearer still stands, and
-step 12.5 is where it is answered: a correction becomes a `FIX`-sourced row rather than
+step 12c is where it is answered: a correction becomes a `FIX`-sourced row rather than
 a catalogue wrapper, so it is recorded once instead of re-applied every run.
 
-## 14. `any_of`, `optional`
+## 12c. Enrichment: the time information ESGF does not publish
+
+*New step, and the one in progress.* Step 12b cannot be finished without a source of
+start and end times, and step 12a left that open. This step is that source, and it is a
+new pipeline step rather than a piece of either neighbour:
+
+```text
+Requirement --> search --> database --> ENRICH --> solve --> outcome
+```
+
+Three design notes, in this order:
+
+| Note | What it settles |
+|---|---|
+| [enrichment.md](docs/further-background/enrichment.md) (part one, [#70](https://github.com/esmporium/esmporium/pull/70)) | decisions 1-23: what is stored, half-open ranges, natural versus rich values, the `Covers` question and its pictures, what is project-specific |
+| [enrichment-sources.md](docs/further-background/enrichment-sources.md) (part two, [#74](https://github.com/esmporium/esmporium/pull/74)) | where each piece of information comes from, what it costs, how far it can be believed, and what reads it |
+| [enrichment-storage.md](docs/further-background/enrichment-storage.md) (part three, [#74](https://github.com/esmporium/esmporium/pull/74)) | decisions 24-37: the tables, the enrich step, fixes, parallelism, and the PR ladder below |
+
+**Read them before starting any of it.** What belongs here is the shape, the order of
+work, and where we are up to.
+
+### What is settled
+
+- **Why store rather than compute during `solve`.** Lookups become free; a value set by
+  a fix is recorded instead of recomputed every run; and it is where the information
+  belongs. ESGF's search index not carrying it is a gap in ESGF, which we fill.
+- **Six sources, each recorded as such**, with a trust order: `FIX`, then
+  `VARIABLE_VALUES`, then the published metadata (`SEARCH_RECORD`, `FILENAME`,
+  `FILE_HEADER`). `VARIABLE_ATTRIBUTES` sit outside that order, because nothing else
+  records a calendar to check them against. A search record gives a version's first and
+  last time value for nothing, since we already store the raw documents; a filename
+  gives per-file stamps and so the gaps between files; a header gives the branch times
+  and **no start or end at all**; the time bounds give start and end exactly.
+- **Retrieve once, parse everything.** One pure `parse_*` function per source, each
+  returning everything that source can say, and one retrieval handed to every parser
+  that applies — so a 64 KiB prefix read for a parent also yields the calendar.
+- **Expensive retrievals are asked for, never defaulted into**, and only the **first
+  and last** time bounds of a file are ever read. Checking a file's contents for gaps,
+  irregular steps or missing values is a different and much more expensive thing, and
+  is not enrichment.
+- **A fast path may guess, if the guess is named and the slow path can check it.**
+  Filename ends, search-record points, the width of a reporting interval and a missing
+  `branch_time_in_child` all rest on an assumption; each stored value names its
+  assumption, and each answer built on one says so.
+- **Disagreements between sources are kept and surfaced, never overwritten.** The more
+  trusted row answers, and the answer says how to check it.
+- **Readers: our own classic netCDF parser and `h5netcdf`, over one byte source** that
+  is either HTTP ranges or a local file, so local and remote share every parser and
+  every test. No `netCDF4` extra. The classic parser is written from the format
+  specification, citing the grammar rule each piece implements.
+- **Ranges are half-open, and the column says so**: `[start, end_exclusive)`, so the
+  extent is one subtraction with no `+1` and two files are adjacent exactly when
+  `previous.end_exclusive == next.start` — which is what gap detection is. The
+  off-by-one lives in one named conversion, and the raw stamps are kept per file. This
+  is the trap part one calls out as having caught many people before: a yearly dataset
+  published as 1850 to 1860 is eleven years, not ten.
+- **Natural values are a 1-based ordinal step count with no epoch**, because a count of
+  years or months is the same count in every CF calendar — which is why monthly and
+  yearly data never need a file opened. Rich values carry udunits' own
+  `days since 1850-01-01` spelling.
+- **Five new tables**: `FileMetadataDoc` (everything a read found),
+  `FileTimeRange` (raw stamps and bounds, per file per source),
+  `DatasetVersionTimeAxis` (units and calendar), `DatasetVersionTimeRange` (what a
+  version spans, per source) and `DatasetVersionBranchPoint` (both ends of a branch,
+  placed on the axes the two versions are recorded on). `DatasetVersionParent` is
+  renamed `DatasetVersionParentInfo` in the same migration, so the new tables can be
+  named in one pattern.
+- **The branch point goes on the edge**, not on either dataset — a deliberate
+  departure from ESGF, whose data model has no edges. The published floats stay
+  untouched on the parent-info row; the derived positions are a table of their own.
+- **Conversions happen at enrich time, not at solve time.** A published float is stored
+  as published, and its position on the recorded axis is computed with `cftime` and
+  stored beside it, so no solve converts anything and a monthly solve needs nothing
+  extra installed. `cftime` stays an optional extra, and it is enrichment that needs it.
+- **A catalogue entry is one *version* of a dataset**, chosen once by `find` with the
+  requirement's `VersionFilter`, and `entry.id` is that version's id. A time lookup is
+  handed no filter, so it could not otherwise know which version the rest of the solve
+  read.
+- **Constraints switch from asking the catalogue to asking the entry.**
+  `CatalogueWithTimeInfo` is vacated rather than deleted — it still suits anything that
+  is a *lookup* rather than a dataset fact, such as an aggregate over the catalogue —
+  and `CatalogueEntry`'s "mirrors `Dataset`'s columns" docstring is rewritten rather
+  than quietly broken.
+- **`couldnt_answer` is the fourth `SolveResult` mapping**, which is what its docstring
+  has always promised. It carries `NEEDS_ENRICHMENT` ("go and fetch it", with
+  `enrichment_inputs` ready to hand back to the enricher),
+  `MISSING_FEATURE_PLEASE_RAISE_ISSUE` ("a fair thing to want, not supported yet") and
+  `NOT_LOOKED_FOR` / `UNRESOLVED` ("nobody has run `find_parents` for this yet").
+- **The calendar is not a global attribute.** Measured against this repository's own
+  captured header prefixes, not assumed: `calendar` and the time units are attributes
+  of the *time variable*, and `esmporium.headers` reads globals only. The CMIP5 netCDF3
+  prefix does not contain the word `calendar` anywhere. A missing calendar is an error
+  listing the attributes found, not a silent default to `standard`.
+- **Fixes outrank every published source**, with a mandatory reason and evidence, and a
+  branch-time fix is refused if it places the branch outside the parent's recorded
+  range.
+- **Parallel enrichment is pluggable per kind of retrieval.** Retrieving is where the
+  time goes, and which retrievals are slow depends on the system — local reads
+  included. Fixed pools, configurable; adaptation only if a measurement asks for it,
+  which is step 8's lesson applied again.
+
+### The PR ladder
+
+```text
+   built                    fix what is built        store and enrich         Covers on a real DB
+   ──────────────────►  R1, R2, R3  ──────────►  C1, C2, C3, C4  ──────────►  D  ──────────►  P, E
+   values, Covers           units, branch            readers, parsers,         integration     parallel,
+   in memory                floats, versions         tables, enrich step       tests           download_by_id
+```
+
+Each rung, what it does and whether it has landed is one row of
+[the work table](#the-work-in-the-order-we-are-doing-it) above; each is written up in
+full under its own name in part three ("PR R1", "PR C1", and so on). A rung is **not**
+a step of this plan: a step is a goal, a rung is a unit of work, and the whole reason
+this step grew fifteen of them is that the goal is one and the work is not.
+
+Ordering, stated once: R1 before R2, because `Covers` uses R1's types. R3 is
+independent of both and has to land before C3, which is keyed on entries being
+versions. C1 before C2 before C4; C3 can land beside C1 or C2. D needs C4. **P comes
+after D**, so that it changes how retrievals are run rather than what they return. **E
+is independent** and can land any time after R3.
+
+### What changed since this step was first written
+
+Building A, B and B2, and reviewing them, overturned five things this step used to say.
+They are corrected above; they are listed here because PR descriptions and code
+comments written before 2026-11-16 still assume them:
+
+- **two new tables** (`DatasetTimeRange`, `DatasetBranchPoint`) became **five**, with
+  raw text per *file* because a version's range is combined from many files;
+- **rich values come from a file header** became **from the time bounds**: no CMIP5 or
+  CMIP6 file sampled carries `time_coverage_start` or `time_coverage_end`;
+- **`cftime` at solve time** became **at enrich time**, with the derived positions
+  stored, so nothing is converted while solving;
+- **`Covers` for a direct parent only, with the chain as its own PR** — the chain
+  landed in B2, and `Covers` loses `align` in R2 rather than keeping two alignment
+  modes;
+- **an entry is a `Dataset` row whose describing version is resolved per lookup**
+  became **an entry is a version, chosen once**.
+
+## 13. `any_of`, `optional`
 
 *Was R8.*
 
@@ -1086,7 +1255,7 @@ Two things become visible here and belong in the PR description. First, the thir
 — alias, fan-out, alternative — is complete. Second, **ambiguous results, and ones we could not answer,
 are never skipped**: `any_of` stops at them rather than trying the next alternative, and
 `optional` passes them on rather than treating them as absent, so a question we cannot
-answer is never silently read as "no". (Step 12.5 is what gives "could not answer" a
+answer is never silently read as "no". (Step 12c is what gives "could not answer" a
 name: `couldnt_answer`, carrying `NEEDS_ENRICHMENT` or
 `MISSING_FEATURE_PLEASE_RAISE_ISSUE` as its reason.)
 
@@ -1097,7 +1266,7 @@ Tests: `test_alternative_chosen_in_order`, `test_alternative_applies_to_whole_li
 
 Use cases: `06-zec-1pct`, `07-zec-bell`, `08-flat10-cdr`, `12-gcmagicc`, `18-amoc`.
 
-## 15. `scope` and `SameTimeRange`
+## 14. `scope` and `SameTimeRange`
 
 *Was R9, where it was called `namespace`. Let's settle on `scope` unless the code reads
 better the other way when we get there.*
@@ -1107,6 +1276,17 @@ better the other way when we get there.*
 - `constraints.py`: `SameTimeRange`.
 - `planning.py`: `test_carbon_closure` — a scoped requirement compiles to the same
   searches, with roles prefixed.
+
+**`SameTimeRange` inherits calendar alignment from step 12c.** By its decision 33,
+`Covers` is only ever about branch alignment and loses its `align` argument in PR R2,
+so comparing two datasets on a shared calendar is this step's job and nobody else's.
+The developer note in `covers.py` that draws the distinction -- a misaligned axis is
+normal for ancestry and resolved by the branch point, while for a sibling pair it is a
+loud `Fail` because something is wrong with the data -- is kept and re-pointed by R2 so
+this step still finds it. The value types, the half-open convention and the calendar
+arithmetic are all in place by then, so what is left here is the comparison and the
+three outcomes (identical passes, overlapping degrades naming the overlap, disjoint
+fails).
 
 The third attachment level lands, completing the design note's table of where a check goes and
 what its failure costs. Worth restating that there is deliberately no "one experiment" node:
@@ -1123,7 +1303,7 @@ round-tripping whole.
 
 Use cases: `02-ecs`, `16-carbon-closure`, `16a-carbon-calibration`.
 
-## 16. `Aux`
+## 15. `Aux`
 
 *Was R11.*
 
@@ -1152,7 +1332,7 @@ Use cases: `13-energy-balance`, `19-sea-ice`. All twenty now build and solve.
 If this runs long, split at the `via` boundary: first `via="match"` with match levels and
 required-versus-optional, then `via="link"` and `also_for_lineage`.
 
-## 17. Rework `prefer`
+## 16. Rework `prefer`
 
 *New step.*
 
@@ -1181,11 +1361,18 @@ Concretely, that means:
 This lands after `Aux` because by then we know what the candidate lists actually look
 like in every node type, which is what an arbitrary `prefer` function has to be handed.
 
+One thing gets easier first: after step 12c's **PR R3** a catalogue entry *is* one
+`DatasetVersion`, with `version`, `is_latest` and `retracted` beside its id. So "prefer
+a specific version" is ranking a field the candidates already carry, rather than
+reaching back through a dataset to its versions. The gap between `versions` (a filter,
+which says what counts) and `prefer` (a ranking, which says what wins) is still this
+step's to close.
+
 ---
 
 # Phase 4 — load it, and tidy up
 
-## 18. Data loading
+## 17. Data loading
 
 *Was PR9.*
 
@@ -1213,7 +1400,7 @@ Integration tests:
 
 - [ ]
 
-## 19. `Sibling`
+## 18. `Sibling`
 
 *Was R10.*
 
@@ -1228,7 +1415,7 @@ Tests: `test_erf_control_found_as_sibling`, `test_lineage_kinds_round_trip`.
 
 Use cases: `09-erf-transient`, `10-erf-timeslice`.
 
-## 20. Dataset clash handling
+## 19. Dataset clash handling
 
 *Was PR5.5.*
 
@@ -1247,7 +1434,7 @@ So testing it now does mean fixing it now. And the fix is bigger than it first l
 
 See note in `test_health`
 
-## 21. Ingesting from a local source
+## 20. Ingesting from a local source
 
 *New step.* This is the headache step 9 deliberately deferred.
 
@@ -1265,15 +1452,15 @@ the schema.
 - [ ] make it clear in the database which answer came from where, so a disagreement
       between a local file and a search document is debuggable
 
-## 22. Daily CMIP5/CMIP6 downloads, using what is already local
+## 21. Daily CMIP5/CMIP6 downloads, using what is already local
 
-*New step.* Depends on step 21.
+*New step.* Depends on step 20.
 
 Downloading daily CMIP6/CMIP5 data, cogniscent of the data that is already available
 locally. This is the expensive data that step 9's note said to leave alone until
 'ingest from local' works — so this is where that guard comes off.
 
-## 23. Clean up
+## 22. Clean up
 
 *Was R13, plus the loose ends from everything above.*
 
@@ -1284,14 +1471,15 @@ wherever analyses need it. `PLAN-REQUIREMENTS.md` and
 esmporium's docs and in this file.
 
 This can happen as soon as nothing in esmporium-processing imports the prototype,
-which is after step 16 — it sits here because it is tidy-up, not because it is blocked.
+which is after step 15 — it sits here because it is tidy-up, not because it is blocked.
 
 Also sweep, at this point:
 
 - [ ] the import-boundary test question (see *Deviations still outstanding* below)
-- [ ] the branch-time handling note carried into step 13
+- [ ] the branch-time handling note carried into step 12b
 - [ ] whatever "wait and see if this bites us" notes we wrote along the way and now
       have an answer for
+- [ ] any row of the work table which never happened: drop it, and say why in the PR
 
 ---
 
@@ -1312,6 +1500,16 @@ facets.
 
 ## Per-PR conventions
 
+- **Every PR updates this document**: its row in
+  [the work table](#the-work-in-the-order-we-are-doing-it), the `Status` of every step
+  that row names, and the body of the step it belongs to. A PR joins the work table
+  when it is planned, not when it lands, so the table is also the queue. This file
+  holds the order and the status; the design notes in `docs/further-background/` hold
+  the reasoning. A PR which changes what a later step will have to do says so here, in
+  that step.
+- **Step numbers are never renumbered or reused once work has started against them.**
+  12a/12b/12c and the shift of 13 to 22 happened while phase 3 was young; from here the
+  numbers are fixed, and a new goal gets the next free number rather than a fraction.
 - One changelog fragment per PR, `changelog/<issue>.<type>.md`, in the existing style: a
   sentence naming the new objects with `[...][]` cross-references.
 - `esmporium/requirements/__init__.py` grows its `__all__` each PR, matching
@@ -1334,9 +1532,15 @@ already done; these two are not:
   library. In esmporium the mirror-image assertion is the useful one: `esmporium.requirements`
   may import `esmporium.query` and `DATASET_FACET_COLUMNS` from `esmporium.datasets`, and
   nothing else from `esmporium.search` or `esmporium.db`.
-  Unclear why we need this, maybe remove (at least chek).
+  ~~Unclear why we need this, maybe remove (at least chek).~~ **It stays**: step 12c
+  found it load-bearing. `tests/unit/requirements/test_package.py` pins the exact set
+  of esmporium packages `requirements` may import, and that set is what forces the
+  calendar arithmetic and the no-time-axis vocabulary to live in `esmporium.datasets`
+  rather than beside their neighbours in `esmporium.enrich`. The rule it enforces --
+  anything a constraint reads at solve time lives in `datasets` -- is one the next
+  constraint will meet too.
 - **The `atmos`/`land`/`ocean` test helpers start auxiliary-free** and gain their `Aux` lists
-  at step 16. Six lines change in one helper module; the twenty use cases themselves never change.
+  at step 15. Six lines change in one helper module; the twenty use cases themselves never change.
 
 ## Loose ends we have noticed but not scheduled
 
@@ -1374,17 +1578,21 @@ Not steps of their own, but written down so they are not lost:
   "Requirement became satisfiable" is the difference between `solve` at t1 and at t2. (This is
   now step 3, rather than out of scope.)
 - **Linking from `cell_measures`** at ingestion, which is what makes `Aux(via="link")` the
-  default rather than the fallback. Lands between steps 6 and 16.
+  default rather than the fallback. Lands between steps 6 and 15.
 - **Backtracking.** Solving stays greedy: a choice made for one leaf is never revisited to
   satisfy another. [TODO: clarify what this means]
 - **Narrowing auxiliary searches.** Auxiliary queries inherit nothing, so they find fx data for
   every model. If that proves too broad, narrow first and widen only when nothing is found, the
   way `ancestry_until` is handled. [I'm not convinced the logic of this is right, let's see when we get to auxiliary]
 - **Calendars.** ~~`time_range` and `branch_time_in_parent` stay plain fractional
-  years.~~ **Decided the other way at step 12.5**, which stores natural units and, where
-  a header gives us one, a calendar -- and never fractional years, at rest or in
-  flight. Fractional years looked simplest but quietly assumes every year is the same
-  length, which is false in four of the six CF calendars. `cftime` does the arithmetic.
+  years.~~ **Decided the other way at step 12c**, which stores natural units and,
+  where the time variable's attributes give us one, a calendar. Fractional years looked
+  simplest but quietly assume every year is the same length, which is false in four of
+  the six CF calendars, so no extent we state or compare is ever in them. That is a
+  rule about *our* numbers, not about published ones: a branch time published as a
+  float is stored as that float with its units, untouched, and its position on the
+  parent's recorded axis is derived beside it (12c's decision 31). `cftime` does the
+  arithmetic, at enrich time.
 - **Trust when loading.** Loading a serialised requirement imports constraint classes by name,
   so only load requirements you trust. Worth a docstring note, not a mechanism, for now.
   [We might be able to do something a bit safer with a specific loading function in the DB, let's see]
@@ -1637,7 +1845,7 @@ Integration tess:
 From `esmporium-processing/PLAN-REQUIREMENTS-TO-ESMPORIUM.md`, written 2026-09-16.
 Kept verbatim: the framing, the `CatalogueEntry` reasoning, and the steps which are
 done (`R0`–`R4`). The steps which are still to come (`R5`–`R13`) are not repeated here
-— they are steps 11, 12–16, 19 and 23 above, carrying their original text.
+— they are steps 11, 12a–15, 18 and 22 above, carrying their original text.
 
 One wrinkle to know when reading it: the table in that document drifted out of step
 with its own sections. The table said `R4` was `to_search_plan`, while the section
