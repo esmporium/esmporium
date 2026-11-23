@@ -66,7 +66,7 @@ the soft check is never looser than the hard one.
 """
 
 
-# A note for developers, recording a decision so that step 15 does not optimise it
+# A note for developers, recording a decision so that step 14 does not optimise it
 # away. `Covers` and the `SameTimeRange` which is still to come look like one check
 # with a flag, and they are not:
 #

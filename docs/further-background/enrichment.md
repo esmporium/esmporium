@@ -54,7 +54,7 @@ those changes are now made in place rather than left to be noticed:
 - **what a catalogue entry is**: one *version* of a dataset, chosen once when it is
   found ([part three](enrichment-storage.md), decision 32, built in PR R3).
 
-**The order of work, and where we are up to, live in `PLAN.md` step 12.5**, not here.
+**The order of work, and where we are up to, live in `PLAN.md` step 12c**, not here.
 This note is the record of the decisions and of why A, B and B2 look the way they do.
 ///
 
@@ -70,8 +70,9 @@ PR [#69](https://github.com/esmporium/esmporium/pull/69) shipped `Constraint` an
 two hand-written dicts keyed by entry id. Against `DatabaseCatalogue` it cannot run
 at all: it needs `CatalogueWithTimeInfo` (`get_time_range`,
 `get_branch_time_in_parent`) and no column anywhere holds a dataset's start and end,
-its calendar, or an interpreted branch point. `PLAN.md` step 13 says so outright:
-*"This step needs a source of `time_range`, and we have none."*
+its calendar, or an interpreted branch point. `PLAN.md` says so outright at the step
+`Covers` belongs to (12b, which was step 13): the constraint cannot be finished until
+something records a time range.
 
 The failure is also silent in the wrong direction. The `Constraint` protocol says
 "raise if you cannot evaluate", `solve._evaluate_constraints` catches **any**
@@ -100,7 +101,7 @@ list that can be passed straight back to the enricher.
 
 | # | Decision |
 |---|---|
-| 1 | The step is **`enrich`** / enrichment. `src/esmporium/enrich/`, `enrich_datasets(...)`, PLAN step "Enrichment". |
+| 1 | The step is **`enrich`** / enrichment. `src/esmporium/enrich/`, `enrich_datasets(...)`, PLAN step 12c, "Enrichment". |
 | 2 | The new outcome is **`NeedsEnrichment`**, not `Undetermined` — "undetermined" implies we might look and still not know, when in fact we just have to go and do the work so that the answer is available. |
 | 3 | **Store both** natural and rich time values. Natural values are ones in the dataset's own frequency and come from the filename, which is basically free to parse and is free (natural values match the dataset's frequency e.g. for yearly datasets you get values like 2024, 1840, for monthly datasets values like 1850-01, 2023-12); rich comes from a file's **time bounds** and is read only where needed (rich means information that allows you to create a full datetime object without guessing i.e. values like 2023-01-01 00:00:00, you don't get this from the filenames alone). *Corrected 2026-11-24:* this said rich values come from a file header. They do not. No CMIP5 or CMIP6 file sampled carries `time_coverage_start` or `time_coverage_end`, so a header gives a calendar and units but neither a start nor an end; the first lower and last upper time bound give both, exactly, for a few small ranged reads ([part two](enrichment-sources.md#variable-values)). |
 | 4 | **Never store fractional years, and never convert to them.** Natural units are the data's own frequency; rich values are datetimes with a calendar. No year conversion at solve time, and none at enrich time. *Narrowed 2026-11-16:* this is about how extents are stated and compared, not about published data. A branch time published as a float is stored as that float with its units ([part three](enrichment-storage.md), decision 31), and the `BranchPoint` built in PR A, which floors it to an `int`, is corrected in PR R1. |
@@ -114,7 +115,7 @@ list that can be passed straight back to the enricher.
 | 10b | **Data at any frequency is supported, including daily and sub-daily** — but anything finer than monthly needs a calendar to unambiguously calculate the extent, so it needs a header read, so it reports `NEEDS_ENRICHMENT` until enriched. Monthly and yearly data never need a file opened to calculate their extent in natural units (they will need files opened to calculate extent in other units). The consequence for storage is sharper than it looks: a daily filename gives *dates*, not a count, so `start` and `end_exclusive` are **nullable** and the status says which fact is missing. |
 | 11 | A **sibling** pair whose axes do not align is a **loud `Fail`** naming the constraint, not a raise: it is a question we can answer, and the answer is no. |
 | 12 | An **uninterpretable raw CMIP5 branch time** is `NeedsEnrichment` pointing at a fix. |
-| 13 | **`SameTimeRange` is deferred** (PLAN step 15), with a comment in the code recording this decision so it is not lost when step 15 lands. |
+| 13 | **`SameTimeRange` is deferred** (PLAN step 14), with a comment in the code recording this decision so it is not lost when step 14 lands. |
 | 14 | **The branch point lives on the edge, not on either dataset** — a deliberate departure from ESGF, whose data model has no edges. The *facts* come from the child (which is where they are published and where `DatasetVersionParent` already stores them); the *place they belong* is the child→parent link. |
 | 15 | **`Covers` does not apply to `fx` data at all, and says so explicitly** rather than relying on nobody ever attaching it to an `fx` leaf. |
 | 16 | **Keep the raw text beside the parsed value** (`start_raw`, `end_raw`). The string is the observation; the number is our parse of it. Different facts, and keeping the string lets a wrong parser be corrected without re-reading anything. *Revised 2026-11-24:* the raw text is kept **per file**, on `FileTimeRange`, because a version's range is combined from many files and no one pair of stamps is the raw form of it. |
@@ -490,7 +491,7 @@ code comment records it, per settled decision 13.
 > rather than inside one: `Covers` loses its `align` argument and is only ever
 > branch-aligned, and comparing on a shared calendar waits for `SameTimeRange`
 > ([part three](enrichment-storage.md), decision 33). The developer note in
-> `covers.py` is kept and re-pointed so step 15 still finds it.
+> `covers.py` is kept and re-pointed so step 14 still finds it.
 
 ## The design switch this forces
 
@@ -507,7 +508,7 @@ is argued out here rather than assumed.
    `Fail`. As a field, the question becomes "were these loaded?", which already has
    a typed error (`UnloadedFacetError`) carrying its own remedy in the message.
 2. *It scales with constraints, not with catalogues.* Every future constraint needing
-   a stored fact — `Aux` and `linked` (step 16), anything download- or
+   a stored fact — `Aux` and `linked` (step 15), anything download- or
    checksum-aware — would otherwise mean another protocol and another runtime-raise
    path. As fields it is one mechanism with one loading flag.
 3. *The reason it was not done this way has gone.* #69 kept it on the catalogue partly
@@ -532,7 +533,7 @@ is argued out here rather than assumed.
    field on an entry even in principle: "this model must have published at least
    three `variant_label`s" is a question about *how many other rows exist*, not about
    any one dataset. A weaker second example is **local availability** ("only use what
-   is already downloaded", cf. PLAN step 22), which is not a property of the dataset
+   is already downloaded", cf. PLAN step 21), which is not a property of the dataset
    because two machines answer differently for the same one.
 
 ### What does a catalogue entry carry, and for which version?
@@ -577,7 +578,7 @@ and its comment already distinguishes kinds within it, noting that `facets_loade
 *"differs from the two mappings in kind rather than in where its values come from"*.
 So `time_range` is a two-line change plus a comment, and it opens a **third
 category**: facts known about the version the entry *is*. It will not be the only
-member — `linked`, for `Aux` at step 16, lands in the same place. The test's own
+member — `linked`, for `Aux` at step 15, lands in the same place. The test's own
 assertion changes with R3: the facet fields still mirror `Dataset`'s columns, field
 for field, and `id` and the version fields mirror `DatasetVersion`'s.
 
@@ -885,7 +886,7 @@ against a database you already hold.
 > R1 to R3, then readers, parsers, storage, the enrich step, the integration tests,
 > parallel enrichment and `download_by_id` — is
 > [the plan in part three](enrichment-storage.md#the-plan-from-here), and the order of
-> work and where we are up to are in `PLAN.md` step 12.5. The PR C, D and E sketches
+> work and where we are up to are in `PLAN.md` step 12c. The PR C, D and E sketches
 > that used to sit at the end of this section have been cut: part three replaced all
 > three, and two plans in two files is what let them drift.
 
@@ -998,7 +999,7 @@ database, is in
 
 ## Out of scope
 
-`SameTimeRange` (`PLAN.md` step 15), with a code comment recording why it was left
+`SameTimeRange` (`PLAN.md` step 14), with a code comment recording why it was left
 until then — re-pointed there by PR R2, which takes `align` off `Covers`
 ([part three](enrichment-storage.md), decision 33).
 

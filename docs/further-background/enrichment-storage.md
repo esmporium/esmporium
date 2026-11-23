@@ -54,7 +54,7 @@ they are reused here for the revised set, and "What changed in review" maps old 
 | 30 | **Every number travels with its units, and every comparison checks them where it happens.** Written out at the call site rather than buried in a helper or an operator, so a reader can see at each comparison that units were checked. |
 | 31 | **Published numbers are stored as published, and conversions are stored beside them.** A branch time published as a float stays a float with its units, untouched. Its position on the parent's recorded axis is computed at enrich time, with `cftime`, and stored as a separate, derived value naming what it was derived from, so the solve never has to convert. The first note's "no fractional years" (decision 4) is about how we *state and compare* extents, not about raw data. |
 | 32 | **A catalogue entry is one *version* of a dataset, chosen once, when it is found, and its `id` is that version's id.** `VersionFilter` is used by `find` and `parent_of`, and nowhere after: not by `Covers`, not by the time lookups, not by the enricher, which is handed version ids. Enriching from a *query* goes through `find`, which is where the filter belongs. See "Fixes to what is built", PR R3. |
-| 33 | **`Covers` is only ever about branch alignment.** Its `align` argument goes; aligning on the calendar is `SameTimeRange`'s job (PLAN step 15). |
+| 33 | **`Covers` is only ever about branch alignment.** Its `align` argument goes; aligning on the calendar is `SameTimeRange`'s job (PLAN step 14). |
 | 34 | **A parent which has not been looked for is "not yet", not "no".** `NOT_LOOKED_FOR` (and `UNRESOLVED`) put a group in `couldnt_answer` pointing at `esmporium.db.find_parents`, as `NEEDS_ENRICHMENT` points at the enricher, rather than in `unsatisfied`. |
 | 35 | **`read_variable_attributes` returns the attributes it was asked for, and reports every attribute it found when it cannot find the ones it is looking for.** |
 | 36 | **Expensive retrievals are asked for, never defaulted into.** Reading time bounds is opt-in, per call. The default path is search records, filenames, and one 64 KiB prefix per simulation where a header is needed, read from a local copy where one exists (`prefer_local=True`, the default) and from a data node otherwise. |
@@ -139,7 +139,7 @@ Each is `breaking` where it touches a requirement's hash or a public signature.
   every answer that relies on it says so, and a fix overrides it.
 - **`align` goes** (decision 33): `Covers` is always branch-aligned.
   The developer note above `CatalogueWithTimeInfo` comparing the two is kept,
-  re-pointed at `SameTimeRange`, so step 15 still has it.
+  re-pointed at `SameTimeRange`, so step 14 still has it.
 - **Messages name their sources** once PR D can supply them; until then, the hooks are there.
 - `breaking`: `Covers` loses a field, so every stored requirement's hash changes.
 
