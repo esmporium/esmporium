@@ -1,4 +1,4 @@
-# Enrichment: the time information ESGF does not publish
+# Enrichment, part one: the time information ESGF does not publish
 
 Design note for the `enrich` step, and for making
 [`Covers`](data-requirements.md#constraints) work against a real catalogue rather
@@ -26,11 +26,36 @@ and these parts are superseded:
   which also adds three corrective PRs (R1 to R3) to what is built.
 - **Does `Dataset` grow the same fields?** is revised:
   a catalogue entry becomes one *version* of a dataset, chosen once when it is found
-  (part three, decision 32).
+  (part three, decision 32). That section is now
+  **What does a catalogue entry carry, and for which version?**
 - **Decision 4** is narrowed (published numbers stay as published, see below),
   `Covers`' **`align`** argument goes (part three, decision 33),
   and the mapping goes through `branch_time_in_child`
   rather than the child's own start (part three, PR R2).
+///
+
+/// note | Status, 2026-11-24
+Parts two and three changed more of this note than the banner above records, and
+those changes are now made in place rather than left to be noticed:
+
+- **the sources**, which are six rather than four, and which of them gives a start
+  and an end: a file header gives neither, the time bounds give both exactly, and a
+  search record gives a version's first and last time value for nothing
+  ([part two](enrichment-sources.md#the-short-version); decisions 3, 24 and 27);
+- **the readers**: our own classic netCDF parser and `h5netcdf`, over one byte source
+  that is HTTP ranges or a local file, and no `netCDF4` extra
+  ([part two](enrichment-sources.md#the-decision); decision 25);
+- **the storage**, which is five tables rather than two, raw text per *file* and the
+  combined range per *version*
+  ([part three](enrichment-storage.md#storage-pr-c3); decisions 6 and 16);
+- **when a conversion happens**: at enrich time, stored beside the published value,
+  so no solve converts anything ([part three](enrichment-storage.md), decision 31;
+  decision 20 and "Where `cftime` can live" below);
+- **what a catalogue entry is**: one *version* of a dataset, chosen once when it is
+  found ([part three](enrichment-storage.md), decision 32, built in PR R3).
+
+**The order of work, and where we are up to, live in `PLAN.md` step 12.5**, not here.
+This note is the record of the decisions and of why A, B and B2 look the way they do.
 ///
 
 Cross-references are written as plain code spans rather than `mkdocstrings`
@@ -77,10 +102,10 @@ list that can be passed straight back to the enricher.
 |---|---|
 | 1 | The step is **`enrich`** / enrichment. `src/esmporium/enrich/`, `enrich_datasets(...)`, PLAN step "Enrichment". |
 | 2 | The new outcome is **`NeedsEnrichment`**, not `Undetermined` — "undetermined" implies we might look and still not know, when in fact we just have to go and do the work so that the answer is available. |
-| 3 | **Store both** natural and rich time values. Natural values are ones in the dataset's own frequency and come from the filename, which is basically free to parse and is free (natural values match the dataset's frequency e.g. for yearly datasets you get values like 2024, 1840, for monthly datasets values like 1850-01, 2023-12); rich comes from a file header and is fetched only where needed (rich means information that allows you to create a full datetime object without guessing i.e. values like 2023-01-01 00:00:00, you don't get this from the filenames alone). |
+| 3 | **Store both** natural and rich time values. Natural values are ones in the dataset's own frequency and come from the filename, which is basically free to parse and is free (natural values match the dataset's frequency e.g. for yearly datasets you get values like 2024, 1840, for monthly datasets values like 1850-01, 2023-12); rich comes from a file's **time bounds** and is read only where needed (rich means information that allows you to create a full datetime object without guessing i.e. values like 2023-01-01 00:00:00, you don't get this from the filenames alone). *Corrected 2026-11-24:* this said rich values come from a file header. They do not. No CMIP5 or CMIP6 file sampled carries `time_coverage_start` or `time_coverage_end`, so a header gives a calendar and units but neither a start nor an end; the first lower and last upper time bound give both, exactly, for a few small ranged reads ([part two](enrichment-sources.md#variable-values)). |
 | 4 | **Never store fractional years, and never convert to them.** Natural units are the data's own frequency; rich values are datetimes with a calendar. No year conversion at solve time, and none at enrich time. *Narrowed 2026-11-16:* this is about how extents are stated and compared, not about published data. A branch time published as a float is stored as that float with its units ([part three](enrichment-storage.md), decision 31), and the `BranchPoint` built in PR A, which floors it to an `int`, is corrected in PR R1. |
 | 5 | **Store start and end, not extents.** An extent is `end - start` (or `end - start + 1` sometimes because of how the indexing/conversion works e.g. the extent of a dataset that goes from 1850 to 1860 when its natural units are years is 11 years, not 10, because the actual bounds can be assumed to be 1850-01-01 to 1860-12-31, this has tripped over many people, hopefully not us), computed outside the database when wanted. Storing both would be the same fact twice, with a consistency burden (that is impossible to get right given that the correct answer depends on assumptions/context that we don't have at enrichment time). |
-| 6 | **One pair of value columns plus a `units` column**, not a natural column group and a rich column group. No half-empty rows. Natural values are a 1-based ordinal step count with no epoch, rich values carry one; see "Natural units are an ordinal count" below. |
+| 6 | **One pair of value columns plus a `units` column**, not a natural column group and a rich column group. No half-empty rows. Natural values are a 1-based ordinal step count with no epoch, rich values carry one; see "Natural units are an ordinal count" below. *Revised 2026-11-24:* the pair of columns and the one `units` column survive, split over two tables — the raw text per file (`FileTimeRange`) and the combined range per version (`DatasetVersionTimeRange`), whose uniqueness includes `units`, so one source can give both a natural row and a dated one ([part three](enrichment-storage.md#storage-pr-c3)). |
 | 7 | A corrected branch time is a **`FIX`-sourced row**, not a Python-level catalogue wrapper. |
 | 8 | A version whose files have a gap gets start and end recorded **plus a contiguity flag**, and `Covers` refuses a gapped range rather than treating it as continuous. |
 | 9 | **`Covers` defaults nothing.** Both modes are first-class and the user states which one they mean, in full, every time. This follows the rule `Requirement` already sets for `group_by` — *"a grouping decides what one group is, so it is stated rather than defaulted"* — and it is forced anyway, because containment cannot be written as a number: nobody knows a dataset's extent until we have measured it. |
@@ -92,11 +117,11 @@ list that can be passed straight back to the enricher.
 | 13 | **`SameTimeRange` is deferred** (PLAN step 15), with a comment in the code recording this decision so it is not lost when step 15 lands. |
 | 14 | **The branch point lives on the edge, not on either dataset** — a deliberate departure from ESGF, whose data model has no edges. The *facts* come from the child (which is where they are published and where `DatasetVersionParent` already stores them); the *place they belong* is the child→parent link. |
 | 15 | **`Covers` does not apply to `fx` data at all, and says so explicitly** rather than relying on nobody ever attaching it to an `fx` leaf. |
-| 16 | **Keep the raw text beside the parsed value** (`start_raw`, `end_raw`). The string is the observation; the number is our parse of it. Different facts, and keeping the string lets a wrong parser be corrected without re-reading anything. |
+| 16 | **Keep the raw text beside the parsed value** (`start_raw`, `end_raw`). The string is the observation; the number is our parse of it. Different facts, and keeping the string lets a wrong parser be corrected without re-reading anything. *Revised 2026-11-24:* the raw text is kept **per file**, on `FileTimeRange`, because a version's range is combined from many files and no one pair of stamps is the raw form of it. |
 | 17 | An unsupported requirement unit is **reported as a group that failed to solve**, with a status along the lines of `MISSING_FEATURE_PLEASE_RAISE_ISSUE` pointing at the issue tracker — *not* an exception that aborts the solve. |
 | 18 | The actionable list is **`enrichment_inputs`** — it names what you pass to the enricher. |
 | 19 | `SolveResult` stays at **four mappings**: `satisfied`, `unsatisfied`, `ambiguous`, `couldnt_answer`. The fourth holds every group we could not answer, **with the reasoning** — each group carries which status applied and why. (`couldn't_answer` cannot be a Python identifier, so the apostrophe is dropped.) |
-| 20 | **Calendar arithmetic uses `cftime`, from a new optional extra. We do not roll our own.** Six CF calendars with six sets of leap rules is exactly the job that looks small and is not. It is an *extra* rather than a dependency, following `h5py`: monthly and yearly requirements never need it, because twelve months is a year in every calendar, so only the sub-monthly path pays. See "Where `cftime` can live" below for the one architectural consequence. |
+| 20 | **Calendar arithmetic uses `cftime`, from a new optional extra. We do not roll our own.** Six CF calendars with six sets of leap rules is exactly the job that looks small and is not. It is an *extra* rather than a dependency, following `h5py`: monthly and yearly requirements never need it, because twelve months is a year in every calendar, so only the sub-monthly path pays. See "Where `cftime` can live" below for the one architectural consequence. *Revised 2026-11-24:* the conversions are done at enrich time and stored ([part three](enrichment-storage.md), decision 31), so no solve converts anything, not even a sub-monthly one. `cftime` is still an optional extra; it is enrichment that needs it. |
 | 21 | **The calendar and the time units are attributes of the *time variable*, not global attributes.** Measured, not assumed — see "Where the numbers come from". `esmporium.headers` reads globals only today, so reaching them is a new slice of that package rather than a call to `read_global_attributes`. |
 | 22 | **Coverage along a chain is a stitch.** "The control covers this experiment *and every parent back up to the control*" is the rule the scenario and ZEC analyses actually need, and the target and its parents are judged as *one continuous series* mapped onto the covering dataset's axis a branch at a time. The anchor is the bottom branch point, the needed end is the target's mapped end, and a break anywhere in the series — a gap inside a member, or a run which branched where its parent holds no data — is a failure. See "Along a chain" below. |
 | 23 | **Natural values are a 1-based ordinal step count, with no epoch.** `0001-01` is month 1, not month 0, which a udunits `since` epoch cannot give because `since` counts *elapsed* steps. See "Natural units are an ordinal count". |
@@ -107,12 +132,12 @@ Two modes over the same stored values, and the user names which one they mean �
 nothing is defaulted (settled decision 9):
 
 ```
-Covers(align="branch", mode="containment", pad=(10, 10))
-Covers(align="branch", mode="overlap", min_overlap=100, pad=(10, 10))
+Covers(mode="containment", pad=(10, 10))
+Covers(mode="overlap", min_overlap=100, pad=(10, 10))
 ```
 
-One class with a required `mode` rather than two classes, because `align` and the
-lineage mapping are common to both and two classes would duplicate that surface.
+One class with a required `mode` rather than two classes, because the lineage mapping
+is common to both and two classes would duplicate that surface.
 `mode` is required rather than inferred from whether `min_overlap` was given, because
 inferring it is exactly the kind of default decision 9 rules out — and because
 containment cannot be written as a number anyway.
@@ -123,7 +148,7 @@ in the write-up" outcome. Dropping it would quietly remove that outcome's only s
 so it carries over as `ideal_pad` (and `ideal_min_overlap` in overlap mode):
 
 ```
-Covers(align="branch", mode="overlap",
+Covers(mode="overlap",
        min_overlap=100, pad=(10, 10),            # hard: Fail if not met
        ideal_min_overlap=150, ideal_pad=(20, 20))  # soft: Degraded if not met
 ```
@@ -458,9 +483,8 @@ days only once leap rules are known — so a sub-monthly filename fills `start_r
 
 With ancestry a misaligned axis is normal and the branch point resolves it. For
 siblings there *is* no branch point, so the axes have to align, and if they do not
-something is wrong with the data. `Covers(align="calendar")` already never reads a
-branch time, so the distinction exists in code today and must not be optimised away.
-A code comment records this, per settled decision 13.
+something is wrong with the data. The distinction must not be optimised away, and a
+code comment records it, per settled decision 13.
 
 > *Revised 2026-11-16.* The distinction stands, but it is drawn between two classes
 > rather than inside one: `Covers` loses its `align` argument and is only ever
@@ -495,8 +519,8 @@ is argued out here rather than assumed.
 
 1. *`CatalogueEntry`'s invariant weakens.* Its docstring says the fields "mirror the
    columns of `Dataset`, so that the two cannot drift apart unnoticed". A time range
-   is a `DatasetTimeRange` row, not a `Dataset` column, so the entry becomes "a
-   dataset row plus facts hanging off it". That must be written into the docstring,
+   is a `DatasetVersionTimeRange` row, not a `Dataset` column, so the entry becomes
+   "a version plus facts hanging off it". That must be written into the docstring,
    or the next reader will try to re-align it with `Dataset` and delete the fields.
 2. *A branch point is not a property of a dataset* — it is a property of the
    (child → parent) edge, and `Lineage` already models that edge — hence settled
@@ -511,45 +535,39 @@ is argued out here rather than assumed.
    is already downloaded", cf. PLAN step 22), which is not a property of the dataset
    because two machines answer differently for the same one.
 
-### Does `Dataset` grow the same fields?
+### What does a catalogue entry carry, and for which version?
 
-> *Revised 2026-11-16.* The conclusion below, that an entry stays one `Dataset` row
-> and every lookup resolves its describing version, is reversed. Resolving the version
-> in each lookup means a time lookup, which is handed no `VersionFilter`, cannot know
-> which version the rest of the solve read. So an entry becomes one *version* of a
-> dataset, chosen once when it is found, and `VersionFilter` is used only by `find` and
-> `parent_of`. `id` becomes the `DatasetVersion` id. See PR R3 in
-> [part three](enrichment-storage.md#pr-r3-a-catalogue-entry-is-a-version).
+**A catalogue entry is one *version* of a dataset, chosen once when it is found, and
+`entry.id` is that `DatasetVersion`'s id** ([part three](enrichment-storage.md),
+decision 32, built in
+[PR R3](enrichment-storage.md#pr-r3-a-catalogue-entry-is-a-version)). `VersionFilter`
+is used by `find` and by `parent_of`, and nowhere after.
 
-The symmetry instinct is right, but the answer is not `Dataset`, and the repository
-already settles it two ways:
+> *Revised 2026-11-24.* This section was headed "Does `Dataset` grow the same
+> fields?" and answered that an entry stays one `Dataset` row with every lookup
+> resolving its describing version, the way `parent_of` already did. That argument is
+> cut rather than kept, because it fails for exactly the facts this note adds:
+> `get_time_range(entry)` is handed no `VersionFilter`, so it could only guess which
+> filter the solve used, and could answer for a different version than the one whose
+> facets and parent the solve had read.
 
-- **A time range is per *version*, not per dataset.** `catalogue.py` carries an
-  explicit developer note: *"**one entry describes one `Dataset` row, not one
-  `DatasetVersion`**, and the versions filter decides which version's documents speak
-  for it."* So the storage hangs off `DatasetVersion`, and the entry carries the range
-  of its **describing version**.
+`Dataset` itself grows nothing either way, and two of the three reasons are unchanged:
+
+- **A time range is per *version*, not per dataset**, so the storage hangs off
+  `DatasetVersion` — `DatasetVersionTimeRange`, `DatasetVersionTimeAxis` and
+  `DatasetVersionBranchPoint` all do.
 - **That pattern is already built and shipped.** `DatasetVersionParent` is keyed on
-  the *child's version*, and `parent_of` resolves `describing_version(...)` first
-  before reading it. So "an entry-level question answered through the describing
-  version" is exactly how #67 already does parents. Time information follows the same
-  road rather than opening a new one.
+  the *child's version*, which is how #67 does parents, and time information follows
+  the same road rather than opening a new one. (PR C3 renames it
+  `DatasetVersionParentInfo`, so the new tables can be named in one pattern.)
 - **No ORM relationships.** `schema.py:337` has the one `Relationship()` in the
   codebase commented out, marked *"TODO: bring this back in once we start doing
   versions"*. Everything else is explicit `select`s. Adding relationship fields to
   `Dataset` would reverse a deliberate choice, so it is out.
 
-So nothing is being decoupled, and in particular the entry does **not** start
-mirroring `DatasetVersion` instead. It has none of that table's columns — no
-`version`, `is_latest` or `retracted` — and `entry.id` is a `Dataset.id`. Saying
-otherwise would contradict the note quoted above and break
-`test_catalogue_entry_mirrors_dataset_columns`
-(`tests/unit/test_schema.py`), which asserts
-`list(mirrored) == list(Dataset.model_fields)`: same names, same order, same declared
-types.
-
-What changes is that the entry's **two tiers get named.** That test already has the
-mechanism — an explicit allowlist of fields with no column behind them:
+What changes for `CatalogueEntry` is that its **two tiers get named.**
+`test_catalogue_entry_mirrors_dataset_columns` (`tests/unit/test_schema.py`) already
+has the mechanism — an explicit allowlist of fields with no column behind them:
 
 ```python
 CATALOGUE_ENTRY_ONLY_FIELDS = {"project_facets", "other_terms", "facets_loaded"}
@@ -558,8 +576,10 @@ CATALOGUE_ENTRY_ONLY_FIELDS = {"project_facets", "other_terms", "facets_loaded"}
 and its comment already distinguishes kinds within it, noting that `facets_loaded`
 *"differs from the two mappings in kind rather than in where its values come from"*.
 So `time_range` is a two-line change plus a comment, and it opens a **third
-category**: facts resolved through the describing version. It will not be the only
-member — `linked`, for `Aux` at step 16, lands in the same place.
+category**: facts known about the version the entry *is*. It will not be the only
+member — `linked`, for `Aux` at step 16, lands in the same place. The test's own
+assertion changes with R3: the facet fields still mirror `Dataset`'s columns, field
+for field, and `id` and the version fields mirror `DatasetVersion`'s.
 
 The entry's own docstring currently says *"The fields mirror the columns of `Dataset`,
 so that the two cannot drift apart unnoticed"*, which read strictly is **already**
@@ -567,11 +587,11 @@ untrue of the three fields in that allowlist. `time_range` only makes the
 overstatement visible, so the fix is to split the sentence rather than weaken the
 promise that matters:
 
-> An entry is one `Dataset` row — its id and its facet columns, mirrored field for
-> field and held to that by `test_catalogue_entry_mirrors_dataset_columns` — **plus**
-> what else is known about that dataset once a version has been chosen to speak for
-> it. `VersionFilter` chooses and `describing_version` is where; `project_facets`,
-> `other_terms` and `time_range` are all on that second footing.
+> An entry is one `DatasetVersion` — its id, its version columns, and the facet
+> columns of the dataset it belongs to, mirrored field for field and held to that by
+> `test_catalogue_entry_mirrors_dataset_columns` — **plus** what else is known about
+> that version. `find` chooses the version, with the requirement's `VersionFilter`;
+> `project_facets`, `other_terms` and `time_range` are all on that second footing.
 
 That keeps the invariant that earns its keep — *"a facet added to `Dataset` and not to
 the entry means requirements silently cannot select on it"* — exactly as strong.
@@ -581,10 +601,18 @@ the entry means requirements silently cannot select on it"* — exactly as stron
 Settled decision 20 takes `cftime` as an optional extra. It has one architectural
 consequence worth stating before anyone starts.
 
+> *Revised 2026-11-24.* This section used to rest on `Covers` doing calendar
+> arithmetic **at solve time** for sub-monthly data. It does not: the positions are
+> derived at enrich time and stored beside the published values
+> ([part three](enrichment-storage.md), decision 31), so `esmporium[calendars]` is
+> what *enrichment* needs rather than what a sub-monthly solve needs. The layout
+> below is unchanged, because an import rule forced it rather than who calls the
+> arithmetic.
+
 `esmporium.datasets` is imported by everything, and `esmporium.requirements` may
-import only `esmporium.query`, `esmporium.datasets` and `esmporium.formatting`. But
-`Covers` needs calendar arithmetic **at solve time** for sub-monthly data: turning
-"20 years of pad" into a position on a daily axis depends on the calendar. So:
+import only `esmporium.query`, `esmporium.datasets` and `esmporium.formatting`. The
+value types still have to be able to say whether two axes are comparable, and
+answering that for a natural axis against a dated one is a conversion (PR R1). So:
 
 - the **value types** stay in `esmporium.datasets`, standard library only — they hold
   numbers, a unit and a calendar name, and do no calendar arithmetic;
@@ -600,40 +628,37 @@ did not have before. That breaks no rule here — this package's import restrict
 about esmporium cycles, not third parties — but it is a real change to its footprint
 and belongs in the PR description.
 
-Practically: monthly and yearly requirements work with nothing extra installed. Daily
-and sub-daily need `esmporium[calendars]`, and without it the arithmetic should raise
+Practically: a solve works with nothing extra installed, because what it reads was
+converted when it was recorded. Enrichment needs `esmporium[calendars]` to place a
+published float on a recorded axis, and without it the arithmetic should raise
 a plain `ImportError` naming the extra, as `hdf5.py` does. That is an *environment*
 problem rather than a data or feature one, so it must not become a solve status
 alongside `NEEDS_ENRICHMENT` and `MISSING_FEATURE_PLEASE_RAISE_ISSUE`.
 
 ## Where the numbers come from
 
-> *Superseded 2026-11-16* by [part two](enrichment-sources.md). In short: the table
-> below misses search records, which carry a version's first and last time value for
-> free; it runs together the file header, the time variable's attributes and the time
-> variable's values, which differ in cost and in how far they can be believed; and
-> "a header read cannot cheaply give start and end" is true of the header but not of
-> the time bounds, whose first and last values are a few small reads away. The reader
-> discussion at the end of this section is also replaced: `netCDF4` is not used, and
-> netCDF-4 files are read through `h5netcdf`.
+> *Superseded 2026-11-16* by [part two](enrichment-sources.md), which is the list to
+> read: six sources, what each gives, what it costs, and how far each can be believed.
+> The table that was here has been cut rather than kept beside it.
 
-| Fact | Source | Cost | Available for |
-|---|---|---|---|
-| start, end, natural units | the filename — `…_320001-325012.nc` | free, `File.filename` already stored | every file we have seen |
-| contiguity / gaps | the set of filenames for a version | free | every version |
-| calendar, time units | file header, the **time variable's** attributes — *not* global ones | one byte-range read per *simulation*, plus a new reader (see below) | anything we can reach a data node for |
-| start, end, rich (datetimes) | file header | same read | ditto |
-| branch point, raw | already stored — `DatasetVersionParent.branch_time_in_parent` | already paid | CMIP6/7 reliably; CMIP5 not usable as published |
-| branch point, interpreted | enrich, or a `FIX` | — | settled decisions 7 and 12 |
-
-Two things worth stating plainly, because both were nearly got wrong:
+Three corrections it makes, because each was nearly got wrong twice:
 
 - **The filename does not give rich values.** It gives natural-unit start and end and
-  nothing else — no calendar, no time units. Rich values require opening a file.
-- **A header read cannot cheaply give start and end.** The time coordinate's *values*
-  live in the data section, interleaved by record, not in the first 64 KiB. The header
-  is the source for *calendar and units*; the filename is the source for *start and
-  end*. They are complements, not alternatives.
+  nothing else — no calendar, no time units.
+- **A file header does not give start and end either**, cheaply or at all: no CMIP5 or
+  CMIP6 file sampled carries `time_coverage_start` or `time_coverage_end`. The header
+  is the source for the branch times; the *time variable's attributes* are the source
+  for calendar and units; the *time bounds* are the source for an exact start and end,
+  and their first and last values are a few small ranged reads
+  ([part two](enrichment-sources.md#variable-values)).
+- **Search records give a version's first and last time value for nothing**, since
+  `DatasetRawDoc` already holds the raw records. This note missed them entirely, and
+  they are the cheapest source there is.
+
+Which reader reads what is settled in
+[part two](enrichment-sources.md#what-reads-it): our own classic netCDF parser, and
+`h5netcdf` for netCDF-4, both over one byte source that is either HTTP ranges or a
+local file. There is no `netCDF4` extra.
 
 - **And the calendar is not a global attribute**, which is settled decision 21 and was
   measured rather than assumed. Against this repository's own captured prefixes:
@@ -649,21 +674,16 @@ Two things worth stating plainly, because both were nearly got wrong:
   of `esmporium.headers`** — `read_variable_attributes(prefix, "time", file_size=…)`
   — and not a call to something that exists.
 
-  Worth recording why that reader cannot just be h5py. h5py reads HDF5; classic
-  netCDF is a different format, beginning `CDF\x01`, and h5py refuses it outright
-  (`OSError: file signature not found`, confirmed against the CMIP5 prefix above).
-  Classic is most of CMIP5, so "h5py for everything" would mean no CMIP5 calendars at
-  all. `netCDF4` can read both, and is rejected for the reason `headers/hdf5.py`'s
-  docstring already gives: it does its own HTTP inside the C library, so a stalled
-  read cannot be timed out from Python and an HTTP status arrives as text inside an
-  `OSError`. So `netcdf3.py` grows a variable-list walk instead — the list sits
+  `netcdf3.py` grows a variable-list walk rather than being replaced: the list sits
   directly after the global attributes and reuses the same `NC_ATTRIBUTE` structure
-  the parser already reads, so it is a short addition rather than a new parser. The
-  one trap is `CDF\x02`, where `begin` widens to eight bytes.
+  the parser already reads, so it is a short addition. The one trap is `CDF\x02`,
+  where `begin` widens to eight bytes. Why a classic file cannot be read by h5py, or
+  by `netCDF4`, is measured in
+  [part two](enrichment-sources.md#what-was-looked-at).
 
-No filename date parsing exists anywhere in the repository today — all new code. What
-is project-specific about it, and where each piece lives, is set out in "What is
-project-specific, and where it lives" below.
+Filename date parsing was all new code, and landed in PR A. What is project-specific
+about it, and where each piece lives, is set out in "What is project-specific, and
+where it lives" below.
 
 ## Frequency, units, and what needs a header
 
@@ -752,8 +772,9 @@ src/esmporium/datasets/
                        (here because requirements and db both need them
                         and neither may import the other)
     calendars.py       year and month offsets per CF calendar, via cftime
-                       (here, not in enrich/, because `Covers` needs it at
-                        solve time and `requirements` may not import `enrich`)
+                       (here, not in enrich/, because the value types' own
+                        comparison rules may need a conversion and
+                        `requirements` may not import `enrich`)
     no_time_axis.py    NO_TIME_AXIS_INTERVALS_BY_PROJECT, has_no_time_axis
                        (here for the same reason: `Covers` refuses `fx` data
                         both when a requirement is built and when it is solved)
@@ -764,16 +785,26 @@ src/esmporium/enrich/
                        SPAN_BY_REPORTING_INTERVAL
                        reader_for_project(project, readers=...)
     headers.py         read_time_axis(attributes) -> TimeAxis   (project-independent;
-                       `attributes` are the time variable's, per decision 21)
-    measure.py         per-file ranges -> per-version range + contiguity
-                       (renamed combine_files_to_datasets.py in PR R1:
-                        nothing is measured, information is retrieved and parsed)
+                       `attributes` are the time variable's, per decision 21.
+                        PR R1: raises rather than defaulting to `standard`
+                        when `calendar` is absent)
+    combine_files_to_datasets.py
+                       per-file ranges -> per-version range + contiguity
+                       (built as measure.py; PR R1 renames it, because
+                        nothing is measured: information is retrieved and parsed)
 
 src/esmporium/headers/
-    netcdf3.py         grows a variable-list walk, so that
-    hdf5.py            read_variable_attributes(prefix, "time", ...) exists at all
-    parsing.py         (decision 21; lands with the storage step, where reads happen)
+    netcdf3.py         grows a variable-list walk and record offsets, and
+    hdf5.py            reads netCDF-4 through h5netcdf rather than bare h5py,
+    fetching.py        over one byte source that is HTTP ranges or a local file,
+    parsing.py         so that read_variable_attributes(source, "time", ...) and
+                       read_first_and_last_time_bounds(source) exist at all
+                       (decision 21 and part two; PR C1, where the reads live)
 ```
+
+The one `parse_*` function per source, and the tables they are written to, are
+[part three](enrichment-storage.md#the-enrich-step-prs-c1-to-c4)'s, and so is the
+enrich step which dispatches an artefact to every parser that applies.
 
 `calendars.py` sitting in `datasets` rather than `enrich` is forced, not stylistic:
 `tests/unit/requirements/test_package.py` asserts the *exact* set of esmporium packages
@@ -788,9 +819,9 @@ at solve time has to live in `datasets`**, whatever else it has in common with i
 neighbours in `enrich`.
 
 - `VersionTimeRange` is a value, and `Covers` reads one to get at the contiguity flag
-  decision 8 turns on, so it belongs beside the other values. `measure_version`, which
-  produces it, stays in `enrich/measure.py`: the measurement is enrichment's, the value
-  is not.
+  decision 8 turns on, so it belongs beside the other values. The function which
+  produces it stays in `enrich/` (`combine_file_ranges`, after PR R1): combining a
+  version's files is enrichment's, the value is not.
 - The no-time-axis vocabulary is project knowledge, which would put it beside the other
   two registries, except that decision 15's refusal happens inside `requirements` --
   at solve time *and* when a requirement is built.
@@ -837,23 +868,29 @@ status:
 |---|---|---|
 | `NEEDS_ENRICHMENT` | the fact is not recorded yet | run `enrich_datasets(result.enrichment_inputs)` |
 | `MISSING_FEATURE_PLEASE_RAISE_ISSUE` | the requirement is fair but unsupported, e.g. an overlap in years against daily data | raise an issue — the message carries the link |
+| `NOT_LOOKED_FOR` / `UNRESOLVED` | nobody has looked for this dataset's parent yet, so the lineage the check needs is not there | run `esmporium.db.find_parents` ([part three](enrichment-storage.md), decision 34, added 2026-11-24) |
 
 `enrichment_inputs` is the actionable extraction from that bucket: flat, deduplicated,
 and shaped to hand straight back to the enricher. It names *which* fact is missing —
 range, branch point, or calendar — so the enricher knows whether it needs a header
 read or only a filename parse. Both interfaces asked for are served over one body:
 PR A's pure functions take catalogue entries and have no ids at all, giving
-reproducibility across machines, and PR C adds the id-driven entry point for speed
+reproducibility across machines, and PR C4 adds the id-driven entry point for speed
 against a database you already hold.
 
-## Plan, as six PRs
+## Plan: the three PRs that landed here
 
-> *Status 2026-11-16.* A, B and B2 are built (#71 to #73). C, D and E are superseded by
-> [the plan in part three](enrichment-storage.md#the-plan-from-here), which first
-> corrects what A to B2 built (PRs R1 to R3) and then splits C into readers, parsers,
-> storage and the enrich step. They are kept below as the record of what was planned.
+> *Status 2026-11-24.* A, B and B2 are built (#71 to #73) and are kept below as the
+> record of what each one was for. Everything after them — the three corrective PRs
+> R1 to R3, then readers, parsers, storage, the enrich step, the integration tests,
+> parallel enrichment and `download_by_id` — is
+> [the plan in part three](enrichment-storage.md#the-plan-from-here), and the order of
+> work and where we are up to are in `PLAN.md` step 12.5. The PR C, D and E sketches
+> that used to sit at the end of this section have been cut: part three replaced all
+> three, and two plans in two files is what let them drift.
 
 PRs A and B need no database and no network, which is the order this repo has built
+every previous piece of the requirements system: prove it in memory, then wire it up.
 every previous piece of the requirements system: prove it in memory, then wire it up.
 
 ### PR A — time information as a first-class dataset fact
@@ -946,104 +983,26 @@ one PR here that is not `breaking`.
   `05-zec-flat10` and `11-tas-scenario-anomalies` saying the intermediate run is not
   covered yet come off, because now it is.
 
-### PR C — storage and the enrich step
-
-- **First**, decision 21's reader: `netcdf3.py` grows a variable-list walk, `hdf5.py`
-  grows the matching path, and `read_variable_attributes(prefix, name, file_size=…)`
-  joins `read_global_attributes` in `parsing.py`. Without it nothing can record a
-  calendar for a classic netCDF file, which is most of CMIP5.
-
-- `src/esmporium/db/schema.py`: `DatasetTimeRange` and `DatasetBranchPoint`, plus a
-  `TimeInfoSource` enum (`FILENAME`, `FILE_HEADER`, `FIX`). `DatasetTimeRange` is
-  unique on `(dataset_version_id, source)`, exactly like `DatasetVersionParent`, so
-  `SOURCE_PRECEDENCE` is inherited rather than rebuilt. Note the consequence of
-  decision 3: a version can hold a `FILENAME` row *and* a `FILE_HEADER` row at once,
-  and that is the point — the cheap answer and the precise one coexist, and
-  precedence decides which speaks. Columns:
-
-  | Column | Why |
-  |---|---|
-  | `start`, `end_exclusive` | the numbers, half-open; no extent column (settled decisions 5 and 9b). Named `end_exclusive` so the convention reaches every call site. **Nullable**, because a sub-monthly filename gives dates rather than a count (settled decision 10b), and then `status` says which fact is missing |
-  | `units` | `months` or `years` for a natural value, which carries no epoch (settled decision 23), and udunits' own `days since 1850-01-01` for a rich one. One column serves both, so no half-empty rows (settled decision 6). Precedent: `parent_time_units` already stores the rich shape |
-  | `calendar` | nullable, and `NULL` *means* something: we didn't have the calendar when we ingested this information |
-  | `source` | `FILENAME` / `FILE_HEADER` / `FIX` |
-  | `is_contiguous`, `n_files` | settled decision 8 |
-  | `file_id`, `recorded_at` | provenance, as every other table here carries |
-  | `start_raw`, `end_raw` | text, never used in arithmetic (settled decision 16) |
-  | `status` | distinguishes "nobody measured" from "this dataset has no time axis" (`fx`), the same distinction `ParentStatus` draws between `NOT_LOOKED_FOR` and `ROOT` |
-
-  The FK target is `DatasetVersion`, not `Dataset`, and no `Relationship()` is added —
-  see "Does `Dataset` grow the same fields?" above.
-
-- `DatasetBranchPoint` hangs off the existing child→parent link rather than off either
-  dataset (settled decision 14). The raw facts are already stored on
-  `DatasetVersionParent`, keyed on the child's version; this table holds the
-  *interpreted* value, keyed on `parent_info_id` exactly as `DatasetParentLink` is, so
-  it inherits source precedence and the raw row stays raw.
-
-- One alembic revision via `make migration MESSAGE="…"`, then read by hand —
-  autogenerate is a first draft and cannot see data migrations.
-- `src/esmporium/db/enrich_to_database.py`: planning and writing, following the
-  `plan_downloads` / `download` and `plan_header_reads` /
-  `record_header_parent_facts` split that already exists. Reuses `get_or_create`, the
-  "asserted wins, silence changes nothing" rule, and the `HeaderReadCallRecord`
-  observer path.
-- Header reads batched **per simulation**, not per dataset — a calendar belongs to
-  the run, exactly as `plan_header_reads` already argues for parents.
-- `FIX`-sourced rows reusing `esmporium.fixes` and its mandatory `reason` /
-  `evidence`.
-- Integration tests: the new tables round-trip through the migrated schema, beside
-  `tests/integration/db/test_headers_against_migrations.py`.
-
-### PR D — the catalogue serves it, and the integration tests that were the point
-
-- `CatalogueEntry` gains the time fields, loaded on a `needs_time_info` flag
-  mirroring `facets_loaded` / `needs_facets` from #58; `DatabaseCatalogue` and
-  `InMemoryCatalogue` both fill them; `CatalogueWithTimeInfo` is vacated (not
-  deleted — see "Costs" above).
-- `tests/integration/requirements/`: pre-load a migrated SQLite database, enrich it,
-  solve a `Covers` requirement against `DatabaseCatalogue`, and assert it agrees with
-  `InMemoryCatalogueWithTimeInfo` on the same data. That agreement is the property
-  `docs/further-background/data-requirements.md` already says a test holds the two
-  catalogues to.
-- Assert the distinction that motivated all of this: before enrichment the group is
-  `needs_enrichment`, **not** `unsatisfied`; after enrichment it resolves.
-- One opt-in live test behind a new marker registered in `pyproject.toml` and
-  `tests/conftest.py` alongside `reads_file_headers`, with a `make` target.
-
-### PR E — `download_by_id` (independent, land any time)
-
-`src/esmporium/db/downloads_to_database.py`. `plan_downloads` already calls
-`find_datasets(...)` and immediately reduces the result to `dataset_ids` before
-calling `_versions_to_plan(session, dataset_ids, …)`. Split it at that line: the
-existing query entry point keeps working, and an id-based one wraps the same body.
-
-Worth stating in the PR description, because it answers a question asked explicitly:
-**ESGF ids cannot be routed through the existing query interface.** `facet_filters`
-*raises* on any name outside `DATASET_FACET_COLUMNS`, and `id_project_specific` is
-deliberately excluded from it ("identify a row rather than describe it"). A facet
-query is also a cross-product rather than a list, so asking for two specific datasets
-by facet returns four. An id-based entry point is the only correct answer, not merely
-the more convenient one.
-
 ## Verification
 
+A, B and B2 need no database and no network, so for them it is:
+
 ```
-make migration MESSAGE="add time range and branch point tables"   # then read it
-make migration-sql       # the schema applying every migration from scratch gives
 make test                # fast suite, no network
-make test-headers        # opt-in, live data nodes
+make checks
 ```
 
-Then end to end against a populated database: search a small CMIP6 requirement,
-`enrich_datasets` what comes back, solve a `Covers` requirement, and confirm that
-(a) it is satisfied where the control is long enough, (b) *before* enrichment the
-group is in `couldnt_answer` with status `NEEDS_ENRICHMENT` rather than in
-`unsatisfied`, and (c) `result.enrichment_inputs` feeds back into
-`enrich_datasets` unmodified.
+Everything from the migration onwards, and the end-to-end run against a populated
+database, is in
+[part three's verification](enrichment-storage.md#verification).
 
 ## Out of scope
 
 `SameTimeRange` (`PLAN.md` step 15), with a code comment recording why it was left
-until then. Each PR carries its own `changelog/` fragment, as every other change here
-does; PRs B and C are `breaking`, because a requirement's hash covers its constraints.
+until then — re-pointed there by PR R2, which takes `align` off `Covers`
+([part three](enrichment-storage.md), decision 33).
+
+Each PR carries its own `changelog/` fragment, as every other change here does. B is
+`breaking`, and so are R1, R2 and R3, wherever they touch a requirement's hash or a
+public signature: the hash covers a requirement's constraints, and `Covers` loses a
+field. B2 is the one PR here that is not.

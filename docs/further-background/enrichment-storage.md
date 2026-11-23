@@ -179,7 +179,8 @@ So:
 - Decision 34 lands here: an unresolved parent puts the group in `couldnt_answer`
   with a status pointing at `find_parents`, so coverage never has to break a deadlock with a filter.
 - The developer note above `Catalogue` ("one entry describes one `Dataset` row, not one `DatasetVersion`")
-  and the first note's "Does `Dataset` grow the same fields?" are updated to say this.
+  and the first note's "What does a catalogue entry carry, and for which version?"
+  are updated to say this.
 
 Not done, and not needed: the commented-out `Relationship()` in `schema.py`.
 Explicit `select`s are the state of the code rather than a recorded decision,
@@ -532,9 +533,20 @@ As above.
 
 ### PR E — `download_by_id`
 
-As in [the first note](enrichment.md#pr-e-download_by_id-independent-land-any-time),
-except that after R3 the ids it takes are version ids, which is what a download is of.
+`src/esmporium/db/downloads_to_database.py`. `plan_downloads` already calls
+`find_datasets(...)` and immediately reduces the result to ids before planning,
+so the split is at that line: the existing query entry point keeps working,
+and an id-based one wraps the same body.
+After R3 the ids it takes are version ids, which is what a download is of.
 Land any time after R3.
+
+Worth stating in the PR description, because it answers a question asked explicitly:
+**ESGF ids cannot be routed through the existing query interface.**
+`facet_filters` *raises* on any name outside `DATASET_FACET_COLUMNS`,
+and `id_project_specific` is deliberately excluded from it
+("identify a row rather than describe it").
+A facet query is also a cross-product rather than a list,
+so asking for two specific datasets by facet returns four.
 
 ## Verification
 
