@@ -115,7 +115,7 @@ class CatalogueWithTimeInfo(Catalogue, Protocol):
         -------
         :
             The half-open span of its describing version, whether its files fill that
-            span, and how many there were -- or `None` if nothing has measured it
+            span, and how many there were -- or `None` if nothing has recorded it
 
             A version whose files leave a gap still has a span, so the two are
             separate facts and both are needed: `Covers` refuses a gapped range rather
@@ -216,7 +216,7 @@ class Covers(BaseModel):
     [Requirement.group_by][esmporium.requirements.Requirement.group_by] already sets
     -- a decision is stated rather than guessed -- and it is forced anyway, because
     containment cannot be written as a number: nobody knows a dataset's extent until
-    it has been measured.
+    it has been recorded.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -434,7 +434,7 @@ class Covers(BaseModel):
             [Pass][esmporium.requirements.Pass]
 
             Every lineage is judged rather than the first failure ending it, so that a
-            `NeedsEnrichment` names every dataset which has to be measured and one
+            `NeedsEnrichment` names every dataset which has to be enriched and one
             call to the enricher clears the lot.
 
         Raises
@@ -587,15 +587,15 @@ class Covers(BaseModel):
                 "once for a simulation rather than over time."
             )
 
-        measured = self._ranges(catalogue, involved, subject)
-        if isinstance(measured, NeedsEnrichment):
-            return measured
+        ranges = self._ranges(catalogue, involved, subject)
+        if isinstance(ranges, NeedsEnrichment):
+            return ranges
 
         # Before any branch point is asked for, deliberately: a gap is a definite
         # answer, so enriching first would cost a round trip and still fail.
         gapped = [
             entry
-            for entry, each in zip(involved, measured, strict=True)
+            for entry, each in zip(involved, ranges, strict=True)
             if not each.is_contiguous
         ]
         if gapped:
@@ -615,13 +615,13 @@ class Covers(BaseModel):
                 "missing decade is reported as covered."
             )
 
-        aligned = self._align(catalogue, involved, measured, subject)
+        aligned = self._align(catalogue, involved, ranges, subject)
         if not isinstance(aligned, _Alignment):
             return aligned
 
         return self._compare(
             covering=covering,
-            have=measured[-1].range,
+            have=ranges[-1].range,
             anchor=aligned.anchor,
             covered_end=aligned.covered_end,
             subject=subject,
@@ -724,7 +724,7 @@ class Covers(BaseModel):
         subject: str,
     ) -> tuple[VersionTimeRange, ...] | NeedsEnrichment:
         """
-        Get the measured range of every dataset involved, or say which are missing
+        Get the recorded range of every dataset involved, or say which are missing
 
         Parameters
         ----------
@@ -743,42 +743,42 @@ class Covers(BaseModel):
         :
             One range per dataset, in the order they were given, or
             [NeedsEnrichment][esmporium.requirements.NeedsEnrichment] naming every
-            dataset which has not been measured
+            dataset whose range is not recorded
         """
-        measured: list[VersionTimeRange] = []
-        unmeasured: list[CatalogueEntry] = []
+        ranges: list[VersionTimeRange] = []
+        unrecorded_ranges: list[CatalogueEntry] = []
         for entry in involved:
             each = catalogue.get_time_range(entry)
             if each is None:
-                unmeasured.append(entry)
+                unrecorded_ranges.append(entry)
             else:
-                measured.append(each)
+                ranges.append(each)
 
         # Every one which is missing rather than the first, so that one run of the
         # enricher clears the lot.
-        if unmeasured:
-            unmeasured.sort(key=lambda entry: entry.id)
+        if unrecorded_ranges:
+            unrecorded_ranges.sort(key=lambda entry: entry.id)
             listed = readable_list(
-                [f"#{entry.id}" for entry in unmeasured], quote=False
+                [f"#{entry.id}" for entry in unrecorded_ranges], quote=False
             )
 
             return _needs(
                 subject,
-                f"nothing has measured when {listed} "
-                f"{'is' if len(unmeasured) == 1 else 'are'}",
+                f"nothing has recorded when {listed} "
+                f"{'is' if len(unrecorded_ranges) == 1 else 'are'}",
                 "its start and end come off its filenames, so this costs nothing but "
                 "has to be done once",
-                unmeasured,
+                unrecorded_ranges,
                 MissingTimeFact.TIME_RANGE,
             )
 
-        return tuple(measured)
+        return tuple(ranges)
 
     def _align(
         self,
         catalogue: CatalogueWithTimeInfo,
         involved: Sequence[CatalogueEntry],
-        measured: Sequence[VersionTimeRange],
+        ranges: Sequence[VersionTimeRange],
         subject: str,
     ) -> _Alignment | Outcome:
         """
@@ -798,7 +798,7 @@ class Covers(BaseModel):
             The datasets this check reads, as [_involved][(c).Covers._involved] gives
             them
 
-        measured
+        ranges
             Their ranges, in the same order
 
         subject
@@ -810,8 +810,8 @@ class Covers(BaseModel):
             The alignment point and the covered run's mapped `end_exclusive`, both as
             positions on the covering dataset's axis -- or why they could not be found
         """
-        axis = measured[-1].range.axis
-        covered = measured[0]
+        axis = ranges[-1].range.axis
+        covered = ranges[0]
         if self.align == "calendar":
             if not covered.range.axis.is_comparable_with(axis):
                 return Fail(_mismatched(subject, covered.range.axis, axis))
@@ -822,15 +822,15 @@ class Covers(BaseModel):
         if isinstance(branches, NeedsEnrichment):
             return branches
 
-        axes = self._check_the_axes(involved, measured, branches, subject)
+        axes = self._check_the_axes(involved, ranges, branches, subject)
         if axes is not None:
             return axes
 
-        joins = self._check_the_joins(involved, measured, branches, subject)
+        joins = self._check_the_joins(involved, ranges, branches, subject)
         if joins is not None:
             return joins
 
-        return _aligned_through(measured, branches)
+        return _aligned_through(ranges, branches)
 
     def _branch_points(
         self,
@@ -891,7 +891,7 @@ class Covers(BaseModel):
     def _check_the_axes(
         self,
         involved: Sequence[CatalogueEntry],
-        measured: Sequence[VersionTimeRange],
+        ranges: Sequence[VersionTimeRange],
         branches: Sequence[BranchPoint],
         subject: str,
     ) -> Outcome | None:
@@ -904,7 +904,7 @@ class Covers(BaseModel):
             The datasets this check reads, as [_involved][(c).Covers._involved] gives
             them
 
-        measured
+        ranges
             Their ranges, in the same order
 
         branches
@@ -920,8 +920,8 @@ class Covers(BaseModel):
         """
         for index, branch in enumerate(branches):
             child, parent = involved[index], involved[index + 1]
-            child_axis = measured[index].range.axis
-            parent_axis = measured[index + 1].range.axis
+            child_axis = ranges[index].range.axis
+            parent_axis = ranges[index + 1].range.axis
 
             # A control and an experiment on different calendars fail here,
             # because the calendar check is strict.
@@ -956,7 +956,7 @@ class Covers(BaseModel):
     def _check_the_joins(
         self,
         involved: Sequence[CatalogueEntry],
-        measured: Sequence[VersionTimeRange],
+        ranges: Sequence[VersionTimeRange],
         branches: Sequence[BranchPoint],
         subject: str,
     ) -> Outcome | None:
@@ -977,7 +977,7 @@ class Covers(BaseModel):
             The datasets this check reads, as [_involved][(c).Covers._involved] gives
             them
 
-        measured
+        ranges
             Their ranges, in the same order
 
         branches
@@ -994,7 +994,7 @@ class Covers(BaseModel):
         broken = []
         for index in range(len(branches) - 1):
             child, parent = involved[index], involved[index + 1]
-            held = measured[index + 1].range
+            held = ranges[index + 1].range
             at = branches[index].in_parent
 
             if not held.start <= at < held.end_exclusive:
@@ -1018,8 +1018,8 @@ class Covers(BaseModel):
         *,
         covering: CatalogueEntry,
         have: TimeRange,
-        anchor: int,
-        covered_end: int,
+        anchor: float,
+        covered_end: float,
         subject: str,
     ) -> Outcome:
         """
@@ -1047,7 +1047,7 @@ class Covers(BaseModel):
         :
             `Fail` if the hard requirement is not met, `Degraded` if the ideal is not,
             `Pass` otherwise -- or `NeedsEnrichment` if the comparison needs a finer
-            axis than the data has been measured on
+            axis than the data is recorded on
         """
         if self.pad is not None:
             met = _covers(have, anchor, covered_end, self.min_overlap, self.pad)
@@ -1148,7 +1148,7 @@ class _Alignment:
     can tell which it got by name.
     """
 
-    anchor: int
+    anchor: float
     """
     Where the series line up, on the covering dataset's axis
 
@@ -1157,18 +1157,18 @@ class _Alignment:
     alongside.
     """
 
-    covered_end: int
+    covered_end: float
     """The covered run's mapped `end_exclusive`, on the same axis"""
 
 
 # TODO future:
 # Other anchors are coherent and not supported. "piControl has to overlap my scenario,
-# and I do not care about the historical run it came through" measures from the covered
-# run's own mapped start rather than from the bottom of the chain, and `min_overlap`
+# and I do not care about the historical run it came through" is anchored at the covered
+# run's own mapped start rather than at the bottom of the chain, and `min_overlap`
 # could be wanted from either. Saying which is a field on `Covers`, so both wait for
 # somebody to ask for one.
 def _aligned_through(
-    measured: Sequence[VersionTimeRange], branches: Sequence[BranchPoint]
+    ranges: Sequence[VersionTimeRange], branches: Sequence[BranchPoint]
 ) -> _Alignment:
     """
     Map the covered run onto the covering dataset's axis, one branch at a time
@@ -1184,12 +1184,12 @@ def _aligned_through(
 
     `BP` is where the run directly below the covering dataset branched off it, and it
     is the alignment point. Each run in between then contributes how far into its own
-    parent it branched, measured from that parent's own start, so the covered run's
+    parent it branched, counted from that parent's own start, so the covered run's
     start lands wherever the chain of branches puts it.
 
     Parameters
     ----------
-    measured
+    ranges
         Ranges of the datasets involved, covered one first and covering one last
 
     branches
@@ -1210,9 +1210,9 @@ def _aligned_through(
 
     position = anchor
     for index in reversed(range(len(branches) - 1)):
-        position += branches[index].in_parent - measured[index + 1].range.start
+        position += branches[index].in_parent - ranges[index + 1].range.start
 
-    return _Alignment(anchor, position + measured[0].range.extent)
+    return _Alignment(anchor, position + ranges[0].range.extent.count)
 
 
 @dataclass(frozen=True)
@@ -1224,10 +1224,10 @@ class _Window:
     they are read, which is in two message formats and one `if`.
     """
 
-    start: int
+    start: float
     """First step which has to be covered"""
 
-    end_exclusive: int
+    end_exclusive: float
     """First step after the last which has to be covered"""
 
     covered: bool
@@ -1236,8 +1236,8 @@ class _Window:
 
 def _covers(
     have: TimeRange,
-    anchor: int,
-    covered_end: int,
+    anchor: float,
+    covered_end: float,
     min_overlap: Span | None,
     pad: tuple[Span, Span],
 ) -> _Window | NeedsEnrichment:

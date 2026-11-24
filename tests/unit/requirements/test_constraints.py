@@ -185,7 +185,7 @@ class NeedsTheYears(BaseModel):
     A check which cannot answer until somebody records how long a dataset is
 
     The shape of a check whose facts are not in yet: it names the datasets it would
-    need measured, so one call to whatever does the measuring clears every group.
+    need enriched, so one call to whatever does the enriching clears every group.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -193,21 +193,21 @@ class NeedsTheYears(BaseModel):
     role: str
 
     def evaluate(self, view: ConstraintView, catalogue: CatalogueWithYears) -> Outcome:
-        unmeasured = [
+        unenriched = [
             entry
             for entry in view.roles[self.role]
             if entry.id not in getattr(catalogue, "years_on_record", {})
         ]
-        if unmeasured:
-            listed = ", ".join(f"#{entry.id}" for entry in unmeasured)
+        if unenriched:
+            listed = ", ".join(f"#{entry.id}" for entry in unenriched)
 
             return NeedsEnrichment(
-                f"nothing has measured {listed}",
+                f"nothing has recorded {listed}",
                 inputs=tuple(
                     EnrichmentInput(
                         dataset_id=entry.id, missing=MissingTimeFact.TIME_RANGE
                     )
-                    for entry in unmeasured
+                    for entry in unenriched
                 ),
             )
 
@@ -652,7 +652,7 @@ def test_a_check_which_cannot_answer_is_not_reported_as_missing_data(dataset):
     assert not result.satisfied
     (group,) = result.couldnt_answer.values()
     assert group.status is ExplanationStatusNotOk.NEEDS_ENRICHMENT
-    assert "nothing has measured #1" in result.explain()
+    assert "nothing has recorded #1" in result.explain()
 
 
 def test_an_unsupported_check_is_in_the_same_bucket_for_a_different_reason(dataset):
@@ -664,13 +664,13 @@ def test_an_unsupported_check_is_in_the_same_bucket_for_a_different_reason(datas
 
     (group,) = result.couldnt_answer.values()
     assert group.status is ExplanationStatusNotOk.MISSING_FEATURE_PLEASE_RAISE_ISSUE
-    # Nothing to go and fetch: no amount of measuring makes a feature exist.
+    # Nothing to go and fetch: no amount of enriching makes a feature exist.
     assert result.enrichment_inputs == ()
 
 
 def test_enrichment_inputs_are_deduplicated(dataset):
     """
-    One dataset two checks both need measured is named once
+    One dataset two checks both need enriched is named once
     """
     result = solve(
         requirement(
@@ -748,7 +748,7 @@ def test_a_definite_failure_outranks_something_we_could_not_answer(dataset):
 
     assert list(result.unsatisfied) == [ONLY_GROUP]
     assert not result.couldnt_answer
-    # Still worth measuring, even though this group has a worse problem than that.
+    # Still worth enriching, even though this group has a worse problem than that.
     (unsolved,) = result.unsatisfied.values()
     assert unsolved.enrichment_inputs == (
         EnrichmentInput(dataset_id=2, missing=MissingTimeFact.TIME_RANGE),

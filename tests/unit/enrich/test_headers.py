@@ -12,7 +12,7 @@ import pytest
 
 from esmporium.datasets.time import TimeStep, UnknownTimeUnitsError
 from esmporium.enrich.headers import (
-    CF_DEFAULT_CALENDAR,
+    NoCalendarError,
     NoTimeUnitsError,
     read_time_axis,
 )
@@ -66,17 +66,23 @@ def test_other_attributes_are_ignored():
     assert axis.units.step == TimeStep.DAYS
 
 
-def test_a_file_which_names_no_calendar_gets_cfs_own_default():
+@pytest.mark.parametrize("calendar", [None, "", b""])
+def test_a_file_which_names_no_calendar_says_so(calendar):
     """
-    CF says a silent time coordinate is on the standard calendar
+    Rather than assuming CF's `standard`
 
-    Recorded as `standard` rather than left empty, because `None` is reserved for not
-    having read a header at all -- a different thing from having read one which stayed
-    silent.
+    CF's rule is how to read a file, not evidence of what the model ran, and a silent
+    default is how a day count comes out wrong unnoticed. The message lists what the
+    attributes did say, so whoever reads it can see what was there.
     """
-    assert read_time_axis({"units": "days since 1850-01-01"}).calendar == (
-        CF_DEFAULT_CALENDAR
-    )
+    attributes: dict[str, object] = {"units": "days since 1850-01-01", "axis": "T"}
+    if calendar is not None:
+        attributes["calendar"] = calendar
+
+    with pytest.raises(NoCalendarError, match=r"axis, .*units") as error:
+        read_time_axis(attributes)
+
+    assert error.value.attributes is attributes
 
 
 def test_attributes_with_no_units_say_what_is_missing_and_why():

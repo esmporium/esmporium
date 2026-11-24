@@ -19,10 +19,18 @@ from esmporium.datasets.calendars import (
     NoEpochError,
     UnknownCalendarError,
     advance,
+    convert_position,
     position_of_date,
     retreat,
 )
-from esmporium.datasets.time import Span, TimeAxis, TimeStep, TimeUnits, total_months
+from esmporium.datasets.time import (
+    CalendarOnANaturalAxisError,
+    Span,
+    TimeAxis,
+    TimeStep,
+    TimeUnits,
+    total_months,
+)
 
 cftime = pytest.importorskip("cftime", reason="the optional `calendars` extra")
 
@@ -49,29 +57,37 @@ def daily(calendar: str) -> TimeAxis:
     return TimeAxis(TimeUnits(TimeStep.DAYS, "1850-01-01"), calendar)
 
 
-def on(axis: TimeAxis, *parts: int) -> int:
+def on(axis: TimeAxis, year: int, month: int, day: int) -> float:
     """
-    Get a date's position on an axis
+    Get a date's position on a dated axis
 
     Parameters
     ----------
     axis
-        The axis
+        The dated axis, which knows its calendar
 
-    *parts
-        Year, then optionally month, day and hour
+    year
+        Calendar year
+
+    month
+        Month of that year
+
+    day
+        Day of that month
 
     Returns
     -------
     :
         The date's position
     """
-    year, month, day, hour = (*parts, *(1, 1, 1, 0)[len(parts) :])
+    return cftime.date2num(
+        cftime.datetime(year, month, day, calendar=axis.calendar),
+        str(axis.units),
+        calendar=axis.calendar,
+    )
 
-    return position_of_date(axis, year=year, month=month, day=day, hour=hour)
 
-
-def date_at(position: int, calendar: str) -> str:
+def date_at(position: float, calendar: str) -> str:
     """
     Render a position on a daily axis as a date
 
@@ -150,19 +166,33 @@ def test_a_part_year_against_yearly_data_is_refused():
 
 
 @pytest.mark.parametrize(
-    ("axis", "parts", "expected"),
+    ("axis", "year", "month", "expected"),
     [
-        (YEARLY, (1850,), 1850),
-        (YEARLY, (1850, 7, 15), 1850),
-        (MONTHLY, (1850, 1), 22189),
-        (MONTHLY, (1, 1), 1),
+        (YEARLY, 1850, None, 1850),
+        (MONTHLY, 1850, 1, 22189),
+        (MONTHLY, 1, 1, 1),
     ],
 )
-def test_placing_a_date_on_a_calendar_free_axis(axis, parts, expected):
+def test_placing_a_date_on_a_calendar_free_axis(axis, year, month, expected):
+    assert position_of_date(axis, year=year, month=month) == expected
+
+
+@pytest.mark.parametrize(("axis", "month"), [(YEARLY, 7), (MONTHLY, None)])
+def test_a_date_which_does_not_match_the_axis_step_is_refused(axis, month):
     """
-    Components finer than the axis' own step are ignored, not refused
+    A month on a yearly axis would have to be dropped, and a monthly axis without one
+    would have to fill it in
     """
-    assert on(axis, *parts) == expected
+    with pytest.raises(ValueError, match="got year=1850"):
+        position_of_date(axis, year=1850, month=month)
+
+
+def test_a_date_is_not_placed_on_a_dated_axis_by_position_of_date():
+    """
+    That is an instant in a calendar, and `convert_position`'s job
+    """
+    with pytest.raises(ValueError, match="convert_position"):
+        position_of_date(daily("noleap"), year=1850)
 
 
 def test_a_natural_sub_monthly_axis_has_no_dates_on_it():
@@ -273,13 +303,13 @@ def test_minutes_on_an_hourly_axis():
     assert advance(0, Span(1, TimeStep.HOURS), axis) == 60
 
 
-@pytest.mark.parametrize("move", [advance, position_of_date])
+@pytest.mark.parametrize("move", [advance, convert_position])
 def test_an_axis_which_does_not_know_its_calendar_says_so(move):
     """
     Work waiting to be done, and distinguishable from every other failure
 
-    Both directions have to say it: placing a date on the axis and moving along it
-    are two ways to need the same calendar.
+    Both have to say it: moving along the axis and converting onto it are two ways to
+    need the same calendar.
     """
     axis = TimeAxis(TimeUnits(TimeStep.DAYS, "1850-01-01"), calendar=None)
 
@@ -287,20 +317,27 @@ def test_an_axis_which_does_not_know_its_calendar_says_so(move):
         if move is advance:
             advance(0, Span(1, TimeStep.YEARS), axis)
         else:
-            position_of_date(axis, year=1850)
+            convert_position(22189, from_axis=MONTHLY, to_axis=axis)
 
 
-def test_a_sub_monthly_axis_with_a_calendar_but_no_epoch_says_so():
+def test_a_sub_monthly_axis_with_no_epoch_says_so():
     """
-    A reachable state, and a different complaint from not knowing the calendar
+    A different complaint from not knowing the calendar
 
-    "Days, in the 360-day calendar" is still not a scale: there is no date to count
-    from, so there is nothing to do arithmetic against.
+    "Days" on its own is not a scale: there is no date to count from, so there is
+    nothing to do arithmetic against.
     """
-    axis = TimeAxis(TimeUnits(TimeStep.DAYS), "360_day")
-
     with pytest.raises(NoEpochError):
-        advance(0, Span(1, TimeStep.YEARS), axis)
+        advance(0, Span(1, TimeStep.YEARS), TimeAxis(TimeUnits(TimeStep.DAYS)))
+
+
+def test_a_natural_axis_cannot_carry_a_calendar():
+    """
+    A count with no epoch is the same count in every calendar, so naming one says
+    nothing
+    """
+    with pytest.raises(CalendarOnANaturalAxisError):
+        TimeAxis(TimeUnits(TimeStep.DAYS), "360_day")
 
 
 # ----------------------------------------------------- without the extra installed
@@ -331,14 +368,16 @@ def test_a_daily_axis_without_cftime_names_the_extra(monkeypatch):
         advance(0, Span(1, TimeStep.YEARS), daily("noleap"))
 
 
-def test_placing_a_date_without_cftime_names_the_extra_too(monkeypatch):
+def test_converting_onto_a_dated_axis_without_cftime_names_the_extra_too(
+    monkeypatch,
+):
     """
     Both entry points need the extra, so both have to say which one it is
     """
     _hide_cftime(monkeypatch)
 
     with pytest.raises(MissingCalendarsExtraError, match=r"esmporium\[calendars\]"):
-        position_of_date(daily("noleap"), year=1850)
+        convert_position(22189, from_axis=MONTHLY, to_axis=daily("noleap"))
 
 
 def test_the_missing_extra_is_an_import_error():

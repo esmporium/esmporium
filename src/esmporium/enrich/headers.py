@@ -26,20 +26,6 @@ CF_UNITS_ATTRIBUTE = "units"
 CF_CALENDAR_ATTRIBUTE = "calendar"
 """The CF attribute naming which calendar a time coordinate's values are in"""
 
-# TODO (PR R1 in docs/further-background/enrichment-storage.md):
-# no default calendar. A missing `calendar` becomes an error listing what was found,
-# and a fix can supply it.
-CF_DEFAULT_CALENDAR = "standard"
-"""
-The calendar CF says to assume when a time coordinate does not name one
-
-Applied, because it is the convention rather than a guess of ours: CF states that a
-time coordinate with no `calendar` attribute is on the standard (mixed
-Julian/Gregorian) calendar. Recorded all the same, so the stored row says `standard`
-rather than nothing -- what `NULL` is reserved for is *not having read a header at
-all*, which is a different thing from having read one that stayed silent.
-"""
-
 
 class NoTimeUnitsError(ValueError):
     """
@@ -66,6 +52,32 @@ class NoTimeUnitsError(ValueError):
         )
 
 
+class NoCalendarError(ValueError):
+    """
+    Raised when a time variable's attributes do not say which calendar it is on
+    """
+
+    def __init__(self, attributes: Mapping[str, object]) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        attributes
+            The attributes which were read
+        """
+        self.attributes = attributes
+        found = ", ".join(sorted(str(name) for name in attributes)) or "none"
+        super().__init__(
+            f"These attributes do not include a {CF_CALENDAR_ATTRIBUTE!r}, so they do "
+            f"not say which calendar the time values are in. Attributes found: "
+            f"{found}. CF reads a missing calendar as 'standard', but that is a rule "
+            f"for reading a file rather than evidence of what the model ran, so it is "
+            f"not assumed here. If the calendar is known from elsewhere, record it as "
+            f"a fix."
+        )
+
+
 def read_time_axis(attributes: Mapping[str, object]) -> TimeAxis:
     """
     Read a time axis out of a time variable's attributes
@@ -85,6 +97,9 @@ def read_time_axis(attributes: Mapping[str, object]) -> TimeAxis:
     NoTimeUnitsError
         The attributes do not include `units`
 
+    NoCalendarError
+        The attributes do not include `calendar`, or it is empty
+
     UnknownTimeUnitsError
         The `units` attribute is not a string we read
 
@@ -94,21 +109,24 @@ def read_time_axis(attributes: Mapping[str, object]) -> TimeAxis:
     >>> str(axis.units), axis.calendar
     ('days since 1850-01-01', 'noleap')
 
-    A file which does not name a calendar gets CF's own default, recorded rather than
-    left empty:
+    A file which does not name a calendar says so, listing what it did name:
 
-    >>> read_time_axis({"units": "days since 1850-01-01"}).calendar
-    'standard'
+    >>> try:
+    ...     read_time_axis({"units": "days since 1850-01-01", "axis": "T"})
+    ... except NoCalendarError as error:
+    ...     sorted(error.attributes)
+    ['axis', 'units']
     """
     if CF_UNITS_ATTRIBUTE not in attributes:
         raise NoTimeUnitsError(attributes)
 
-    calendar = _as_text(attributes.get(CF_CALENDAR_ATTRIBUTE))
+    units = TimeUnits.parse(_as_text(attributes[CF_UNITS_ATTRIBUTE]) or "")
 
-    return TimeAxis(
-        units=TimeUnits.parse(_as_text(attributes[CF_UNITS_ATTRIBUTE]) or ""),
-        calendar=calendar if calendar else CF_DEFAULT_CALENDAR,
-    )
+    calendar = _as_text(attributes.get(CF_CALENDAR_ATTRIBUTE))
+    if not calendar:
+        raise NoCalendarError(attributes)
+
+    return TimeAxis(units=units, calendar=calendar)
 
 
 def _as_text(value: object) -> str | None:

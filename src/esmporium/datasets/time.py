@@ -15,6 +15,12 @@ off-by-one traps:
 - a **natural** value is a 1-based ordinal step count with no epoch, so the first
   month of year 1 is month 1. A udunits `since` epoch counts *elapsed* steps and would
   make it month 0.
+
+Positions are held as given. On a natural axis a position is a whole number of steps,
+and anything else is refused; on a dated axis it is whatever was published, fraction
+and all, because a branch time or a time bound is a float and rounding it would be a
+conversion nobody asked for. Moving between axes is
+[convert_position][esmporium.datasets.calendars.convert_position].
 """
 
 from __future__ import annotations
@@ -177,6 +183,10 @@ class TimeUnits:
         """
         Read a units string back
 
+        Splits `<step> since <epoch>` and does no more. The epoch is kept as the text
+        the file wrote, because interpreting it -- partial dates, times of day, the
+        calendar it is a date in -- is what `cftime` does and is not repeated here.
+
         Parameters
         ----------
         text
@@ -251,6 +261,9 @@ class TimeAxis:
     A pair of positions is only comparable when they are on axes which agree -- see
     [is_comparable_with][(c).is_comparable_with] -- which is why this is a type rather
     than two loose fields.
+
+    A natural axis has no calendar, and is refused if given one: a count of years or
+    months is the same count in every calendar, so a calendar on it would say nothing.
     """
 
     units: TimeUnits
@@ -260,10 +273,22 @@ class TimeAxis:
     """
     The CF calendar name, e.g. `standard`, `noleap`, `360_day`
 
-    `None` *means* something: we did not have the calendar when this was recorded. It
-    is not a default standing in for `standard`, because guessing a calendar is how a
-    day count silently comes out wrong.
+    Always `None` on a natural axis. On a dated axis `None` means the calendar is not
+    known, and such an axis is comparable with nothing, itself included: guessing a
+    calendar is how a day count silently comes out wrong.
     """
+
+    def __post_init__(self) -> None:
+        """
+        Check a natural axis does not carry a calendar
+
+        Raises
+        ------
+        CalendarOnANaturalAxisError
+            The units are natural and a calendar was given
+        """
+        if self.units.is_natural and self.calendar is not None:
+            raise CalendarOnANaturalAxisError(self.units, self.calendar)
 
     def is_comparable_with(self, other: TimeAxis) -> bool:
         """
@@ -277,35 +302,52 @@ class TimeAxis:
         Returns
         -------
         :
-            `True` if the two sets of numbers are on the same scale
+            `True` if a number on one axis means the same instant, or the same step,
+            as that number on the other
 
         Notes
         -----
-        The units have to match exactly, because the numbers mean nothing without
-        them. The calendar only has to match when *both* axes know it: a range
-        measured from a filename does not know its calendar, and refusing to compare
-        it with one that does would make the cheap answer useless.
+        Comparable means the numbers can be compared as they stand, with no
+        conversion:
+
+        - **natural against natural**: the same step. Neither carries a calendar,
+          because a natural axis cannot.
+        - **dated against dated**: the same units, epoch included, and the same
+          calendar, which both have to know. Two dated axes on one calendar with
+          different epochs or steps are not comparable as they stand, and are once one
+          is converted onto the other.
+        - **natural against dated**: never. A month count and a day count are related
+          only through a calendar, by a conversion.
+
+        Conversions are
+        [convert_position][esmporium.datasets.calendars.convert_position].
 
         Examples
         --------
         >>> monthly = TimeAxis(TimeUnits(TimeStep.MONTHS))
-        >>> monthly.is_comparable_with(TimeAxis(TimeUnits(TimeStep.MONTHS), "noleap"))
+        >>> monthly.is_comparable_with(TimeAxis(TimeUnits(TimeStep.MONTHS)))
         True
 
         >>> noleap = TimeAxis(TimeUnits(TimeStep.DAYS, "1850-01-01"), "noleap")
         >>> gregorian = TimeAxis(TimeUnits(TimeStep.DAYS, "1850-01-01"), "standard")
         >>> noleap.is_comparable_with(gregorian)
         False
+
+        >>> unknown = TimeAxis(TimeUnits(TimeStep.DAYS, "1850-01-01"))
+        >>> unknown.is_comparable_with(unknown)
+        False
+
+        >>> monthly.is_comparable_with(noleap)
+        False
         """
         if self.units != other.units:
             return False
 
-        # TODO (PR R1 in docs/further-background/enrichment-storage.md):
-        # a `None` calendar matching anything is a default in disguise.
-        # Natural axes need no calendar; dated axes need a known, identical one,
-        # and may differ in epoch once converted.
-        if self.calendar is None or other.calendar is None:
+        if self.units.is_natural:
             return True
+
+        if self.calendar is None or other.calendar is None:
+            return False
 
         # Strict on purpose: different calendars are never comparable,
         # so nothing slips through by accident.
@@ -317,6 +359,92 @@ class TimeAxis:
         # so any loosening has to say which case it allows,
         # rather than dropping the check.
         return self.calendar == other.calendar
+
+
+class CalendarOnANaturalAxisError(ValueError):
+    """
+    Raised when a natural axis is given a calendar
+    """
+
+    def __init__(self, units: TimeUnits, calendar: str) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        units
+            The natural units
+
+        calendar
+            The calendar which was given with them
+        """
+        self.units = units
+        self.calendar = calendar
+        super().__init__(
+            f"A {units} axis is a count of {units.step.value} with no epoch, which is "
+            f"the same count in every calendar, so it cannot carry calendar "
+            f"{calendar!r}. A calendar belongs to a dated axis, '<step> since <epoch>'."
+        )
+
+
+class NotAWholeStepError(ValueError):
+    """
+    Raised when a position on a natural axis is not a whole number of steps
+    """
+
+    def __init__(self, value: float, axis: TimeAxis) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        value
+            The position which was given
+
+        axis
+            The natural axis it was given on
+        """
+        self.value = value
+        self.axis = axis
+        super().__init__(
+            f"{value!r} is not a position on a {axis.units} axis, which counts whole "
+            f"{axis.units.step.value}. A fractional value is a position on a dated "
+            f"axis; putting it on a natural one is a conversion, done by "
+            f"`esmporium.datasets.calendars.convert_position`."
+        )
+
+
+def check_position(value: float, axis: TimeAxis) -> None:
+    """
+    Refuse a position which a natural axis cannot hold
+
+    Parameters
+    ----------
+    value
+        The position
+
+    axis
+        The axis it is a position on
+
+    Raises
+    ------
+    NotAWholeStepError
+        `axis` is natural and `value` is not a whole number
+
+    Examples
+    --------
+    >>> check_position(22189, TimeAxis(TimeUnits(TimeStep.MONTHS)))
+
+    >>> check_position(438000.5, TimeAxis(TimeUnits(TimeStep.DAYS, "1850-01-01")))
+
+    >>> try:
+    ...     check_position(1850.5, TimeAxis(TimeUnits(TimeStep.YEARS)))
+    ... except NotAWholeStepError as error:
+    ...     error.value
+    1850.5
+    """
+    if axis.units.is_natural and not float(value).is_integer():
+        raise NotAWholeStepError(value, axis)
 
 
 class MismatchedTimeAxisError(ValueError):
@@ -341,7 +469,8 @@ class MismatchedTimeAxisError(ValueError):
         super().__init__(
             f"These time ranges are not on comparable axes: {left.units} in calendar "
             f"{left.calendar!r} against {right.units} in calendar {right.calendar!r}. "
-            f"Convert one of them first."
+            f"Convert one onto the other first, with "
+            f"`esmporium.datasets.calendars.convert_position`."
         )
 
 
@@ -350,7 +479,7 @@ class EmptyTimeRangeError(ValueError):
     Raised when a time range would hold no data at all
     """
 
-    def __init__(self, start: int, end_exclusive: int) -> None:
+    def __init__(self, start: float, end_exclusive: float) -> None:
         """
         Initialise the error
 
@@ -389,28 +518,31 @@ class TimeRange:
        is. With inclusive ends that test would need a `+ 1` which has to know the
        unit.
 
+    Positions on a natural axis are whole numbers of steps; on a dated axis they are
+    as published, e.g. a time bound of `0.125` days.
+
     Examples
     --------
     Yearly data published as 1850 to 1860 holds eleven years, not ten. Count the
     boxes, not the fence posts:
 
     >>> yearly = TimeAxis(TimeUnits(TimeStep.YEARS))
-    >>> TimeRange(1850, 1861, yearly).extent
-    11
+    >>> str(TimeRange(1850, 1861, yearly).extent)
+    '11 years'
 
     A dataset with a single step has an extent of one, which is the case that catches
     a conversion which subtracted the published values:
 
-    >>> TimeRange(1850, 1851, yearly).extent
-    1
+    >>> str(TimeRange(1850, 1851, yearly).extent)
+    '1 year'
     """
 
-    start: int
-    """The first step in the data, counted in the axis' units"""
+    start: float
+    """The first step in the data, as a position on the axis"""
 
-    end_exclusive: int
+    end_exclusive: float
     """
-    The first step *not* in the data, counted in the axis' units
+    The first step *not* in the data, as a position on the axis
 
     Note that this is **not** what the filename says. A monthly file named
     `..._320001-325012.nc` contains December 325012, so `end_exclusive` is January
@@ -422,27 +554,42 @@ class TimeRange:
 
     def __post_init__(self) -> None:
         """
-        Check the range holds at least one step
+        Check the range holds at least one step, at positions its axis can hold
 
         Raises
         ------
+        NotAWholeStepError
+            The axis is natural and a position is not a whole number
+
         EmptyTimeRangeError
             `end_exclusive` is not greater than `start`
         """
+        check_position(self.start, self.axis)
+        check_position(self.end_exclusive, self.axis)
+
         if self.end_exclusive <= self.start:
             raise EmptyTimeRangeError(self.start, self.end_exclusive)
 
     @property
-    def extent(self) -> int:
+    def extent(self) -> Span:
         """
         How long the data runs for, in the axis' units
 
         Returns
         -------
         :
-            `end_exclusive - start`, with no correction term
+            `end_exclusive - start` steps of the axis' own step, with no correction
+            term
+
+            A whole number on a natural axis. On a dated axis it is whatever the
+            positions give, so hourly data on a `days since` axis can have a
+            fractional extent.
         """
-        return self.end_exclusive - self.start
+        length = self.end_exclusive - self.start
+        if self.axis.units.is_natural:
+            return Span(int(length), self.axis.units.step)
+
+        return Span(length, self.axis.units.step)
 
     def contains(self, other: TimeRange) -> bool:
         """
@@ -472,7 +619,8 @@ class TimeRange:
         >>> TimeRange(0, 100, monthly).contains(TimeRange(50, 101, monthly))
         False
         """
-        self._check_comparable(other)
+        if not self.axis.is_comparable_with(other.axis):
+            raise MismatchedTimeAxisError(self.axis, other.axis)
 
         return self.start <= other.start and self.end_exclusive >= other.end_exclusive
 
@@ -513,26 +661,10 @@ class TimeRange:
         >>> first.is_adjacent_to(TimeRange(22310, 22430, monthly))
         False
         """
-        self._check_comparable(other)
-
-        return self.end_exclusive == other.start or other.end_exclusive == self.start
-
-    def _check_comparable(self, other: TimeRange) -> None:
-        """
-        Refuse a comparison between ranges on axes which do not agree
-
-        Parameters
-        ----------
-        other
-            The range being compared against
-
-        Raises
-        ------
-        MismatchedTimeAxisError
-            The two axes are not comparable
-        """
         if not self.axis.is_comparable_with(other.axis):
             raise MismatchedTimeAxisError(self.axis, other.axis)
+
+        return self.end_exclusive == other.start or other.end_exclusive == self.start
 
 
 @dataclass(frozen=True)
@@ -545,8 +677,8 @@ class VersionTimeRange:
     step, and [Covers][esmporium.requirements.Covers] refuses it on the strength of the
     flag rather than on the strength of a missing range.
 
-    Here rather than beside the measurement which produces it
-    ([measure_version][esmporium.enrich.measure_version]) because
+    Here rather than beside the function which produces it
+    ([combine_file_ranges][esmporium.enrich.combine_file_ranges]) because
     `Covers` reads one *at solve time*, and
     `esmporium.requirements` may import `esmporium.datasets` and not
     `esmporium.enrich`.
@@ -567,10 +699,10 @@ class VersionTimeRange:
 
     n_files: int
     """
-    How many files were measured
+    How many files were combined
 
     Kept so that a stored row can be judged without re-reading anything: a version
-    which gained a file since it was measured is a row to measure again.
+    which gained a file since it was combined is a row to combine again.
     """
 
 
@@ -579,7 +711,7 @@ class NegativeSpanError(ValueError):
     Raised when a length of time is given as a negative number
     """
 
-    def __init__(self, count: int, step: TimeStep) -> None:
+    def __init__(self, count: float, step: TimeStep) -> None:
         """
         Initialise the error
 
@@ -600,6 +732,31 @@ class NegativeSpanError(ValueError):
         )
 
 
+class FractionalCalendarFreeSpanError(ValueError):
+    """
+    Raised when a span of years or months is not a whole number of them
+    """
+
+    def __init__(self, count: float, step: TimeStep) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        count
+            The count which was given
+
+        step
+            The step it counted
+        """
+        self.count = count
+        self.step = step
+        super().__init__(
+            f"A span of {step.value} is a whole number of them, but got {count}. "
+            f"State a part of a year in months, e.g. 6 months rather than 0.5 years."
+        )
+
+
 @dataclass(frozen=True)
 class Span:
     """
@@ -608,6 +765,10 @@ class Span:
     A *length*, not a position: "twenty years of overlap", "ten years of padding".
     Lengths are what the half-open convention does not touch, so there is no
     exclusive-end question here at all.
+
+    A count of years or months is whole: a fractional year is not a length this
+    states. A count of anything finer may be fractional, because that is what the
+    extent of sub-daily data on a `days since` axis comes to.
 
     Examples
     --------
@@ -618,7 +779,7 @@ class Span:
     '1 year'
     """
 
-    count: int
+    count: int | float
     """How many steps long"""
 
     step: TimeStep
@@ -626,15 +787,21 @@ class Span:
 
     def __post_init__(self) -> None:
         """
-        Check the length is not negative
+        Check the length is not negative, and is whole where it has to be
 
         Raises
         ------
         NegativeSpanError
             `count` is less than zero
+
+        FractionalCalendarFreeSpanError
+            `step` is years or months and `count` is not a whole number
         """
         if self.count < 0:
             raise NegativeSpanError(self.count, self.step)
+
+        if self.step.is_calendar_free and not float(self.count).is_integer():
+            raise FractionalCalendarFreeSpanError(self.count, self.step)
 
     def __str__(self) -> str:
         """
@@ -658,26 +825,24 @@ class BranchPoint:
 
     A property of the (child to parent) edge rather than of either dataset, which is a
     deliberate departure from ESGF, whose data model has no edges. The facts are the
-    child's -- its header publishes the number, and for CMIP7 its search record
+    child's -- its header publishes the numbers, and for CMIP7 its search record
     publishes the units -- but the place they belong is the link.
 
-    The one piece of arithmetic coverage needs is that **after mapping, the child's
-    start is the branch point**: a position `p` on the child's axis is
-    `in_parent + (p - child_start)` on the parent's.
+    Each end is a position on its own run's axis, as given: `branch_time_in_parent` is
+    in the parent's time units and calendar, and `branch_time_in_child` in the child's.
+    Nothing here converts either one. On a dated axis a position is the published float;
+    on a natural axis it has to be whole, and putting a published float there is the
+    caller's conversion,
+    [convert_position][esmporium.datasets.calendars.convert_position].
     """
 
-    # TODO (PR R1 in docs/further-background/enrichment-storage.md):
-    # stop flooring here: placing a published float on a natural axis
-    # is the enricher's explicit, recorded conversion, not this type's.
-    # Also give `in_child` its own axis (it is in the child's units and calendar).
-    in_parent: int
+    in_parent: float
     """
-    Where the child's data starts, as a position on the *parent's* axis
+    Where the child branched, as a position on `parent_axis`
 
-    Interpreted, not raw, in two senses. The published number is on
-    [DatasetVersionParent.branch_time_in_parent][esmporium.db.schema.DatasetVersionParent.branch_time_in_parent],
-    a float, so building one of these floors it to a whole step rather than rounding.
-    And the axis it counts on is published only by some projects: a CMIP6 header gives
+    Published as `branch_time_in_parent`, a float, on
+    [DatasetVersionParent][esmporium.db.schema.DatasetVersionParent]. The axis it
+    counts on is published only by some projects: a CMIP6 header gives
     `parent_time_units` beside it, CMIP7 publishes them in the search index, and CMIP5
     publishes a bare `branch_time` with no units at all -- which is why a CMIP5 branch
     point needs a fix before one of these can be built.
@@ -686,15 +851,43 @@ class BranchPoint:
     parent_axis: TimeAxis
     """The axis `in_parent` is a position on"""
 
-    in_child: int | None = None
+    in_child: float | None = None
     """
-    Where the child's data starts, as a position on the child's own axis
+    Where the child branched, as a position on `child_axis`
 
-    `None` when the file did not say. Published as `branch_time_in_child` by a header
-    which carries one, and kept because it is a check rather than an input: it should
-    equal the child's measured start, and a disagreement is a fact about the data
-    worth noticing rather than a number to compute with.
+    Published as `branch_time_in_child` by a header which carries one, and `None` when
+    the file did not say, which is every CMIP5 file.
     """
+
+    child_axis: TimeAxis | None = None
+    """
+    The axis `in_child` is a position on
+
+    Given exactly when `in_child` is.
+    """
+
+    def __post_init__(self) -> None:
+        """
+        Check each end is a position its axis can hold
+
+        Raises
+        ------
+        ValueError
+            Only one of `in_child` and `child_axis` was given
+
+        NotAWholeStepError
+            An end is on a natural axis and is not a whole number
+        """
+        if (self.in_child is None) != (self.child_axis is None):
+            msg = (
+                "in_child and child_axis are given together or not at all, got "
+                f"in_child={self.in_child!r} and child_axis={self.child_axis!r}"
+            )
+            raise ValueError(msg)
+
+        check_position(self.in_parent, self.parent_axis)
+        if self.in_child is not None and self.child_axis is not None:
+            check_position(self.in_child, self.child_axis)
 
 
 def total_months(year: int, month: int) -> int:
@@ -794,8 +987,8 @@ def spanned(ranges: Iterable[TimeRange]) -> TimeRange:
     Examples
     --------
     >>> monthly = TimeAxis(TimeUnits(TimeStep.MONTHS))
-    >>> spanned([TimeRange(0, 12, monthly), TimeRange(24, 36, monthly)]).extent
-    36
+    >>> str(spanned([TimeRange(0, 12, monthly), TimeRange(24, 36, monthly)]).extent)
+    '36 months'
     """
     in_order = tuple(ranges)
     if not in_order:
