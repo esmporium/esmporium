@@ -30,6 +30,7 @@ from esmporium.datasets import (
     BranchTimeInChild,
     MismatchedTimeAxisError,
     NoEpochError,
+    Position,
     Span,
     TimeAxis,
     TimeRange,
@@ -144,11 +145,11 @@ class CatalogueWithTimeInfo(Catalogue, Protocol):
             has recorded it
 
             - `in_parent` is the published `branch_time_in_parent`, a position on the
-              axis the *parent's* range is recorded on (`parent_axis`).
+              axis the *parent's* range is recorded on.
             - `in_child` is the published `branch_time_in_child`, a position on the axis
-              *`entry`'s* range is recorded on (`child_axis`), or `None` where it was
-              not published. What stands in for it then is the convention of the
-              child's project: see [esmporium.datasets.branch_time_in_child][].
+              *`entry`'s* range is recorded on, or `None` where it was not published.
+              What stands in for it then is the convention of the child's project:
+              see [esmporium.datasets.branch_time_in_child][].
 
             A fix may set either end, and a value it sets is used like a published one.
             A CMIP5 branch time is published without units and so cannot be placed on
@@ -619,6 +620,7 @@ class Covers(BaseModel):
             return aligned
 
         return self._compare(
+            covered=involved[0],
             covering=covering,
             have=ranges[-1].range,
             aligned=aligned,
@@ -801,7 +803,7 @@ class Covers(BaseModel):
         if isinstance(hops, (NeedsEnrichment, MissingFeature)):
             return hops
 
-        return _mapped_through(hops, ranges, subject)
+        return _mapped_through(hops, subject)
 
     def _hops(
         self,
@@ -856,15 +858,16 @@ class Covers(BaseModel):
                 unrecorded.append(child)
                 continue
 
-            if point.in_child is not None and point.child_axis is not None:
+            child_held, parent_held = ranges[index].range, ranges[index + 1].range
+            if point.in_child is not None:
                 hops.append(
                     _Hop(
                         child=child,
                         parent=parent,
+                        child_held=child_held,
+                        parent_held=parent_held,
                         in_parent=point.in_parent,
-                        parent_axis=point.parent_axis,
                         in_child=point.in_child,
-                        child_axis=point.child_axis,
                     )
                 )
                 continue
@@ -881,20 +884,20 @@ class Covers(BaseModel):
 
             # `BranchTimeInChild.ASSUMED_FIRST_TIME_BOUND`: the run is taken to start at
             # its branch, so its own first time bound stands in for `in_child`.
-            first = ranges[index].range
+            first = Position(child_held.start, child_held.axis)
             hops.append(
                 _Hop(
                     child=child,
                     parent=parent,
+                    child_held=child_held,
+                    parent_held=parent_held,
                     in_parent=point.in_parent,
-                    parent_axis=point.parent_axis,
-                    in_child=first.start,
-                    child_axis=first.axis,
+                    in_child=first,
                     assumption=(
                         f"#{child.id} is {child.project}, which does not publish "
                         "`branch_time_in_child`, so it is assumed to be "
-                        f"#{child.id}'s first time bound, {first.start} in "
-                        f"{first.axis.units}. If #{child.id}'s leading files are "
+                        f"#{child.id}'s first time bound, {first}. If "
+                        f"#{child.id}'s leading files are "
                         "missing, that is later than its branch; a fix which states "
                         "`branch_time_in_child` replaces this assumption."
                     ),
@@ -943,6 +946,7 @@ class Covers(BaseModel):
     def _compare(
         self,
         *,
+        covered: CatalogueEntry,
         covering: CatalogueEntry,
         have: TimeRange,
         aligned: _Alignment,
@@ -953,6 +957,9 @@ class Covers(BaseModel):
 
         Parameters
         ----------
+        covered
+            The covered dataset, named when its own data is what falls short
+
         covering
             The covering dataset, named in every message
 
@@ -991,8 +998,15 @@ class Covers(BaseModel):
             if not met.covered:
                 return Fail(
                     _with_assumptions(
-                        f"{self._described(subject, covering, have, met)}, with "
-                        f"padding {_described_pad(self.pad)}",
+                        self._described(
+                            subject,
+                            covered=covered,
+                            covering=covering,
+                            have=have,
+                            needed=met,
+                            padding=f"with padding {_described_pad(self.pad)}",
+                            wanted="wanted",
+                        ),
                         aligned.assumptions,
                     )
                 )
@@ -1022,53 +1036,91 @@ class Covers(BaseModel):
         if not ideally.covered:
             return Degraded(
                 _with_assumptions(
-                    f"{self._described(subject, covering, have, ideally)}, ideal "
-                    f"padding {_described_pad(ideal_pad)} not met",
+                    self._described(
+                        subject,
+                        covered=covered,
+                        covering=covering,
+                        have=have,
+                        needed=ideally,
+                        padding=f"ideal padding {_described_pad(ideal_pad)} not met",
+                        wanted="ideally wanted",
+                    ),
                     aligned.assumptions,
                 )
             )
 
         return _passed(subject, aligned.assumptions)
 
-    def _described(
+    def _described(  # noqa: PLR0913 - one argument per thing the message names
         self,
         subject: str,
+        *,
+        covered: CatalogueEntry,
         covering: CatalogueEntry,
         have: TimeRange,
         needed: _Window,
+        padding: str,
+        wanted: str,
     ) -> str:
         """
-        Describe what the covering dataset holds against what was wanted
+        Describe what fell short of what was wanted
 
         One spelling, used by both the hard and the soft message, because two would be
         free to drift and a reader comparing a `Fail` with a `Degraded` is comparing
-        the same two numbers.
+        the same numbers. It names each of the two ways a window can fall short which
+        applies, and only those:
+
+        - the covering dataset does not hold the window, e.g.
+          `tas: #2 covers [0, 200) and needs [90, 260), in years, with padding ...`;
+        - the covered run stops before the overlap it is meant to supply, e.g.
+          `tas: #1's data runs to 150 on #2's axis, short of the 100 years of overlap
+          wanted from 100, which runs to 200, in years`.
 
         Parameters
         ----------
         subject
             Role path being judged
 
+        covered
+            The covered dataset
+
         covering
             The covering dataset
 
         have
-            What it holds
+            What the covering dataset holds
 
         needed
             What was wanted, on `have`'s axis
 
+        padding
+            What was said about padding, attached to the covering dataset's part
+
+        wanted
+            How the overlap was wanted, "wanted" or "ideally wanted"
+
         Returns
         -------
         :
-            The description, e.g.
-            `tas: #2 covers [0, 200) and needs [90, 260), in years`
+            The description
         """
-        return (
-            f"{subject}: #{covering.id} covers "
-            f"[{have.start}, {have.end_exclusive}) and needs "
-            f"[{needed.start}, {needed.end_exclusive}), in {needed.axis.units}"
-        )
+        units = needed.axis.units
+        parts = []
+        if not needed.held:
+            parts.append(
+                f"#{covering.id} covers [{have.start}, {have.end_exclusive}) and needs "
+                f"[{needed.start}, {needed.end_exclusive}), in {units}, {padding}"
+            )
+
+        if not needed.overlap_supplied:
+            parts.append(
+                f"#{covered.id}'s data runs to {needed.covered_end} on "
+                f"#{covering.id}'s axis, short of the {needed.overlap} of overlap "
+                f"{wanted} from {needed.anchor}, which runs to {needed.overlap_end}, "
+                f"in {units}"
+            )
+
+        return f"{subject}: {'; and '.join(parts)}"
 
 
 @dataclass(frozen=True)
@@ -1077,7 +1129,8 @@ class _Hop:
     One branch of the series: a child, its parent, and the instant it branched
 
     The branch point with `in_child` settled, so the mapping never has to ask where
-    it came from. Each end is a position on its own run's recorded axis.
+    it came from, together with the data each run holds, so every check on the hop
+    has what it compares against to hand.
     """
 
     child: CatalogueEntry
@@ -1086,23 +1139,87 @@ class _Hop:
     parent: CatalogueEntry
     """The run it branched from"""
 
-    in_parent: float
-    """Where it branched, on `parent_axis`"""
+    child_held: TimeRange
+    """What the child holds, on its own recorded axis"""
 
-    parent_axis: TimeAxis
-    """The axis `in_parent` is a position on"""
+    parent_held: TimeRange
+    """What the parent holds, on its own recorded axis"""
 
-    in_child: float
-    """Where it branched, on `child_axis`"""
+    in_parent: Position
+    """Where it branched, read off the parent's axis"""
 
-    child_axis: TimeAxis
-    """The axis `in_child` is a position on"""
+    in_child: Position
+    """Where it branched, read off the child's axis"""
 
     assumption: str | None = None
     """
     What `in_child` rests on when it was not published or fixed, as a sentence for a
     message, or `None` when it was
     """
+
+    def onto_parent(self, at: Position) -> Position:
+        """
+        Get the same instant as a position on the child's axis, read off the parent's
+
+        `at - in_child` is how far after the branch `at` is, counted in the child's
+        steps. The same length after `in_parent`, counted in the parent's steps, is
+        the same instant. The child's epoch cancels in the subtraction, so the two
+        axes may start counting from different dates; the length is read in the
+        parent's steps and calendar, so those have to be the child's.
+
+        Parameters
+        ----------
+        at
+            The position, on the child's axis
+
+        Returns
+        -------
+        :
+            The same instant, on the parent's axis
+
+        Raises
+        ------
+        MismatchedTimeAxisError
+            `at` is not on the child's axis, or the child and the parent count in a
+            different step or calendar, which
+            [_mapped_through][(m)._mapped_through] rules out before mapping, so this
+            is a bug
+        """
+        if not at.axis.is_comparable_with(self.in_child.axis):
+            raise MismatchedTimeAxisError(at.axis, self.in_child.axis)
+
+        if not _lengths_cross(self.in_child.axis, self.in_parent.axis):
+            raise MismatchedTimeAxisError(self.in_child.axis, self.in_parent.axis)
+
+        after_branch = at.value - self.in_child.value
+
+        return Position(self.in_parent.value + after_branch, self.in_parent.axis)
+
+
+def _lengths_cross(child: TimeAxis, parent: TimeAxis) -> bool:
+    """
+    Determine whether a length counted on one axis means the same on another
+
+    Parameters
+    ----------
+    child
+        The axis the length is counted on
+
+    parent
+        The axis it is read on
+
+    Returns
+    -------
+    :
+        `True` if both count in the same step, both or neither from an epoch, and in
+        the same calendar. The epochs themselves may differ, because a length has
+        none.
+    """
+    return (
+        child.units.step is parent.units.step
+        and child.units.is_natural == parent.units.is_natural
+        and child.calendar == parent.calendar
+    )
 
 
 @dataclass(frozen=True)
@@ -1112,23 +1229,19 @@ class _Alignment:
 
     A type rather than a pair of numbers so that
     [_align][(c).Covers._align] can answer either this or an outcome and the caller
-    can tell which it got by name, and so that the axis the numbers are on travels
-    with them.
+    can tell which it got by name.
     """
 
-    anchor: float
+    anchor: Position
     """
-    Where the series line up, on `axis`
+    Where the series line up, on the covering dataset's axis
 
     Where the run directly below the covering dataset branched off it, which is the
     first instant of the series below it that runs alongside the covering dataset.
     """
 
-    covered_end: float
-    """The covered run's mapped `end_exclusive`, on `axis`"""
-
-    axis: TimeAxis
-    """The covering dataset's recorded axis, which both numbers are positions on"""
+    covered_end: Position
+    """The covered run's `end_exclusive`, on the covering dataset's axis"""
 
     assumptions: tuple[str, ...] = ()
     """
@@ -1137,6 +1250,18 @@ class _Alignment:
     Carried into every message built on this alignment.
     """
 
+    def __post_init__(self) -> None:
+        """
+        Check both positions are on the same axis
+
+        Raises
+        ------
+        MismatchedTimeAxisError
+            They are not, which the mapping rules out, so this is a bug
+        """
+        if not self.anchor.axis.is_comparable_with(self.covered_end.axis):
+            raise MismatchedTimeAxisError(self.anchor.axis, self.covered_end.axis)
+
 
 # TODO future:
 # Other anchors are coherent and not supported. "piControl has to overlap my scenario,
@@ -1144,43 +1269,46 @@ class _Alignment:
 # run's own mapped start rather than at the bottom of the chain, and `min_overlap`
 # could be wanted from either. Saying which is a field on `Covers`, so both wait for
 # somebody to ask for one.
-def _mapped_through(
-    hops: Sequence[_Hop], ranges: Sequence[VersionTimeRange], subject: str
-) -> _Alignment | Outcome:
+def _mapped_through(hops: Sequence[_Hop], subject: str) -> _Alignment | Outcome:
     """
     Map the covered run onto the covering dataset's axis, one branch at a time
 
+    Every run counts time on its own axis, a ruler with its own zero, so the same
+    instant reads a different number off each. Here, every axis counts days in the
+    same calendar, from a different date:
+
     ```text
-                     BP
-                      │
-      covering |──────┼──────────────────────────────|
-                      │
-      in between      |═══════════════════|
-      covered                     |═══════════════|
+                          historical      ssp585            ssp585's end
+                          branches        branches          (what is carried up)
+                              │               │                 │
+      piControl's axis    0 ──┼───────────────┼─────────────────┼──►
+      (days since 0001)    182500          242725            274115
+                              │               │                 │
+      historical's axis       0 ──────────────┼─────────────────┼──►
+      (days since 1850)                     60225             91615
+                                              │                 │
+      ssp585's axis                           0 ────────────────┼──►
+      (days since 2015)                                       31390
     ```
 
-    A position `p` on a child's axis lands at `in_parent + (p - in_child)` on its
-    parent's: `p - in_child` is how far after the branch `p` is, on the child's clock,
-    and the same length after the branch on the parent's clock is the same instant.
-    Carried up hop by hop, that puts the covered run's `end_exclusive` on the covering
-    dataset's axis. `BP`, the alignment point, is where the run directly below the
-    covering dataset branched off it.
+    31390, 91615 and 274115 are the same instant. Each hop reads it off the next axis
+    up, with [_Hop.onto_parent][(m)._Hop.onto_parent], until it is on the covering
+    dataset's. The alignment point is where the run directly below the covering
+    dataset branched off it, 182500 here.
 
-    The joins are checked on the way, on both sides, because coverage is judged along
-    the whole series and a break anywhere in it leaves a hole no amount of covering can
-    fill. Each run has to hold data at its own branch -- one whose data starts later is
-    missing its leading files -- and each run in between has to hold data where its
-    child branched. The join onto the covering dataset itself is left out, because
-    whether *it* holds data at `BP` is the coverage question
-    [_compare][(m).Covers._compare] answers, with the window it needed in the message.
+    Everything which can stop the mapping is checked first, in the order the outcomes
+    rank (see [_worst][(m)._worst]):
+
+    1. [_ends_off_their_runs][(m)._ends_off_their_runs]: `Fail` if a branch point is
+       not on its own runs' axes;
+    2. [_broken_joins][(m)._broken_joins]: `Fail` if the series does not join up;
+    3. [_uncrossable][(m)._uncrossable]: `MissingFeature` if a child and its parent
+       count time in ways a length cannot cross between.
 
     Parameters
     ----------
     hops
         Where each dataset branched from the next one up, covered one first
-
-    ranges
-        Ranges of the datasets involved, covered one first and covering one last
 
     subject
         Role path being judged, used in every message
@@ -1189,62 +1317,184 @@ def _mapped_through(
     -------
     :
         The alignment point and the covered run's mapped `end_exclusive`, on the
-        covering dataset's axis -- or `Fail` if a branch point is not on its run's
-        axis or the series does not join up, or `MissingFeature` if a child and its
-        parent count in different steps or calendars
-
-    Raises
-    ------
-    MismatchedTimeAxisError
-        The position being carried up is not on the axis of the hop it is mapped
-        through, which the checks before it rule out, so this is a bug
+        covering dataset's axis -- or the first of the outcomes above which applies
     """
-    covered = ranges[0].range
-    position, axis = covered.end_exclusive, covered.axis
+    off_their_runs = _ends_off_their_runs(hops, subject)
+    if off_their_runs is not None:
+        return off_their_runs
+
+    broken = _broken_joins(hops, subject)
+    if broken is not None:
+        return broken
+
+    uncrossable = _uncrossable(hops, subject)
+    if uncrossable is not None:
+        return uncrossable
+
+    covered = hops[0].child_held
+    covered_end = Position(covered.end_exclusive, covered.axis)
+    for hop in hops:
+        covered_end = hop.onto_parent(covered_end)
+
+    return _Alignment(
+        anchor=hops[-1].in_parent,
+        covered_end=covered_end,
+        assumptions=tuple(hop.assumption for hop in hops if hop.assumption is not None),
+    )
+
+
+def _ends_off_their_runs(hops: Sequence[_Hop], subject: str) -> Fail | None:
+    """
+    Check each end of every branch point is on its own run's recorded axis
+
+    One on any other axis is the data disagreeing with itself rather than a question
+    about alignment, so it is loud, per settled decision 11.
+
+    Parameters
+    ----------
+    hops
+        Where each dataset branched from the next one up, covered one first
+
+    subject
+        Role path being judged, used in the message
+
+    Returns
+    -------
+    :
+        `Fail` naming the first end which is off its run's axis, or `None` if none is
+    """
+    for hop in hops:
+        if not hop.in_parent.axis.is_comparable_with(hop.parent_held.axis):
+            return Fail(_off_its_axis(subject, hop, "parent"))
+
+        if not hop.in_child.axis.is_comparable_with(hop.child_held.axis):
+            return Fail(_off_its_axis(subject, hop, "child"))
+
+    return None
+
+
+def _broken_joins(hops: Sequence[_Hop], subject: str) -> Fail | None:
+    """
+    Check the series joins up, on both sides of every branch
+
+    Coverage is judged along the whole series, and a break anywhere in it leaves a hole
+    no amount of covering can fill. The two sides of a join ask **different**
+    questions, so they use different comparisons:
+
+    ```text
+                      the parent's data has to run UP TO the branch
+      parent   ═══════════════════════╡
+                                      ▲ the branch
+                                      ╞═══════════════════════   child
+                                      the child's data has to run FROM the branch
+
+      child side:   child_held.holds(in_child)
+                    start <= in_child <  end_exclusive    holds the branch step
+      parent side:  parent_held.runs_up_to(in_parent)
+                    start <= in_parent <= end_exclusive   may stop exactly there
+    ```
+
+    - **Child side, `<`**: the child has to hold the step it branched at. One whose
+      data starts later is missing its leading files.
+    - **Parent side, `<=`**: the parent's data has to reach the branch, and reaching it
+      exactly is a seamless join. `ssp585` branches off `historical` at 2015-01-01,
+      which is `historical`'s `end_exclusive`: the first instant *after* its data.
+      With `<` there, every scenario chained through `historical` would read as broken.
+
+    The parent side is checked for the runs in between only. The join onto the covering
+    dataset itself is left out, because whether *it* holds data at the alignment point
+    is the coverage question [_compare][(m).Covers._compare] answers, with the window
+    it needed in the message -- and there, a covering run which stops exactly at the
+    branch has nothing to overlap with, so it is not enough.
+
+    Parameters
+    ----------
+    hops
+        Where each dataset branched from the next one up, covered one first
+
+    subject
+        Role path being judged, used in the message
+
+    Returns
+    -------
+    :
+        `Fail` naming every broken join, so that one look finds them all, or `None` if
+        there are none
+    """
     broken: list[str] = []
-
-    for index, hop in enumerate(hops):
-        child_held = ranges[index].range
-        parent_held = ranges[index + 1].range
-
-        # Each end of a branch point is a position on its own run's recorded axis, so
-        # one on any other axis is the data disagreeing with itself rather than a
-        # question about alignment. Loud, per settled decision 11.
-        if not hop.parent_axis.is_comparable_with(parent_held.axis):
-            return Fail(_off_its_axis(subject, hop, "parent", parent_held.axis))
-
-        if index < len(hops) - 1 and not (
-            parent_held.start <= hop.in_parent < parent_held.end_exclusive
-        ):
+    for hop in hops:
+        # `<=` at the top, on purpose: a parent which stops exactly where its child
+        # branched joins up. See the diagram above.
+        if hop is not hops[-1] and not hop.parent_held.runs_up_to(hop.in_parent):
             broken.append(
-                f"#{hop.child.id} branched from #{hop.parent.id} at {hop.in_parent}, "
-                f"which is outside the [{parent_held.start}, "
-                f"{parent_held.end_exclusive}) #{hop.parent.id} holds"
+                f"#{hop.child.id} branched from #{hop.parent.id} at "
+                f"{hop.in_parent.value}, outside #{hop.parent.id}'s data, which runs "
+                f"from {hop.parent_held.start} up to {hop.parent_held.end_exclusive}"
             )
 
-        if not hop.child_axis.is_comparable_with(child_held.axis):
-            return Fail(_off_its_axis(subject, hop, "child", child_held.axis))
-
-        if not child_held.start <= hop.in_child < child_held.end_exclusive:
+        # `<` at the top, on purpose: the child has to hold the step it branched at.
+        if not hop.child_held.holds(hop.in_child):
             broken.append(
-                f"#{hop.child.id} branched at {hop.in_child} on its own axis, which "
-                f"is outside the [{child_held.start}, {child_held.end_exclusive}) it "
-                "holds"
+                f"#{hop.child.id} branched at {hop.in_child.value} on its own axis, "
+                f"which is outside the [{hop.child_held.start}, "
+                f"{hop.child_held.end_exclusive}) it holds"
             )
 
-        # `position - in_child` is a length on the child's axis, and adding it to
-        # `in_parent` reads it as a length on the parent's. Those are the same length
-        # only in the same step and the same calendar. The epochs may differ, because a
-        # length has none.
-        if hop.child_axis.units.step is not hop.parent_axis.units.step:
+    if not broken:
+        return None
+
+    return Fail(
+        f"{subject}: {readable_list(broken, quote=False)}. Coverage is judged "
+        "along the whole series from the covering dataset down, so a run which "
+        "branched where it or its parent has no data breaks it."
+    )
+
+
+def _uncrossable(hops: Sequence[_Hop], subject: str) -> MissingFeature | None:
+    """
+    Check a length after each branch can be read off the parent's axis as it stands
+
+    Parameters
+    ----------
+    hops
+        Where each dataset branched from the next one up, covered one first
+
+    subject
+        Role path being judged, used in the message
+
+    Returns
+    -------
+    :
+        `MissingFeature` for the first child and parent which count in a different
+        step, one from an epoch and one not, or in a different calendar, or `None`
+        if every length crosses as it stands
+    """
+    for hop in hops:
+        child, parent = hop.in_child.axis, hop.in_parent.axis
+        if child.units.step is not parent.units.step:
             return MissingFeature(
                 f"{subject}: #{hop.child.id} reports every "
-                f"{hop.child_axis.units.step.value.rstrip('s')} and "
-                f"#{hop.parent.id} every "
-                f"{hop.parent_axis.units.step.value.rstrip('s')}, and comparing a run "
-                "against a parent at a different frequency is not supported yet. It "
-                "is a fair thing to want -- the two spans are the same lengths written "
-                "in different units -- so please say you wanted it at "
+                f"{child.units.step.value.rstrip('s')} and #{hop.parent.id} every "
+                f"{parent.units.step.value.rstrip('s')}, and comparing a run against "
+                "a parent at a different frequency is not supported yet. It is a "
+                "fair thing to want -- the two spans are the same lengths written in "
+                "different units -- so please say you wanted it at "
+                f"{ISSUE_TRACKER_URL}."
+            )
+
+        if child.units.is_natural != parent.units.is_natural:
+            natural, dated = (
+                (hop.child, hop.parent)
+                if child.units.is_natural
+                else (hop.parent, hop.child)
+            )
+
+            return MissingFeature(
+                f"{subject}: #{natural.id} counts {child.units.step.value} as a plain "
+                f"ordinal and #{dated.id} counts them from a date, and lining up a "
+                "run with a parent counted the other way is not supported yet. "
+                "Placing one on the other's axis is a conversion the enricher makes "
+                "when it records the branch point, so please say you wanted it at "
                 f"{ISSUE_TRACKER_URL}."
             )
 
@@ -1252,41 +1502,20 @@ def _mapped_through(
         # different calendars for a control and its experiments, and whether that
         # matters depends on the data, so any loosening has to say which case it
         # allows rather than dropping the check.
-        if hop.child_axis.calendar != hop.parent_axis.calendar:
+        if child.calendar != parent.calendar:
             return MissingFeature(
-                f"{subject}: #{hop.child.id} is in calendar "
-                f"{hop.child_axis.calendar!r} and #{hop.parent.id} in "
-                f"{hop.parent_axis.calendar!r}, and lining up a run with a parent in "
-                "a different calendar is not supported yet. Whether it matters "
-                "depends on the data -- monthly data rarely cares which calendar each "
-                "run used, and daily data does -- so please say you wanted it at "
-                f"{ISSUE_TRACKER_URL}."
+                f"{subject}: #{hop.child.id} is in calendar {child.calendar!r} and "
+                f"#{hop.parent.id} in {parent.calendar!r}, and lining up a run with a "
+                "parent in a different calendar is not supported yet. Whether it "
+                "matters depends on the data -- monthly data rarely cares which "
+                "calendar each run used, and daily data does -- so please say you "
+                f"wanted it at {ISSUE_TRACKER_URL}."
             )
 
-        if not axis.is_comparable_with(hop.child_axis):
-            raise MismatchedTimeAxisError(axis, hop.child_axis)
-
-        position = hop.in_parent + (position - hop.in_child)
-        axis = hop.parent_axis
-
-    if broken:
-        return Fail(
-            f"{subject}: {readable_list(broken, quote=False)}. Coverage is judged "
-            "along the whole series from the covering dataset down, so a run which "
-            "branched where it or its parent has no data breaks it."
-        )
-
-    return _Alignment(
-        anchor=hops[-1].in_parent,
-        covered_end=position,
-        axis=axis,
-        assumptions=tuple(hop.assumption for hop in hops if hop.assumption is not None),
-    )
+    return None
 
 
-def _off_its_axis(
-    subject: str, hop: _Hop, end: Literal["parent", "child"], run_axis: TimeAxis
-) -> str:
+def _off_its_axis(subject: str, hop: _Hop, end: Literal["parent", "child"]) -> str:
     """
     Say that one end of a branch point is not on the axis of the run it belongs to
 
@@ -1301,25 +1530,21 @@ def _off_its_axis(
     end
         Which end of the branch point it is
 
-    run_axis
-        The axis the data of the run at that end is recorded on
-
     Returns
     -------
     :
         The message
     """
-    run, end_axis = (
-        (hop.parent, hop.parent_axis)
+    run, at, held = (
+        (hop.parent, hop.in_parent, hop.parent_held)
         if end == "parent"
-        else (hop.child, hop.child_axis)
+        else (hop.child, hop.in_child, hop.child_held)
     )
 
     return (
-        f"{subject}: the {end} end of #{hop.child.id}'s branch point is a position on "
-        f"a {end_axis.units} axis in calendar {end_axis.calendar!r}, but "
-        f"#{run.id}'s own data is on a {run_axis.units} axis in calendar "
-        f"{run_axis.calendar!r}. The two have to be the same axis for the branch "
+        f"{subject}: the {end} end of #{hop.child.id}'s branch point is {at}, but "
+        f"#{run.id}'s own data is on a {held.axis.units} axis in calendar "
+        f"{held.axis.calendar!r}. The two have to be the same axis for the branch "
         "point to mean anything."
     )
 
@@ -1376,7 +1601,12 @@ class _Window:
     The window a comparison asked for, and whether it was covered
 
     A type rather than a tuple so that the things it carries are named where they are
-    read, which is in two message formats and one `if`.
+    read, which is in two message formats and one `if`. A window can fall short in two
+    separate ways, and each is kept so the message can say which:
+
+    - the **covering** dataset does not hold all of the window (`held`);
+    - in overlap mode, the **covered** run's data stops before the overlap it is meant
+      to supply does (`overlap_supplied`).
     """
 
     start: float
@@ -1386,10 +1616,48 @@ class _Window:
     """First step after the last which has to be covered, on `axis`"""
 
     axis: TimeAxis
-    """The covering dataset's recorded axis, which the window is on"""
+    """The covering dataset's recorded axis, which every number here is on"""
 
-    covered: bool
-    """Whether the covering dataset holds all of it"""
+    held: bool
+    """Whether the covering dataset holds all of `[start, end_exclusive)`"""
+
+    anchor: float
+    """The alignment point, where any overlap is counted from"""
+
+    covered_end: float
+    """The covered run's `end_exclusive`, read off `axis`"""
+
+    overlap: Span | None
+    """The overlap wanted from `anchor`, or `None` in containment mode"""
+
+    overlap_end: float | None
+    """Where that overlap ends, or `None` in containment mode"""
+
+    @property
+    def overlap_supplied(self) -> bool:
+        """
+        Whether the covered run has data all the way through the overlap
+
+        Returns
+        -------
+        :
+            `True` in containment mode, which asks for no overlap, and otherwise
+            `True` if `covered_end >= overlap_end`
+        """
+        return self.overlap_end is None or self.covered_end >= self.overlap_end
+
+    @property
+    def covered(self) -> bool:
+        """
+        Whether nothing falls short
+
+        Returns
+        -------
+        :
+            `True` if the covering dataset holds the window and the covered run
+            supplies the overlap
+        """
+        return self.held and self.overlap_supplied
 
 
 def _covers(
@@ -1450,10 +1718,10 @@ def _covers(
     the alignment point at all, and there is no data there to take an anomaly against.
     """
     # Everything below moves along, and compares against, `have`'s axis.
-    if not aligned.axis.is_comparable_with(have.axis):
-        raise MismatchedTimeAxisError(have.axis, aligned.axis)
+    if not aligned.anchor.axis.is_comparable_with(have.axis):
+        raise MismatchedTimeAxisError(have.axis, aligned.anchor.axis)
 
-    anchor, covered_end = aligned.anchor, aligned.covered_end
+    anchor, covered_end = aligned.anchor.value, aligned.covered_end.value
 
     finer = [
         span
@@ -1485,21 +1753,20 @@ def _covers(
         # rather than a fact about the data, so it must not become a solve status.
         return NeedsEnrichment(str(error))
 
-    # In overlap mode there also has to *be* that much data to overlap with, which is
-    # written as positions so that a length never has to be turned into a count. What
-    # has to reach the far edge of the window is the series from the anchor down, so
-    # with a run or two in between it is not the covered run's own extent.
-    enough_to_overlap = min_overlap is None or covered_end >= needed_end
-
+    # In overlap mode there also has to *be* that much data to overlap with, which
+    # `_Window.overlap_supplied` checks as positions, so that a length never has to be
+    # turned into a count. What has to reach the far edge of the window is the series
+    # from the anchor down, so with a run or two in between it is not the covered
+    # run's own extent.
     return _Window(
         start=start,
         end_exclusive=end_exclusive,
         axis=have.axis,
-        covered=(
-            enough_to_overlap
-            and have.start <= start
-            and have.end_exclusive >= end_exclusive
-        ),
+        held=have.start <= start and have.end_exclusive >= end_exclusive,
+        anchor=anchor,
+        covered_end=covered_end,
+        overlap=min_overlap,
+        overlap_end=needed_end if min_overlap is not None else None,
     )
 
 

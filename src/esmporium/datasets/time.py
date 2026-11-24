@@ -447,9 +447,64 @@ def check_position(value: float, axis: TimeAxis) -> None:
         raise NotAWholeStepError(value, axis)
 
 
+@dataclass(frozen=True)
+class Position:
+    """
+    A point in time, as a number read off a particular axis
+
+    A number on its own does not say which axis it was read off, and two numbers off
+    different axes cannot be compared or subtracted: day 91615 since 1850 and day
+    182500 since 0001 are just readings off two rulers with different zeros. So the
+    number and its axis are held together, and anything which combines two positions
+    can check they are on the same ruler first.
+
+    On a natural axis the value has to be a whole number of steps; on a dated axis it
+    is as published, fraction and all.
+
+    Examples
+    --------
+    >>> str(Position(22189, TimeAxis(TimeUnits(TimeStep.MONTHS))))
+    '22189 in months'
+
+    >>> str(Position(91615, TimeAxis(TimeUnits(TimeStep.DAYS, "1850-01-01"), "noleap")))
+    "91615 in days since 1850-01-01, calendar 'noleap'"
+    """
+
+    value: float
+    """The number, read off `axis`"""
+
+    axis: TimeAxis
+    """The axis `value` is read off"""
+
+    def __post_init__(self) -> None:
+        """
+        Check the value is a position its axis can hold
+
+        Raises
+        ------
+        NotAWholeStepError
+            The axis is natural and the value is not a whole number
+        """
+        check_position(self.value, self.axis)
+
+    def __str__(self) -> str:
+        """
+        Get the position as text for a message
+
+        Returns
+        -------
+        :
+            The value and its units, and its calendar when the axis names one
+        """
+        if self.axis.calendar is None:
+            return f"{self.value} in {self.axis.units}"
+
+        return f"{self.value} in {self.axis.units}, calendar {self.axis.calendar!r}"
+
+
 class MismatchedTimeAxisError(ValueError):
     """
-    Raised when two time ranges on axes which do not agree are compared
+    Raised when positions or ranges on axes which do not agree are compared
     """
 
     def __init__(self, left: TimeAxis, right: TimeAxis) -> None:
@@ -623,6 +678,98 @@ class TimeRange:
             raise MismatchedTimeAxisError(self.axis, other.axis)
 
         return self.start <= other.start and self.end_exclusive >= other.end_exclusive
+
+    def holds(self, position: Position) -> bool:
+        """
+        Determine whether a position is one of this range's steps
+
+        Half-open, so `end_exclusive` itself is **not** held: it is the first instant
+        after the data. To ask whether the data reaches a position, `end_exclusive`
+        included, use [runs_up_to][(c).runs_up_to].
+
+        Parameters
+        ----------
+        position
+            The position
+
+        Returns
+        -------
+        :
+            `True` if `start <= position < end_exclusive`
+
+        Raises
+        ------
+        MismatchedTimeAxisError
+            `position` is not on an axis comparable with this range's
+
+        Examples
+        --------
+        >>> monthly = TimeAxis(TimeUnits(TimeStep.MONTHS))
+        >>> TimeRange(0, 100, monthly).holds(Position(0, monthly))
+        True
+
+        Half-open, so `end_exclusive` itself is not held:
+
+        >>> TimeRange(0, 100, monthly).holds(Position(100, monthly))
+        False
+        """
+        if not self.axis.is_comparable_with(position.axis):
+            raise MismatchedTimeAxisError(self.axis, position.axis)
+
+        return self.start <= position.value < self.end_exclusive
+
+    def runs_up_to(self, position: Position) -> bool:
+        """
+        Determine whether this range's data runs without a break up to a position
+
+        Unlike [holds][(c).holds], `end_exclusive` itself counts, because a range
+        whose last step ends exactly at `position` has data right up to it:
+
+        ```text
+          [0, 100) holds steps 0 .. 99, and step 99 ends at 100
+
+          ══════ data ══════╡
+                            ▲ 100 = end_exclusive
+          runs_up_to(100)  →  0 <= 100 <= 100  →  True
+          holds(100)       →  0 <= 100 <  100  →  False
+        ```
+
+        This is what a parent has to do at the instant a child branches off it: the
+        parent's data stops, and the child's starts, at the same instant. A scenario
+        which branches off `historical` on the first instant after its last step is
+        a seamless join, and has to read as one.
+
+        Parameters
+        ----------
+        position
+            The position
+
+        Returns
+        -------
+        :
+            `True` if `start <= position <= end_exclusive` -- with `<=` at **both**
+            ends, where [holds][(c).holds] has `<` at the top
+
+        Raises
+        ------
+        MismatchedTimeAxisError
+            `position` is not on an axis comparable with this range's
+
+        Examples
+        --------
+        >>> monthly = TimeAxis(TimeUnits(TimeStep.MONTHS))
+        >>> TimeRange(0, 100, monthly).runs_up_to(Position(100, monthly))
+        True
+
+        One step past the end is a gap:
+
+        >>> TimeRange(0, 100, monthly).runs_up_to(Position(101, monthly))
+        False
+        """
+        if not self.axis.is_comparable_with(position.axis):
+            raise MismatchedTimeAxisError(self.axis, position.axis)
+
+        return self.start <= position.value <= self.end_exclusive
 
     def is_adjacent_to(self, other: TimeRange) -> bool:
         """
@@ -828,17 +975,17 @@ class BranchPoint:
     child's -- its header publishes the numbers, and for CMIP7 its search record
     publishes the units -- but the place they belong is the link.
 
-    Each end is a position on its own run's axis, as given: `branch_time_in_parent` is
-    in the parent's time units and calendar, and `branch_time_in_child` in the child's.
-    Nothing here converts either one. On a dated axis a position is the published float;
-    on a natural axis it has to be whole, and putting a published float there is the
-    caller's conversion,
+    One instant, read off two rulers: `in_parent` off the parent's axis and `in_child`
+    off the child's. Each is a [Position][(m).Position], so the axis it was read off
+    travels with it. Nothing here converts either one. On a dated axis a position is
+    the published float; on a natural axis it has to be whole, and putting a published
+    float there is the caller's conversion,
     [convert_position][esmporium.datasets.calendars.convert_position].
     """
 
-    in_parent: float
+    in_parent: Position
     """
-    Where the child branched, as a position on `parent_axis`
+    Where the child branched, on the parent's axis
 
     Published as `branch_time_in_parent`, a float, on
     [DatasetVersionParent][esmporium.db.schema.DatasetVersionParent]. The axis it
@@ -848,46 +995,13 @@ class BranchPoint:
     point needs a fix before one of these can be built.
     """
 
-    parent_axis: TimeAxis
-    """The axis `in_parent` is a position on"""
-
-    in_child: float | None = None
+    in_child: Position | None = None
     """
-    Where the child branched, as a position on `child_axis`
+    Where the child branched, on the child's axis
 
     Published as `branch_time_in_child` by a header which carries one, and `None` when
     the file did not say, which is every CMIP5 file.
     """
-
-    child_axis: TimeAxis | None = None
-    """
-    The axis `in_child` is a position on
-
-    Given exactly when `in_child` is.
-    """
-
-    def __post_init__(self) -> None:
-        """
-        Check each end is a position its axis can hold
-
-        Raises
-        ------
-        ValueError
-            Only one of `in_child` and `child_axis` was given
-
-        NotAWholeStepError
-            An end is on a natural axis and is not a whole number
-        """
-        if (self.in_child is None) != (self.child_axis is None):
-            msg = (
-                "in_child and child_axis are given together or not at all, got "
-                f"in_child={self.in_child!r} and child_axis={self.child_axis!r}"
-            )
-            raise ValueError(msg)
-
-        check_position(self.in_parent, self.parent_axis)
-        if self.in_child is not None and self.child_axis is not None:
-            check_position(self.in_child, self.child_axis)
 
 
 def total_months(year: int, month: int) -> int:

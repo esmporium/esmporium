@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 
 from esmporium.datasets import (
     BranchPoint,
+    Position,
     TimeAxis,
     TimeRange,
     TimeStep,
@@ -102,13 +103,11 @@ def branched_at(
         The branch point
     """
     if in_child is None:
-        return BranchPoint(in_parent=position, parent_axis=axis)
+        return BranchPoint(in_parent=Position(position, axis))
 
     return BranchPoint(
-        in_parent=position,
-        parent_axis=axis,
-        in_child=in_child,
-        child_axis=axis if child_axis is None else child_axis,
+        in_parent=Position(position, axis),
+        in_child=Position(in_child, axis if child_axis is None else child_axis),
     )
 
 

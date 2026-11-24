@@ -11,6 +11,8 @@ from esmporium.datasets.time import (
     EmptyTimeRangeError,
     MismatchedTimeAxisError,
     NegativeSpanError,
+    NotAWholeStepError,
+    Position,
     Span,
     TimeAxis,
     TimeRange,
@@ -347,6 +349,74 @@ def test_spanning_ranges_on_different_axes_is_refused():
         spanned([TimeRange(0, 240, MONTHLY), TimeRange(0, 20, YEARLY)])
 
 
+# ------------------------------------------------------------------------ positions
+
+
+def test_a_position_on_a_natural_axis_is_a_whole_number_of_steps():
+    """
+    A fraction of a month is not a month: placing one there is a conversion
+    """
+    with pytest.raises(NotAWholeStepError):
+        Position(1850.5, YEARLY)
+
+
+def test_a_position_on_a_dated_axis_is_kept_as_published():
+    assert Position(438000.5, DAILY_NOLEAP).value == 438000.5
+
+
+def test_a_position_says_which_ruler_it_was_read_off():
+    """
+    So that a number in a message is never a bare number
+    """
+    assert str(Position(91615, DAILY_NOLEAP)) == (
+        "91615 in days since 1850-01-01, calendar 'noleap'"
+    )
+
+
+# ------------------------------------------------------ holding, and running up to
+
+
+@pytest.mark.parametrize(
+    ("position", "expected"),
+    [
+        (99, False),
+        (100, True),
+        (199, True),
+        # Half-open: `end_exclusive` is the first instant after the data.
+        (200, False),
+    ],
+)
+def test_holds_is_half_open(position, expected):
+    assert TimeRange(100, 200, YEARLY).holds(Position(position, YEARLY)) is expected
+
+
+@pytest.mark.parametrize(
+    ("position", "expected"),
+    [
+        (99, False),
+        (100, True),
+        (199, True),
+        # Unlike `holds`: data which stops exactly here runs up to here.
+        (200, True),
+        # One step past the end is a gap.
+        (201, False),
+    ],
+)
+def test_runs_up_to_counts_end_exclusive(position, expected):
+    assert (
+        TimeRange(100, 200, YEARLY).runs_up_to(Position(position, YEARLY)) is expected
+    )
+
+
+@pytest.mark.parametrize("check", ["holds", "runs_up_to"])
+def test_a_position_off_another_ruler_cannot_be_asked_about(check):
+    """
+    Year 150 and month 150 are not the same instant
+    """
+    with pytest.raises(MismatchedTimeAxisError):
+        getattr(TimeRange(100, 200, YEARLY), check)(Position(150, MONTHLY))
+
+
 # --------------------------------------------------------------------- branch point
 
 
@@ -355,19 +425,26 @@ def test_a_branch_point_keeps_a_published_float_as_published():
     `branch_time_in_parent` on a dated axis is not rounded to a whole day
     """
     branch = BranchPoint(
-        in_parent=438000.5,
-        parent_axis=DAILY_NOLEAP,
-        in_child=0.0,
-        child_axis=DAILY_NOLEAP,
+        in_parent=Position(438000.5, DAILY_NOLEAP),
+        in_child=Position(0.0, DAILY_NOLEAP),
     )
 
-    assert (branch.in_parent, branch.in_child) == (438000.5, 0.0)
+    assert branch.in_child is not None
+    assert (branch.in_parent.value, branch.in_child.value) == (438000.5, 0.0)
 
 
 def test_a_branch_point_need_not_know_where_it_is_in_the_child():
     """
     CMIP5 does not publish it
     """
-    branch = BranchPoint(in_parent=0, parent_axis=MONTHLY)
+    branch = BranchPoint(in_parent=Position(0, MONTHLY))
 
-    assert (branch.in_child, branch.child_axis) == (None, None)
+    assert branch.in_child is None
+
+
+def test_a_branch_point_on_a_natural_axis_is_a_whole_number_of_steps():
+    """
+    Checked by the position, so no end of a branch point can get past it
+    """
+    with pytest.raises(NotAWholeStepError):
+        BranchPoint(in_parent=Position(100.5, YEARLY))
