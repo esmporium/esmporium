@@ -166,7 +166,7 @@ def satisfying_catalogue(make_entry):
                 else recorded_range(0, 1800)
                 for entry in entries.values()
             },
-            branch_times_in_parent={
+            branch_points={
                 child: branched_at(1200)
                 for child, parent in parents.items()
                 if parent is not None

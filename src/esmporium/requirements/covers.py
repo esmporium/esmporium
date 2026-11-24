@@ -7,10 +7,14 @@ branch points -- so it defines [CatalogueWithTimeInfo][(m).CatalogueWithTimeInfo
 beside itself and is a `Constraint[CatalogueWithTimeInfo]`. See
 [esmporium.requirements.constraints][] for the pattern.
 
-Every position here is a whole number of steps on a stated
-[TimeAxis][esmporium.datasets.TimeAxis], never a fractional year, and every range is
-half-open ([TimeRange][esmporium.datasets.TimeRange]). Resolving a length such as
-"twenty years" against an axis is [esmporium.datasets.calendars][]'s job.
+Every position here is a position on a stated
+[TimeAxis][esmporium.datasets.TimeAxis] -- a whole number of steps on a natural axis,
+the published value on a dated one, never a fractional year -- and every range is
+half-open ([TimeRange][esmporium.datasets.TimeRange]). Two positions are combined or
+compared only after checking, at that line, that their axes allow it. Nothing here
+converts between axes: a branch point arrives already placed on the axes the two runs
+are recorded on. Resolving a length such as "twenty years" against an axis is
+[esmporium.datasets.calendars][]'s job.
 """
 
 from __future__ import annotations
@@ -23,15 +27,19 @@ from pydantic import BaseModel, ConfigDict, model_validator
 from esmporium.datasets import (
     MONTHS_PER_YEAR,
     BranchPoint,
+    BranchTimeInChild,
+    MismatchedTimeAxisError,
     NoEpochError,
     Span,
     TimeAxis,
     TimeRange,
     TimeStep,
     UnknownCalendarError,
+    UnknownProjectBranchTimeInChildError,
     UnknownProjectTimeAxisError,
     VersionTimeRange,
     advance,
+    branch_time_in_child_convention,
     has_no_time_axis,
     projects_with_a_known_time_axis_vocabulary,
     retreat,
@@ -67,22 +75,19 @@ the soft check is never looser than the hard one.
 
 
 # A note for developers, recording a decision so that step 14 does not optimise it
-# away. `Covers` and the `SameTimeRange` which is still to come look like one check
-# with a flag, and they are not:
+# away. `Covers` and the `SameTimeRange` which is still to come (PLAN step 14, for the
+# siblings of step 18) look like one check with a flag, and they are not:
 #
-#   Covers, align="branch"      ancestry. The axes do *not* align, and the branch
-#                               point is what resolves that. No branch point means
-#                               `NeedsEnrichment`, not a failure.
-#   Covers, align="calendar"    the axes are compared directly, and never asks for a
-#                               branch point at all.
-#   SameTimeRange               siblings, or any pair on one axis. There *is* no
-#                               branch point to ask for, so axes which do not line up
-#                               are a loud `Fail`: it is a question we can answer and
-#                               the answer is no.
+#   Covers          ancestry. The two runs' axes do *not* line up, and the branch
+#                   points between them are what resolve that. No branch point means
+#                   `NeedsEnrichment`, not a failure.
+#   SameTimeRange   siblings, or any pair on one axis. There *is* no branch point to
+#                   ask for, so axes which do not line up are a loud `Fail`: it is a
+#                   question we can answer and the answer is no.
 #
-# So `align="calendar"` is not "SameTimeRange spelled differently", and merging the
-# two would lose the distinction between "misaligned, which is expected here" and
-# "misaligned, which means something is wrong with the data".
+# So comparing two ranges directly on a shared calendar belongs to `SameTimeRange`, and
+# folding it into `Covers` would lose the distinction between "misaligned, which is
+# expected here" and "misaligned, which means something is wrong with the data".
 
 
 # TODO (PR R3 in docs/further-background/enrichment-storage.md):
@@ -123,24 +128,32 @@ class CatalogueWithTimeInfo(Catalogue, Protocol):
         """
         ...
 
-    def get_branch_time_in_parent(self, entry: CatalogueEntry) -> BranchPoint | None:
+    def get_branch_point(self, entry: CatalogueEntry) -> BranchPoint | None:
         """
         Get where a dataset branched from its parent
 
         Parameters
         ----------
         entry
-            Dataset to get the branch point of
+            Dataset to get the branch point of, i.e. the child
 
         Returns
         -------
         :
-            Where the start of `entry`'s data falls on its *parent's* axis, with the
-            axis it is a position on -- or `None` if nothing has recorded it
+            The instant `entry` branched, on both runs' clocks -- or `None` if nothing
+            has recorded it
 
-            A CMIP5 branch time is published without units and so cannot be
-            interpreted as it stands; such a dataset answers `None` until a fix
-            records the interpreted value.
+            - `in_parent` is the published `branch_time_in_parent`, a position on the
+              axis the *parent's* range is recorded on (`parent_axis`).
+            - `in_child` is the published `branch_time_in_child`, a position on the axis
+              *`entry`'s* range is recorded on (`child_axis`), or `None` where it was
+              not published. What stands in for it then is the convention of the
+              child's project: see [esmporium.datasets.branch_time_in_child][].
+
+            A fix may set either end, and a value it sets is used like a published one.
+            A CMIP5 branch time is published without units and so cannot be placed on
+            any axis as it stands; such a dataset answers `None` until a fix records
+            the interpreted value.
         """
         ...
 
@@ -204,14 +217,21 @@ class Covers(BaseModel):
     One dataset in a lineage has to cover the span of another
 
     For example
-    `Covers(role="control", align="branch", mode="containment", pad=(Span(0,
-    TimeStep.YEARS), Span(0, TimeStep.YEARS)))`
+    `Covers(role="control", mode="containment", pad=(Span(0, TimeStep.YEARS),
+    Span(0, TimeStep.YEARS)))`
     requires each dataset's control to cover the dataset's span, which is what an
     anomaly from the control needs.
 
     Attach it to the leaf whose lineage it judges, or above it.
 
-    **Nothing is defaulted.** `align`, `mode` and `pad` all have to be stated, every
+    **The two runs are lined up through their branch points.** `target`'s span is
+    mapped onto `role`'s axis one branch at a time, so `role` has to be an ancestor of
+    `target`. Coverage is then judged along the whole series: the run `role` holds has
+    to span `target` *and* every parent between the two. For example, a ZEC experiment
+    branches off 1pctCO2, which branches off piControl, so a control covering the ZEC
+    run has to span from the ZEC run back through 1pctCO2.
+
+    **Nothing is defaulted.** `mode` and `pad` both have to be stated, every
     time. That follows the rule
     [Requirement.group_by][esmporium.requirements.Requirement.group_by] already sets
     -- a decision is stated rather than guessed -- and it is forced anyway, because
@@ -239,20 +259,6 @@ class Covers(BaseModel):
     The one thing here with a default, because it is role naming rather than part of
     the coverage question: almost every check is about the dataset which filled the
     leaf.
-    """
-
-    align: Literal["branch", "calendar"]
-    """
-    How to line up the time axes of `role` and `target`
-
-    With `"branch"`, `target`'s span is mapped into `role`'s axis through the branch
-    points, one branch at a time, so `role` has to be an ancestor of `target`.
-    Coverage is then judged along the whole series: the run `role` holds has to span
-    `target` *and* every parent between the two. With `"calendar"`, the two ranges are
-    compared directly and no branch point is ever asked for.
-
-    For example, ZEC experiment branches off 1pctCO2 branches of piControl. Coverage
-    has to span from ZEC to piControl in a multi-hop parent coverage requirement.
     """
 
     mode: Literal["containment", "overlap"]
@@ -440,9 +446,9 @@ class Covers(BaseModel):
         Raises
         ------
         ValueError
-            `role` or `target` is not in a lineage, or `align` is `"branch"` and
-            `role` is not an ancestor of `target`. Both are mistakes in the
-            requirement, so they stop rather than being reported.
+            `role` or `target` is not in a lineage, or `role` is not an ancestor of
+            `target`. Both are mistakes in the requirement, so they stop rather than
+            being reported.
         """
         if not view.lineages:
             return Fail("Covers needs a lineage, but none was resolved")
@@ -516,13 +522,7 @@ class Covers(BaseModel):
         :
             The message, or `""` when the catalogue can answer
         """
-        # Only the methods this check will actually call: `align="calendar"` never
-        # asks for a branch point, so a catalogue which knows ranges and not branch
-        # points can serve it.
-        needed = ["get_time_range"]
-        if self.align == "branch":
-            needed.append("get_branch_time_in_parent")
-
+        needed = ["get_time_range", "get_branch_point"]
         absent = [
             name for name in needed if not callable(getattr(catalogue, name, None))
         ]
@@ -561,15 +561,14 @@ class Covers(BaseModel):
         ------
         ValueError
             `role` or `target` is not in this lineage, or `role` is not an ancestor of
-            `target` under `align="branch"`
+            `target`
         """
         members = lineage.members
         target_index = lineage.index_of(self.target)
         role_index = lineage.index_of(self.role)
         covering = members[role_index]
 
-        if self.align == "branch":
-            self._check_is_an_ancestor(target_index, role_index)
+        self._check_is_an_ancestor(target_index, role_index)
 
         involved = self._involved(members, target_index, role_index)
 
@@ -622,8 +621,7 @@ class Covers(BaseModel):
         return self._compare(
             covering=covering,
             have=ranges[-1].range,
-            anchor=aligned.anchor,
-            covered_end=aligned.covered_end,
+            aligned=aligned,
             subject=subject,
         )
 
@@ -633,8 +631,8 @@ class Covers(BaseModel):
         """
         Get the datasets this check reads, covered one first and covering one last
 
-        Under `align="branch"` that is the chain from the covered dataset up to the
-        covering one, which is the series coverage is judged along. A member of the
+        That is the chain from the covered dataset up to the covering one, which is
+        the series coverage is judged along. A member of the
         lineage below `target` or above `role` is no part of the question, so it is
         neither judged nor asked to be enriched.
 
@@ -653,13 +651,7 @@ class Covers(BaseModel):
         -------
         :
             The covered dataset, any parents between the two, and the covering one
-
-            Just the pair under `align="calendar"`, which compares two ranges
-            directly and so never looks at what is between them.
         """
-        if self.align == "calendar":
-            return (members[target_index], members[role_index])
-
         return tuple(members[target_index : role_index + 1])
 
     def _check_is_an_ancestor(self, target_index: int, role_index: int) -> None:
@@ -683,8 +675,8 @@ class Covers(BaseModel):
         """
         if target_index >= role_index:
             msg = (
-                f"With align='branch', {self.role!r} must be an ancestor "
-                f"of {self.target!r}"
+                f"{self.role!r} must be an ancestor of {self.target!r}: Covers lines "
+                "the two up through the branch points between them"
             )
             raise ValueError(msg)
 
@@ -784,15 +776,10 @@ class Covers(BaseModel):
         """
         Put the covered dataset's span onto the covering dataset's axis
 
-        **After mapping, the series the covered run belongs to starts at the alignment
-        point.** That is the one piece of arithmetic coverage needs, and it is what
-        lets [_covers][(m)._covers] answer containment and overlap with one
-        comparison, swapping only the upper bound.
-
         Parameters
         ----------
         catalogue
-            Catalogue, asked for one branch point per hop under `align="branch"`
+            Catalogue, asked for one branch point per hop
 
         involved
             The datasets this check reads, as [_involved][(c).Covers._involved] gives
@@ -810,36 +797,29 @@ class Covers(BaseModel):
             The alignment point and the covered run's mapped `end_exclusive`, both as
             positions on the covering dataset's axis -- or why they could not be found
         """
-        axis = ranges[-1].range.axis
-        covered = ranges[0]
-        if self.align == "calendar":
-            if not covered.range.axis.is_comparable_with(axis):
-                return Fail(_mismatched(subject, covered.range.axis, axis))
+        hops = self._hops(catalogue, involved, ranges, subject)
+        if isinstance(hops, (NeedsEnrichment, MissingFeature)):
+            return hops
 
-            return _Alignment(covered.range.start, covered.range.end_exclusive)
+        return _mapped_through(hops, ranges, subject)
 
-        branches = self._branch_points(catalogue, involved, subject)
-        if isinstance(branches, NeedsEnrichment):
-            return branches
-
-        axes = self._check_the_axes(involved, ranges, branches, subject)
-        if axes is not None:
-            return axes
-
-        joins = self._check_the_joins(involved, ranges, branches, subject)
-        if joins is not None:
-            return joins
-
-        return _aligned_through(ranges, branches)
-
-    def _branch_points(
+    def _hops(
         self,
         catalogue: CatalogueWithTimeInfo,
         involved: Sequence[CatalogueEntry],
+        ranges: Sequence[VersionTimeRange],
         subject: str,
-    ) -> tuple[BranchPoint, ...] | NeedsEnrichment:
+    ) -> tuple[_Hop, ...] | NeedsEnrichment | MissingFeature:
         """
-        Get where each dataset involved branched from the next one up
+        Get where each dataset involved branched from the next one up, on both clocks
+
+        A branch point's `in_child` is used whenever it has one, whether the child's
+        header published it or a fix set it. Where it has none, the child's project
+        says what happens, through
+        [branch_time_in_child_convention][esmporium.datasets.branch_time_in_child_convention]:
+        a project which publishes it has simply not had it recorded yet, and one which
+        does not (CMIP5) has its child's first time bound stand in for it, with that
+        assumption carried into every message built on it.
 
         Parameters
         ----------
@@ -850,26 +830,97 @@ class Covers(BaseModel):
             The datasets this check reads, as [_involved][(c).Covers._involved] gives
             them
 
+        ranges
+            Their ranges, in the same order
+
         subject
             Role path being judged, used in the message
 
         Returns
         -------
         :
-            One branch point per hop, so one fewer than there are datasets, each a
-            position on the axis of the dataset above it -- or
+            One hop per pair of neighbours, so one fewer than there are datasets,
+            covered one first -- or
+            [MissingFeature][esmporium.requirements.MissingFeature] naming every child
+            whose project's convention we do not know, or
             [NeedsEnrichment][esmporium.requirements.NeedsEnrichment] naming every
             dataset whose branch point is not recorded
         """
-        points: list[BranchPoint] = []
+        hops: list[_Hop] = []
         unrecorded: list[CatalogueEntry] = []
-        for child in involved[:-1]:
-            point = catalogue.get_branch_time_in_parent(child)
+        unknown: list[CatalogueEntry] = []
+        for index, child in enumerate(involved[:-1]):
+            parent = involved[index + 1]
+            point = catalogue.get_branch_point(child)
             if point is None:
                 unrecorded.append(child)
-            else:
-                points.append(point)
+                continue
 
+            if point.in_child is not None and point.child_axis is not None:
+                hops.append(
+                    _Hop(
+                        child=child,
+                        parent=parent,
+                        in_parent=point.in_parent,
+                        parent_axis=point.parent_axis,
+                        in_child=point.in_child,
+                        child_axis=point.child_axis,
+                    )
+                )
+                continue
+
+            try:
+                convention = branch_time_in_child_convention(child.project)
+            except UnknownProjectBranchTimeInChildError:
+                unknown.append(child)
+                continue
+
+            if convention is BranchTimeInChild.PUBLISHED:
+                unrecorded.append(child)
+                continue
+
+            # `BranchTimeInChild.ASSUMED_FIRST_TIME_BOUND`: the run is taken to start at
+            # its branch, so its own first time bound stands in for `in_child`.
+            first = ranges[index].range
+            hops.append(
+                _Hop(
+                    child=child,
+                    parent=parent,
+                    in_parent=point.in_parent,
+                    parent_axis=point.parent_axis,
+                    in_child=first.start,
+                    child_axis=first.axis,
+                    assumption=(
+                        f"#{child.id} is {child.project}, which does not publish "
+                        "`branch_time_in_child`, so it is assumed to be "
+                        f"#{child.id}'s first time bound, {first.start} in "
+                        f"{first.axis.units}. If #{child.id}'s leading files are "
+                        "missing, that is later than its branch; a fix which states "
+                        "`branch_time_in_child` replaces this assumption."
+                    ),
+                )
+            )
+
+        # `MissingFeature` before `NeedsEnrichment`, for the reason `_worst` gives:
+        # enriching will not make a convention we do not know into one we do.
+        if unknown:
+            unknown.sort(key=lambda entry: entry.id)
+            one = len(unknown) == 1
+            listed = readable_list([f"#{entry.id}" for entry in unknown], quote=False)
+            projects = readable_list(sorted({entry.project for entry in unknown}))
+            onto = "its parent's axis" if one else "their parents' axes"
+
+            return MissingFeature(
+                f"{subject}: {listed} {'is' if one else 'are'} from {projects}, and "
+                "we do not know whether that publishes `branch_time_in_child`, or what "
+                "to assume where it does not, so there is no way to put "
+                f"{'its' if one else 'their'} data onto {onto}. Saying so is one "
+                "line in `BRANCH_TIME_IN_CHILD_BY_PROJECT`, so please say you wanted "
+                f"it at {ISSUE_TRACKER_URL}."
+            )
+
+        # Every one which is missing rather than the first, so that one run of the
+        # enricher clears the lot.
         if unrecorded:
             unrecorded.sort(key=lambda entry: entry.id)
             listed = readable_list(
@@ -881,145 +932,20 @@ class Covers(BaseModel):
                 f"nothing has recorded where {listed} branched from "
                 f"{'its parent' if len(unrecorded) == 1 else 'their parents'}",
                 "the runs are on different axes and the branch point is what lines "
-                "them up, so there is nothing to compare without it",
+                "them up. A CMIP6 or CMIP7 file header publishes both of its ends, "
+                "and a CMIP5 branch time is published without units, so it needs a fix",
                 unrecorded,
                 MissingTimeFact.BRANCH_POINT,
             )
 
-        return tuple(points)
-
-    def _check_the_axes(
-        self,
-        involved: Sequence[CatalogueEntry],
-        ranges: Sequence[VersionTimeRange],
-        branches: Sequence[BranchPoint],
-        subject: str,
-    ) -> Outcome | None:
-        """
-        Check each hop's branch point and the two runs it joins are on one axis
-
-        Parameters
-        ----------
-        involved
-            The datasets this check reads, as [_involved][(c).Covers._involved] gives
-            them
-
-        ranges
-            Their ranges, in the same order
-
-        branches
-            Where each of them branched from the next one up
-
-        subject
-            Role path being judged, used in every message
-
-        Returns
-        -------
-        :
-            Why a hop cannot be mapped, or `None` when every one can
-        """
-        for index, branch in enumerate(branches):
-            child, parent = involved[index], involved[index + 1]
-            child_axis = ranges[index].range.axis
-            parent_axis = ranges[index + 1].range.axis
-
-            # A control and an experiment on different calendars fail here,
-            # because the calendar check is strict.
-            # That may need loosening for real data at scale:
-            # see the note in `TimeAxis.is_comparable_with`.
-            if not branch.parent_axis.is_comparable_with(parent_axis):
-                # The branch point and the parent's own data disagree about the axis
-                # the parent is on, which is the data disagreeing with itself rather
-                # than a question about alignment. Loud, per settled decision 11.
-                return Fail(
-                    f"{subject}: the branch point of #{child.id} is a position on a "
-                    f"{branch.parent_axis.units} axis in calendar "
-                    f"{branch.parent_axis.calendar!r}, but #{parent.id}'s own data is "
-                    f"on a {parent_axis.units} axis in calendar "
-                    f"{parent_axis.calendar!r}. The two have to be the same axis for "
-                    "the branch point to mean anything."
-                )
-
-            if child_axis.units.step is not parent_axis.units.step:
-                return MissingFeature(
-                    f"{subject}: #{child.id} reports every "
-                    f"{child_axis.units.step.value.rstrip('s')} and #{parent.id} "
-                    f"every {parent_axis.units.step.value.rstrip('s')}, and comparing "
-                    "a run against a parent at a different frequency is not supported "
-                    "yet. It is a fair thing to want -- the two spans are the same "
-                    "lengths written in different units -- so please say you wanted "
-                    f"it at {ISSUE_TRACKER_URL}."
-                )
-
-        return None
-
-    def _check_the_joins(
-        self,
-        involved: Sequence[CatalogueEntry],
-        ranges: Sequence[VersionTimeRange],
-        branches: Sequence[BranchPoint],
-        subject: str,
-    ) -> Outcome | None:
-        """
-        Check each run in between branched where its own parent has data
-
-        Coverage is judged along the whole series, so if there is a multi-hop parent
-        chain required for the analysis, the runs in between have to join
-        up: one which branched before its parent's data starts, or after it ends,
-        leaves a hole no amount of covering can fill. The hop onto the covering
-        dataset itself is left out, because whether *it* holds data at the branch point
-        is the coverage question [_compare][(c)._compare] answers, with the window it
-        needed in the message.
-
-        Parameters
-        ----------
-        involved
-            The datasets this check reads, as [_involved][(c).Covers._involved] gives
-            them
-
-        ranges
-            Their ranges, in the same order
-
-        branches
-            Where each of them branched from the next one up
-
-        subject
-            Role path being judged, used in the message
-
-        Returns
-        -------
-        :
-            Why the series does not join up, or `None` when it does
-        """
-        broken = []
-        for index in range(len(branches) - 1):
-            child, parent = involved[index], involved[index + 1]
-            held = ranges[index + 1].range
-            at = branches[index].in_parent
-
-            if not held.start <= at < held.end_exclusive:
-                broken.append(
-                    f"#{child.id} branched from #{parent.id} at {at}, which is "
-                    f"outside the [{held.start}, {held.end_exclusive}) #{parent.id} "
-                    "holds"
-                )
-
-        if not broken:
-            return None
-
-        return Fail(
-            f"{subject}: {readable_list(broken, quote=False)}. Coverage is judged "
-            "along the whole series from the covering dataset down, so a run which "
-            "branched where its parent has no data breaks it."
-        )
+        return tuple(hops)
 
     def _compare(
         self,
         *,
         covering: CatalogueEntry,
         have: TimeRange,
-        anchor: float,
-        covered_end: float,
+        aligned: _Alignment,
         subject: str,
     ) -> Outcome:
         """
@@ -1033,11 +959,9 @@ class Covers(BaseModel):
         have
             What it holds
 
-        anchor
-            Where the two runs line up, on `have`'s axis
-
-        covered_end
-            The covered run's mapped `end_exclusive`, on `have`'s axis
+        aligned
+            Where the two runs line up and where the covered run ends, on `have`'s
+            axis, and what the mapping assumed
 
         subject
             Role path being judged, used in every message
@@ -1048,9 +972,12 @@ class Covers(BaseModel):
             `Fail` if the hard requirement is not met, `Degraded` if the ideal is not,
             `Pass` otherwise -- or `NeedsEnrichment` if the comparison needs a finer
             axis than the data is recorded on
+
+            Every one but `NeedsEnrichment` names what the mapping assumed, a `Pass`
+            included: an answer which rests on an assumption says so.
         """
         if self.pad is not None:
-            met = _covers(have, anchor, covered_end, self.min_overlap, self.pad)
+            met = _covers(have, aligned, self.min_overlap, self.pad)
             if isinstance(met, NeedsEnrichment):
                 return _needs(
                     subject,
@@ -1063,12 +990,15 @@ class Covers(BaseModel):
 
             if not met.covered:
                 return Fail(
-                    f"{self._described(subject, covering, have, met)}, with padding "
-                    f"{_described_pad(self.pad)}"
+                    _with_assumptions(
+                        f"{self._described(subject, covering, have, met)}, with "
+                        f"padding {_described_pad(self.pad)}",
+                        aligned.assumptions,
+                    )
                 )
 
         if self.ideal_min_overlap is None and self.ideal_pad is None:
-            return Pass()
+            return _passed(subject, aligned.assumptions)
 
         # An unstated ideal falls back to the hard requirement, so the soft check is
         # never looser than the hard one -- an `ideal_min_overlap` on its own would
@@ -1078,7 +1008,7 @@ class Covers(BaseModel):
         if ideal_pad is None:
             ideal_pad = self.pad or NO_PADDING
 
-        ideally = _covers(have, anchor, covered_end, ideal_overlap, ideal_pad)
+        ideally = _covers(have, aligned, ideal_overlap, ideal_pad)
         if isinstance(ideally, NeedsEnrichment):
             return _needs(
                 subject,
@@ -1091,11 +1021,14 @@ class Covers(BaseModel):
 
         if not ideally.covered:
             return Degraded(
-                f"{self._described(subject, covering, have, ideally)}, ideal padding "
-                f"{_described_pad(ideal_pad)} not met"
+                _with_assumptions(
+                    f"{self._described(subject, covering, have, ideally)}, ideal "
+                    f"padding {_described_pad(ideal_pad)} not met",
+                    aligned.assumptions,
+                )
             )
 
-        return Pass()
+        return _passed(subject, aligned.assumptions)
 
     def _described(
         self,
@@ -1123,7 +1056,7 @@ class Covers(BaseModel):
             What it holds
 
         needed
-            What was wanted
+            What was wanted, on `have`'s axis
 
         Returns
         -------
@@ -1134,8 +1067,42 @@ class Covers(BaseModel):
         return (
             f"{subject}: #{covering.id} covers "
             f"[{have.start}, {have.end_exclusive}) and needs "
-            f"[{needed.start}, {needed.end_exclusive}), in {have.axis.units}"
+            f"[{needed.start}, {needed.end_exclusive}), in {needed.axis.units}"
         )
+
+
+@dataclass(frozen=True)
+class _Hop:
+    """
+    One branch of the series: a child, its parent, and the instant it branched
+
+    The branch point with `in_child` settled, so the mapping never has to ask where
+    it came from. Each end is a position on its own run's recorded axis.
+    """
+
+    child: CatalogueEntry
+    """The run which branched"""
+
+    parent: CatalogueEntry
+    """The run it branched from"""
+
+    in_parent: float
+    """Where it branched, on `parent_axis`"""
+
+    parent_axis: TimeAxis
+    """The axis `in_parent` is a position on"""
+
+    in_child: float
+    """Where it branched, on `child_axis`"""
+
+    child_axis: TimeAxis
+    """The axis `in_child` is a position on"""
+
+    assumption: str | None = None
+    """
+    What `in_child` rests on when it was not published or fixed, as a sentence for a
+    message, or `None` when it was
+    """
 
 
 @dataclass(frozen=True)
@@ -1143,22 +1110,32 @@ class _Alignment:
     """
     Where two runs line up, once the covered one has been mapped
 
-    A type rather than a pair of ints so that
+    A type rather than a pair of numbers so that
     [_align][(c).Covers._align] can answer either this or an outcome and the caller
-    can tell which it got by name.
+    can tell which it got by name, and so that the axis the numbers are on travels
+    with them.
     """
 
     anchor: float
     """
-    Where the series line up, on the covering dataset's axis
+    Where the series line up, on `axis`
 
-    Under `align="branch"` that is where the run directly below the covering dataset
-    branched off it, which is the first step of its data the series below it runs
-    alongside.
+    Where the run directly below the covering dataset branched off it, which is the
+    first instant of the series below it that runs alongside the covering dataset.
     """
 
     covered_end: float
-    """The covered run's mapped `end_exclusive`, on the same axis"""
+    """The covered run's mapped `end_exclusive`, on `axis`"""
+
+    axis: TimeAxis
+    """The covering dataset's recorded axis, which both numbers are positions on"""
+
+    assumptions: tuple[str, ...] = ()
+    """
+    What the mapping assumed rather than read, one sentence each
+
+    Carried into every message built on this alignment.
+    """
 
 
 # TODO future:
@@ -1167,9 +1144,9 @@ class _Alignment:
 # run's own mapped start rather than at the bottom of the chain, and `min_overlap`
 # could be wanted from either. Saying which is a field on `Covers`, so both wait for
 # somebody to ask for one.
-def _aligned_through(
-    ranges: Sequence[VersionTimeRange], branches: Sequence[BranchPoint]
-) -> _Alignment:
+def _mapped_through(
+    hops: Sequence[_Hop], ranges: Sequence[VersionTimeRange], subject: str
+) -> _Alignment | Outcome:
     """
     Map the covered run onto the covering dataset's axis, one branch at a time
 
@@ -1182,37 +1159,215 @@ def _aligned_through(
       covered                     |═══════════════|
     ```
 
-    `BP` is where the run directly below the covering dataset branched off it, and it
-    is the alignment point. Each run in between then contributes how far into its own
-    parent it branched, counted from that parent's own start, so the covered run's
-    start lands wherever the chain of branches puts it.
+    A position `p` on a child's axis lands at `in_parent + (p - in_child)` on its
+    parent's: `p - in_child` is how far after the branch `p` is, on the child's clock,
+    and the same length after the branch on the parent's clock is the same instant.
+    Carried up hop by hop, that puts the covered run's `end_exclusive` on the covering
+    dataset's axis. `BP`, the alignment point, is where the run directly below the
+    covering dataset branched off it.
+
+    The joins are checked on the way, on both sides, because coverage is judged along
+    the whole series and a break anywhere in it leaves a hole no amount of covering can
+    fill. Each run has to hold data at its own branch -- one whose data starts later is
+    missing its leading files -- and each run in between has to hold data where its
+    child branched. The join onto the covering dataset itself is left out, because
+    whether *it* holds data at `BP` is the coverage question
+    [_compare][(m).Covers._compare] answers, with the window it needed in the message.
 
     Parameters
     ----------
+    hops
+        Where each dataset branched from the next one up, covered one first
+
     ranges
         Ranges of the datasets involved, covered one first and covering one last
 
-    branches
-        Where each of them branched from the next one up, one per hop
+    subject
+        Role path being judged, used in every message
 
     Returns
     -------
     :
-        The alignment point and the covered run's mapped `end_exclusive`
+        The alignment point and the covered run's mapped `end_exclusive`, on the
+        covering dataset's axis -- or `Fail` if a branch point is not on its run's
+        axis or the series does not join up, or `MissingFeature` if a child and its
+        parent count in different steps or calendars
+
+    Raises
+    ------
+    MismatchedTimeAxisError
+        The position being carried up is not on the axis of the hop it is mapped
+        through, which the checks before it rule out, so this is a bug
     """
-    # TODO (PR R2 in docs/further-background/enrichment-storage.md):
-    # this maps through each run's own first step,
-    # which assumes its data starts exactly at its branch
-    # and shifts everything above it when a leading file is missing.
-    # Map through `branch_time_in_child` instead,
-    # checking the axes of what is combined at each step.
-    anchor = branches[-1].in_parent
+    covered = ranges[0].range
+    position, axis = covered.end_exclusive, covered.axis
+    broken: list[str] = []
 
-    position = anchor
-    for index in reversed(range(len(branches) - 1)):
-        position += branches[index].in_parent - ranges[index + 1].range.start
+    for index, hop in enumerate(hops):
+        child_held = ranges[index].range
+        parent_held = ranges[index + 1].range
 
-    return _Alignment(anchor, position + ranges[0].range.extent.count)
+        # Each end of a branch point is a position on its own run's recorded axis, so
+        # one on any other axis is the data disagreeing with itself rather than a
+        # question about alignment. Loud, per settled decision 11.
+        if not hop.parent_axis.is_comparable_with(parent_held.axis):
+            return Fail(_off_its_axis(subject, hop, "parent", parent_held.axis))
+
+        if index < len(hops) - 1 and not (
+            parent_held.start <= hop.in_parent < parent_held.end_exclusive
+        ):
+            broken.append(
+                f"#{hop.child.id} branched from #{hop.parent.id} at {hop.in_parent}, "
+                f"which is outside the [{parent_held.start}, "
+                f"{parent_held.end_exclusive}) #{hop.parent.id} holds"
+            )
+
+        if not hop.child_axis.is_comparable_with(child_held.axis):
+            return Fail(_off_its_axis(subject, hop, "child", child_held.axis))
+
+        if not child_held.start <= hop.in_child < child_held.end_exclusive:
+            broken.append(
+                f"#{hop.child.id} branched at {hop.in_child} on its own axis, which "
+                f"is outside the [{child_held.start}, {child_held.end_exclusive}) it "
+                "holds"
+            )
+
+        # `position - in_child` is a length on the child's axis, and adding it to
+        # `in_parent` reads it as a length on the parent's. Those are the same length
+        # only in the same step and the same calendar. The epochs may differ, because a
+        # length has none.
+        if hop.child_axis.units.step is not hop.parent_axis.units.step:
+            return MissingFeature(
+                f"{subject}: #{hop.child.id} reports every "
+                f"{hop.child_axis.units.step.value.rstrip('s')} and "
+                f"#{hop.parent.id} every "
+                f"{hop.parent_axis.units.step.value.rstrip('s')}, and comparing a run "
+                "against a parent at a different frequency is not supported yet. It "
+                "is a fair thing to want -- the two spans are the same lengths written "
+                "in different units -- so please say you wanted it at "
+                f"{ISSUE_TRACKER_URL}."
+            )
+
+        # Strict on purpose, as `TimeAxis.is_comparable_with` is: some models use
+        # different calendars for a control and its experiments, and whether that
+        # matters depends on the data, so any loosening has to say which case it
+        # allows rather than dropping the check.
+        if hop.child_axis.calendar != hop.parent_axis.calendar:
+            return MissingFeature(
+                f"{subject}: #{hop.child.id} is in calendar "
+                f"{hop.child_axis.calendar!r} and #{hop.parent.id} in "
+                f"{hop.parent_axis.calendar!r}, and lining up a run with a parent in "
+                "a different calendar is not supported yet. Whether it matters "
+                "depends on the data -- monthly data rarely cares which calendar each "
+                "run used, and daily data does -- so please say you wanted it at "
+                f"{ISSUE_TRACKER_URL}."
+            )
+
+        if not axis.is_comparable_with(hop.child_axis):
+            raise MismatchedTimeAxisError(axis, hop.child_axis)
+
+        position = hop.in_parent + (position - hop.in_child)
+        axis = hop.parent_axis
+
+    if broken:
+        return Fail(
+            f"{subject}: {readable_list(broken, quote=False)}. Coverage is judged "
+            "along the whole series from the covering dataset down, so a run which "
+            "branched where it or its parent has no data breaks it."
+        )
+
+    return _Alignment(
+        anchor=hops[-1].in_parent,
+        covered_end=position,
+        axis=axis,
+        assumptions=tuple(hop.assumption for hop in hops if hop.assumption is not None),
+    )
+
+
+def _off_its_axis(
+    subject: str, hop: _Hop, end: Literal["parent", "child"], run_axis: TimeAxis
+) -> str:
+    """
+    Say that one end of a branch point is not on the axis of the run it belongs to
+
+    Parameters
+    ----------
+    subject
+        Role path being judged
+
+    hop
+        The branch whose point it is
+
+    end
+        Which end of the branch point it is
+
+    run_axis
+        The axis the data of the run at that end is recorded on
+
+    Returns
+    -------
+    :
+        The message
+    """
+    run, end_axis = (
+        (hop.parent, hop.parent_axis)
+        if end == "parent"
+        else (hop.child, hop.child_axis)
+    )
+
+    return (
+        f"{subject}: the {end} end of #{hop.child.id}'s branch point is a position on "
+        f"a {end_axis.units} axis in calendar {end_axis.calendar!r}, but "
+        f"#{run.id}'s own data is on a {run_axis.units} axis in calendar "
+        f"{run_axis.calendar!r}. The two have to be the same axis for the branch "
+        "point to mean anything."
+    )
+
+
+def _with_assumptions(message: str, assumptions: Sequence[str]) -> str:
+    """
+    Add what an answer assumed to its message
+
+    Parameters
+    ----------
+    message
+        The answer
+
+    assumptions
+        What it rests on, one sentence each
+
+    Returns
+    -------
+    :
+        `message`, followed by every assumption
+    """
+    if not assumptions:
+        return message
+
+    return f"{message}. {' '.join(assumptions)}"
+
+
+def _passed(subject: str, assumptions: Sequence[str]) -> Pass:
+    """
+    Say that the check passed, and what that rests on
+
+    Parameters
+    ----------
+    subject
+        Role path being judged
+
+    assumptions
+        What the answer assumed rather than read, one sentence each
+
+    Returns
+    -------
+    :
+        A `Pass`, whose message names every assumption, or is empty when there are none
+    """
+    if not assumptions:
+        return Pass()
+
+    return Pass(f"{subject}: {' '.join(assumptions)}")
 
 
 @dataclass(frozen=True)
@@ -1220,15 +1375,18 @@ class _Window:
     """
     The window a comparison asked for, and whether it was covered
 
-    A type rather than a tuple so that the three things it carries are named where
-    they are read, which is in two message formats and one `if`.
+    A type rather than a tuple so that the things it carries are named where they are
+    read, which is in two message formats and one `if`.
     """
 
     start: float
-    """First step which has to be covered"""
+    """First step which has to be covered, on `axis`"""
 
     end_exclusive: float
-    """First step after the last which has to be covered"""
+    """First step after the last which has to be covered, on `axis`"""
+
+    axis: TimeAxis
+    """The covering dataset's recorded axis, which the window is on"""
 
     covered: bool
     """Whether the covering dataset holds all of it"""
@@ -1236,8 +1394,7 @@ class _Window:
 
 def _covers(
     have: TimeRange,
-    anchor: float,
-    covered_end: float,
+    aligned: _Alignment,
     min_overlap: Span | None,
     pad: tuple[Span, Span],
 ) -> _Window | NeedsEnrichment:
@@ -1264,11 +1421,8 @@ def _covers(
     have
         What the covering dataset holds
 
-    anchor
-        Where the two runs line up, on `have`'s axis
-
-    covered_end
-        The covered run's mapped `end_exclusive`, on `have`'s axis
+    aligned
+        Where the two runs line up, and the covered run's mapped `end_exclusive`
 
     min_overlap
         How much data from `anchor` is wanted, or `None` for containment
@@ -1283,12 +1437,24 @@ def _covers(
         [NeedsEnrichment][esmporium.requirements.NeedsEnrichment] if a threshold
         cannot be placed on `have`'s axis as it stands
 
+    Raises
+    ------
+    MismatchedTimeAxisError
+        `aligned` is not on `have`'s axis, which the mapping rules out, so this is a
+        bug
+
     Notes
     -----
     The window is **anchored** at the alignment point rather than free to slide inside
     the overlap. A sliding window passes cases where the covering run does not reach
     the alignment point at all, and there is no data there to take an anomaly against.
     """
+    # Everything below moves along, and compares against, `have`'s axis.
+    if not aligned.axis.is_comparable_with(have.axis):
+        raise MismatchedTimeAxisError(have.axis, aligned.axis)
+
+    anchor, covered_end = aligned.anchor, aligned.covered_end
+
     finer = [
         span
         for span in (min_overlap, *pad)
@@ -1328,6 +1494,7 @@ def _covers(
     return _Window(
         start=start,
         end_exclusive=end_exclusive,
+        axis=have.axis,
         covered=(
             enough_to_overlap
             and have.start <= start
@@ -1389,35 +1556,6 @@ def _described_pad(pad: tuple[Span, Span]) -> str:
         The two, e.g. `(10 years, 10 years)`
     """
     return f"({pad[0]}, {pad[1]})"
-
-
-def _mismatched(subject: str, left: TimeAxis, right: TimeAxis) -> str:
-    """
-    Say that two ranges which have to be on one axis are not
-
-    Parameters
-    ----------
-    subject
-        Role path being judged
-
-    left
-        Axis of the covered range
-
-    right
-        Axis of the covering range
-
-    Returns
-    -------
-    :
-        The message
-    """
-    return (
-        f"{subject}: these two are not on comparable axes -- {left.units} in calendar "
-        f"{left.calendar!r} against {right.units} in calendar {right.calendar!r} -- so "
-        "with align='calendar' there is nothing to compare. Calendar alignment "
-        "compares the two ranges directly, so they have to be on one axis already; "
-        "align='branch' is how two runs on different axes are lined up."
-    )
 
 
 def _needs(
@@ -1512,11 +1650,16 @@ def _worst(outcomes: Sequence[Outcome]) -> Outcome:
     if degraded:
         return Degraded(_joined(degraded))
 
-    return Pass()
+    # A pass can carry what it assumed, and that has to survive as well.
+    commented = [
+        outcome for outcome in outcomes if isinstance(outcome, Pass) and outcome.message
+    ]
+
+    return Pass(_joined(commented))
 
 
 def _joined(
-    outcomes: Sequence[Degraded | Fail | MissingFeature | NeedsEnrichment],
+    outcomes: Sequence[Pass | Degraded | Fail | MissingFeature | NeedsEnrichment],
 ) -> str:
     """
     Join the messages of several outcomes of one kind
@@ -1524,11 +1667,11 @@ def _joined(
     Parameters
     ----------
     outcomes
-        The outcomes, at least one
+        The outcomes
 
     Returns
     -------
     :
-        Their messages, in the order the lineages were judged
+        Their messages, in the order the lineages were judged, or `""` for none
     """
     return "; ".join(outcome.message for outcome in outcomes)

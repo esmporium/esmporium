@@ -82,7 +82,6 @@ def containment(**overrides) -> Covers:
     """Get a containment check on the control, with nothing else stated"""
     settings = {
         "role": "control",
-        "align": "branch",
         "mode": "containment",
         "pad": NO_PAD,
         **overrides,
@@ -95,7 +94,6 @@ def overlap(count: int, **overrides) -> Covers:
     """Get an overlap check on the control asking for `count` years from the branch"""
     settings = {
         "role": "control",
-        "align": "branch",
         "mode": "overlap",
         "min_overlap": Span(count, YEARS),
         "pad": NO_PAD,
@@ -124,15 +122,22 @@ def lineage_view(*members: CatalogueEntry, end_role: str = "control") -> Constra
     )
 
 
-def child_and_control(
-    dataset, *, child, control, branch=None, axis: TimeAxis = YEARLY_AXIS
+def child_and_control(  # noqa: PLR0913 - one argument per fact a test can leave out
+    dataset,
+    *,
+    child,
+    control,
+    branch=None,
+    axis: TimeAxis = YEARLY_AXIS,
+    child_axis: TimeAxis | None = None,
 ):
     """
     Get a child, its control and a catalogue holding them
 
-    `child` and `control` are recorded ranges and `branch` a branch point, or `None`
-    for "nothing recorded it" -- which is how a test says a fact is missing rather
-    than wrong.
+    `child` and `control` are recorded ranges and `branch` where the child branched
+    on the control's axis, or `None` for "nothing recorded it" -- which is how a test
+    says a fact is missing rather than wrong. The child branched at 0 on its own axis,
+    which is `axis` unless `child_axis` says otherwise.
     """
     child_entry = dataset(1)
     control_entry = dataset(2, experiment="piControl")
@@ -144,7 +149,9 @@ def child_and_control(
             for entry_id, each in ((1, child), (2, control))
             if each is not None
         },
-        branch_times_in_parent={} if branch is None else {1: branched_at(branch, axis)},
+        branch_points={}
+        if branch is None
+        else {1: branched_at(branch, axis, child_axis=child_axis)},
     )
 
     return child_entry, control_entry, catalogue
@@ -245,7 +252,7 @@ def test_containment_is_the_covered_runs_own_extent(worked_example):
                     1: recorded_range(0, 150, YEARLY_AXIS),
                     2: recorded_range(0, 250, YEARLY_AXIS),
                 },
-                branch_times_in_parent=catalogue.branch_times_in_parent,
+                branch_points=catalogue.branch_points,
             ),
         )
         == Pass()
@@ -256,12 +263,11 @@ def test_containment_refuses_a_min_overlap_and_overlap_requires_one():
     # Two halves of one rule: the mode says which question is being asked, so the
     # thresholds which belong to the other one are a mistake rather than ignored.
     with pytest.raises(ValidationError, match="needs `min_overlap`"):
-        Covers(role="control", align="branch", mode="overlap", pad=NO_PAD)
+        Covers(role="control", mode="overlap", pad=NO_PAD)
 
     with pytest.raises(ValidationError, match="takes no `min_overlap`"):
         Covers(
             role="control",
-            align="branch",
             mode="containment",
             pad=NO_PAD,
             min_overlap=Span(1, YEARS),
@@ -275,13 +281,11 @@ def test_nothing_is_defaulted():
         Covers(role="control")
 
     missing = {error["loc"][0] for error in caught.value.errors()}
-    assert missing == {"align", "mode", "pad"}
-    assert Covers(
-        role="control", align="branch", mode="containment", pad=NO_PAD
-    ).target == ("self")
+    assert missing == {"mode", "pad"}
+    assert Covers(role="control", mode="containment", pad=NO_PAD).target == ("self")
 
 
-# ------------------------------------------------------------------- the two aligns
+# ------------------------------------------------------------- naming the two runs
 
 
 def test_covers_needs_a_lineage():
@@ -291,55 +295,6 @@ def test_covers_needs_a_lineage():
     )
 
     assert outcome == Fail("Covers needs a lineage, but none was resolved")
-
-
-def test_covers_calendar(dataset):
-    child, control, catalogue = child_and_control(
-        dataset,
-        child=recorded_range(1850, 2015, YEARLY_AXIS),
-        control=recorded_range(1850, 1880, YEARLY_AXIS),
-    )
-
-    outcome = Covers(
-        role="control", align="calendar", mode="containment", pad=NO_PAD
-    ).evaluate(lineage_view(child, control), catalogue)
-
-    assert isinstance(outcome, Fail)
-    assert "covers [1850, 1880) and needs [1850, 2015)" in outcome.message
-
-
-def test_calendar_alignment_never_asks_for_a_branch_point(dataset):
-    # Which is why it works against a catalogue with no branch point recorded at all,
-    # and is the distinction a future `SameTimeRange` must not optimise away.
-    child, control, catalogue = child_and_control(
-        dataset,
-        child=recorded_range(1850, 1900, YEARLY_AXIS),
-        control=recorded_range(1850, 2000, YEARLY_AXIS),
-        branch=None,
-    )
-
-    outcome = Covers(
-        role="control", align="calendar", mode="containment", pad=NO_PAD
-    ).evaluate(lineage_view(child, control), catalogue)
-
-    assert outcome == Pass()
-
-
-def test_calendar_alignment_refuses_axes_which_do_not_line_up(dataset):
-    # Settled decision 11: with no branch point to resolve it, a misaligned axis is a
-    # question we can answer and the answer is no.
-    child, control, catalogue = child_and_control(
-        dataset,
-        child=recorded_range(22189, 24000, MONTHLY_AXIS),
-        control=recorded_range(1850, 2000, YEARLY_AXIS),
-    )
-
-    outcome = Covers(
-        role="control", align="calendar", mode="containment", pad=NO_PAD
-    ).evaluate(lineage_view(child, control), catalogue)
-
-    assert isinstance(outcome, Fail)
-    assert "not on comparable axes" in outcome.message
 
 
 def test_covers_branch_needs_ancestor(dataset):
@@ -354,7 +309,6 @@ def test_covers_branch_needs_ancestor(dataset):
         Covers(
             role="self",
             target="control",
-            align="branch",
             mode="containment",
             pad=NO_PAD,
         ).evaluate(lineage_view(child, control), catalogue)
@@ -373,15 +327,12 @@ def test_end_and_the_lineage_role_name_mean_the_same_thing(dataset):
         dataset,
         child=recorded_range(0, 10, YEARLY_AXIS),
         control=recorded_range(0, 5, YEARLY_AXIS),
+        branch=0,
     )
     view = lineage_view(child, control)
 
-    by_end = Covers(
-        role="end", align="calendar", mode="containment", pad=NO_PAD
-    ).evaluate(view, catalogue)
-    by_name = Covers(
-        role="control", align="calendar", mode="containment", pad=NO_PAD
-    ).evaluate(view, catalogue)
+    by_end = containment(role="end").evaluate(view, catalogue)
+    by_name = containment(role="control").evaluate(view, catalogue)
 
     assert isinstance(by_end, Fail)
     assert by_end == by_name
@@ -453,7 +404,7 @@ def test_no_required_padding_only_checks_the_ideal(worked_example):
 def test_a_check_which_requires_nothing_is_refused():
     # `pad=None` with no ideal would pass whatever the data, which is not a check.
     with pytest.raises(ValidationError, match="requires nothing at all"):
-        Covers(role="control", align="branch", mode="containment", pad=None)
+        Covers(role="control", mode="containment", pad=None)
 
 
 def test_degraded_is_kept_as_a_note(dataset):
@@ -598,6 +549,7 @@ def test_a_child_and_parent_at_different_frequencies_is_not_supported_yet(datase
         child=recorded_range(0, 1800, MONTHLY_AXIS),
         control=recorded_range(0, 250, YEARLY_AXIS),
         branch=100,
+        child_axis=MONTHLY_AXIS,
     )
 
     outcome = containment().evaluate(lineage_view(child, control), catalogue)
@@ -796,7 +748,7 @@ def branch_chain_catalogue(dataset, control_end: int):
         },
         # The ZEC run branches 70 years into 1pctCO2, which branches 100 years into
         # piControl
-        branch_times_in_parent={
+        branch_points={
             1: branched_at(70, YEARLY_AXIS),
             2: branched_at(100, YEARLY_AXIS),
         },
@@ -900,7 +852,7 @@ def test_enrichment_inputs_are_what_the_enricher_takes_back(dataset):
             each.dataset_id: enrichments[each.dataset_id]
             for each in first.enrichment_inputs
         },
-        branch_times_in_parent=before.branch_times_in_parent,
+        branch_points=before.branch_points,
     )
 
     second = solve(unenriched, enriched)
@@ -920,11 +872,11 @@ def test_branch_points_can_still_be_corrected_by_wrapping_the_catalogue(dataset)
     """
 
     class Corrected(InMemoryCatalogueWithTimeInfo):
-        def get_branch_time_in_parent(self, entry: CatalogueEntry):
+        def get_branch_point(self, entry: CatalogueEntry):
             if entry.id == 1:
                 return branched_at(0, YEARLY_AXIS)
 
-            return super().get_branch_time_in_parent(entry)
+            return super().get_branch_point(entry)
 
     child, control, recorded = child_and_control(
         dataset,
@@ -936,7 +888,7 @@ def test_branch_points_can_still_be_corrected_by_wrapping_the_catalogue(dataset)
         entries=recorded.entries,
         parents=recorded.parents,
         time_ranges=recorded.time_ranges,
-        branch_times_in_parent=recorded.branch_times_in_parent,
+        branch_points=recorded.branch_points,
     )
     view = lineage_view(child, control)
 
@@ -960,7 +912,6 @@ def test_a_covers_survives_being_stored_and_read_back():
     assert check.model_dump(mode="json") == {
         "role": "control",
         "target": "self",
-        "align": "branch",
         "mode": "overlap",
         "min_overlap": {"count": 100, "step": "years"},
         "pad": [{"count": 10, "step": "years"}, {"count": 10, "step": "years"}],
@@ -1003,6 +954,4 @@ def test_the_mode_errors_message_survives_pydantic():
     assert issubclass(CoversModeError, ValueError)
 
     with pytest.raises(ValidationError, match="needs `min_overlap`"):
-        Covers.model_validate(
-            {"role": "control", "align": "branch", "mode": "overlap", "pad": None}
-        )
+        Covers.model_validate({"role": "control", "mode": "overlap", "pad": None})

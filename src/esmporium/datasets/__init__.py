@@ -2,6 +2,12 @@
 The vocabulary of a dataset, as esmporium stores one
 """
 
+from esmporium.datasets.branch_time_in_child import (
+    BRANCH_TIME_IN_CHILD_BY_PROJECT,
+    BranchTimeInChild,
+    UnknownProjectBranchTimeInChildError,
+    branch_time_in_child_convention,
+)
 from esmporium.datasets.calendars import (
     MissingCalendarsExtraError,
     NoEpochError,
@@ -46,11 +52,13 @@ from esmporium.datasets.time import (
 )
 
 __all__ = [
+    "BRANCH_TIME_IN_CHILD_BY_PROJECT",
     "DATASET_FACET_COLUMNS",
     "MONTHS_PER_YEAR",
     "NO_TIME_AXIS_INTERVALS_BY_PROJECT",
     "AccessService",
     "BranchPoint",
+    "BranchTimeInChild",
     "CalendarOnANaturalAxisError",
     "ContainerFormat",
     "DownloadOutcome",
@@ -68,10 +76,12 @@ __all__ = [
     "TimeStep",
     "TimeUnits",
     "UnknownCalendarError",
+    "UnknownProjectBranchTimeInChildError",
     "UnknownProjectTimeAxisError",
     "UnknownTimeUnitsError",
     "VersionTimeRange",
     "advance",
+    "branch_time_in_child_convention",
     "check_position",
     "convert_position",
     "has_no_time_axis",

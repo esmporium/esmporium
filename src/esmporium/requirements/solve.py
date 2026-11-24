@@ -434,12 +434,14 @@ class NodeResultOk:
 
     notes: tuple[str, ...] = ()
     """
-    What is not ideal about this node, where it is satisfied anyway
+    What is worth knowing about this node, where it is satisfied anyway
 
-    The same messages appear in the explanation, on the lines marked
-    [ExplanationStatusOk.DEGRADED][(m).ExplanationStatusOk]. They are collected flat
-    here as well so that a caller can read them without walking the tree, which is the
-    difference between acting on them and only printing them.
+    What is not ideal about it, which also appears in the explanation on the lines
+    marked [ExplanationStatusOk.DEGRADED][(m).ExplanationStatusOk], and what a
+    constraint which passed said about how it reached its answer, such as an
+    assumption it rests on. They are collected flat here so that a caller can read them
+    without walking the tree, which is the difference between acting on them and only
+    printing them.
     """
 
 
@@ -502,11 +504,13 @@ class Solution:
 
     notes: tuple[str, ...] = ()
     """
-    What is not ideal about this solution, which is satisfied regardless
+    What is worth knowing about this solution, which is satisfied regardless
 
-    Empty for a group which met every constraint outright. A non-empty one is still a
-    solution -- the datasets in `roles` are the answer and the analysis can be run --
-    with something worth recording alongside the result. See
+    What is not ideal about it, and what any constraint which passed said about how
+    it reached its answer. Empty for a group which met every constraint outright and
+    had nothing to say. A non-empty one is still a solution -- the datasets in
+    `roles` are the answer and the analysis can be run -- with something worth
+    recording alongside the result. See
     [NodeResultOk.notes][(m).NodeResultOk.notes].
     """
 
@@ -1500,7 +1504,8 @@ def _evaluate_constraints(
     Returns
     -------
     :
-        `result`, with any degraded notes added, or why a constraint was not met
+        `result`, with the notes of any degraded or commented pass added, or why a
+        constraint was not met
     """
     view = _constraint_view(result, role_prefix)
     notes = list(result.notes)
@@ -1534,7 +1539,12 @@ def _evaluate_constraints(
                 Explanation(name, ExplanationStatusOk.DEGRADED, outcome.message)
             )
 
-    if not degraded:
+        # A pass which has something to say, e.g. what it assumed, is a note and not a
+        # line in the explanation: nothing about the node is less than ideal.
+        if isinstance(outcome, Pass) and outcome.message:
+            notes.append(f"{subject}: {name}: {outcome.message}")
+
+    if not degraded and len(notes) == len(result.notes):
         return result
 
     # The degraded lines hang off the explanation of the thing they judged, rather than

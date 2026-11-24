@@ -72,7 +72,6 @@ checks will refer to.
 CONTROL_COVERS = Covers(
     role="control",
     target="self",
-    align="branch",
     mode="containment",
     pad=NO_PAD,
     ideal_pad=TWENTY_YEARS_EITHER_SIDE,
@@ -88,7 +87,6 @@ which is the thing a number cannot say.
 CONTROL_IDEALLY_COVERS = Covers(
     role="control",
     target="self",
-    align="branch",
     mode="containment",
     pad=None,
     ideal_pad=NO_PAD,
