@@ -7,19 +7,45 @@ from __future__ import annotations
 import pytest
 
 from esmporium.datasets.no_time_axis import NO_TIME_AXIS_INTERVALS_BY_PROJECT
-from esmporium.datasets.time import Span, TimeAxis, TimeStep, TimeUnits
+from esmporium.datasets.time import Span, TimeRange, TimeStep
 from esmporium.enrich.known_readers import (
+    CLIMATOLOGY_SUFFIX,
     FILENAME_TIME_READERS_BY_PROJECT,
     UnknownProjectFilenameTimeReaderError,
     UnknownReportingIntervalError,
     read_trailing_range,
     reader_for_project,
     span_of_reporting_interval,
+    step_of_stamp,
 )
-from esmporium.enrich.protocol import CalendarRequiredError, UnreadableTimestampError
+from esmporium.enrich.protocol import (
+    CalendarRequiredError,
+    PublishedRange,
+    UnreadableTimestampError,
+)
 
-DAILY_NOLEAP = TimeAxis(TimeUnits(TimeStep.DAYS, "1850-01-01"), "noleap")
-HOURLY_NOLEAP = TimeAxis(TimeUnits(TimeStep.HOURS, "1850-01-01"), "noleap")
+
+def half_open(read: PublishedRange, reporting_interval: str) -> TimeRange:
+    """
+    Get the natural half-open range of what a filename published
+
+    Parameters
+    ----------
+    read
+        What the filename published
+
+    reporting_interval
+        The dataset's reporting interval, which gives the width of the last step
+
+    Returns
+    -------
+    :
+        The range, at the precision its start stamp is written to
+    """
+    return read.to_half_open(
+        precision=step_of_stamp(read.start_raw),
+        reports_every=span_of_reporting_interval(reporting_interval),
+    )
 
 
 # ---------------------------------------------------------------- real filenames
@@ -80,10 +106,10 @@ def test_reading_a_monthly_or_yearly_filename(
     """
     The calendar-free cases, which cost nothing and need nothing installed
     """
-    read = reader_for_project(project)(filename, reporting_interval=reporting_interval)
+    read = reader_for_project(project)(filename)
 
     assert (read.start_raw, read.end_raw) == published
-    assert read.to_half_open().extent == extent
+    assert half_open(read, reporting_interval).extent.count == extent
 
 
 def test_a_single_month_file_holds_one_month():
@@ -91,25 +117,23 @@ def test_a_single_month_file_holds_one_month():
     The case which catches a conversion that subtracted the published values
     """
     read = read_trailing_range(
-        "tas_Amon_GFDL-ESM4_piControl_r1i1p1f1_gr1_320001-320001.nc",
-        reporting_interval="mon",
+        "tas_Amon_GFDL-ESM4_piControl_r1i1p1f1_gr1_320001-320001.nc"
     )
 
-    assert read.to_half_open().extent == 1
+    assert half_open(read, "mon").extent == Span(1, TimeStep.MONTHS)
 
 
-def test_a_climatology_keeps_its_range_and_is_marked_as_one():
+def test_a_climatology_keeps_its_range_and_its_suffix():
     """
-    A climatology appends `-clim`, which is not part of the range
+    A CMIP climatology appends `-clim`, which is not part of the range
     """
     read = read_trailing_range(
-        "tas_Amon_ACCESS-ESM1-5_historical_r1i1p1f1_gn_185001-185012-clim.nc",
-        reporting_interval="monC",
+        "tas_Amon_ACCESS-ESM1-5_historical_r1i1p1f1_gn_185001-185012-clim.nc"
     )
 
     assert (read.start_raw, read.end_raw) == ("185001", "185012")
-    assert read.is_climatology
-    assert read.to_half_open().extent == 12
+    assert read.suffix == CLIMATOLOGY_SUFFIX
+    assert half_open(read, "monC").extent == Span(12, TimeStep.MONTHS)
 
 
 def test_a_cmip5_climatology_is_read_the_same_way():
@@ -120,25 +144,23 @@ def test_a_cmip5_climatology_is_read_the_same_way():
     on the filename is the same.
     """
     read = read_trailing_range(
-        "difvho_Oclim_HadGEM2-ES_historical_r1i1p1_185001-185012-clim.nc",
-        reporting_interval="monClim",
+        "difvho_Oclim_HadGEM2-ES_historical_r1i1p1_185001-185012-clim.nc"
     )
 
     assert (read.start_raw, read.end_raw) == ("185001", "185012")
-    assert read.is_climatology
-    assert read.to_half_open().extent == 12
+    assert read.suffix == CLIMATOLOGY_SUFFIX
+    assert half_open(read, "monClim").extent == Span(12, TimeStep.MONTHS)
 
 
-def test_a_monthly_file_is_not_a_climatology():
+def test_a_monthly_file_has_no_suffix():
     """
-    The flag says something, so it has to be false when it is false
+    `None` when nothing follows the range
     """
     read = read_trailing_range(
-        "tas_Amon_ACCESS-ESM1-5_historical_r1i1p1f1_gn_185001-185012.nc",
-        reporting_interval="mon",
+        "tas_Amon_ACCESS-ESM1-5_historical_r1i1p1f1_gn_185001-185012.nc"
     )
 
-    assert not read.is_climatology
+    assert read.suffix is None
 
 
 @pytest.mark.parametrize(
@@ -159,7 +181,7 @@ def test_a_fixed_field_has_no_range_and_says_so_quietly(project, filename):
     """
     `None` rather than an error: there is nothing wrong with an `fx` file
     """
-    assert reader_for_project(project)(filename, reporting_interval="fx") is None
+    assert reader_for_project(project)(filename) is None
 
 
 def test_a_hyphenated_model_name_is_not_mistaken_for_a_range():
@@ -174,8 +196,7 @@ def test_a_hyphenated_model_name_is_not_mistaken_for_a_range():
     assert (
         read_trailing_range(
             "orog_EUR-12_MPI-M-MPI-ESM1-2-HR_historical_r1i1p1f1"
-            "_GERICS_REMO2020_v1_fx.nc",
-            reporting_interval="fx",
+            "_GERICS_REMO2020_v1_fx.nc"
         )
         is None
     )
@@ -185,21 +206,19 @@ def test_a_hyphenated_model_name_is_not_mistaken_for_a_range():
 
 
 @pytest.mark.parametrize(
-    ("filename", "reporting_interval", "axis", "extent"),
+    ("filename", "reporting_interval", "published", "precision"),
     [
         (
             "tasmax_day_HadGEM2-ES_historical_r1i1p1_19591201-19841130.nc",
             "day",
-            DAILY_NOLEAP,
-            # Twenty-five noleap years
-            25 * 365,
+            ("19591201", "19841130"),
+            TimeStep.DAYS,
         ),
         (
             "pr_3hr_ACCESS-ESM1-5_historical_r1i1p1f1_gn_185001010300-185101010000.nc",
             "3hr",
-            HOURLY_NOLEAP,
-            # One noleap year, and the last stamp is the *start* of a three-hour step
-            365 * 24,
+            ("185001010300", "185101010000"),
+            TimeStep.MINUTES,
         ),
         (
             # The same twelve-digit stamp in CMIP5's spelling, which has no grid
@@ -207,8 +226,8 @@ def test_a_hyphenated_model_name_is_not_mistaken_for_a_range():
             # the string, so one reader serves both.
             "pr_3hr_IPSL-CM5A-LR_historical_r1i1p1_197901010300-198001010000.nc",
             "3hr",
-            HOURLY_NOLEAP,
-            365 * 24,
+            ("197901010300", "198001010000"),
+            TimeStep.MINUTES,
         ),
         (
             # A real CMIP7 filename, off a recorded ESGF-NG response
@@ -219,9 +238,8 @@ def test_a_hyphenated_model_name_is_not_mistaken_for_a_range():
             "tas_tavg-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1"
             "_18500101-18601231.nc",
             "day",
-            DAILY_NOLEAP,
-            # 1850 to 1860 inclusive is eleven noleap years
-            11 * 365,
+            ("18500101", "18601231"),
+            TimeStep.DAYS,
         ),
         (
             # A CORDEX-shaped name, here because its half-hour stamps and
@@ -231,48 +249,58 @@ def test_a_hyphenated_model_name_is_not_mistaken_for_a_range():
             "pr_EUR-12_MPI-M-MPI-ESM1-2-HR_historical_r1i1p1f1_GERICS_REMO2020"
             "_v1_1hr_195001010030-195001312330.nc",
             "1hr",
-            HOURLY_NOLEAP,
-            31 * 24,
+            ("195001010030", "195001312330"),
+            TimeStep.MINUTES,
         ),
     ],
 )
-def test_sub_daily_filenames_measure_exactly_once_a_calendar_is_known(
-    filename, reporting_interval, axis, extent
+def test_sub_monthly_filenames_are_read_and_not_placed_on_an_axis(
+    filename, reporting_interval, published, precision
 ):
     """
-    Daily and finer data is supported, it just has to be enriched first
+    The stamps are read as written, and there is no natural axis to put them on
 
-    The half-open end is the last stamp advanced by one *reporting* step, which is
-    what makes a `3hr` file whose last stamp is 21:00 run to midnight.
+    An exact dated range comes from a file's time bounds, so the filename is not
+    padded out to a date to stand in for them.
     """
-    read = read_trailing_range(filename, reporting_interval=reporting_interval)
+    read = read_trailing_range(filename)
 
-    assert read.to_half_open(axis=axis).extent == extent
-
-
-def test_a_daily_filename_without_a_calendar_says_what_it_needs():
-    """
-    Two dates are not a length, and this is the ordinary path for daily data
-    """
-    read = read_trailing_range(
-        "tas_day_ACCESS-ESM1-5_ssp245_r1i1p1f1_gn_20150101-21001231.nc",
-        reporting_interval="day",
-    )
-
+    assert (read.start_raw, read.end_raw) == published
+    assert step_of_stamp(read.start_raw) is precision
     with pytest.raises(CalendarRequiredError):
-        read.to_half_open()
+        half_open(read, reporting_interval)
 
 
-def test_a_sub_daily_filename_is_read_to_the_minute():
+# ----------------------------------------------------------------- stamp precision
+
+
+@pytest.mark.parametrize(
+    ("stamp", "expected"),
+    [
+        ("1850", TimeStep.YEARS),
+        ("185001", TimeStep.MONTHS),
+        ("18500101", TimeStep.DAYS),
+        ("1850010103", TimeStep.HOURS),
+        ("185001010300", TimeStep.MINUTES),
+    ],
+)
+def test_how_precisely_a_stamp_is_written(stamp, expected):
     """
-    Twelve-digit stamps are the ordinary spelling for sub-daily data
+    Read off its length, which is all a filename gives us to go on
     """
-    read = read_trailing_range(
-        "pr_3hr_ACCESS-ESM1-5_historical_r1i1p1f1_gn_185001010300-185101010000.nc",
-        reporting_interval="3hr",
-    )
+    assert step_of_stamp(stamp) == expected
 
-    assert read.precision == TimeStep.MINUTES
+
+@pytest.mark.parametrize(
+    "stamp", ["185", "18500101000000", "", "1850-01", "185x01", "18500101003000"]
+)
+def test_a_stamp_we_cannot_read_is_refused(stamp):
+    """
+    Fourteen digits -- seconds -- included: `subhr` has no step width either, so
+    reading it as minutes would be a wrong answer presented as a right one
+    """
+    with pytest.raises(UnreadableTimestampError):
+        step_of_stamp(stamp)
 
 
 # --------------------------------------------------------------- what we refuse
@@ -283,21 +311,21 @@ def test_an_interval_whose_width_we_do_not_know_is_refused():
     `subhr` says the data is finer than hourly without saying how much finer
     """
     with pytest.raises(UnknownReportingIntervalError, match="subhr"):
-        read_trailing_range(
-            "pr_subhr_X_historical_r1i1p1f1_gn_185001010000-185001020000.nc",
-            reporting_interval="subhr",
-        )
+        span_of_reporting_interval("subhr")
 
 
-def test_a_range_written_to_a_precision_we_do_not_read_is_refused():
+def test_a_range_written_to_a_precision_we_do_not_read_is_kept_raw():
     """
-    Rather than read to the minute and be wrong by whatever the rest said
+    The reader keeps the stamps as written, and reading their precision refuses them
+    rather than reading to the minute and being wrong by whatever the rest said
     """
+    read = read_trailing_range(
+        "pr_1hr_X_historical_r1i1p1f1_gn_18500101000000-18500102000000.nc"
+    )
+
+    assert read.start_raw == "18500101000000"
     with pytest.raises(UnreadableTimestampError):
-        read_trailing_range(
-            "pr_1hr_X_historical_r1i1p1f1_gn_18500101000000-18500102000000.nc",
-            reporting_interval="1hr",
-        )
+        step_of_stamp(read.start_raw)
 
 
 def test_an_unknown_project_has_no_reader_and_no_fallback():
@@ -313,21 +341,18 @@ def test_a_project_can_be_added_without_forking_anything():
     The registry idiom `PARENT_HEADER_READERS_BY_PROJECT` already sets
     """
 
-    def read_mip1(filename, *, reporting_interval):
+    def read_mip1(filename):
         """Pretend MIP1 writes its range first"""
         start_raw, end_raw = filename.split("_")[0].split("-")
 
-        return read_trailing_range(
-            f"var_table_model_experiment_{start_raw}-{end_raw}.nc",
-            reporting_interval=reporting_interval,
-        )
+        return PublishedRange(start_raw, end_raw)
 
     reader = reader_for_project(
         "MIP1", readers={**FILENAME_TIME_READERS_BY_PROJECT, "MIP1": read_mip1}
     )
-    read = reader("185001-185012_tas_MIP1.nc", reporting_interval="mon")
+    read = reader("185001-185012_tas_MIP1.nc")
 
-    assert read.to_half_open().extent == 12
+    assert half_open(read, "mon").extent == Span(12, TimeStep.MONTHS)
 
 
 def test_the_two_registries_name_the_same_projects():
@@ -362,7 +387,7 @@ def test_the_two_registries_name_the_same_projects():
 )
 def test_how_wide_one_reporting_step_is(reporting_interval, expected):
     """
-    What makes the half-open end exact at every frequency
+    The assumption a filename's half-open end rests on, checked by the time bounds
     """
     assert span_of_reporting_interval(reporting_interval) == expected
 

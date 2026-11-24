@@ -117,7 +117,7 @@ class ExplanationStatusNotOk(str, Enum):
     """
     A check could have answered, and the facts it needs are not recorded yet
 
-    Not a failure. A dataset nobody has measured
+    Not a failure. A dataset nobody has enriched
     and a dataset nobody has published used to land in the same bucket, so "we have
     not looked yet" was reported as "there is no data" and whoever read it went
     looking for data which was there all along.
@@ -627,7 +627,7 @@ class SolveResult:
             One entry per (dataset, missing fact), deduplicated, in group order
 
             Flat and deduplicated on purpose: a dataset which two groups both need
-            measured is measured once. It names *which* fact is missing, so the
+            enriched is enriched once. It names *which* fact is missing, so the
             enricher knows whether it has a filename to parse or a header to fetch,
             and it is shaped to pass straight back rather than to be read and retyped.
 
@@ -1716,7 +1716,7 @@ def _eval_all_of(node: AllOf, ctx: _Context, role_prefix: str) -> NodeResult:
 
         # Every failure's inputs, not just those of the one whose status won: a group
         # which is unsatisfied *and* needs enrichment still has datasets worth
-        # measuring, and the next solve is the one which will say whether they help.
+        # enriching, and the next solve is the one which will say whether they help.
         return NodeResultNotOk(
             status,
             Explanation(label, status, parts=explanations),

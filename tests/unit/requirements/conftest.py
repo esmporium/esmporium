@@ -13,7 +13,7 @@ from esmporium.requirements.tree import effective_query, walk_leaves
 from .catalogues import (
     InMemoryCatalogueWithTimeInfo,
     branched_at,
-    measured,
+    recorded_range,
 )
 
 
@@ -85,7 +85,7 @@ def satisfying_catalogue(make_entry):
     That parent is recorded as a root, so a requirement which traced its lineage one
     hop further would be `unsatisfied` here rather than running off the end.
 
-    Every entry also has a measured time range, and every child a branch point,
+    Every entry also has a recorded time range, and every child a branch point,
     chosen so that a parent covers its child with plenty to spare,
     so [Covers][esmporium.requirements.Covers] is met without being degraded.
     Every range is contiguous, because a gap is a thing `Covers` refuses and this
@@ -151,7 +151,7 @@ def satisfying_catalogue(make_entry):
             parents.setdefault(parent.id, None)
 
         # Measured in months, because the analyses ask for `reporting_interval="mon"`
-        # and that is the axis their data would really be measured on. So a child
+        # and that is the axis their data would really be recorded on. So a child
         # spans 150 years (1800 months), branching 100 years (1200 months) into its
         # parent: the parent has to cover [1200, 3000) and covers [0, 12000). That
         # leaves 100 years of slack before the branch point and 750 after the child's
@@ -161,9 +161,9 @@ def satisfying_catalogue(make_entry):
             entries=tuple(entries.values()),
             parents=parents,
             time_ranges={
-                entry.id: measured(0, 12000)
+                entry.id: recorded_range(0, 12000)
                 if parents.get(entry.id, 0) is None
-                else measured(0, 1800)
+                else recorded_range(0, 1800)
                 for entry in entries.values()
             },
             branch_times_in_parent={

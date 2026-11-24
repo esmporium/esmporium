@@ -4,7 +4,7 @@ Tests of [Covers][esmporium.requirements.Covers]
 Everything here is in **years** on a yearly axis unless the test says otherwise, so
 that the numbers in an assertion are the numbers in the picture
 `docs/further-background/enrichment.md` draws. The monthly axis -- years asked for,
-months measured, which is what real monthly data takes -- has its own section.
+months recorded, which is what real monthly data takes -- has its own section.
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ from .catalogues import (
     YEARLY_AXIS,
     InMemoryCatalogueWithTimeInfo,
     branched_at,
-    measured,
+    recorded_range,
 )
 
 GROUP_BY = ("model", "variant_label")
@@ -130,7 +130,7 @@ def child_and_control(
     """
     Get a child, its control and a catalogue holding them
 
-    `child` and `control` are measured ranges and `branch` a branch point, or `None`
+    `child` and `control` are recorded ranges and `branch` a branch point, or `None`
     for "nothing recorded it" -- which is how a test says a fact is missing rather
     than wrong.
     """
@@ -164,8 +164,8 @@ def worked_example(dataset):
     """
     child, control, catalogue = child_and_control(
         dataset,
-        child=measured(0, 150, YEARLY_AXIS),
-        control=measured(0, 200, YEARLY_AXIS),
+        child=recorded_range(0, 150, YEARLY_AXIS),
+        control=recorded_range(0, 200, YEARLY_AXIS),
         branch=100,
     )
 
@@ -199,8 +199,8 @@ def test_the_window_is_anchored_at_the_branch_point(dataset):
     """
     child, control, catalogue = child_and_control(
         dataset,
-        child=measured(0, 150, YEARLY_AXIS),
-        control=measured(150, 400, YEARLY_AXIS),
+        child=recorded_range(0, 150, YEARLY_AXIS),
+        control=recorded_range(150, 400, YEARLY_AXIS),
         branch=100,
     )
 
@@ -218,8 +218,8 @@ def test_overlap_mode_also_needs_the_covered_run_to_be_long_enough(dataset):
     # 50 years of data cannot supply 100 years of overlap.
     child, control, catalogue = child_and_control(
         dataset,
-        child=measured(0, 50, YEARLY_AXIS),
-        control=measured(0, 10_000, YEARLY_AXIS),
+        child=recorded_range(0, 50, YEARLY_AXIS),
+        control=recorded_range(0, 10_000, YEARLY_AXIS),
         branch=100,
     )
 
@@ -242,8 +242,8 @@ def test_containment_is_the_covered_runs_own_extent(worked_example):
                 entries=catalogue.entries,
                 parents=catalogue.parents,
                 time_ranges={
-                    1: measured(0, 150, YEARLY_AXIS),
-                    2: measured(0, 250, YEARLY_AXIS),
+                    1: recorded_range(0, 150, YEARLY_AXIS),
+                    2: recorded_range(0, 250, YEARLY_AXIS),
                 },
                 branch_times_in_parent=catalogue.branch_times_in_parent,
             ),
@@ -296,8 +296,8 @@ def test_covers_needs_a_lineage():
 def test_covers_calendar(dataset):
     child, control, catalogue = child_and_control(
         dataset,
-        child=measured(1850, 2015, YEARLY_AXIS),
-        control=measured(1850, 1880, YEARLY_AXIS),
+        child=recorded_range(1850, 2015, YEARLY_AXIS),
+        control=recorded_range(1850, 1880, YEARLY_AXIS),
     )
 
     outcome = Covers(
@@ -313,8 +313,8 @@ def test_calendar_alignment_never_asks_for_a_branch_point(dataset):
     # and is the distinction a future `SameTimeRange` must not optimise away.
     child, control, catalogue = child_and_control(
         dataset,
-        child=measured(1850, 1900, YEARLY_AXIS),
-        control=measured(1850, 2000, YEARLY_AXIS),
+        child=recorded_range(1850, 1900, YEARLY_AXIS),
+        control=recorded_range(1850, 2000, YEARLY_AXIS),
         branch=None,
     )
 
@@ -330,8 +330,8 @@ def test_calendar_alignment_refuses_axes_which_do_not_line_up(dataset):
     # question we can answer and the answer is no.
     child, control, catalogue = child_and_control(
         dataset,
-        child=measured(22189, 24000, MONTHLY_AXIS),
-        control=measured(1850, 2000, YEARLY_AXIS),
+        child=recorded_range(22189, 24000, MONTHLY_AXIS),
+        control=recorded_range(1850, 2000, YEARLY_AXIS),
     )
 
     outcome = Covers(
@@ -345,8 +345,8 @@ def test_calendar_alignment_refuses_axes_which_do_not_line_up(dataset):
 def test_covers_branch_needs_ancestor(dataset):
     child, control, catalogue = child_and_control(
         dataset,
-        child=measured(0, 10, YEARLY_AXIS),
-        control=measured(0, 10, YEARLY_AXIS),
+        child=recorded_range(0, 10, YEARLY_AXIS),
+        control=recorded_range(0, 10, YEARLY_AXIS),
         branch=0,
     )
 
@@ -371,8 +371,8 @@ def test_covers_branch_needs_ancestor(dataset):
 def test_end_and_the_lineage_role_name_mean_the_same_thing(dataset):
     child, control, catalogue = child_and_control(
         dataset,
-        child=measured(0, 10, YEARLY_AXIS),
-        control=measured(0, 5, YEARLY_AXIS),
+        child=recorded_range(0, 10, YEARLY_AXIS),
+        control=recorded_range(0, 5, YEARLY_AXIS),
     )
     view = lineage_view(child, control)
 
@@ -394,8 +394,8 @@ def test_ideal_padding_not_met_is_degraded(dataset):
     # Needs [100, 250), so ideal padding of 20 years either side needs [80, 270).
     child, control, catalogue = child_and_control(
         dataset,
-        child=measured(0, 150, YEARLY_AXIS),
-        control=measured(90, 1000, YEARLY_AXIS),
+        child=recorded_range(0, 150, YEARLY_AXIS),
+        control=recorded_range(90, 1000, YEARLY_AXIS),
         branch=100,
     )
 
@@ -459,8 +459,8 @@ def test_a_check_which_requires_nothing_is_refused():
 def test_degraded_is_kept_as_a_note(dataset):
     _, _, catalogue = child_and_control(
         dataset,
-        child=measured(0, 150, YEARLY_AXIS),
-        control=measured(90, 1000, YEARLY_AXIS),
+        child=recorded_range(0, 150, YEARLY_AXIS),
+        control=recorded_range(90, 1000, YEARLY_AXIS),
         branch=100,
     )
     ideally_padded = requirement(
@@ -477,7 +477,7 @@ def test_degraded_is_kept_as_a_note(dataset):
     assert "ideal padding (20 years, 20 years) not met" in solution.notes[0]
 
 
-# ----------------------------------------------------- years asked, months measured
+# ----------------------------------------------------- years asked, months recorded
 
 
 def test_a_requirement_in_years_against_a_monthly_axis(dataset):
@@ -490,8 +490,8 @@ def test_a_requirement_in_years_against_a_monthly_axis(dataset):
     """
     child, control, catalogue = child_and_control(
         dataset,
-        child=measured(0, 1800, MONTHLY_AXIS),
-        control=measured(960, 3240, MONTHLY_AXIS),
+        child=recorded_range(0, 1800, MONTHLY_AXIS),
+        control=recorded_range(960, 3240, MONTHLY_AXIS),
         branch=1200,
         axis=MONTHLY_AXIS,
     )
@@ -530,21 +530,21 @@ def test_months_of_padding_against_a_yearly_axis_needs_a_finer_axis(worked_examp
         ("both_ranges", (1, 2)),
     ],
 )
-def test_an_unmeasured_range_needs_enrichment(dataset, missing, expected):
+def test_an_unenriched_range_needs_enrichment(dataset, missing, expected):
     """
     The distinction the whole enrichment step exists for
 
-    Nobody has measured this, which is not the same as there being no data -- and
+    Nobody has recorded this, which is not the same as there being no data -- and
     before this it was reported in the same bucket as there being none.
     """
     child, control, catalogue = child_and_control(
         dataset,
         child=None
         if missing in ("child_range", "both_ranges")
-        else measured(0, 150, YEARLY_AXIS),
+        else recorded_range(0, 150, YEARLY_AXIS),
         control=None
         if missing in ("control_range", "both_ranges")
-        else measured(0, 250, YEARLY_AXIS),
+        else recorded_range(0, 250, YEARLY_AXIS),
         branch=100,
     )
 
@@ -562,8 +562,8 @@ def test_an_unrecorded_branch_point_needs_enrichment(dataset):
     # it stands and the dataset answers `None` until a fix records the value.
     child, control, catalogue = child_and_control(
         dataset,
-        child=measured(0, 150, YEARLY_AXIS),
-        control=measured(0, 250, YEARLY_AXIS),
+        child=recorded_range(0, 150, YEARLY_AXIS),
+        control=recorded_range(0, 250, YEARLY_AXIS),
         branch=None,
     )
 
@@ -580,8 +580,8 @@ def test_a_branch_point_on_a_different_axis_to_its_parent_fails(dataset):
     # parent is on is the data disagreeing with itself, not a question of alignment.
     child, control, catalogue = child_and_control(
         dataset,
-        child=measured(0, 150, YEARLY_AXIS),
-        control=measured(0, 250, YEARLY_AXIS),
+        child=recorded_range(0, 150, YEARLY_AXIS),
+        control=recorded_range(0, 250, YEARLY_AXIS),
         branch=100,
         axis=MONTHLY_AXIS,
     )
@@ -595,8 +595,8 @@ def test_a_branch_point_on_a_different_axis_to_its_parent_fails(dataset):
 def test_a_child_and_parent_at_different_frequencies_is_not_supported_yet(dataset):
     child, control, catalogue = child_and_control(
         dataset,
-        child=measured(0, 1800, MONTHLY_AXIS),
-        control=measured(0, 250, YEARLY_AXIS),
+        child=recorded_range(0, 1800, MONTHLY_AXIS),
+        control=recorded_range(0, 250, YEARLY_AXIS),
         branch=100,
     )
 
@@ -618,8 +618,8 @@ def test_a_gapped_range_is_refused(dataset, gapped):
     """
     child, control, catalogue = child_and_control(
         dataset,
-        child=measured(0, 150, YEARLY_AXIS, contiguous=gapped != "child"),
-        control=measured(0, 10_000, YEARLY_AXIS, contiguous=gapped != "control"),
+        child=recorded_range(0, 150, YEARLY_AXIS, contiguous=gapped != "child"),
+        control=recorded_range(0, 10_000, YEARLY_AXIS, contiguous=gapped != "control"),
         branch=100,
     )
 
@@ -654,8 +654,8 @@ def test_fx_among_other_candidates_fails_when_solved(dataset):
     # is a fact about the data, so it is reported rather than refusing the requirement.
     _, control, catalogue = child_and_control(
         dataset,
-        child=measured(0, 150, YEARLY_AXIS),
-        control=measured(0, 10_000, YEARLY_AXIS),
+        child=recorded_range(0, 150, YEARLY_AXIS),
+        control=recorded_range(0, 10_000, YEARLY_AXIS),
         branch=100,
     )
     fixed_field = dataset(3, variable="areacella", reporting_interval="fx")
@@ -748,8 +748,8 @@ def test_an_unsupported_unit_does_not_stop_the_other_groups(dataset):
     )
     _, _, catalogue = child_and_control(
         dataset,
-        child=measured(0, 150, YEARLY_AXIS),
-        control=measured(0, 10_000, YEARLY_AXIS),
+        child=recorded_range(0, 150, YEARLY_AXIS),
+        control=recorded_range(0, 10_000, YEARLY_AXIS),
         branch=100,
     )
 
@@ -790,9 +790,9 @@ def branch_chain_catalogue(dataset, control_end: int):
         ),
         parents={1: 2, 2: 3, 3: None},
         time_ranges={
-            1: measured(0, 100, YEARLY_AXIS),
-            2: measured(0, 150, YEARLY_AXIS),
-            3: measured(0, control_end, YEARLY_AXIS),
+            1: recorded_range(0, 100, YEARLY_AXIS),
+            2: recorded_range(0, 150, YEARLY_AXIS),
+            3: recorded_range(0, control_end, YEARLY_AXIS),
         },
         # The ZEC run branches 70 years into 1pctCO2, which branches 100 years into
         # piControl
@@ -850,7 +850,7 @@ def test_a_group_which_needs_enrichment_is_not_unsatisfied(dataset):
     *"there is no such data"*, so a reader went looking for data which was there all
     along. It is now a bucket of its own, with what to run to clear it.
     """
-    unmeasured = requirement(
+    unenriched = requirement(
         name="tcr",
         tree=leaf(Query(variable="tas", experiment="abrupt-4xCO2"), "tas")
         .with_lineage(TO_CONTROL)
@@ -859,7 +859,7 @@ def test_a_group_which_needs_enrichment_is_not_unsatisfied(dataset):
     )
     _, _, catalogue = child_and_control(dataset, child=None, control=None, branch=100)
 
-    result = solve(unmeasured, catalogue)
+    result = solve(unenriched, catalogue)
 
     assert not result.unsatisfied
     assert not result.satisfied
@@ -876,7 +876,7 @@ def test_enrichment_inputs_are_what_the_enricher_takes_back(dataset):
     # The round trip, in one test: enrich what the first solve asked for and the
     # second solve answers. "Enriching" here is recording the ranges, which is all the
     # enricher does to a catalogue.
-    unmeasured = requirement(
+    unenriched = requirement(
         name="tcr",
         tree=leaf(Query(variable="tas", experiment="abrupt-4xCO2"), "tas")
         .with_lineage(TO_CONTROL)
@@ -885,25 +885,25 @@ def test_enrichment_inputs_are_what_the_enricher_takes_back(dataset):
     )
     _, _, before = child_and_control(dataset, child=None, control=None, branch=100)
 
-    first = solve(unmeasured, before)
+    first = solve(unenriched, before)
     # What the enricher would have found: the forced run is 150 years long and the
     # control is a long one. Measured off the filenames of exactly the datasets the
     # first solve named, and nothing else.
-    measurements = {
-        1: measured(0, 150, YEARLY_AXIS),
-        2: measured(0, 10_000, YEARLY_AXIS),
+    enrichments = {
+        1: recorded_range(0, 150, YEARLY_AXIS),
+        2: recorded_range(0, 10_000, YEARLY_AXIS),
     }
     enriched = InMemoryCatalogueWithTimeInfo(
         entries=before.entries,
         parents=before.parents,
         time_ranges={
-            each.dataset_id: measurements[each.dataset_id]
+            each.dataset_id: enrichments[each.dataset_id]
             for each in first.enrichment_inputs
         },
         branch_times_in_parent=before.branch_times_in_parent,
     )
 
-    second = solve(unmeasured, enriched)
+    second = solve(unenriched, enriched)
 
     assert list(second.satisfied) == [ONLY_GROUP]
     assert not second.couldnt_answer
@@ -928,8 +928,8 @@ def test_branch_points_can_still_be_corrected_by_wrapping_the_catalogue(dataset)
 
     child, control, recorded = child_and_control(
         dataset,
-        child=measured(0, 150, YEARLY_AXIS),
-        control=measured(0, 200, YEARLY_AXIS),
+        child=recorded_range(0, 150, YEARLY_AXIS),
+        control=recorded_range(0, 200, YEARLY_AXIS),
         branch=100,
     )
     corrected = Corrected(

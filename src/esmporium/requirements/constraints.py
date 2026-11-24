@@ -161,7 +161,7 @@ class EnrichmentInput:
     """
     The dataset, as [CatalogueEntry.id][esmporium.requirements.CatalogueEntry.id]
 
-    A `Dataset` row's id. Which *version* of it to measure is the enricher's question,
+    A `Dataset` row's id. Which *version* of it to enrich is the enricher's question,
     answered the same way the rest of the solve answers it -- through the describing
     version -- rather than something a constraint is in a position to say.
     """

@@ -10,42 +10,51 @@ Requirement --> search --> database --> ENRICH --> solve --> outcome
 ```
 """
 
+from esmporium.enrich.combine_files_to_datasets import (
+    NoFilesToCombineError,
+    combine_file_ranges,
+)
 from esmporium.enrich.headers import (
-    CF_DEFAULT_CALENDAR,
+    NoCalendarError,
     NoTimeUnitsError,
     read_time_axis,
 )
 from esmporium.enrich.known_readers import (
+    CLIMATOLOGY_SUFFIX,
     FILENAME_TIME_READERS_BY_PROJECT,
     SPAN_BY_REPORTING_INTERVAL,
+    STEP_BY_STAMP_LENGTH,
     UnknownProjectFilenameTimeReaderError,
     UnknownReportingIntervalError,
     read_trailing_range,
     reader_for_project,
     span_of_reporting_interval,
+    step_of_stamp,
 )
-from esmporium.enrich.measure import NoFilesToMeasureError, measure_version
 from esmporium.enrich.protocol import (
     CalendarRequiredError,
     FilenameTimeReader,
     PublishedRange,
+    StampPrecisionMismatchError,
     UnreadableTimestampError,
-    step_of_stamp,
 )
 
 __all__ = [
-    "CF_DEFAULT_CALENDAR",
+    "CLIMATOLOGY_SUFFIX",
     "FILENAME_TIME_READERS_BY_PROJECT",
     "SPAN_BY_REPORTING_INTERVAL",
+    "STEP_BY_STAMP_LENGTH",
     "CalendarRequiredError",
     "FilenameTimeReader",
-    "NoFilesToMeasureError",
+    "NoCalendarError",
+    "NoFilesToCombineError",
     "NoTimeUnitsError",
     "PublishedRange",
+    "StampPrecisionMismatchError",
     "UnknownProjectFilenameTimeReaderError",
     "UnknownReportingIntervalError",
     "UnreadableTimestampError",
-    "measure_version",
+    "combine_file_ranges",
     "read_time_axis",
     "read_trailing_range",
     "reader_for_project",

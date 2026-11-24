@@ -40,14 +40,14 @@ def test_a_single_step_dataset_has_an_extent_of_one():
     """
     january = total_months(3200, 1)
 
-    assert TimeRange(january, january + 1, MONTHLY).extent == 1
+    assert TimeRange(january, january + 1, MONTHLY).extent == Span(1, TimeStep.MONTHS)
 
 
 def test_yearly_data_from_1850_to_1860_is_eleven_years():
     """
     Both ends are in the data, so there are eleven years and not ten
     """
-    assert TimeRange(1850, 1861, YEARLY).extent == 11
+    assert TimeRange(1850, 1861, YEARLY).extent == Span(11, TimeStep.YEARS)
 
 
 def test_the_first_month_of_year_one_is_month_one():
@@ -93,8 +93,8 @@ def test_fifty_one_years_of_monthly_data_is_six_hundred_and_twelve_months():
     published = TimeRange(total_months(3200, 1), total_months(3250, 12) + 1, MONTHLY)
 
     assert (published.start, published.end_exclusive) == (38389, 39001)
-    assert published.extent == 612
-    assert published.extent // 12 == 51
+    assert published.extent == Span(612, TimeStep.MONTHS)
+    assert published.extent.count // 12 == 51
 
 
 # ----------------------------------------------------------------------- adjacency
@@ -186,19 +186,23 @@ def test_ranges_in_different_calendars_cannot_be_compared():
         noleap.contains(gregorian)
 
 
-def test_a_range_which_does_not_know_its_calendar_can_still_be_compared():
+def test_a_dated_range_which_does_not_know_its_calendar_is_not_compared():
     """
-    A filename-measured range is comparable with a header-measured one
-
-    Refusing would make the cheap answer useless, and the numbers are on the same
-    scale either way -- it is the units which carry the meaning.
+    Not even with itself: a day count means nothing until its calendar is known
     """
-    measured_from_a_filename = TimeRange(0, 240, MONTHLY)
-    measured_from_a_header = TimeRange(
-        0, 120, TimeAxis(TimeUnits(TimeStep.MONTHS), "360_day")
-    )
+    unknown = TimeRange(0, 3650, TimeAxis(TimeUnits(TimeStep.DAYS, "1850-01-01")))
 
-    assert measured_from_a_filename.contains(measured_from_a_header)
+    with pytest.raises(MismatchedTimeAxisError):
+        unknown.contains(unknown)
+
+
+def test_a_natural_range_is_not_compared_with_a_dated_one():
+    """
+    A month count and a day count are related only through a calendar, by a
+    conversion
+    """
+    with pytest.raises(MismatchedTimeAxisError, match="convert_position"):
+        TimeRange(0, 240, MONTHLY).contains(TimeRange(0, 3650, DAILY_NOLEAP))
 
 
 def test_a_range_must_hold_at_least_one_step():
@@ -346,23 +350,24 @@ def test_spanning_ranges_on_different_axes_is_refused():
 # --------------------------------------------------------------------- branch point
 
 
-def test_a_branch_point_maps_the_child_onto_the_parents_axis():
+def test_a_branch_point_keeps_a_published_float_as_published():
     """
-    After mapping, the child's start *is* the branch point
-
-    The one piece of arithmetic coverage needs, so it is pinned here rather than
-    rediscovered in `Covers`.
+    `branch_time_in_parent` on a dated axis is not rounded to a whole day
     """
-    branch = BranchPoint(in_parent=total_months(1850, 1), parent_axis=MONTHLY)
-    child_start = total_months(1, 1)
+    branch = BranchPoint(
+        in_parent=438000.5,
+        parent_axis=DAILY_NOLEAP,
+        in_child=0.0,
+        child_axis=DAILY_NOLEAP,
+    )
 
-    mapped_start = branch.in_parent + (child_start - child_start)
-
-    assert mapped_start == branch.in_parent
+    assert (branch.in_parent, branch.in_child) == (438000.5, 0.0)
 
 
 def test_a_branch_point_need_not_know_where_it_is_in_the_child():
     """
-    CMIP5 does not publish it, and it is a check rather than an input
+    CMIP5 does not publish it
     """
-    assert BranchPoint(in_parent=0, parent_axis=MONTHLY).in_child is None
+    branch = BranchPoint(in_parent=0, parent_axis=MONTHLY)
+
+    assert (branch.in_child, branch.child_axis) == (None, None)

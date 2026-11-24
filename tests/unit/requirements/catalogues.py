@@ -19,10 +19,10 @@ from esmporium.requirements import CatalogueEntry, InMemoryCatalogue
 
 MONTHLY_AXIS = TimeAxis(TimeUnits(TimeStep.MONTHS))
 """
-The axis these catalogues measure on, unless a test says otherwise
+The axis these catalogues record on, unless a test says otherwise
 
 Monthly because the analyses in `use_cases.py` ask for `reporting_interval="mon"`, so
-a monthly axis is what their data would really be measured on -- and because it is the
+a monthly axis is what their data would really be recorded on -- and because it is the
 case which exercises the one conversion that matters: a requirement stated in years,
 judged against an axis counted in months.
 """
@@ -33,7 +33,7 @@ A yearly axis, for the tests whose arithmetic is easier to read a year at a time
 """
 
 
-def measured(
+def recorded_range(
     start: int,
     end_exclusive: int,
     axis: TimeAxis = MONTHLY_AXIS,
@@ -41,7 +41,7 @@ def measured(
     contiguous: bool = True,
 ) -> VersionTimeRange:
     """
-    Get a measured range, for a test which does not care how it was measured
+    Get a recorded range, for a test which does not care how it was recorded
 
     Parameters
     ----------
@@ -104,13 +104,13 @@ class InMemoryCatalogueWithTimeInfo(InMemoryCatalogue):
     """
 
     time_ranges: Mapping[int, VersionTimeRange] = field(default_factory=dict)
-    """Entry ID -> what its files were measured to add up to"""
+    """Entry ID -> what its files were combined to add up to"""
 
     branch_times_in_parent: Mapping[int, BranchPoint] = field(default_factory=dict)
     """Entry ID -> where it branched from its parent, on the parent's axis"""
 
     def get_time_range(self, entry: CatalogueEntry) -> VersionTimeRange | None:
-        """Get the span of a dataset's data, or `None` if nothing measured it"""
+        """Get the span of a dataset's data, or `None` if nothing recorded it"""
         return self.time_ranges.get(entry.id)
 
     def get_branch_time_in_parent(self, entry: CatalogueEntry) -> BranchPoint | None:

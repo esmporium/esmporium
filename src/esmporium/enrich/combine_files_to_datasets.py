@@ -6,7 +6,7 @@ per-version fact, and not a file, because a requirement asks about a run and not
 one of the pieces it was published in. So the files have to be combined, and the one
 thing that must not be smoothed over while combining them is a gap.
 
-The measurement is here; the value it produces is
+The combining is here; the value it produces is
 [VersionTimeRange][esmporium.datasets.VersionTimeRange], which lives in
 `esmporium.datasets` because [Covers][esmporium.requirements.Covers] reads one at
 solve time and `esmporium.requirements` may not import this package.
@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
 
-class NoFilesToMeasureError(ValueError):
+class NoFilesToCombineError(ValueError):
     """
     Raised when a version's time range is asked for and no files were given
     """
@@ -33,13 +33,12 @@ class NoFilesToMeasureError(ValueError):
         Initialise the error
         """
         super().__init__(
-            "A version with no files has no time range, not an empty one. Nothing "
-            "was measured, so there is nothing to record -- which is what a status "
-            "of 'nobody measured this' is for."
+            "A version with no files has no time range, not an empty one. There is "
+            "nothing to combine, so there is nothing to record."
         )
 
 
-def measure_version(ranges: Iterable[TimeRange]) -> VersionTimeRange:
+def combine_file_ranges(ranges: Iterable[TimeRange]) -> VersionTimeRange:
     """
     Combine the ranges of one version's files into one range for the version
 
@@ -55,7 +54,7 @@ def measure_version(ranges: Iterable[TimeRange]) -> VersionTimeRange:
 
     Raises
     ------
-    NoFilesToMeasureError
+    NoFilesToCombineError
         No ranges were given
 
     MismatchedTimeAxisError
@@ -68,29 +67,29 @@ def measure_version(ranges: Iterable[TimeRange]) -> VersionTimeRange:
 
     >>> from esmporium.datasets.time import TimeAxis, TimeStep, TimeUnits
     >>> monthly = TimeAxis(TimeUnits(TimeStep.MONTHS))
-    >>> measured = measure_version(
+    >>> combined = combine_file_ranges(
     ...     [TimeRange(0, 120, monthly), TimeRange(120, 240, monthly)]
     ... )
-    >>> measured.range.extent, measured.is_contiguous, measured.n_files
-    (240, True, 2)
+    >>> str(combined.range.extent), combined.is_contiguous, combined.n_files
+    ('240 months', True, 2)
 
     A month nobody published still has a span, and says it is not contiguous rather
     than quietly reporting 239 months of data as 240:
 
-    >>> gapped = measure_version(
+    >>> gapped = combine_file_ranges(
     ...     [TimeRange(0, 120, monthly), TimeRange(121, 240, monthly)]
     ... )
-    >>> gapped.range.extent, gapped.is_contiguous
-    (240, False)
+    >>> str(gapped.range.extent), gapped.is_contiguous
+    ('240 months', False)
 
     One file is contiguous with itself:
 
-    >>> measure_version([TimeRange(0, 1, monthly)]).is_contiguous
+    >>> combine_file_ranges([TimeRange(0, 1, monthly)]).is_contiguous
     True
     """
     in_order = sorted(tuple(ranges), key=lambda each: (each.start, each.end_exclusive))
     if not in_order:
-        raise NoFilesToMeasureError
+        raise NoFilesToCombineError
 
     return VersionTimeRange(
         range=spanned(in_order),
