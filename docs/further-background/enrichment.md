@@ -615,9 +615,10 @@ import only `esmporium.query`, `esmporium.datasets` and `esmporium.formatting`. 
 value types still have to be able to say whether two axes are comparable, and
 answering that for a natural axis against a dated one is a conversion (PR R1). So:
 
-- the **value types** stay in `esmporium.datasets`, standard library only — they hold
-  numbers, a unit and a calendar name, and do no calendar arithmetic;
-- the **arithmetic** lives in its own module, `esmporium.datasets.calendars`, and
+- the **value types** stay in `esmporium.datasets`, standard library only at import
+  time — they hold numbers, a unit and a calendar name;
+- the **arithmetic** sits beside them, in `esmporium.datasets.time`
+  (`TimePoint.plus`, `TimePoint.delta_from`, `convert_time_point`), and
   imports `cftime` at point of use, exactly as `headers/hdf5.py` does with `h5py`:
   `import h5py  # the optional headers extra, imported on use`, inside a
   `try` / `except ImportError`. It sits in `datasets` rather than `enrich` because
@@ -768,11 +769,12 @@ with no time axis.
 
 ```
 src/esmporium/datasets/
-    time.py            TimeStep, TimeUnits, TimeAxis, TimeRange, Span,
-                       BranchPoint, VersionTimeRange value types
+    time.py            TimeStep, TimeUnits, TimeAxis, TimePoint, TimeDelta,
+                       TimeRange, BranchPoint, VersionTimeRange value types
                        (here because requirements and db both need them
-                        and neither may import the other)
-    calendars.py       year and month offsets per CF calendar, via cftime
+                        and neither may import the other),
+                       and the arithmetic on them: year and month offsets
+                       per CF calendar, via cftime imported on use
                        (here, not in enrich/, because the value types' own
                         comparison rules may need a conversion and
                         `requirements` may not import `enrich`)
@@ -783,7 +785,7 @@ src/esmporium/datasets/
 src/esmporium/enrich/
     protocol.py        FilenameTimeReader, and the raw range it returns
     known_readers.py   FILENAME_TIME_READERS_BY_PROJECT
-                       SPAN_BY_REPORTING_INTERVAL
+                       DELTA_BY_REPORTING_INTERVAL
                        reader_for_project(project, readers=...)
     headers.py         read_time_axis(attributes) -> TimeAxis   (project-independent;
                        `attributes` are the time variable's, per decision 21.
@@ -807,7 +809,7 @@ The one `parse_*` function per source, and the tables they are written to, are
 [part three](enrichment-storage.md#the-enrich-step-prs-c1-to-c4)'s, and so is the
 enrich step which dispatches an artefact to every parser that applies.
 
-`calendars.py` sitting in `datasets` rather than `enrich` is forced, not stylistic:
+The calendar arithmetic sitting in `datasets` rather than `enrich` is forced, not stylistic:
 `tests/unit/requirements/test_package.py` asserts the *exact* set of esmporium packages
 `requirements` imports, and `datasets` is on it while `enrich` is not. The rule
 `datasets` has to keep is "imports nothing else *from esmporium*", which a third-party
@@ -907,7 +909,7 @@ every previous piece of the requirements system: prove it in memory, then wire i
   registry, laid out under "What is project-specific, and where it lives" above. All
   of them take plain values and return value types; none touches a session or a
   socket.
-- `src/esmporium/datasets/calendars.py` is the one piece with real arithmetic in it,
+- The calendar arithmetic in `src/esmporium/datasets/time.py` is the one piece with real arithmetic in it,
   and it is a thin wrapper over `cftime` rather than our own leap rules (settled
   decision 20), importing it at point of use so the monthly and yearly paths need
   nothing installed.

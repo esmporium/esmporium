@@ -71,8 +71,8 @@ headers = [
 # overlap" becomes a position when the data is finer than monthly. An extra rather than
 # a dependency because monthly and yearly data -- which is nearly every requirement we
 # have -- needs none of it: twelve months is a year in all six CF calendars, so
-# `esmporium.datasets.calendars` answers those with integer arithmetic and never reaches
-# the import. See the module docstring of `esmporium.datasets.calendars`.
+# `esmporium.datasets.time` answers those with integer arithmetic and never reaches
+# the import. See the module docstring of `esmporium.datasets.time`.
 calendars = [
     # 1.6 is the floor because it is the first release with wheels for Python 3.10,
     # the oldest version we support.
@@ -226,10 +226,10 @@ follow_imports = "normal"
 module = ["h5py"]
 ignore_missing_imports = true
 
-# cftime ships no `py.typed` marker. It is the optional `calendars` extra, imported in
-# one function in `esmporium.datasets.calendars`, and nothing it returns reaches a
-# signature -- that function reduces every value it hands back to an `int` before it
-# leaves the module, the same discipline `esmporium.headers.hdf5` keeps with h5py.
+# cftime ships no `py.typed` marker. It is the optional `calendars` extra, imported by
+# one function in `esmporium.datasets.time`, and nothing it returns reaches a
+# signature -- every value it hands back is reduced to a plain `int` or `float` before
+# it leaves the module, the same discipline `esmporium.headers.hdf5` keeps with h5py.
 [[tool.mypy.overrides]]
 module = ["cftime"]
 ignore_missing_imports = true

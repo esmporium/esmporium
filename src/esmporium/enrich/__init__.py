@@ -21,14 +21,14 @@ from esmporium.enrich.headers import (
 )
 from esmporium.enrich.known_readers import (
     CLIMATOLOGY_SUFFIX,
+    DELTA_BY_REPORTING_INTERVAL,
     FILENAME_TIME_READERS_BY_PROJECT,
-    SPAN_BY_REPORTING_INTERVAL,
     STEP_BY_STAMP_LENGTH,
     UnknownProjectFilenameTimeReaderError,
     UnknownReportingIntervalError,
+    delta_of_reporting_interval,
     read_trailing_range,
     reader_for_project,
-    span_of_reporting_interval,
     step_of_stamp,
 )
 from esmporium.enrich.protocol import (
@@ -41,8 +41,8 @@ from esmporium.enrich.protocol import (
 
 __all__ = [
     "CLIMATOLOGY_SUFFIX",
+    "DELTA_BY_REPORTING_INTERVAL",
     "FILENAME_TIME_READERS_BY_PROJECT",
-    "SPAN_BY_REPORTING_INTERVAL",
     "STEP_BY_STAMP_LENGTH",
     "CalendarRequiredError",
     "FilenameTimeReader",
@@ -55,9 +55,9 @@ __all__ = [
     "UnknownReportingIntervalError",
     "UnreadableTimestampError",
     "combine_file_ranges",
+    "delta_of_reporting_interval",
     "read_time_axis",
     "read_trailing_range",
     "reader_for_project",
-    "span_of_reporting_interval",
     "step_of_stamp",
 ]

@@ -11,8 +11,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from esmporium.datasets.calendars import advance, position_of_date
-from esmporium.datasets.time import Span, TimeAxis, TimeRange, TimeStep, TimeUnits
+from esmporium.datasets.time import (
+    TimeAxis,
+    TimeDelta,
+    TimePoint,
+    TimeRange,
+    TimeStep,
+    TimeUnits,
+)
 
 _STAMP_PART_WIDTHS = (4, 2, 2, 2, 2)
 """
@@ -127,7 +133,9 @@ class PublishedRange:
     convention, not this type's.
     """
 
-    def to_half_open(self, *, precision: TimeStep, reports_every: Span) -> TimeRange:
+    def to_half_open(
+        self, *, precision: TimeStep, reports_every: TimeDelta
+    ) -> TimeRange:
         """
         Convert to a half-open range on the natural axis of `precision`
 
@@ -174,9 +182,9 @@ class PublishedRange:
 
         >>> published = PublishedRange("1850", "1860")
         >>> half_open = published.to_half_open(
-        ...     precision=TimeStep.YEARS, reports_every=Span(1, TimeStep.YEARS)
+        ...     precision=TimeStep.YEARS, reports_every=TimeDelta(1, TimeStep.YEARS)
         ... )
-        >>> half_open.start, half_open.end_exclusive, str(half_open.extent)
+        >>> half_open.start.value, half_open.end_exclusive.value, str(half_open.extent)
         (1850, 1861, '11 years')
 
         A single month holds one month, where subtracting the published values would
@@ -185,7 +193,8 @@ class PublishedRange:
         >>> single = PublishedRange("320001", "320001")
         >>> str(
         ...     single.to_half_open(
-        ...         precision=TimeStep.MONTHS, reports_every=Span(1, TimeStep.MONTHS)
+        ...         precision=TimeStep.MONTHS,
+        ...         reports_every=TimeDelta(1, TimeStep.MONTHS),
         ...     ).extent
         ... )
         '1 month'
@@ -195,7 +204,7 @@ class PublishedRange:
         >>> daily = PublishedRange("18500101", "18591231")
         >>> try:
         ...     daily.to_half_open(
-        ...         precision=TimeStep.DAYS, reports_every=Span(1, TimeStep.DAYS)
+        ...         precision=TimeStep.DAYS, reports_every=TimeDelta(1, TimeStep.DAYS)
         ...     )
         ... except CalendarRequiredError as error:
         ...     error.precision
@@ -207,11 +216,10 @@ class PublishedRange:
         axis = TimeAxis(TimeUnits(precision))
 
         return TimeRange(
-            start=_position_of_stamp(self.start_raw, precision, axis),
-            end_exclusive=advance(
-                _position_of_stamp(self.end_raw, precision, axis), reports_every, axis
+            start=_time_point_of_stamp(self.start_raw, precision, axis),
+            end_exclusive=_time_point_of_stamp(self.end_raw, precision, axis).plus(
+                reports_every
             ),
-            axis=axis,
         )
 
 
@@ -259,7 +267,7 @@ def _read_stamp(stamp: str) -> tuple[int, ...]:
     return tuple(parts)
 
 
-def _position_of_stamp(stamp: str, precision: TimeStep, axis: TimeAxis) -> int:
+def _time_point_of_stamp(stamp: str, precision: TimeStep, axis: TimeAxis) -> TimePoint:
     """
     Get where a filename timestamp falls on a natural axis
 
@@ -277,7 +285,7 @@ def _position_of_stamp(stamp: str, precision: TimeStep, axis: TimeAxis) -> int:
     Returns
     -------
     :
-        Its position on `axis`
+        It as a time point on `axis`
 
     Raises
     ------
@@ -292,7 +300,7 @@ def _position_of_stamp(stamp: str, precision: TimeStep, axis: TimeAxis) -> int:
     if len(parts) != wanted:
         raise StampPrecisionMismatchError(stamp, precision)
 
-    return position_of_date(
+    return TimePoint.from_year_and_month(
         axis, year=parts[0], month=parts[1] if precision == TimeStep.MONTHS else None
     )
 

@@ -9,8 +9,8 @@ from dataclasses import dataclass, field
 
 from esmporium.datasets import (
     BranchPoint,
-    Position,
     TimeAxis,
+    TimePoint,
     TimeRange,
     TimeStep,
     TimeUnits,
@@ -64,7 +64,7 @@ def recorded_range(
         The range, with a file count which is only there because a real one has one
     """
     return VersionTimeRange(
-        range=TimeRange(start, end_exclusive, axis),
+        range=TimeRange.from_values(start, end_exclusive, axis),
         is_contiguous=contiguous,
         n_files=1,
     )
@@ -103,11 +103,11 @@ def branched_at(
         The branch point
     """
     if in_child is None:
-        return BranchPoint(in_parent=Position(position, axis))
+        return BranchPoint(in_parent=TimePoint(position, axis))
 
     return BranchPoint(
-        in_parent=Position(position, axis),
-        in_child=Position(in_child, axis if child_axis is None else child_axis),
+        in_parent=TimePoint(position, axis),
+        in_child=TimePoint(in_child, axis if child_axis is None else child_axis),
     )
 
 
