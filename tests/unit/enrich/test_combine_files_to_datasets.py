@@ -10,8 +10,8 @@ import pytest
 
 from esmporium.datasets.time import (
     MismatchedTimeAxisError,
-    Span,
     TimeAxis,
+    TimeDelta,
     TimeRange,
     TimeStep,
     TimeUnits,
@@ -40,7 +40,7 @@ def decade(first_year: int) -> TimeRange:
     :
         A monthly range of 120 months
     """
-    return TimeRange(
+    return TimeRange.from_values(
         total_months(first_year, 1), total_months(first_year + 10, 1), MONTHLY
     )
 
@@ -51,7 +51,7 @@ def test_files_which_meet_make_a_contiguous_version():
     """
     combined = combine_file_ranges([decade(1850), decade(1860), decade(1870)])
 
-    assert combined.range.extent == Span(360, TimeStep.MONTHS)
+    assert combined.range.extent == TimeDelta(360, TimeStep.MONTHS)
     assert combined.is_contiguous
     assert combined.n_files == 3
 
@@ -62,7 +62,7 @@ def test_the_order_the_files_arrive_in_does_not_matter():
     """
     combined = combine_file_ranges([decade(1870), decade(1850), decade(1860)])
 
-    assert combined.range.start == total_months(1850, 1)
+    assert combined.range.start.value == total_months(1850, 1)
     assert combined.is_contiguous
 
 
@@ -75,7 +75,7 @@ def test_a_gap_is_reported_rather_than_smoothed_over():
     """
     combined = combine_file_ranges([decade(1850), decade(1870)])
 
-    assert combined.range.extent == Span(360, TimeStep.MONTHS)
+    assert combined.range.extent == TimeDelta(360, TimeStep.MONTHS)
     assert not combined.is_contiguous
     assert combined.n_files == 2
 
@@ -84,8 +84,8 @@ def test_a_single_missing_month_is_a_gap():
     """
     The smallest gap there is, which is the one worth catching
     """
-    first = TimeRange(0, 120, MONTHLY)
-    after_one_missing_month = TimeRange(121, 240, MONTHLY)
+    first = TimeRange.from_values(0, 120, MONTHLY)
+    after_one_missing_month = TimeRange.from_values(121, 240, MONTHLY)
 
     assert not combine_file_ranges([first, after_one_missing_month]).is_contiguous
 
@@ -96,7 +96,10 @@ def test_an_overlap_is_a_failure_too():
     month nobody published
     """
     combined = combine_file_ranges(
-        [TimeRange(0, 120, MONTHLY), TimeRange(119, 240, MONTHLY)]
+        [
+            TimeRange.from_values(0, 120, MONTHLY),
+            TimeRange.from_values(119, 240, MONTHLY),
+        ]
     )
 
     assert not combined.is_contiguous
@@ -132,4 +135,9 @@ def test_files_which_disagree_about_their_axis_are_refused():
     Which is a fact about the publication rather than about the question
     """
     with pytest.raises(MismatchedTimeAxisError):
-        combine_file_ranges([TimeRange(0, 120, MONTHLY), TimeRange(1850, 1860, YEARLY)])
+        combine_file_ranges(
+            [
+                TimeRange.from_values(0, 120, MONTHLY),
+                TimeRange.from_values(1850, 1860, YEARLY),
+            ]
+        )

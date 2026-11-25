@@ -1217,11 +1217,20 @@ work, and where we are up to.
 
 What the later rungs build on, as it now is in code:
 
-- **Every time number is read off a stated axis.** `TimeRange` holds two numbers on
-  one axis; `Position` holds one number and its axis; `BranchPoint` is two `Position`s,
-  `in_parent` on the parent's axis and `in_child` on the child's, or `None` where it was
-  not published. Two numbers are compared only when their axes are comparable: the same
-  units, epoch included, and on a dated axis the same known calendar.
+- **Every time number is read off a stated axis.** A `TimePoint` (called `Position`
+  in R2) holds one number and its axis; `TimeRange` holds two `TimePoint`s on one axis;
+  `BranchPoint` is two `TimePoint`s, `in_parent` on the parent's axis and `in_child` on
+  the child's, or `None` where it was not published. Two time points are compared only
+  when their axes are comparable: the same units, epoch included, and on a dated axis
+  the same known calendar.
+- **Lengths of time are `TimeDelta`s** (which replaced `Span`): a signed count of a
+  step, and optionally the calendar it was measured in. `later.delta_from(earlier)` gives
+  one, and `point.plus(delta)` applies one; the calendar arithmetic behind both
+  lives in `esmporium.datasets.time`, which folded in `datasets/calendars.py`. Years
+  and months measured in one calendar are refused on an axis in another; days are
+  walked in any calendar. `Covers` keeps its own same-calendar check for branch
+  mapping, because walking days and walking years come apart across calendars, and
+  which one a user means is still to be decided.
 - **`Covers` expects each end of a branch point on its own run's recorded range axis**,
   and fails loudly otherwise. That is what C4's derived branch point provides, and
   what D's `DatabaseCatalogue` has to hand back, built from the `in_parent_*` and
@@ -1325,7 +1334,8 @@ R2 ([#78](https://github.com/esmporium/esmporium/pull/78)), so comparing two dat
 on a shared calendar is this step's job and nobody else's. The developer note in
 `covers.py` that draws the distinction -- a misaligned axis is normal for ancestry and
 resolved by the branch point, while for a sibling pair it is a loud `Fail` because
-something is wrong with the data -- points at this step. The value types, `Position`,
+something is wrong with the data -- points at this step. The value types, `TimePoint`,
+`TimeDelta`,
 the half-open convention (`TimeRange.holds`, `TimeRange.contains`) and the calendar
 arithmetic are all in place, so what is left here is the comparison and the three
 outcomes (identical passes, overlapping degrades naming the overlap, disjoint fails).

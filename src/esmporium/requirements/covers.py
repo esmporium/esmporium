@@ -7,14 +7,14 @@ branch points -- so it defines [CatalogueWithTimeInfo][(m).CatalogueWithTimeInfo
 beside itself and is a `Constraint[CatalogueWithTimeInfo]`. See
 [esmporium.requirements.constraints][] for the pattern.
 
-Every position here is a position on a stated
+Every instant here is a [TimePoint][esmporium.datasets.TimePoint] on a stated
 [TimeAxis][esmporium.datasets.TimeAxis] -- a whole number of steps on a natural axis,
 or the published value on a dated one, -- and every range is
-half-open ([TimeRange][esmporium.datasets.TimeRange]). Two positions are combined or
+half-open ([TimeRange][esmporium.datasets.TimeRange]). Two time points are combined or
 compared only after checking, at that line, that their axes allow it. Nothing here
 converts between axes: a branch point arrives already placed on the axes the two runs
-are recorded on. Resolving a length such as "twenty years" against an axis is
-[esmporium.datasets.calendars][]'s job.
+are recorded on. Moving a time point by a length such as "twenty years" is
+[TimePoint.plus][esmporium.datasets.TimePoint.plus]'s job.
 """
 
 from __future__ import annotations
@@ -28,22 +28,22 @@ from esmporium.datasets import (
     MONTHS_PER_YEAR,
     BranchPoint,
     BranchTimeInChild,
+    DeltaCalendarMismatchError,
     MismatchedTimeAxisError,
+    NegativeLengthError,
     NoEpochError,
-    Position,
-    Span,
     TimeAxis,
+    TimeDelta,
+    TimePoint,
     TimeRange,
     TimeStep,
     UnknownCalendarError,
     UnknownProjectBranchTimeInChildError,
     UnknownProjectTimeAxisError,
     VersionTimeRange,
-    advance,
     branch_time_in_child_convention,
     has_no_time_axis,
     projects_with_a_known_time_axis_vocabulary,
-    retreat,
 )
 from esmporium.formatting import readable_list
 from esmporium.requirements.catalogue import Catalogue, CatalogueEntry, set_facets
@@ -66,7 +66,10 @@ if TYPE_CHECKING:
     from esmporium.query import QueryCanonical
     from esmporium.requirements.relations import Lineage
 
-NO_PADDING: tuple[Span, Span] = (Span(0, TimeStep.YEARS), Span(0, TimeStep.YEARS))
+NO_PADDING: tuple[TimeDelta, TimeDelta] = (
+    TimeDelta(0, TimeStep.YEARS),
+    TimeDelta(0, TimeStep.YEARS),
+)
 """
 Padding which requires nothing either side
 
@@ -219,8 +222,8 @@ class Covers(BaseModel):
     One dataset in a lineage has to cover the span of another
 
     For example
-    `Covers(role="control", mode="containment", pad=(Span(0, TimeStep.YEARS),
-    Span(0, TimeStep.YEARS)))`
+    `Covers(role="control", mode="containment", pad=(TimeDelta(0, TimeStep.YEARS),
+    TimeDelta(0, TimeStep.YEARS)))`
     requires each dataset's control to cover the dataset's span, which is what an
     anomaly from the control needs.
 
@@ -269,12 +272,12 @@ class Covers(BaseModel):
       `target` has to have that much data to overlap with.
     """
 
-    min_overlap: Span | None = None
+    min_overlap: TimeDelta | None = None
     """
     How much data from the alignment point `role` has to hold, in overlap mode
 
     Required in overlap mode and refused in containment mode. A *length*, not a
-    position, so the half-open convention does not touch it: `Span(100,
+    time point, so the half-open convention does not touch it: `TimeDelta(100,
     TimeStep.MONTHS)` means one hundred months.
 
     Measured from the point the two series line up, and the data it has to overlap
@@ -284,12 +287,13 @@ class Covers(BaseModel):
     """
 
     # TODO future:
-    # A string shorthand for the four `Span` fields -- `pad=("10 years", "10 years")`,
-    # `min_overlap="100 months"` -- via a `Span.parse` mirroring the `__str__` which
+    # A string shorthand for the four `TimeDelta` fields --
+    # `pad=("10 years", "10 years")`, `min_overlap="100 months"` --
+    # via a `TimeDelta.parse` mirroring the `__str__` which
     # already exists, and a `BeforeValidator`. That is the "accept any style, store
     # one" move `accept_any_query_style` makes for queries. Deliberately not done yet:
     # one new way of spelling a length is enough for one change.
-    pad: tuple[Span, Span] | None
+    pad: tuple[TimeDelta, TimeDelta] | None
     """
     How much `role` has to cover before and after the span it is compared against
 
@@ -298,14 +302,14 @@ class Covers(BaseModel):
     [ideal_pad][(c).ideal_pad] / [ideal_min_overlap][(c).ideal_min_overlap] are
     judged. That is a coherent thing to mean -- "the control should cover this, and
     there are workarounds if it does not" -- and is different from
-    `pad=(Span(0, TimeStep.YEARS), Span(0, TimeStep.YEARS))`, which requires exact
-    coverage with no padding.
+    `pad=(TimeDelta(0, TimeStep.YEARS), TimeDelta(0, TimeStep.YEARS))`,
+    which requires exact coverage with no padding.
 
     A constraint with `pad=None` and no ideal at all would require nothing, and is
     refused.
     """
 
-    ideal_min_overlap: Span | None = None
+    ideal_min_overlap: TimeDelta | None = None
     """
     How much data from the alignment point `role` should ideally hold
 
@@ -314,7 +318,7 @@ class Covers(BaseModel):
     something to say in the write-up.
     """
 
-    ideal_pad: tuple[Span, Span] | None = None
+    ideal_pad: tuple[TimeDelta, TimeDelta] | None = None
     """
     How much `role` should ideally cover before and after the span compared against
 
@@ -324,6 +328,18 @@ class Covers(BaseModel):
     unstated one falls back to the hard requirement, so the soft check is never looser
     than the hard one.
     """
+
+    @model_validator(mode="after")
+    def _thresholds_are_not_negative(self) -> Covers:
+        # A `TimeDelta` can be negative, because the difference of two time points
+        # can be. A length a requirement states cannot: data *before* a point is asked
+        # for with `pad[0]`. A calendar on one is fine, and is judged against the data
+        # when the check is evaluated -- see `_in_another_calendar`.
+        for threshold in self._thresholds():
+            if threshold.is_negative:
+                raise NegativeLengthError(threshold)
+
+        return self
 
     @model_validator(mode="after")
     def _thresholds_match_the_mode(self) -> Covers:
@@ -476,7 +492,7 @@ class Covers(BaseModel):
 
         return _worst(outcomes)
 
-    def _unsupported_spans(self) -> tuple[Span, ...]:
+    def _unsupported_spans(self) -> tuple[TimeDelta, ...]:
         """
         Get the thresholds stated in a unit we do not support yet
 
@@ -489,6 +505,20 @@ class Covers(BaseModel):
             A decision about the API surface, and nothing to do with which data we
             can judge: see [evaluate][(c).evaluate]'s `MissingFeature` message.
         """
+        return tuple(
+            span for span in self._thresholds() if not span.step.is_calendar_free
+        )
+
+    def _thresholds(self) -> tuple[TimeDelta, ...]:
+        """
+        Get every length this check states
+
+        Returns
+        -------
+        :
+            The hard and the ideal overlap and padding which are stated, in the order
+            they are declared
+        """
         stated = [
             self.min_overlap,
             *(self.pad or ()),
@@ -496,11 +526,7 @@ class Covers(BaseModel):
             *(self.ideal_pad or ()),
         ]
 
-        return tuple(
-            span
-            for span in stated
-            if span is not None and not span.step.is_calendar_free
-        )
+        return tuple(span for span in stated if span is not None)
 
     def _catalogue_cannot_answer(self, catalogue: CatalogueWithTimeInfo) -> str:
         """
@@ -881,7 +907,7 @@ class Covers(BaseModel):
 
             # `BranchTimeInChild.ASSUMED_FIRST_TIME_BOUND`: the run is taken to start at
             # its branch, so its own first time bound stands in for `in_child`.
-            first = Position(child_held.start, child_held.axis)
+            first = child_held.start
             hops.append(
                 _Hop(
                     child=child,
@@ -977,20 +1003,17 @@ class Covers(BaseModel):
             `Pass` otherwise -- or `NeedsEnrichment` if the comparison needs a finer
             axis than the data is recorded on
 
+            A threshold of years or months stated in a calendar the covering dataset
+            is not in cannot be judged as written, and comes to `Fail` for the hard
+            requirement and `Degraded` for the ideal.
+
             Every one but `NeedsEnrichment` names what the mapping assumed, a `Pass`
             included: an answer which rests on an assumption says so.
         """
         if self.pad is not None:
             met = _covers(have, aligned, self.min_overlap, self.pad)
-            if isinstance(met, NeedsEnrichment):
-                return _needs(
-                    subject,
-                    met.message,
-                    "a file header gives the calendar and the time units, and the "
-                    "comparison is exact once it has them",
-                    (covering,),
-                    MissingTimeFact.CALENDAR,
-                )
+            if not isinstance(met, _Window):
+                return _not_judged(met, subject, covering, aligned, soft=False)
 
             if not met.covered:
                 return Fail(
@@ -1020,15 +1043,8 @@ class Covers(BaseModel):
             ideal_pad = self.pad or NO_PADDING
 
         ideally = _covers(have, aligned, ideal_overlap, ideal_pad)
-        if isinstance(ideally, NeedsEnrichment):
-            return _needs(
-                subject,
-                ideally.message,
-                "a file header gives the calendar and the time units, and the "
-                "comparison is exact once it has them",
-                (covering,),
-                MissingTimeFact.CALENDAR,
-            )
+        if not isinstance(ideally, _Window):
+            return _not_judged(ideally, subject, covering, aligned, soft=True)
 
         if not ideally.covered:
             return Degraded(
@@ -1102,19 +1118,21 @@ class Covers(BaseModel):
             The description
         """
         units = needed.axis.units
+        overlap_end = None if needed.overlap_end is None else needed.overlap_end.value
         parts = []
         if not needed.held:
             parts.append(
-                f"#{covering.id} covers [{have.start}, {have.end_exclusive}) and needs "
-                f"[{needed.start}, {needed.end_exclusive}), in {units}, {padding}"
+                f"#{covering.id} covers [{have.start.value}, "
+                f"{have.end_exclusive.value}) and needs [{needed.start.value}, "
+                f"{needed.end_exclusive.value}), in {units}, {padding}"
             )
 
         if not needed.overlap_supplied:
             parts.append(
-                f"#{covered.id}'s data runs to {needed.covered_end} on "
+                f"#{covered.id}'s data runs to {needed.covered_end.value} on "
                 f"#{covering.id}'s axis, short of the {needed.overlap} of overlap "
-                f"{wanted} from {needed.anchor}, which runs to {needed.overlap_end}, "
-                f"in {units}"
+                f"{wanted} from {needed.anchor.value}, which runs to "
+                f"{overlap_end}, in {units}"
             )
 
         return f"{subject}: {'; and '.join(parts)}"
@@ -1142,10 +1160,10 @@ class _Hop:
     parent_held: TimeRange
     """What the parent holds, on its own recorded axis"""
 
-    in_parent: Position
+    in_parent: TimePoint
     """Where it branched, read off the parent's axis"""
 
-    in_child: Position
+    in_child: TimePoint
     """Where it branched, read off the child's axis"""
 
     assumption: str | None = None
@@ -1154,20 +1172,21 @@ class _Hop:
     message, or `None` when it was
     """
 
-    def onto_parent(self, at: Position) -> Position:
+    def onto_parent(self, point_in_child: TimePoint) -> TimePoint:
         """
-        Get the same instant as a position on the child's axis, read off the parent's
+        Get the same instant as a time point on the child's axis, read off the parent's
 
-        `at - in_child` is how far after the branch `at` is, counted in the child's
-        steps. The same length after `in_parent`, counted in the parent's steps, is
-        the same instant. The child's epoch cancels in the subtraction, so the two
-        axes may start counting from different dates; the length is read in the
-        parent's steps and calendar, so those have to be the child's.
+        `point_in_child.delta_from(in_child)` is how far after the branch the point is,
+        counted in the child's steps. The same length after `in_parent`, counted in the
+        parent's steps, is the same instant. The child's epoch cancels in the
+        subtraction, so the two axes may start counting from different dates; the
+        length is read in the parent's steps and calendar, so those have to be the
+        child's.
 
         Parameters
         ----------
-        at
-            The position, on the child's axis
+        point_in_child
+            The time point, on the child's axis
 
         Returns
         -------
@@ -1177,20 +1196,20 @@ class _Hop:
         Raises
         ------
         MismatchedTimeAxisError
-            `at` is not on the child's axis, or the child and the parent count in a
-            different step or calendar, which
+            `point_in_child` is not on the child's axis, or the child and the
+            parent count in a different step or calendar, which
             [_mapped_through][(m)._mapped_through] rules out before mapping, so this
             is a bug
         """
-        if not at.axis.is_comparable_with(self.in_child.axis):
-            raise MismatchedTimeAxisError(at.axis, self.in_child.axis)
+        branch_in_parent, branch_in_child = self.in_parent, self.in_child
 
-        if not _lengths_cross(self.in_child.axis, self.in_parent.axis):
-            raise MismatchedTimeAxisError(self.in_child.axis, self.in_parent.axis)
+        if not point_in_child.axis.is_comparable_with(branch_in_child.axis):
+            raise MismatchedTimeAxisError(point_in_child.axis, branch_in_child.axis)
 
-        after_branch = at.value - self.in_child.value
+        if not _lengths_cross(branch_in_child.axis, branch_in_parent.axis):
+            raise MismatchedTimeAxisError(branch_in_child.axis, branch_in_parent.axis)
 
-        return Position(self.in_parent.value + after_branch, self.in_parent.axis)
+        return branch_in_parent.plus(point_in_child.delta_from(branch_in_child))
 
 
 def _lengths_cross(child: TimeAxis, parent: TimeAxis) -> bool:
@@ -1211,6 +1230,27 @@ def _lengths_cross(child: TimeAxis, parent: TimeAxis) -> bool:
         `True` if both count in the same step, both or neither from an epoch, and in
         the same calendar. The epochs themselves may differ, because a length has
         none.
+
+    Notes
+    -----
+    Stricter than [TimePoint.plus][esmporium.datasets.TimePoint.plus] on
+    purpose. That would walk a number of days measured in one calendar along an axis
+    in another, because a day is a day in every calendar. For a branch, though,
+    "the same distance after the branch" means one of two things once the calendars
+    differ, and they come apart:
+
+    - the same *elapsed model time*: walk the days. A `noleap` child's
+      2050-01-01 is 73000 days after a 1850-01-01 branch, which on a `standard`
+      parent is 2049-11-13;
+    - the same *calendar date*, so the same point in the seasonal cycle: walk the
+      years, which lands on 2050-01-01.
+
+    That is 49 days apart after 200 years (about three years for a `360_day` child),
+    and an anomaly against a window of the parent's annual means would carry the
+    difference. Which one a user means is a decision for `Covers` to make
+    explicitly, so until it does a different calendar is
+    `MISSING_FEATURE_PLEASE_RAISE_ISSUE`, from [_uncrossable][(m)._uncrossable],
+    rather than whichever the arithmetic happens to give.
     """
     return (
         child.units.step is parent.units.step
@@ -1229,7 +1269,7 @@ class _Alignment:
     can tell which it got by name.
     """
 
-    anchor: Position
+    anchor: TimePoint
     """
     Where the series line up, on the covering dataset's axis
 
@@ -1237,7 +1277,7 @@ class _Alignment:
     first instant of the series below it that runs alongside the covering dataset.
     """
 
-    covered_end: Position
+    covered_end: TimePoint
     """The covered run's `end_exclusive`, on the covering dataset's axis"""
 
     assumptions: tuple[str, ...] = ()
@@ -1328,8 +1368,7 @@ def _mapped_through(hops: Sequence[_Hop], subject: str) -> _Alignment | Outcome:
     if uncrossable is not None:
         return uncrossable
 
-    covered = hops[0].child_held
-    covered_end = Position(covered.end_exclusive, covered.axis)
+    covered_end = hops[0].child_held.end_exclusive
     for hop in hops:
         covered_end = hop.onto_parent(covered_end)
 
@@ -1426,15 +1465,16 @@ def _broken_joins(hops: Sequence[_Hop], subject: str) -> Fail | None:
             broken.append(
                 f"#{hop.child.id} branched from #{hop.parent.id} at "
                 f"{hop.in_parent.value}, outside #{hop.parent.id}'s data, which runs "
-                f"from {hop.parent_held.start} up to {hop.parent_held.end_exclusive}"
+                f"from {hop.parent_held.start.value} up to "
+                f"{hop.parent_held.end_exclusive.value}"
             )
 
         # `<` at the top, on purpose: the child has to hold the step it branched at.
         if not hop.child_held.holds(hop.in_child):
             broken.append(
                 f"#{hop.child.id} branched at {hop.in_child.value} on its own axis, "
-                f"which is outside the [{hop.child_held.start}, "
-                f"{hop.child_held.end_exclusive}) it holds"
+                f"which is outside the [{hop.child_held.start.value}, "
+                f"{hop.child_held.end_exclusive.value}) it holds"
             )
 
     if not broken:
@@ -1606,28 +1646,28 @@ class _Window:
       to supply does (`overlap_supplied`).
     """
 
-    start: float
+    start: TimePoint
     """First step which has to be covered, on `axis`"""
 
-    end_exclusive: float
+    end_exclusive: TimePoint
     """First step after the last which has to be covered, on `axis`"""
 
     axis: TimeAxis
-    """The covering dataset's recorded axis, which every number here is on"""
+    """The covering dataset's recorded axis, which every time point here is on"""
 
     held: bool
     """Whether the covering dataset holds all of `[start, end_exclusive)`"""
 
-    anchor: float
+    anchor: TimePoint
     """The alignment point, where any overlap is counted from"""
 
-    covered_end: float
+    covered_end: TimePoint
     """The covered run's `end_exclusive`, read off `axis`"""
 
-    overlap: Span | None
+    overlap: TimeDelta | None
     """The overlap wanted from `anchor`, or `None` in containment mode"""
 
-    overlap_end: float | None
+    overlap_end: TimePoint | None
     """Where that overlap ends, or `None` in containment mode"""
 
     @property
@@ -1641,7 +1681,9 @@ class _Window:
             `True` in containment mode, which asks for no overlap, and otherwise
             `True` if `covered_end >= overlap_end`
         """
-        return self.overlap_end is None or self.covered_end >= self.overlap_end
+        return self.overlap_end is None or self.overlap_end.is_at_or_before(
+            self.covered_end
+        )
 
     @property
     def covered(self) -> bool:
@@ -1660,9 +1702,9 @@ class _Window:
 def _covers(
     have: TimeRange,
     aligned: _Alignment,
-    min_overlap: Span | None,
-    pad: tuple[Span, Span],
-) -> _Window | NeedsEnrichment:
+    min_overlap: TimeDelta | None,
+    pad: tuple[TimeDelta, TimeDelta],
+) -> _Window | NeedsEnrichment | _InAnotherCalendar:
     """
     Determine whether one span covers what is needed, with padding
 
@@ -1700,7 +1742,9 @@ def _covers(
     :
         The window which was needed and whether it is covered, or
         [NeedsEnrichment][esmporium.requirements.NeedsEnrichment] if a threshold
-        cannot be placed on `have`'s axis as it stands
+        cannot be placed on `have`'s axis as it stands, or
+        [_InAnotherCalendar][(m)._InAnotherCalendar] if a threshold is years or
+        months stated in a calendar other than `have`'s
 
     Raises
     ------
@@ -1718,7 +1762,7 @@ def _covers(
     if not aligned.anchor.axis.is_comparable_with(have.axis):
         raise MismatchedTimeAxisError(have.axis, aligned.anchor.axis)
 
-    anchor, covered_end = aligned.anchor.value, aligned.covered_end.value
+    anchor, covered_end = aligned.anchor, aligned.covered_end
 
     finer = [
         span
@@ -1737,18 +1781,22 @@ def _covers(
 
     try:
         needed_end = (
-            advance(anchor, min_overlap, have.axis)
-            if min_overlap is not None
-            else covered_end
+            anchor.plus(min_overlap) if min_overlap is not None else covered_end
         )
-        start = retreat(anchor, pad[0], have.axis)
-        end_exclusive = advance(needed_end, pad[1], have.axis)
+        start = anchor.plus(pad[0].negated())
+        end_exclusive = needed_end.plus(pad[1])
     except (UnknownCalendarError, NoEpochError) as error:
         # A dated axis which does not know its calendar, which is what a range placed
         # on one before any header was read looks like. `MissingCalendarsExtraError`
         # is deliberately *not* caught: an uninstalled extra is an environment problem
         # rather than a fact about the data, so it must not become a solve status.
         return NeedsEnrichment(str(error))
+    except DeltaCalendarMismatchError as error:
+        # The requirement stated a length in one calendar and the data is in
+        # another. Raised partway through the solve, because that is the first
+        # point at which the data's calendar is known, and returned as what it means
+        # for this lineage rather than stopping the solve.
+        return _InAnotherCalendar(threshold=error.delta, axis=error.axis)
 
     # In overlap mode there also has to *be* that much data to overlap with, which
     # `_Window.overlap_supplied` checks as positions, so that a length never has to be
@@ -1759,7 +1807,10 @@ def _covers(
         start=start,
         end_exclusive=end_exclusive,
         axis=have.axis,
-        held=have.start <= start and have.end_exclusive >= end_exclusive,
+        held=(
+            have.start.is_at_or_before(start)
+            and end_exclusive.is_at_or_before(have.end_exclusive)
+        ),
         anchor=anchor,
         covered_end=covered_end,
         overlap=min_overlap,
@@ -1767,7 +1818,108 @@ def _covers(
     )
 
 
-def _too_fine(span: Span, axis: TimeAxis) -> bool:
+@dataclass(frozen=True)
+class _InAnotherCalendar:
+    """
+    A threshold of years or months stated in a calendar the data is not in
+    """
+
+    threshold: TimeDelta
+    """The threshold, which names its calendar"""
+
+    axis: TimeAxis
+    """The covering dataset's axis, in another calendar"""
+
+
+def _not_judged(
+    why: NeedsEnrichment | _InAnotherCalendar,
+    subject: str,
+    covering: CatalogueEntry,
+    aligned: _Alignment,
+    *,
+    soft: bool,
+) -> Outcome:
+    """
+    Say why a window could not be judged, as the outcome it comes to
+
+    Parameters
+    ----------
+    why
+        What [_covers][(m)._covers] gave back instead of a window
+
+    subject
+        Role path being judged
+
+    covering
+        The covering dataset
+
+    aligned
+        Where the two runs line up, and what that assumed
+
+    soft
+        Whether this was the ideal rather than the hard requirement
+
+    Returns
+    -------
+    :
+        `NeedsEnrichment` if the covering dataset's calendar is not known yet.
+        If a threshold is stated in a calendar the data is not in, `Fail` for the
+        hard requirement and `Degraded` for the ideal, as a threshold which is not
+        met would be: enriching will not change which calendar the data is in.
+    """
+    if isinstance(why, NeedsEnrichment):
+        return _needs(
+            subject,
+            why.message,
+            "a file header gives the calendar and the time units, and the "
+            "comparison is exact once it has them",
+            (covering,),
+            MissingTimeFact.CALENDAR,
+        )
+
+    message = _with_assumptions(
+        _in_another_calendar(subject, covering, why), aligned.assumptions
+    )
+
+    return Degraded(message) if soft else Fail(message)
+
+
+def _in_another_calendar(
+    subject: str, covering: CatalogueEntry, found: _InAnotherCalendar
+) -> str:
+    """
+    Say that a threshold is stated in a calendar the covering dataset is not in
+
+    Parameters
+    ----------
+    subject
+        Role path being judged
+
+    covering
+        The covering dataset
+
+    found
+        The threshold, and the axis it could not be applied on
+
+    Returns
+    -------
+    :
+        The message
+    """
+    threshold = found.threshold
+
+    return (
+        f"{subject}: {threshold} is stated in calendar {threshold.calendar!r}, and "
+        f"#{covering.id}'s data is in calendar {found.axis.calendar!r}. How long a "
+        "year or a month is, is where calendars disagree, so the requirement cannot "
+        "be judged against this data as it is written. For the same number of "
+        f"{threshold.step.value} in any calendar, state it with "
+        "`.in_any_calendar()`; for the same number of days, where its calendar fixes "
+        "them, with `.in_steps(TimeStep.DAYS)`"
+    )
+
+
+def _too_fine(span: TimeDelta, axis: TimeAxis) -> bool:
     """
     Determine whether a span cannot be placed on an axis as it stands
 
@@ -1805,7 +1957,7 @@ def _too_fine(span: Span, axis: TimeAxis) -> bool:
     return True
 
 
-def _described_pad(pad: tuple[Span, Span]) -> str:
+def _described_pad(pad: tuple[TimeDelta, TimeDelta]) -> str:
     """
     Describe a pair of padding spans for a message a person is going to read
 

@@ -7,15 +7,15 @@ from __future__ import annotations
 import pytest
 
 from esmporium.datasets.no_time_axis import NO_TIME_AXIS_INTERVALS_BY_PROJECT
-from esmporium.datasets.time import Span, TimeRange, TimeStep
+from esmporium.datasets.time import TimeDelta, TimeRange, TimeStep
 from esmporium.enrich.known_readers import (
     CLIMATOLOGY_SUFFIX,
     FILENAME_TIME_READERS_BY_PROJECT,
     UnknownProjectFilenameTimeReaderError,
     UnknownReportingIntervalError,
+    delta_of_reporting_interval,
     read_trailing_range,
     reader_for_project,
-    span_of_reporting_interval,
     step_of_stamp,
 )
 from esmporium.enrich.protocol import (
@@ -44,7 +44,7 @@ def half_open(read: PublishedRange, reporting_interval: str) -> TimeRange:
     """
     return read.to_half_open(
         precision=step_of_stamp(read.start_raw),
-        reports_every=span_of_reporting_interval(reporting_interval),
+        reports_every=delta_of_reporting_interval(reporting_interval),
     )
 
 
@@ -120,7 +120,7 @@ def test_a_single_month_file_holds_one_month():
         "tas_Amon_GFDL-ESM4_piControl_r1i1p1f1_gr1_320001-320001.nc"
     )
 
-    assert half_open(read, "mon").extent == Span(1, TimeStep.MONTHS)
+    assert half_open(read, "mon").extent == TimeDelta(1, TimeStep.MONTHS)
 
 
 def test_a_climatology_keeps_its_range_and_its_suffix():
@@ -133,7 +133,7 @@ def test_a_climatology_keeps_its_range_and_its_suffix():
 
     assert (read.start_raw, read.end_raw) == ("185001", "185012")
     assert read.suffix == CLIMATOLOGY_SUFFIX
-    assert half_open(read, "monC").extent == Span(12, TimeStep.MONTHS)
+    assert half_open(read, "monC").extent == TimeDelta(12, TimeStep.MONTHS)
 
 
 def test_a_cmip5_climatology_is_read_the_same_way():
@@ -149,7 +149,7 @@ def test_a_cmip5_climatology_is_read_the_same_way():
 
     assert (read.start_raw, read.end_raw) == ("185001", "185012")
     assert read.suffix == CLIMATOLOGY_SUFFIX
-    assert half_open(read, "monClim").extent == Span(12, TimeStep.MONTHS)
+    assert half_open(read, "monClim").extent == TimeDelta(12, TimeStep.MONTHS)
 
 
 def test_a_monthly_file_has_no_suffix():
@@ -311,7 +311,7 @@ def test_an_interval_whose_width_we_do_not_know_is_refused():
     `subhr` says the data is finer than hourly without saying how much finer
     """
     with pytest.raises(UnknownReportingIntervalError, match="subhr"):
-        span_of_reporting_interval("subhr")
+        delta_of_reporting_interval("subhr")
 
 
 def test_a_range_written_to_a_precision_we_do_not_read_is_kept_raw():
@@ -352,7 +352,7 @@ def test_a_project_can_be_added_without_forking_anything():
     )
     read = reader("185001-185012_tas_MIP1.nc")
 
-    assert half_open(read, "mon").extent == Span(12, TimeStep.MONTHS)
+    assert half_open(read, "mon").extent == TimeDelta(12, TimeStep.MONTHS)
 
 
 def test_the_two_registries_name_the_same_projects():
@@ -374,26 +374,26 @@ def test_the_two_registries_name_the_same_projects():
 @pytest.mark.parametrize(
     ("reporting_interval", "expected"),
     [
-        ("yr", Span(1, TimeStep.YEARS)),
-        ("dec", Span(10, TimeStep.YEARS)),
-        ("mon", Span(1, TimeStep.MONTHS)),
-        ("monC", Span(1, TimeStep.MONTHS)),
-        ("monClim", Span(1, TimeStep.MONTHS)),
-        ("day", Span(1, TimeStep.DAYS)),
-        ("6hr", Span(6, TimeStep.HOURS)),
-        ("3hr", Span(3, TimeStep.HOURS)),
-        ("1hr", Span(1, TimeStep.HOURS)),
+        ("yr", TimeDelta(1, TimeStep.YEARS)),
+        ("dec", TimeDelta(10, TimeStep.YEARS)),
+        ("mon", TimeDelta(1, TimeStep.MONTHS)),
+        ("monC", TimeDelta(1, TimeStep.MONTHS)),
+        ("monClim", TimeDelta(1, TimeStep.MONTHS)),
+        ("day", TimeDelta(1, TimeStep.DAYS)),
+        ("6hr", TimeDelta(6, TimeStep.HOURS)),
+        ("3hr", TimeDelta(3, TimeStep.HOURS)),
+        ("1hr", TimeDelta(1, TimeStep.HOURS)),
     ],
 )
 def test_how_wide_one_reporting_step_is(reporting_interval, expected):
     """
     The assumption a filename's half-open end rests on, checked by the time bounds
     """
-    assert span_of_reporting_interval(reporting_interval) == expected
+    assert delta_of_reporting_interval(reporting_interval) == expected
 
 
 def test_cmip5_and_cmip6_spell_a_monthly_climatology_differently():
     """
     `monClim` and `monC` are the same width, and both have to be known
     """
-    assert span_of_reporting_interval("monClim") == span_of_reporting_interval("monC")
+    assert delta_of_reporting_interval("monClim") == delta_of_reporting_interval("monC")

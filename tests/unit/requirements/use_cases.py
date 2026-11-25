@@ -12,7 +12,7 @@ than any example invented to exercise one feature.
 
 from __future__ import annotations
 
-from esmporium.datasets import Span, TimeStep
+from esmporium.datasets import TimeDelta, TimeStep
 from esmporium.query import Query
 from esmporium.requirements import (
     Ancestors,
@@ -23,10 +23,13 @@ from esmporium.requirements import (
     requirement,
 )
 
-NO_PAD = (Span(0, TimeStep.YEARS), Span(0, TimeStep.YEARS))
+NO_PAD = (TimeDelta(0, TimeStep.YEARS), TimeDelta(0, TimeStep.YEARS))
 """No padding either side, i.e. the covered span and not one step more"""
 
-TWENTY_YEARS_EITHER_SIDE = (Span(20, TimeStep.YEARS), Span(20, TimeStep.YEARS))
+TWENTY_YEARS_EITHER_SIDE = (
+    TimeDelta(20, TimeStep.YEARS),
+    TimeDelta(20, TimeStep.YEARS),
+)
 """
 Twenty years before the branch point and after the end of the covered run
 

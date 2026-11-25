@@ -121,7 +121,9 @@ jobs:
           # installed: no h5py release ships a 3.14 wheel, so it would be built from
           # source against an HDF5 library the runner does not have. See the note on
           # h5py in pyproject.toml's `tests-min` group.
-          uv-dependency-install-flags: ${{ matrix.python-version == '3.14' && '--group tests --extra plots' || '--group tests --all-extras' }}
+          # The `calendars` extra is installed there all the same, because cftime
+          # ships 3.14 wheels and the doctests in `esmporium.datasets.time` use it.
+          uv-dependency-install-flags: ${{ matrix.python-version == '3.14' && '--group tests --extra plots --extra calendars' || '--group tests --all-extras' }}
       - name: Run tests
         env:
           # Don't need interactive plots

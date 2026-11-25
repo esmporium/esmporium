@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from esmporium.datasets.time import Span, TimeRange, TimeStep, total_months
+from esmporium.datasets.time import TimeDelta, TimeRange, TimeStep, total_months
 from esmporium.enrich.protocol import (
     CalendarRequiredError,
     PublishedRange,
@@ -18,8 +18,8 @@ from esmporium.enrich.protocol import (
     UnreadableTimestampError,
 )
 
-ONE_MONTH = Span(1, TimeStep.MONTHS)
-ONE_YEAR = Span(1, TimeStep.YEARS)
+ONE_MONTH = TimeDelta(1, TimeStep.MONTHS)
+ONE_YEAR = TimeDelta(1, TimeStep.YEARS)
 
 
 def monthly(start_raw: str, end_raw: str) -> TimeRange:
@@ -53,9 +53,9 @@ def test_both_ends_of_a_published_range_are_in_the_data():
     """
     half_open = monthly("185001", "186012")
 
-    assert half_open.start == total_months(1850, 1)
-    assert half_open.end_exclusive == total_months(1861, 1)
-    assert half_open.extent == Span(132, TimeStep.MONTHS)
+    assert half_open.start.value == total_months(1850, 1)
+    assert half_open.end_exclusive.value == total_months(1861, 1)
+    assert half_open.extent == TimeDelta(132, TimeStep.MONTHS)
 
 
 def test_a_single_step_range_has_an_extent_of_one():
@@ -70,8 +70,8 @@ def test_yearly_data_is_eleven_years_not_ten():
         precision=TimeStep.YEARS, reports_every=ONE_YEAR
     )
 
-    assert (half_open.start, half_open.end_exclusive) == (1850, 1861)
-    assert half_open.extent == Span(11, TimeStep.YEARS)
+    assert (half_open.start.value, half_open.end_exclusive.value) == (1850, 1861)
+    assert half_open.extent == TimeDelta(11, TimeStep.YEARS)
 
 
 def test_the_raw_strings_are_kept_beside_the_numbers():
@@ -83,7 +83,7 @@ def test_the_raw_strings_are_kept_beside_the_numbers():
     published = PublishedRange("320001", "325012")
 
     assert (published.start_raw, published.end_raw) == ("320001", "325012")
-    assert monthly(published.start_raw, published.end_raw).start == 38389
+    assert monthly(published.start_raw, published.end_raw).start.value == 38389
 
 
 def test_a_published_range_holds_only_what_the_filename_says():
@@ -117,18 +117,23 @@ def test_the_half_open_end_is_one_reporting_step_past_the_last_stamp():
     A `dec` file stamped to the year runs ten years past its last stamp.
     """
     half_open = PublishedRange("1850", "1950").to_half_open(
-        precision=TimeStep.YEARS, reports_every=Span(10, TimeStep.YEARS)
+        precision=TimeStep.YEARS, reports_every=TimeDelta(10, TimeStep.YEARS)
     )
 
-    assert half_open.end_exclusive == 1960
+    assert half_open.end_exclusive.value == 1960
 
 
 @pytest.mark.parametrize(
     ("start_raw", "end_raw", "precision", "reports_every"),
     [
-        ("18500101", "18591231", TimeStep.DAYS, Span(1, TimeStep.DAYS)),
-        ("1850010103", "1859123121", TimeStep.HOURS, Span(3, TimeStep.HOURS)),
-        ("185001010300", "185101010000", TimeStep.MINUTES, Span(3, TimeStep.HOURS)),
+        ("18500101", "18591231", TimeStep.DAYS, TimeDelta(1, TimeStep.DAYS)),
+        ("1850010103", "1859123121", TimeStep.HOURS, TimeDelta(3, TimeStep.HOURS)),
+        (
+            "185001010300",
+            "185101010000",
+            TimeStep.MINUTES,
+            TimeDelta(3, TimeStep.HOURS),
+        ),
     ],
 )
 def test_a_sub_monthly_range_has_no_natural_axis(

@@ -339,7 +339,7 @@ which is what lets a `Fail` resting on filenames say
 "these ranges come from filenames only; enrich #3 and #7 from variable values to check them" (decision 28).
 
 `CatalogueWithTimeInfo.get_time_range` gains the `wanted` step in PR D:
-`Covers` knows it, because `pad` and `min_overlap` are `Span`s.
+`Covers` knows it, because `pad` and `min_overlap` are `TimeDelta`s.
 
 ### Consistency between sources
 

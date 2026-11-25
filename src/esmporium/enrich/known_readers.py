@@ -20,7 +20,7 @@ from __future__ import annotations
 import pathlib
 from typing import TYPE_CHECKING
 
-from esmporium.datasets.time import Span, TimeStep
+from esmporium.datasets.time import TimeDelta, TimeStep
 from esmporium.enrich.protocol import PublishedRange, UnreadableTimestampError
 
 if TYPE_CHECKING:
@@ -67,23 +67,23 @@ monthly values labelled 1850-1850 are not a twelve-month run.
 # This is a guess.
 # Also support using the time bounds to figure this out
 # as a "higher tier" source.
-SPAN_BY_REPORTING_INTERVAL: Mapping[str, Span] = {
-    "dec": Span(10, TimeStep.YEARS),
-    "yr": Span(1, TimeStep.YEARS),
-    "yrPt": Span(1, TimeStep.YEARS),
-    "mon": Span(1, TimeStep.MONTHS),
-    "monC": Span(1, TimeStep.MONTHS),
-    "monClim": Span(1, TimeStep.MONTHS),
-    "monPt": Span(1, TimeStep.MONTHS),
-    "day": Span(1, TimeStep.DAYS),
-    "6hr": Span(6, TimeStep.HOURS),
-    "6hrPt": Span(6, TimeStep.HOURS),
-    "6hrLev": Span(6, TimeStep.HOURS),
-    "3hr": Span(3, TimeStep.HOURS),
-    "3hrPt": Span(3, TimeStep.HOURS),
-    "1hr": Span(1, TimeStep.HOURS),
-    "1hrPt": Span(1, TimeStep.HOURS),
-    "1hrCM": Span(1, TimeStep.HOURS),
+DELTA_BY_REPORTING_INTERVAL: Mapping[str, TimeDelta] = {
+    "dec": TimeDelta(10, TimeStep.YEARS),
+    "yr": TimeDelta(1, TimeStep.YEARS),
+    "yrPt": TimeDelta(1, TimeStep.YEARS),
+    "mon": TimeDelta(1, TimeStep.MONTHS),
+    "monC": TimeDelta(1, TimeStep.MONTHS),
+    "monClim": TimeDelta(1, TimeStep.MONTHS),
+    "monPt": TimeDelta(1, TimeStep.MONTHS),
+    "day": TimeDelta(1, TimeStep.DAYS),
+    "6hr": TimeDelta(6, TimeStep.HOURS),
+    "6hrPt": TimeDelta(6, TimeStep.HOURS),
+    "6hrLev": TimeDelta(6, TimeStep.HOURS),
+    "3hr": TimeDelta(3, TimeStep.HOURS),
+    "3hrPt": TimeDelta(3, TimeStep.HOURS),
+    "1hr": TimeDelta(1, TimeStep.HOURS),
+    "1hrPt": TimeDelta(1, TimeStep.HOURS),
+    "1hrCM": TimeDelta(1, TimeStep.HOURS),
 }
 """
 How wide one reporting step is taken to be, by the reporting interval which names it
@@ -150,7 +150,7 @@ class UnknownReportingIntervalError(NotImplementedError):
             The interval whose width we do not know
         """
         self.reporting_interval = reporting_interval
-        known = ", ".join(sorted(SPAN_BY_REPORTING_INTERVAL))
+        known = ", ".join(sorted(DELTA_BY_REPORTING_INTERVAL))
         super().__init__(
             f"Do not know how long one {reporting_interval!r} step is, so the "
             f"half-open end of its range cannot be worked out. Known intervals: "
@@ -159,10 +159,10 @@ class UnknownReportingIntervalError(NotImplementedError):
         )
 
 
-def span_of_reporting_interval(
+def delta_of_reporting_interval(
     reporting_interval: str,
-    spans: Mapping[str, Span] = SPAN_BY_REPORTING_INTERVAL,
-) -> Span:
+    deltas: Mapping[str, TimeDelta] = DELTA_BY_REPORTING_INTERVAL,
+) -> TimeDelta:
     """
     Get how wide one reporting step is
 
@@ -171,7 +171,7 @@ def span_of_reporting_interval(
     reporting_interval
         The reporting interval, e.g. `mon`, `3hr`
 
-    spans
+    deltas
         The widths to look it up in
 
     Returns
@@ -186,11 +186,11 @@ def span_of_reporting_interval(
 
     Examples
     --------
-    >>> str(span_of_reporting_interval("3hr"))
+    >>> str(delta_of_reporting_interval("3hr"))
     '3 hours'
     """
     try:
-        return spans[reporting_interval]
+        return deltas[reporting_interval]
     except KeyError as error:
         raise UnknownReportingIntervalError(reporting_interval) from error
 
