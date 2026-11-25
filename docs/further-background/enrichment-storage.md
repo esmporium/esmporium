@@ -151,12 +151,13 @@ Each is `breaking` where it touches a requirement's hash or a public signature.
 ### PR R3 — a catalogue entry is a version
 
 `src/esmporium/requirements/`, `src/esmporium/db/database_catalogue.py`.
+Built in [#79](https://github.com/esmporium/esmporium/pull/79).
 
-Today an entry is a `Dataset` row,
-and "which version speaks for it" is answered by `describing_version` at **every** lookup:
+Before it, an entry was a `Dataset` row,
+and "which version speaks for it" was answered by `describing_version` at **every** lookup:
 the newest version (by version string, ties broken by id) which passes the lookup's `VersionFilter`.
-Facets are read through it at `find`, parents through it at `parent_of`,
-and PR D's time lookups would have had to do the same.
+Facets were read through it at `find` (merged from every version that passed),
+parents through it at `parent_of`, and PR D's time lookups would have had to do the same.
 `CatalogueWithTimeInfo.get_time_range(entry)` takes no filter,
 so it could only have guessed which filter the solve used,
 and answered for a different version than the one whose facets and parent the solve had read.
@@ -198,6 +199,13 @@ So:
 - The developer note above `Catalogue` ("one entry describes one `Dataset` row, not one `DatasetVersion`")
   and the first note's "What does a catalogue entry carry, and for which version?"
   are updated to say this.
+- As built, beyond the above:
+  `parent_of_dataset` is renamed `parent_of_version`, and `describing_version` and `version_filter` are deleted;
+  `plan_downloads` plans exactly the entries' versions and loses `latest_version_only`;
+  `InMemoryCatalogue` applies the `VersionFilter` to each entry (`passes_version_filter`),
+  without choosing one version per dataset;
+  an entry's description in messages carries its version;
+  and a dataset with no versions is never found, under any filter.
 
 Not done, and not needed: the commented-out `Relationship()` in `schema.py`.
 Explicit `select`s are the state of the code rather than a recorded decision,

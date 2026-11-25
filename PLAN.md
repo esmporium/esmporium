@@ -110,7 +110,7 @@ interpreted.
 | 11 | `Ancestors` lineage in requirements | 2 | 10 | done · [#67](https://github.com/esmporium/esmporium/pull/67) |
 | **12a** | The `Constraint` protocol, nothing shipped | 3 | 11 | done · [#69](https://github.com/esmporium/esmporium/pull/69) |
 | **12b** | `Covers`: the constraint itself | 3 | 12c PR D | shipped, unfinished · [#69](https://github.com/esmporium/esmporium/pull/69), [#72](https://github.com/esmporium/esmporium/pull/72), [#73](https://github.com/esmporium/esmporium/pull/73) |
-| **12c** | Enrichment: the time information ESGF does not publish | 3 | 12a | **in progress** · R3 next |
+| **12c** | Enrichment: the time information ESGF does not publish | 3 | 12a | **in progress** · C1 next |
 | 13 | `any_of`, `optional` | 3 | — | ready |
 | 14 | `scope` and `SameTimeRange` | 3 | 12c PR R2 | ready |
 | 15 | `Aux` | 3 | — | ready |
@@ -147,14 +147,14 @@ the constraint at once.
 | [#76](https://github.com/esmporium/esmporium/pull/76) | `PLAN.md` and part one brought back in step with parts two and three | 12c | done |
 | [#77](https://github.com/esmporium/esmporium/pull/77) | **PR R1** — the values carry their units and only say what was published: `extent` returns a `Span`, two axes are comparable only on the same units and calendar, `BranchPoint` keeps published floats and gains a child axis, no default calendar, `PublishedRange` holds the stamps as published, `measure_version` renamed `combine_file_ranges` | 12c, 12b | done |
 | [#78](https://github.com/esmporium/esmporium/pull/78) | **PR R2** — `Covers` maps a child onto its parent through both ends of the branch point, checks axes where it computes, and loses `align`. `Position` (a number with its axis), `BranchPoint` built from two, the per-project `branch_time_in_child` registry, every join checked on both sides | 12c, 12b, 14 | done |
-| **R3** | a catalogue entry is a version; an unresolved parent reports "not yet" | 12c, 11, 16 | **next** |
-| **C1** | readers: the range-backed byte source, the classic variable-list walk, `h5netcdf` for netCDF-4, the time-bounds read | 12c, 10 | after R3 |
+| [#79](https://github.com/esmporium/esmporium/pull/79) | **PR R3** — a catalogue entry is one `DatasetVersion`, chosen once by `find`; `parent_of` returns the parent version the link records, the filter only checking it; an unwalked lineage is `couldnt_answer` / `NEEDS_FIND_PARENTS` with `find_parents_inputs`; `EnrichmentInput.dataset_version_id`; `plan_downloads` plans the entries' versions | 12c, 11, 16 | done |
+| **C1** | readers: the range-backed byte source, the classic variable-list walk, `h5netcdf` for netCDF-4, the time-bounds read | 12c, 10 | **next** |
 | **C2** | the `parse_*` functions, pure, one per source, plus the consistency comparison | 12c | after C1 |
-| **C3** | storage: the five tables, the `DatasetVersionParentInfo` rename, one alembic revision | 12c | after R3 |
+| **C3** | storage: the five tables, the `DatasetVersionParentInfo` rename, one alembic revision | 12c | ready |
 | **C4** | `enrich_datasets`, serial: plan, retrieve, parse, record, back-fill, fixes | 12c | after C1-C3 |
 | **D** | the catalogue serves it, and the integration tests that were the point | 12c, 12b | after C4 — **this is what finishes 12b** |
 | **P** | parallel enrichment: an executor per kind of retrieval | 12c | after D |
-| **E** | `download_by_id`, splitting `plan_downloads` where it already reduces a query to ids | 7, 21 | after R3 |
+| **E** | `download_by_id`, splitting `plan_downloads` where it already reduces a query to ids | 7, 21 | ready |
 
 R1 to E are [step 12c](#12c-enrichment-the-time-information-esgf-does-not-publish)'s,
 and that section says what each one is for. A PR joins this table when it is planned
@@ -211,10 +211,11 @@ and `Ancestors` in requirements all work -- and the watched searches and the nig
 downloads off them run in `CMIP-Output-Tracking`, which is steps 5 and 9.
 
 **Phase 3 is the requirement language, and step 12c is the work in hand.** Its three
-design notes and its pure half are built, and two of its three corrective PRs have
-landed: R1 gave the values their units, and R2 made `Covers` map through both ends of a
-branch point. R3 comes next, then the readers, the parsers, the storage, the enrich
-step, and the integration tests that finish 12b. Steps 13, 14, 15 and 18 are ready
+design notes and its pure half are built, and all three of its corrective PRs have
+landed: R1 gave the values their units, R2 made `Covers` map through both ends of a
+branch point, and R3 made a catalogue entry one version, chosen once. The readers come
+next, then the parsers, the storage, the enrich step, and the integration tests that
+finish 12b; the storage and `download_by_id` can start beside the readers. Steps 13, 14, 15 and 18 are ready
 whenever we want them; 16 is waiting on 15. **Phase 4 has not started**, and step 17 (data loading)
 wants a design pass of its own before it is picked up.
 
@@ -767,8 +768,9 @@ One convenience this will want: **`download_by_id`**, which is
 `plan_downloads` takes the same query object a search takes, and a facet query cannot
 name a list -- `facet_filters` refuses anything outside `DATASET_FACET_COLUMNS`, and a
 facet query is a cross-product, so asking for two specific datasets returns four. An
-id-based entry point is the only correct answer, and after PR R3 the ids it takes are
-version ids, which is what a download is of.
+id-based entry point is the only correct answer, and the ids it takes are version ids
+(an entry's `id` since PR R3, [#79](https://github.com/esmporium/esmporium/pull/79)),
+which is what a download is of.
 
 We're going to be a bit stupid about this and just do a clean archive. The reason is that the logic for ingesting data that is already available locally will be tricky and I don't want us to get delayed worrying about that headache: downloading is not that expensive and we have to do it for CMIP7 anyway. We just need to be a bit careful to not re-download anything really expensive i.e. let's not start downloading any daily CMIP6 data until we have the 'ingest from local' functionality working (steps 20 and 21).
 
@@ -915,8 +917,10 @@ What landed differently from the sketch above, and why:
   running `find_parents`. Step 12c keeps that distinction rather than folding it into
   `NEEDS_ENRICHMENT`: by its decision 34, `NOT_LOOKED_FOR` and `UNRESOLVED` put a group
   in `couldnt_answer` with a status pointing at `esmporium.db.find_parents`, the way
-  `NEEDS_ENRICHMENT` points at the enricher. Today both still report `UNSATISFIED`;
-  **PR R3** is where that changes.
+  `NEEDS_ENRICHMENT` points at the enricher. **PR R3
+  ([#79](https://github.com/esmporium/esmporium/pull/79)) built it**: both report
+  `NEEDS_FIND_PARENTS`, and `SolveResult.find_parents_inputs` hands back the version
+  ids each lineage stopped at.
 - **A satisfied lineage says how it was resolved**, in its explanation only
   (`ParentLookup.provenance`). A chain which rests on a hand fix, or on our own rule for
   which release of the parent to use, reads differently from one the archive published.
@@ -1020,7 +1024,8 @@ What landed differently from the sketch above, and why:
   `couldnt_answer` and `enrichment_inputs`, and `_evaluate_constraints` now catches
   `ConstraintNotEvaluableError` rather than every exception, so a typo inside a
   constraint is a bug again instead of an unsatisfied group. The parent half of it --
-  an unresolved parent reported as "not yet" -- is PR R3's.
+  an unresolved parent reported as "not yet", `NEEDS_FIND_PARENTS` -- landed in PR R3
+  ([#79](https://github.com/esmporium/esmporium/pull/79)).
 - **`requirement()` grew a `constraints` argument.** The field alone was not enough --
   the factory is the documented way to build one, so a requirement-level check would
   have been unreachable through it.
@@ -1180,7 +1185,10 @@ work, and where we are up to.
 - **A catalogue entry is one *version* of a dataset**, chosen once by `find` with the
   requirement's `VersionFilter`, and `entry.id` is that version's id. A time lookup is
   handed no filter, so it could not otherwise know which version the rest of the solve
-  read.
+  read. **The parent's version is the one its link records**, the one `find_parents`
+  chose and climbed from; `parent_of`'s filter only checks it, and a refused release is
+  `NO_USABLE_VERSION` with no fallback. Built in
+  [#79](https://github.com/esmporium/esmporium/pull/79).
 - **Constraints switch from asking the catalogue to asking the entry.**
   `CatalogueWithTimeInfo` is vacated rather than deleted — it still suits anything that
   is a *lookup* rather than a dataset fact, such as an aggregate over the catalogue —
@@ -1190,7 +1198,8 @@ work, and where we are up to.
   has always promised. It carries `NEEDS_ENRICHMENT` ("go and fetch it", with
   `enrichment_inputs` ready to hand back to the enricher),
   `MISSING_FEATURE_PLEASE_RAISE_ISSUE` ("a fair thing to want, not supported yet") and
-  `NOT_LOOKED_FOR` / `UNRESOLVED` ("nobody has run `find_parents` for this yet").
+  `NEEDS_FIND_PARENTS` ("nobody has run `find_parents` for this yet", for a parent
+  `NOT_LOOKED_FOR` or `UNRESOLVED`, with `find_parents_inputs` ready to hand back).
 - **The calendar is not a global attribute.** Measured against this repository's own
   captured header prefixes, not assumed: `calendar` and the time units are attributes
   of the *time variable*, and `esmporium.headers` reads globals only. The CMIP5 netCDF3
@@ -1251,10 +1260,9 @@ a step of this plan: a step is a goal, a rung is a unit of work, and the whole r
 this step grew fifteen of them is that the goal is one and the work is not.
 
 Ordering, stated once: R1 before R2, because `Covers` uses R1's types; both have
-landed. R3 is independent of both and has to land before C3, which is keyed on entries being
-versions. C1 before C2 before C4; C3 can land beside C1 or C2. D needs C4. **P comes
+landed, and so has R3, which C3 is keyed on. C1 before C2 before C4; C3 can land beside C1 or C2. D needs C4. **P comes
 after D**, so that it changes how retrievals are run rather than what they return. **E
-is independent** and can land any time after R3.
+is independent** and can land any time.
 
 ### What changed since this step was first written
 
@@ -1395,7 +1403,8 @@ Concretely, that means:
 This lands after `Aux` because by then we know what the candidate lists actually look
 like in every node type, which is what an arbitrary `prefer` function has to be handed.
 
-One thing gets easier first: after step 12c's **PR R3** a catalogue entry *is* one
+One thing gets easier first: since step 12c's **PR R3**
+([#79](https://github.com/esmporium/esmporium/pull/79)) a catalogue entry *is* one
 `DatasetVersion`, with `version`, `is_latest` and `retracted` beside its id. So "prefer
 a specific version" is ranking a field the candidates already carry, rather than
 reaching back through a dataset to its versions. The gap between `versions` (a filter,
