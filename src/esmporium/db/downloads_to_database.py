@@ -237,7 +237,6 @@ def plan_downloads(  # noqa: PLR0913 - one argument per thing a plan has to be t
     *,
     versions: VersionFilter = VersionFilter.NOT_RETRACTED,
     layout: PathBuilder = esmporium_layout,
-    latest_version_only: bool = True,
     skip_done: bool = True,
 ) -> tuple[DownloadPlanItem, ...]:
     """
@@ -257,18 +256,12 @@ def plan_downloads(  # noqa: PLR0913 - one argument per thing a plan has to be t
 
     versions
         Which of a dataset's versions count. Passed to
-        [find_datasets][esmporium.db.find_datasets].
+        [find_datasets][esmporium.db.find_datasets], which chooses one version per
+        dataset, and that version is the one planned.
 
     layout
         Where under `root` each file goes. See
         [PathBuilder][esmporium.downloads.PathBuilder].
-
-    latest_version_only
-        Whether to plan only the newest qualifying version of each dataset.
-
-        `True` by default, because "download this data" almost always means the
-        current version, and planning every version we have ever seen would quietly
-        multiply a download by its history. Pass `False` to get the lot.
 
     skip_done
         Whether to leave out files we already have.
@@ -289,13 +282,10 @@ def plan_downloads(  # noqa: PLR0913 - one argument per thing a plan has to be t
         `skip_done` is `False`, and left out entirely when it is `True`.
     """
     entries = find_datasets(session, query, versions=versions)
-    dataset_ids = [entry.id for entry in entries]
-    if not dataset_ids:
+    if not entries:
         return ()
 
-    version_rows = _versions_to_plan(
-        session, dataset_ids, latest_version_only=latest_version_only
-    )
+    version_rows = _versions_to_plan(session, [entry.id for entry in entries])
 
     items: list[DownloadPlanItem] = []
     for version, id_project_specific in version_rows:
@@ -342,7 +332,7 @@ def plan_downloads(  # noqa: PLR0913 - one argument per thing a plan has to be t
 
 
 def _versions_to_plan(
-    session: Session, dataset_ids: Sequence[int], *, latest_version_only: bool
+    session: Session, dataset_version_ids: Sequence[int]
 ) -> tuple[tuple[DatasetVersion, str], ...]:
     """
     Get the versions to plan downloads for, with their datasets' project-specific ids
@@ -352,38 +342,23 @@ def _versions_to_plan(
     session
         The session to read from
 
-    dataset_ids
-        The datasets whose versions to consider
-
-    latest_version_only
-        Whether to keep only the newest version of each dataset
+    dataset_version_ids
+        The versions to plan
 
     Returns
     -------
     :
-        Each version to plan, paired with its dataset's `id_project_specific`
+        Each version, paired with its dataset's `id_project_specific`, ordered by
+        dataset and then by version
     """
     rows = session.exec(
         select(DatasetVersion, Dataset.id_project_specific)
         .join(Dataset, col(DatasetVersion.dataset_id) == col(Dataset.id))
-        .where(col(DatasetVersion.dataset_id).in_(dataset_ids))
+        .where(col(DatasetVersion.id).in_(dataset_version_ids))
         .order_by(col(DatasetVersion.dataset_id), col(DatasetVersion.version))
     ).all()
 
-    if not latest_version_only:
-        return tuple((version, id_ps) for version, id_ps in rows)
-
-    # Keep the last row per dataset. The query is ordered by version, and ESGF
-    # versions are dates or integers, so the last one sorted as a string is the
-    # newest -- except for CMIP5 replicas, whose version strings can disagree across
-    # data nodes (a date on one, `1` on another). `is_latest` is not used instead
-    # because it is a snapshot of what ESGF said when we searched, and more than one
-    # version of a dataset can carry it.
-    newest: dict[int, tuple[DatasetVersion, str]] = {}
-    for version, id_ps in rows:
-        newest[version.dataset_id] = (version, id_ps)
-
-    return tuple(newest.values())
+    return tuple((version, id_ps) for version, id_ps in rows)
 
 
 def _already_done(
@@ -603,7 +578,6 @@ def download(  # noqa: PLR0913 - one argument per thing a download has to be tol
     selector: DataNodeSelector = DEFAULT_DATA_NODE_SELECTOR,
     versions: VersionFilter = VersionFilter.NOT_RETRACTED,
     layout: PathBuilder = esmporium_layout,
-    latest_version_only: bool = True,
     client: httpx.Client | None = None,
     observer: DataNodeCallObserver | None = None,
     progress: ProgressCallback | None = None,
@@ -651,9 +625,6 @@ def download(  # noqa: PLR0913 - one argument per thing a download has to be tol
     layout
         Where under `root` each file goes.
 
-    latest_version_only
-        Whether to download only the newest qualifying version of each dataset.
-
     client
         The HTTP client to fetch with. **The credentials seam**; see
         [fetch_to_path][esmporium.downloads.fetch_to_path]. If `None`, an anonymous
@@ -699,7 +670,6 @@ def download(  # noqa: PLR0913 - one argument per thing a download has to be tol
             root,
             versions=versions,
             layout=layout,
-            latest_version_only=latest_version_only,
         )
         queue_downloads(session, plan)
         session.commit()

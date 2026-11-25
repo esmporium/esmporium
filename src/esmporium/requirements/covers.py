@@ -91,9 +91,6 @@ the soft check is never looser than the hard one.
 # expected here" and "misaligned, which means something is wrong with the data".
 
 
-# TODO (PR R3 in docs/further-background/enrichment-storage.md):
-# once an entry is a version (`entry.id` is a `DatasetVersion` id),
-# these answer for that version and no `VersionFilter` is needed here.
 # TODO future:
 # What [Covers][(m).Covers] needs. Neither
 # [InMemoryCatalogue][esmporium.requirements.InMemoryCatalogue] nor
@@ -102,6 +99,10 @@ the soft check is never looser than the hard one.
 class CatalogueWithTimeInfo(Catalogue, Protocol):
     """
     A catalogue which can say when a dataset's data is and where it branched from
+
+    Both methods answer for the version the entry is, so neither takes a
+    [VersionFilter][esmporium.requirements.VersionFilter]: the version was chosen when
+    the entry was found.
 
     Both methods answer `None` for "nobody has recorded this", which `Covers` reports
     as [NeedsEnrichment][esmporium.requirements.NeedsEnrichment] rather than as a
@@ -120,7 +121,7 @@ class CatalogueWithTimeInfo(Catalogue, Protocol):
         Returns
         -------
         :
-            The half-open span of its describing version, whether its files fill that
+            The half-open span of the entry's version, whether its files fill that
             span, and how many there were -- or `None` if nothing has recorded it
 
             A version whose files leave a gap still has a span, so the two are
@@ -1862,7 +1863,8 @@ def _needs(
         f"known to be no -- {remedy}. Run the enricher over "
         "`result.enrichment_inputs` and solve again.",
         inputs=tuple(
-            EnrichmentInput(dataset_id=entry.id, missing=missing) for entry in entries
+            EnrichmentInput(dataset_version_id=entry.id, missing=missing)
+            for entry in entries
         ),
     )
 

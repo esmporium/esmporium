@@ -350,8 +350,10 @@ def test_ambiguous_grids_and_prefer(dataset):
     first, second = catalogue.entries
     assert explanation.message == (
         "2 candidates, differing in 'grid_label': "
-        f"#{first.id} ({first.id_project_specific!r}) with grid_label='gn', "
-        f"#{second.id} ({second.id_project_specific!r}) with grid_label='gr'. "
+        f"#{first.id} "
+        f"({first.id_project_specific!r}, v{first.version}) with grid_label='gn', "
+        f"#{second.id} "
+        f"({second.id_project_specific!r}, v{second.version}) with grid_label='gr'. "
         "Nothing was given to choose between them: set `prefer` on the "
         "requirement (e.g. `prefer={'grid_label': (...)}`), narrow the query, or "
         "use `cardinality=Cardinality.ALL` to keep them all."
@@ -417,8 +419,12 @@ def test_ambiguous_despite_prefer_says_what_was_preferred(dataset):
     first, second = catalogue.entries
     assert explanation.message == (
         "2 candidates, differing in 'institution': "
-        f"#{first.id} ({first.id_project_specific!r}) with institution='InstA', "
-        f"#{second.id} ({second.id_project_specific!r}) with institution='InstB'. "
+        f"#{first.id} "
+        f"({first.id_project_specific!r}, v{first.version}) "
+        "with institution='InstA', "
+        f"#{second.id} "
+        f"({second.id_project_specific!r}, v{second.version}) "
+        "with institution='InstB'. "
         "Preferring grid_label in the order 'gn' and 'gr' did not narrow this to "
         "one, since the candidates left over are equally preferred: add the facet "
         "they differ on to `prefer`, or narrow the query."
@@ -449,8 +455,9 @@ def test_candidates_which_agree_on_every_facet(dataset, reads_everything):
     first, second = catalogue.entries
     assert explanation.message == (
         "2 candidates which agree on every facet, so no facet can choose between "
-        f"them: #{first.id} ({first.id_project_specific!r}), "
-        f"#{second.id} ({second.id_project_specific!r}). They differ only in "
+        f"them: #{first.id} ({first.id_project_specific!r}, v{first.version}), "
+        f"#{second.id} "
+        f"({second.id_project_specific!r}, v{second.version}). They differ only in "
         "their project-specific ID, which cannot be used to break a tie."
         "This should not happen: datasets agreeing on every column are stored "
         "separately only when their project-specific IDs differ, so the facet which "
@@ -625,7 +632,8 @@ def test_the_label_names_the_roles_below_it(dataset):
         "\n"
         "[unsatisfied] model=ModelA, variant_label=r1i1p1f1\n"
         "  [unsatisfied] all_of(tas & rlut)\n"
-        f"    [satisfied] tas: #{entry.id} ({entry.id_project_specific!r})\n"
+        f"    [satisfied] tas: #{entry.id} "
+        f"({entry.id_project_specific!r}, v{entry.version})\n"
         "    [unsatisfied] all_of(rlut)\n"
         "      [unsatisfied] rlut: no dataset matches variable=rlut "
         "for model=ModelA, variant_label=r1i1p1f1"
@@ -1291,10 +1299,39 @@ def test_a_lineage_which_was_never_read_says_so(dataset):
 
     result = solve(traced(), catalogue)
 
-    assert list(result.unsatisfied) == [ONLY_GROUP]
+    assert not result.unsatisfied
+    group = result.couldnt_answer[ONLY_GROUP]
+    assert group.status is ExplanationStatusNotOk.NEEDS_FIND_PARENTS
+    assert result.find_parents_inputs == (1,)
     rendered = result.explain()
     assert "nothing has read a parent for" in rendered
     assert "esmporium.db.find_parents" in rendered
+
+
+def test_find_parents_starts_from_where_the_chain_stopped(dataset):
+    # The child's parent is recorded and the parent's is not, so the walk is to be
+    # picked up from the parent rather than from the start.
+    child = dataset(1, experiment="ssp585")
+    historical = dataset(2)
+    catalogue = InMemoryCatalogue(entries=(child, historical), parents={1: 2})
+
+    result = solve(traced(child=Query(variable="tas", experiment="ssp585")), catalogue)
+
+    assert result.couldnt_answer[ONLY_GROUP].status is (
+        ExplanationStatusNotOk.NEEDS_FIND_PARENTS
+    )
+    assert result.find_parents_inputs == (2,)
+
+
+def test_a_parent_release_the_filter_refuses_says_so(dataset):
+    child = dataset(1)
+    control = dataset(2, experiment="piControl", retracted=True)
+    catalogue = InMemoryCatalogue(entries=(child, control), parents={1: 2, 2: None})
+
+    result = solve(traced(), catalogue)
+
+    assert result.unsatisfied[ONLY_GROUP].status is ExplanationStatusNotOk.UNSATISFIED
+    assert "`version_chooser`" in result.explain()
 
 
 def test_a_root_before_the_target_says_the_chain_ended(dataset):
@@ -1329,7 +1366,9 @@ def test_max_hops_is_a_guard_rather_than_the_stopping_rule(dataset):
 
 def test_a_lineage_which_cannot_be_followed_is_unsatisfied_not_ambiguous(dataset):
     # A dataset has one parent, so there is nothing for `ambiguous` to be about.
-    result = solve(traced(), InMemoryCatalogue(entries=(dataset(1),)))
+    result = solve(
+        traced(), InMemoryCatalogue(entries=(dataset(1),), parents={1: None})
+    )
 
     assert not result.ambiguous
     assert result.unsatisfied[ONLY_GROUP].status is ExplanationStatusNotOk.UNSATISFIED

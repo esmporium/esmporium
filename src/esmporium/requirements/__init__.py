@@ -70,6 +70,7 @@ from esmporium.requirements.catalogue import (
     asked_facets,
     matches,
     matches_facets,
+    passes_version_filter,
     set_facets,
     to_stored_query,
 )
@@ -238,6 +239,7 @@ __all__ = [
     "leaf",
     "matches",
     "matches_facets",
+    "passes_version_filter",
     "requirement",
     "role_paths",
     "set_facets",

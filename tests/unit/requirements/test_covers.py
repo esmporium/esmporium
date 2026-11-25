@@ -512,7 +512,7 @@ def test_months_of_padding_against_a_yearly_axis_needs_a_finer_axis(worked_examp
 
     assert isinstance(outcome, NeedsEnrichment)
     assert outcome.inputs == (
-        EnrichmentInput(dataset_id=2, missing=MissingTimeFact.CALENDAR),
+        EnrichmentInput(dataset_version_id=2, missing=MissingTimeFact.CALENDAR),
     )
 
 
@@ -549,7 +549,7 @@ def test_an_unenriched_range_needs_enrichment(dataset, missing, expected):
 
     assert isinstance(outcome, NeedsEnrichment)
     assert outcome.inputs == tuple(
-        EnrichmentInput(dataset_id=entry_id, missing=MissingTimeFact.TIME_RANGE)
+        EnrichmentInput(dataset_version_id=entry_id, missing=MissingTimeFact.TIME_RANGE)
         for entry_id in expected
     )
 
@@ -568,7 +568,7 @@ def test_an_unrecorded_branch_point_needs_enrichment(dataset):
 
     assert isinstance(outcome, NeedsEnrichment)
     assert outcome.inputs == (
-        EnrichmentInput(dataset_id=1, missing=MissingTimeFact.BRANCH_POINT),
+        EnrichmentInput(dataset_version_id=1, missing=MissingTimeFact.BRANCH_POINT),
     )
 
 
@@ -939,7 +939,7 @@ def test_a_cmip6_child_without_where_it_branched_needs_enrichment(dataset):
 
     assert isinstance(outcome, NeedsEnrichment)
     assert outcome.inputs == (
-        EnrichmentInput(dataset_id=1, missing=MissingTimeFact.BRANCH_POINT),
+        EnrichmentInput(dataset_version_id=1, missing=MissingTimeFact.BRANCH_POINT),
     )
 
 
@@ -1250,8 +1250,8 @@ def test_a_group_which_needs_enrichment_is_not_unsatisfied(dataset):
     (group,) = result.couldnt_answer.values()
     assert group.status is ExplanationStatusNotOk.NEEDS_ENRICHMENT
     assert result.enrichment_inputs == (
-        EnrichmentInput(dataset_id=1, missing=MissingTimeFact.TIME_RANGE),
-        EnrichmentInput(dataset_id=2, missing=MissingTimeFact.TIME_RANGE),
+        EnrichmentInput(dataset_version_id=1, missing=MissingTimeFact.TIME_RANGE),
+        EnrichmentInput(dataset_version_id=2, missing=MissingTimeFact.TIME_RANGE),
     )
     assert ExplanationStatusNotOk.NEEDS_ENRICHMENT.value in result.explain()
 
@@ -1281,7 +1281,7 @@ def test_enrichment_inputs_are_what_the_enricher_takes_back(dataset):
         entries=before.entries,
         parents=before.parents,
         time_ranges={
-            each.dataset_id: enrichments[each.dataset_id]
+            each.dataset_version_id: enrichments[each.dataset_version_id]
             for each in first.enrichment_inputs
         },
         branch_points=before.branch_points,

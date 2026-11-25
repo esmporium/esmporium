@@ -311,15 +311,19 @@ Shipped checks:
 
 `Catalogue` is a protocol with `find`, `parent_of` and `linked`.
 `find` and `parent_of` each have two implementations: `InMemoryCatalogue`, written out
-by hand, and `esmporium.db.DatabaseCatalogue`, which answers from the `Dataset` rows a
-search saved and the parent links a parent walk recorded. The two have to agree, and a
+by hand, and `esmporium.db.DatabaseCatalogue`, which answers from the dataset versions a
+search saved and the parent links a parent walk recorded. An entry is one *version* of a
+dataset: `find` chooses it once, with the requirement's `versions` filter, and a parent
+is the version its link records. The two have to agree, and a
 test holds them to it; the in-memory one is how each new piece of this design gets
 written and is expected to stay. `linked` is still ahead of us, on both.
 
 `parent_of` answers with a reason as well as a parent, because "nobody has read a parent
 for this dataset yet" and "this dataset declares no parent" are different facts and only
 the second is settled. Reporting the first as an absence would send a reader looking for
-data which is very likely already published.
+data which is very likely already published, so a lineage which stops there puts its
+group in `couldnt_answer` as `NEEDS_FIND_PARENTS`, with the versions to hand
+`esmporium.db.find_parents` in `SolveResult.find_parents_inputs`.
 
 ## Flow and storage
 

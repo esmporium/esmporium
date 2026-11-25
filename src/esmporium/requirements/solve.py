@@ -127,6 +127,20 @@ class ExplanationStatusNotOk(str, Enum):
     again.
     """
 
+    NEEDS_FIND_PARENTS = "needs_find_parents"
+    """
+    A lineage could be followed, once somebody records the parent it stopped at
+
+    Not a failure. Either nothing has read a parent for a dataset version on the chain
+    ([ParentStatus.NOT_LOOKED_FOR][esmporium.requirements.ParentStatus.NOT_LOOKED_FOR]),
+    or the parent it names has not been matched to a dataset we hold
+    ([ParentStatus.UNRESOLVED][esmporium.requirements.ParentStatus.UNRESOLVED]).
+
+    The remedy is concrete: run [esmporium.db.find_parents][] over
+    [SolveResult.find_parents_inputs][(m).SolveResult.find_parents_inputs] and solve
+    again.
+    """
+
     MISSING_FEATURE_PLEASE_RAISE_ISSUE = "missing_feature_please_raise_issue"
     """
     The requirement is a fair thing to want and we have not built it
@@ -145,21 +159,25 @@ _STATUS_PRIORITY: dict[ExplanationStatusNotOk, int] = {
     ExplanationStatusNotOk.UNSATISFIED: 0,
     ExplanationStatusNotOk.AMBIGUOUS: 1,
     ExplanationStatusNotOk.MISSING_FEATURE_PLEASE_RAISE_ISSUE: 2,
-    ExplanationStatusNotOk.NEEDS_ENRICHMENT: 3,
+    ExplanationStatusNotOk.NEEDS_FIND_PARENTS: 3,
+    ExplanationStatusNotOk.NEEDS_ENRICHMENT: 4,
 }
 """
 Which status a group takes when its parts fail in different ways, lowest first
 
-One rule orders all four: **the status which wins is the one the others' remedies
+One rule orders all five: **the status which wins is the one the others' remedies
 would not clear.** A group missing a dataset cannot be satisfied however the ambiguity
 is settled, nor however much is enriched, so the missing dataset is the honest
-headline. By the same reasoning an ambiguity outranks the two "could not answer"
-statuses, and an unsupported requirement outranks enrichment -- fetching facts will
-not make a feature exist.
+headline. By the same reasoning an ambiguity outranks the three "could not answer"
+statuses, and an unsupported requirement outranks both of the others -- recording
+facts will not make a feature exist. Finding parents outranks enrichment because it
+comes first: until a parent is recorded, the facts it would need enriching cannot be
+named.
 """
 
 _COULDNT_ANSWER_STATUSES: tuple[ExplanationStatusNotOk, ...] = (
     ExplanationStatusNotOk.MISSING_FEATURE_PLEASE_RAISE_ISSUE,
+    ExplanationStatusNotOk.NEEDS_FIND_PARENTS,
     ExplanationStatusNotOk.NEEDS_ENRICHMENT,
 )
 """
@@ -468,6 +486,15 @@ class NodeResultNotOk:
     [SolveResult.enrichment_inputs][(m).SolveResult.enrichment_inputs].
     """
 
+    find_parents_inputs: tuple[int, ...] = ()
+    """
+    The dataset versions whose parents have to be recorded to judge this node
+
+    Empty for every status but [NEEDS_FIND_PARENTS][(m).ExplanationStatusNotOk], and
+    carried flat. See
+    [SolveResult.find_parents_inputs][(m).SolveResult.find_parents_inputs].
+    """
+
 
 NodeResult = NodeResultOk | NodeResultNotOk
 """The result of evaluating one node of the tree, within one group"""
@@ -576,6 +603,13 @@ class UnsolvedGroup:
     See [NodeResultNotOk.enrichment_inputs][(m).NodeResultNotOk.enrichment_inputs].
     """
 
+    find_parents_inputs: tuple[int, ...] = ()
+    """
+    The dataset versions whose parents have to be recorded to judge this group
+
+    See [NodeResultNotOk.find_parents_inputs][(m).NodeResultNotOk.find_parents_inputs].
+    """
+
 
 @dataclass(frozen=True)
 class SolveResult:
@@ -613,10 +647,11 @@ class SolveResult:
 
     The fourth bucket, and the one which is not a verdict. The other three say what
     became of a group; this one says we did not get that far, and
-    [UnsolvedGroup.status][(m).UnsolvedGroup.status] says which of the two reasons
+    [UnsolvedGroup.status][(m).UnsolvedGroup.status] says which of the three reasons
     applied -- the facts are not recorded yet
-    ([NEEDS_ENRICHMENT][(m).ExplanationStatusNotOk]), or the requirement is one we
-    have not built
+    ([NEEDS_ENRICHMENT][(m).ExplanationStatusNotOk]), a parent on a lineage is not
+    recorded yet ([NEEDS_FIND_PARENTS][(m).ExplanationStatusNotOk]), or the
+    requirement is one we have not built
     ([MISSING_FEATURE_PLEASE_RAISE_ISSUE][(m).ExplanationStatusNotOk]).
     """
 
@@ -649,6 +684,43 @@ class SolveResult:
         found: dict[EnrichmentInput, None] = {}
         for group in self.couldnt_answer.values():
             found.update(dict.fromkeys(group.enrichment_inputs))
+
+        return tuple(found)
+
+    @property
+    def find_parents_inputs(self) -> tuple[int, ...]:
+        """
+        Get the versions to hand `find_parents`, to follow the lineages we could not
+
+        Returns
+        -------
+        :
+            Dataset version ids, deduplicated, in group order
+
+            Each is the version a lineage stopped at, which is the one to start
+            [esmporium.db.find_parents][] from, and they are ids of
+            [DatasetVersion][esmporium.db.schema.DatasetVersion] rows because that is
+            what `find_parents` takes.
+
+        Examples
+        --------
+        `find_parents` also needs to be told where to stop, which is the experiment
+        the lineage's `until` names:
+
+        ```python
+        result = solve(requirement, catalogue)
+        if result.find_parents_inputs:
+            find_parents(
+                session,
+                result.find_parents_inputs,
+                until_experiment=("piControl",),
+            )
+            result = solve(requirement, catalogue)
+        ```
+        """
+        found: dict[int, None] = {}
+        for group in self.couldnt_answer.values():
+            found.update(dict.fromkeys(group.find_parents_inputs))
 
         return tuple(found)
 
@@ -796,10 +868,11 @@ def describe_query(query: QueryProtocol) -> str:
 
 
 def _describe_entry(entry: CatalogueEntry) -> str:
-    # Both ID and id_project_specific. The integer is the key to the
-    # row, for anyone going to look it up or link to it; the project-specific ID is the
-    # dataset in the project's own language, which is what a user can search for.
-    return f"#{entry.id} ({entry.id_project_specific!r})"
+    # The ID, id_project_specific and the version. The integer is the key to the
+    # version's row, for anyone going to look it up or link to it; the project-specific
+    # ID is the dataset in the project's own language, which is what a user can search
+    # for; and the version says which release of it this is.
+    return f"#{entry.id} ({entry.id_project_specific!r}, v{entry.version})"
 
 
 def _differing_facets(candidates: Sequence[CatalogueEntry]) -> tuple[str, ...]:
@@ -1105,7 +1178,7 @@ def _no_parent_message(
 
     One message per [ParentStatus][esmporium.requirements.ParentStatus], because what
     to do about each is different and a single message would have to be vague enough to
-    fit all five.
+    fit all six.
 
     Parameters
     ----------
@@ -1152,8 +1225,9 @@ def _no_parent_message(
     if status is ParentStatus.UNRESOLVED:
         return (
             f"{subject} names a parent which has not been matched to a dataset we "
-            f"hold, so the chain back to {target} stops here. Searching for that "
-            "parent may find it."
+            f"hold, so the chain back to {target} stops here. This is work waiting "
+            "to be done rather than missing data: run `esmporium.db.find_parents` "
+            "over this dataset, which searches for the parent, and solve again."
         )
 
     if status is ParentStatus.PARENT_NOT_FOUND:
@@ -1170,8 +1244,29 @@ def _no_parent_message(
             "it is not."
         )
 
+    if status is ParentStatus.NO_USABLE_VERSION:
+        return (
+            f"the release of {subject}'s parent which the parent link records is not "
+            "one the requirement's `versions` accepts, so the chain back to "
+            f"{target} stops here. Solve with different `versions`, or record a "
+            "different release by running `esmporium.db.find_parents` with a "
+            "`version_chooser`."
+        )
+
     msg = f"{status!r} is not a reason a parent was not found"
     raise ValueError(msg)
+
+
+_NOT_YET_PARENT_STATUSES: frozenset[ParentStatus] = frozenset(
+    {ParentStatus.NOT_LOOKED_FOR, ParentStatus.UNRESOLVED}
+)
+"""
+The parent lookups which mean "not recorded yet" rather than "no"
+
+Both are cleared by [esmporium.db.find_parents][], so a lineage which stops at one is
+reported as [NEEDS_FIND_PARENTS][(m).ExplanationStatusNotOk] rather than as
+unsatisfied.
+"""
 
 
 def _ancestor_lineage(
@@ -1200,9 +1295,10 @@ def _ancestor_lineage(
         One hop per parent, closest first, the last of which matched `until`.
         At least one long.
 
-        Or why the chain could not be followed, which is always `unsatisfied`: a
-        lineage either reaches what it was told to reach or it does not, and there is
-        nothing for `ambiguous` to be about -- a dataset has one parent.
+        Or why the chain could not be followed: `needs_find_parents` when a parent on
+        the way is not recorded yet, carrying the version the walk stopped at, and
+        `unsatisfied` otherwise. Never `ambiguous`: a lineage either reaches what it
+        was told to reach or it does not, and a dataset has one parent.
     """
     if matches(ancestors.until, entry):
         # A chain ends at a dataset matching `until`, so it cannot start at one.
@@ -1234,6 +1330,17 @@ def _ancestor_lineage(
             needs_facets=ctx.needs_facets,
         )
         if lookup.parent is None:
+            if lookup.status in _NOT_YET_PARENT_STATUSES:
+                return NodeResultNotOk(
+                    ExplanationStatusNotOk.NEEDS_FIND_PARENTS,
+                    Explanation(
+                        subject,
+                        ExplanationStatusNotOk.NEEDS_FIND_PARENTS,
+                        _no_parent_message(current, ancestors, lookup.status),
+                    ),
+                    find_parents_inputs=(current.id,),
+                )
+
             return NodeResultNotOk(
                 ExplanationStatusNotOk.UNSATISFIED,
                 Explanation(
@@ -1733,6 +1840,9 @@ def _eval_all_of(node: AllOf, ctx: _Context, role_prefix: str) -> NodeResult:
             enrichment_inputs=tuple(
                 each for failure in failures for each in failure.enrichment_inputs
             ),
+            find_parents_inputs=tuple(
+                each for failure in failures for each in failure.find_parents_inputs
+            ),
         )
 
     # Everything left is `NodeResultOk`,
@@ -2102,9 +2212,11 @@ def solve(requirement: Requirement, catalogue: Catalogue) -> SolveResult:
         ambiguous and couldn't-answer, each with an explanation
 
         A group in the fourth bucket is one we did not answer for rather than one we
-        answered "no" about, and
+        answered "no" about.
         [SolveResult.enrichment_inputs][(m).SolveResult.enrichment_inputs] is what
-        clears the ones which are only waiting on facts nobody has recorded.
+        clears the ones which are only waiting on facts nobody has recorded, and
+        [SolveResult.find_parents_inputs][(m).SolveResult.find_parents_inputs] the
+        ones waiting on a parent nobody has recorded.
 
     Raises
     ------
@@ -2176,6 +2288,7 @@ def solve(requirement: Requirement, catalogue: Catalogue) -> SolveResult:
                     subject, evaluated.status, parts=(evaluated.explanation,)
                 ),
                 enrichment_inputs=evaluated.enrichment_inputs,
+                find_parents_inputs=evaluated.find_parents_inputs,
             )
 
     return SolveResult(

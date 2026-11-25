@@ -42,6 +42,7 @@ from esmporium.downloads import (
 )
 from esmporium.downloads.errors import DataNodeTimeoutError, RouteMissingError
 from esmporium.query import QueryCMIP6
+from esmporium.requirements import VersionFilter
 
 ID_PS = "CMIP6.CMIP.MOHC.UKESM1-0-LL.historical.r1i1p1f2.Amon.tas.gn"
 
@@ -620,7 +621,7 @@ def test_given_up_files_are_not_counted_as_outstanding(engine, stored):
 
 def test_only_the_newest_version_is_planned_by_default(engine, stored, tmp_path):
     """
-    "Download this data" means the current version, not its whole history
+    "Download this data" means the version `find` chose, not the dataset's history
 
     Worth pinning deliberately: the live CMIP7 data this was developed against
     happens to publish exactly one version per dataset, so this path is not exercised
@@ -652,28 +653,28 @@ def test_only_the_newest_version_is_planned_by_default(engine, stored, tmp_path)
     assert plan[0].request.dest.parent.name == "v20261101"
 
 
-def test_every_version_can_be_planned_if_asked(engine, stored, tmp_path):
-    """`latest_version_only=False` gets the lot, for a caller who wants the history"""
+def test_a_retracted_newer_version_is_not_planned(engine, stored, tmp_path):
+    """The version filter decides which version is planned, as it does for `find`"""
     with Session(engine) as session:
         version = session.exec(select(DatasetVersion)).one()
         newer = DatasetVersion(
             dataset_id=version.dataset_id,
             version="20261101",
             is_latest=True,
-            retracted=False,
+            retracted=True,
         )
         session.add(newer)
         session.flush()
         session.add(File(dataset_version_id=newer.id, filename="tas_new.nc", size=300))
         session.commit()
 
-        plan = plan_downloads(session, QUERY, tmp_path, latest_version_only=False)
+        plan = plan_downloads(session, QUERY, tmp_path)
+        everything = plan_downloads(
+            session, QUERY, tmp_path, versions=VersionFilter.ANY
+        )
 
-    assert sorted(item.request.dest.parent.name for item in plan) == [
-        "v20200623",
-        "v20200623",
-        "v20261101",
-    ]
+    assert {item.request.dest.parent.name for item in plan} == {"v20200623"}
+    assert [item.request.dest.name for item in everything] == ["tas_new.nc"]
 
 
 def test_download_runs_the_whole_flow_offline(engine, stored, tmp_path):

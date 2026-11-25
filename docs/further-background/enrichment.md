@@ -542,7 +542,8 @@ is argued out here rather than assumed.
 `entry.id` is that `DatasetVersion`'s id** ([part three](enrichment-storage.md),
 decision 32, built in
 [PR R3](enrichment-storage.md#pr-r3-a-catalogue-entry-is-a-version)). `VersionFilter`
-is used by `find` and by `parent_of`, and nowhere after.
+is used by `find`, and by `parent_of` as a check on the parent version its link
+records, and nowhere after.
 
 > *Revised 2026-11-24.* This section was headed "Does `Dataset` grow the same
 > fields?" and answered that an entry stays one `Dataset` row with every lookup

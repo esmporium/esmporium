@@ -149,21 +149,21 @@ class MissingTimeFact(str, Enum):
 @dataclass(frozen=True)
 class EnrichmentInput:
     """
-    One dataset, and one fact about it which has to be recorded
+    One dataset version, and one fact about it which has to be recorded
 
     What [SolveResult.enrichment_inputs][esmporium.requirements.SolveResult] hands
     back, shaped to pass straight to the enricher rather than to be read and retyped.
-    Frozen and hashable so that the same dataset asked for by two groups deduplicates
+    Frozen and hashable so that the same version asked for by two groups deduplicates
     to one.
     """
 
-    dataset_id: int
+    dataset_version_id: int
     """
-    The dataset, as [CatalogueEntry.id][esmporium.requirements.CatalogueEntry.id]
+    The version, as [CatalogueEntry.id][esmporium.requirements.CatalogueEntry.id]
 
-    A `Dataset` row's id. Which *version* of it to enrich is the enricher's question,
-    answered the same way the rest of the solve answers it -- through the describing
-    version -- rather than something a constraint is in a position to say.
+    A [DatasetVersion][esmporium.db.schema.DatasetVersion] row's id: the version the
+    solve read, so the enricher records facts for exactly that version and has none to
+    choose.
     """
 
     missing: MissingTimeFact

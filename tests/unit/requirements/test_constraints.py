@@ -205,7 +205,7 @@ class NeedsTheYears(BaseModel):
                 f"nothing has recorded {listed}",
                 inputs=tuple(
                     EnrichmentInput(
-                        dataset_id=entry.id, missing=MissingTimeFact.TIME_RANGE
+                        dataset_version_id=entry.id, missing=MissingTimeFact.TIME_RANGE
                     )
                     for entry in unenriched
                 ),
@@ -693,7 +693,7 @@ def test_enrichment_inputs_are_deduplicated(dataset):
     assert len(group.enrichment_inputs) == 2
     # ...but what you hand the enricher names it once.
     assert result.enrichment_inputs == (
-        EnrichmentInput(dataset_id=1, missing=MissingTimeFact.TIME_RANGE),
+        EnrichmentInput(dataset_version_id=1, missing=MissingTimeFact.TIME_RANGE),
     )
 
 
@@ -715,7 +715,7 @@ def test_enrichment_inputs_come_out_in_a_stable_order(dataset):
     inputs = solve(over_two_models, catalogue).enrichment_inputs
 
     # ModelA's dataset first, because the groups are sorted and ModelA sorts first.
-    assert [each.dataset_id for each in inputs] == [2, 1]
+    assert [each.dataset_version_id for each in inputs] == [2, 1]
     assert solve(over_two_models, catalogue).enrichment_inputs == inputs
 
 
@@ -751,5 +751,5 @@ def test_a_definite_failure_outranks_something_we_could_not_answer(dataset):
     # Still worth enriching, even though this group has a worse problem than that.
     (unsolved,) = result.unsatisfied.values()
     assert unsolved.enrichment_inputs == (
-        EnrichmentInput(dataset_id=2, missing=MissingTimeFact.TIME_RANGE),
+        EnrichmentInput(dataset_version_id=2, missing=MissingTimeFact.TIME_RANGE),
     )

@@ -1760,6 +1760,9 @@ def requirement(  # noqa: PLR0913 - one argument per field of the requirement
     >>> def published(entry_id: int, variant_label: str) -> CatalogueEntry:
     ...     return CatalogueEntry(
     ...         id=entry_id,
+    ...         version="20190429",
+    ...         is_latest=True,
+    ...         retracted=False,
     ...         id_project_specific=f"CMIP6.CanESM5.historical.tas.{variant_label}",
     ...         project="CMIP6",
     ...         model="CanESM5",
