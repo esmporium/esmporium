@@ -9,7 +9,7 @@ beside itself and is a `Constraint[CatalogueWithTimeInfo]`. See
 
 Every position here is a position on a stated
 [TimeAxis][esmporium.datasets.TimeAxis] -- a whole number of steps on a natural axis,
-the published value on a dated one, never a fractional year -- and every range is
+or the published value on a dated one, -- and every range is
 half-open ([TimeRange][esmporium.datasets.TimeRange]). Two positions are combined or
 compared only after checking, at that line, that their axes allow it. Nothing here
 converts between axes: a branch point arrives already placed on the axes the two runs
@@ -75,7 +75,7 @@ the soft check is never looser than the hard one.
 """
 
 
-# A note for developers, recording a decision so that step 14 does not optimise it
+# TODO: recording a decision so that step 14 in PLAN.md does not optimise it
 # away. `Covers` and the `SameTimeRange` which is still to come (PLAN step 14, for the
 # siblings of step 18) look like one check with a flag, and they are not:
 #
@@ -233,11 +233,7 @@ class Covers(BaseModel):
     run has to span from the ZEC run back through 1pctCO2.
 
     **Nothing is defaulted.** `mode` and `pad` both have to be stated, every
-    time. That follows the rule
-    [Requirement.group_by][esmporium.requirements.Requirement.group_by] already sets
-    -- a decision is stated rather than guessed -- and it is forced anyway, because
-    containment cannot be written as a number: nobody knows a dataset's extent until
-    it has been recorded.
+    time.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")

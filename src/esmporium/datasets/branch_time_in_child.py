@@ -7,9 +7,8 @@ onto its parent's axis needs both. CMIP6 and CMIP7 publish both in the child's f
 header. CMIP5 publishes neither as such, only a bare `branch_time` with no units, and
 nothing at all on the child's clock.
 
-So where `branch_time_in_child` is not published, **we decide** what stands in for it,
-and the decision is recorded here per project rather than left implicit wherever a
-branch point is read. This is a registry: the public function takes the mapping as a
+So where `branch_time_in_child` is not published, **we decide** what stands in for it.
+This is a registry: the public function takes the mapping as a
 defaulted argument, and a caller can add a project, or override one of ours, without
 forking anything.
 
@@ -22,11 +21,6 @@ branch_time_in_child_convention(
     },
 )
 ```
-
-This lives in `esmporium.datasets` because
-[Covers][esmporium.requirements.Covers] applies it at solve time and the enricher
-applies it when it derives a branch point, and `esmporium.requirements` may import
-`esmporium.datasets` and not `esmporium.enrich`.
 """
 
 from __future__ import annotations
