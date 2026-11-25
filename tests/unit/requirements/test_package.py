@@ -167,6 +167,10 @@ for name in sys.modules:
         # requirement is built and when it is solved, and this package may not import
         # that one. Same reason as `datasets.calendars` above.
         "esmporium.datasets.no_time_axis",
+        # Where each project's `branch_time_in_child` comes from, which `Covers` needs
+        # at solve time and the enricher when it derives a branch point. Same reason as
+        # `datasets.no_time_axis` above.
+        "esmporium.datasets.branch_time_in_child",
         "esmporium.datasets.time",
         "esmporium.formatting",
         "esmporium.query",

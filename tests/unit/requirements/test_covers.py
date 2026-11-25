@@ -12,7 +12,15 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from esmporium.datasets import NegativeSpanError, Span, TimeAxis, TimeStep
+from esmporium.datasets import (
+    BranchPoint,
+    NegativeSpanError,
+    Position,
+    Span,
+    TimeAxis,
+    TimeStep,
+    TimeUnits,
+)
 from esmporium.query import Query
 from esmporium.requirements import (
     Ancestors,
@@ -82,7 +90,6 @@ def containment(**overrides) -> Covers:
     """Get a containment check on the control, with nothing else stated"""
     settings = {
         "role": "control",
-        "align": "branch",
         "mode": "containment",
         "pad": NO_PAD,
         **overrides,
@@ -95,7 +102,6 @@ def overlap(count: int, **overrides) -> Covers:
     """Get an overlap check on the control asking for `count` years from the branch"""
     settings = {
         "role": "control",
-        "align": "branch",
         "mode": "overlap",
         "min_overlap": Span(count, YEARS),
         "pad": NO_PAD,
@@ -124,15 +130,22 @@ def lineage_view(*members: CatalogueEntry, end_role: str = "control") -> Constra
     )
 
 
-def child_and_control(
-    dataset, *, child, control, branch=None, axis: TimeAxis = YEARLY_AXIS
+def child_and_control(  # noqa: PLR0913 - one argument per fact a test can leave out
+    dataset,
+    *,
+    child,
+    control,
+    branch=None,
+    axis: TimeAxis = YEARLY_AXIS,
+    child_axis: TimeAxis | None = None,
 ):
     """
     Get a child, its control and a catalogue holding them
 
-    `child` and `control` are recorded ranges and `branch` a branch point, or `None`
-    for "nothing recorded it" -- which is how a test says a fact is missing rather
-    than wrong.
+    `child` and `control` are recorded ranges and `branch` where the child branched
+    on the control's axis, or `None` for "nothing recorded it" -- which is how a test
+    says a fact is missing rather than wrong. The child branched at 0 on its own axis,
+    which is `axis` unless `child_axis` says otherwise.
     """
     child_entry = dataset(1)
     control_entry = dataset(2, experiment="piControl")
@@ -144,7 +157,9 @@ def child_and_control(
             for entry_id, each in ((1, child), (2, control))
             if each is not None
         },
-        branch_times_in_parent={} if branch is None else {1: branched_at(branch, axis)},
+        branch_points={}
+        if branch is None
+        else {1: branched_at(branch, axis, child_axis=child_axis)},
     )
 
     return child_entry, control_entry, catalogue
@@ -226,6 +241,26 @@ def test_overlap_mode_also_needs_the_covered_run_to_be_long_enough(dataset):
     outcome = overlap(100).evaluate(lineage_view(child, control), catalogue)
 
     assert isinstance(outcome, Fail)
+    # The message names the run which fell short, and not the one which did not.
+    assert outcome.message == (
+        "tas: #1's data runs to 150 on #2's axis, short of the 100 years of overlap "
+        "wanted from 100, which runs to 200, in years"
+    )
+
+
+def test_when_both_runs_fall_short_both_are_named(dataset):
+    child, control, catalogue = child_and_control(
+        dataset,
+        child=recorded_range(0, 50, YEARLY_AXIS),
+        control=recorded_range(0, 150, YEARLY_AXIS),
+        branch=100,
+    )
+
+    outcome = overlap(100).evaluate(lineage_view(child, control), catalogue)
+
+    assert isinstance(outcome, Fail)
+    assert "#2 covers [0, 150) and needs [100, 200)" in outcome.message
+    assert "#1's data runs to 150 on #2's axis" in outcome.message
 
 
 def test_containment_is_the_covered_runs_own_extent(worked_example):
@@ -245,7 +280,7 @@ def test_containment_is_the_covered_runs_own_extent(worked_example):
                     1: recorded_range(0, 150, YEARLY_AXIS),
                     2: recorded_range(0, 250, YEARLY_AXIS),
                 },
-                branch_times_in_parent=catalogue.branch_times_in_parent,
+                branch_points=catalogue.branch_points,
             ),
         )
         == Pass()
@@ -256,12 +291,11 @@ def test_containment_refuses_a_min_overlap_and_overlap_requires_one():
     # Two halves of one rule: the mode says which question is being asked, so the
     # thresholds which belong to the other one are a mistake rather than ignored.
     with pytest.raises(ValidationError, match="needs `min_overlap`"):
-        Covers(role="control", align="branch", mode="overlap", pad=NO_PAD)
+        Covers(role="control", mode="overlap", pad=NO_PAD)
 
     with pytest.raises(ValidationError, match="takes no `min_overlap`"):
         Covers(
             role="control",
-            align="branch",
             mode="containment",
             pad=NO_PAD,
             min_overlap=Span(1, YEARS),
@@ -275,13 +309,11 @@ def test_nothing_is_defaulted():
         Covers(role="control")
 
     missing = {error["loc"][0] for error in caught.value.errors()}
-    assert missing == {"align", "mode", "pad"}
-    assert Covers(
-        role="control", align="branch", mode="containment", pad=NO_PAD
-    ).target == ("self")
+    assert missing == {"mode", "pad"}
+    assert Covers(role="control", mode="containment", pad=NO_PAD).target == ("self")
 
 
-# ------------------------------------------------------------------- the two aligns
+# ------------------------------------------------------------- naming the two runs
 
 
 def test_covers_needs_a_lineage():
@@ -291,55 +323,6 @@ def test_covers_needs_a_lineage():
     )
 
     assert outcome == Fail("Covers needs a lineage, but none was resolved")
-
-
-def test_covers_calendar(dataset):
-    child, control, catalogue = child_and_control(
-        dataset,
-        child=recorded_range(1850, 2015, YEARLY_AXIS),
-        control=recorded_range(1850, 1880, YEARLY_AXIS),
-    )
-
-    outcome = Covers(
-        role="control", align="calendar", mode="containment", pad=NO_PAD
-    ).evaluate(lineage_view(child, control), catalogue)
-
-    assert isinstance(outcome, Fail)
-    assert "covers [1850, 1880) and needs [1850, 2015)" in outcome.message
-
-
-def test_calendar_alignment_never_asks_for_a_branch_point(dataset):
-    # Which is why it works against a catalogue with no branch point recorded at all,
-    # and is the distinction a future `SameTimeRange` must not optimise away.
-    child, control, catalogue = child_and_control(
-        dataset,
-        child=recorded_range(1850, 1900, YEARLY_AXIS),
-        control=recorded_range(1850, 2000, YEARLY_AXIS),
-        branch=None,
-    )
-
-    outcome = Covers(
-        role="control", align="calendar", mode="containment", pad=NO_PAD
-    ).evaluate(lineage_view(child, control), catalogue)
-
-    assert outcome == Pass()
-
-
-def test_calendar_alignment_refuses_axes_which_do_not_line_up(dataset):
-    # Settled decision 11: with no branch point to resolve it, a misaligned axis is a
-    # question we can answer and the answer is no.
-    child, control, catalogue = child_and_control(
-        dataset,
-        child=recorded_range(22189, 24000, MONTHLY_AXIS),
-        control=recorded_range(1850, 2000, YEARLY_AXIS),
-    )
-
-    outcome = Covers(
-        role="control", align="calendar", mode="containment", pad=NO_PAD
-    ).evaluate(lineage_view(child, control), catalogue)
-
-    assert isinstance(outcome, Fail)
-    assert "not on comparable axes" in outcome.message
 
 
 def test_covers_branch_needs_ancestor(dataset):
@@ -354,7 +337,6 @@ def test_covers_branch_needs_ancestor(dataset):
         Covers(
             role="self",
             target="control",
-            align="branch",
             mode="containment",
             pad=NO_PAD,
         ).evaluate(lineage_view(child, control), catalogue)
@@ -373,21 +355,36 @@ def test_end_and_the_lineage_role_name_mean_the_same_thing(dataset):
         dataset,
         child=recorded_range(0, 10, YEARLY_AXIS),
         control=recorded_range(0, 5, YEARLY_AXIS),
+        branch=0,
     )
     view = lineage_view(child, control)
 
-    by_end = Covers(
-        role="end", align="calendar", mode="containment", pad=NO_PAD
-    ).evaluate(view, catalogue)
-    by_name = Covers(
-        role="control", align="calendar", mode="containment", pad=NO_PAD
-    ).evaluate(view, catalogue)
+    by_end = containment(role="end").evaluate(view, catalogue)
+    by_name = containment(role="control").evaluate(view, catalogue)
 
     assert isinstance(by_end, Fail)
     assert by_end == by_name
 
 
 # --------------------------------------------------------------- the soft thresholds
+
+
+def test_an_ideal_overlap_the_covered_run_cannot_supply_says_so(dataset):
+    child, control, catalogue = child_and_control(
+        dataset,
+        child=recorded_range(0, 120, YEARLY_AXIS),
+        control=recorded_range(0, 1000, YEARLY_AXIS),
+        branch=100,
+    )
+    check = overlap(100, ideal_min_overlap=Span(150, YEARS))
+
+    outcome = check.evaluate(lineage_view(child, control), catalogue)
+
+    assert isinstance(outcome, Degraded)
+    assert outcome.message == (
+        "tas: #1's data runs to 220 on #2's axis, short of the 150 years of overlap "
+        "ideally wanted from 100, which runs to 250, in years"
+    )
 
 
 def test_ideal_padding_not_met_is_degraded(dataset):
@@ -453,7 +450,7 @@ def test_no_required_padding_only_checks_the_ideal(worked_example):
 def test_a_check_which_requires_nothing_is_refused():
     # `pad=None` with no ideal would pass whatever the data, which is not a check.
     with pytest.raises(ValidationError, match="requires nothing at all"):
-        Covers(role="control", align="branch", mode="containment", pad=None)
+        Covers(role="control", mode="containment", pad=None)
 
 
 def test_degraded_is_kept_as_a_note(dataset):
@@ -598,6 +595,7 @@ def test_a_child_and_parent_at_different_frequencies_is_not_supported_yet(datase
         child=recorded_range(0, 1800, MONTHLY_AXIS),
         control=recorded_range(0, 250, YEARLY_AXIS),
         branch=100,
+        child_axis=MONTHLY_AXIS,
     )
 
     outcome = containment().evaluate(lineage_view(child, control), catalogue)
@@ -762,6 +760,302 @@ def test_an_unsupported_unit_does_not_stop_the_other_groups(dataset):
     assert result.enrichment_inputs == ()
 
 
+# ------------------------------------------- where the child branched, on its axis
+
+
+def branched_pair(dataset, *, child, control, point, child_project="CMIP6"):
+    """
+    Get a child, its control and a catalogue, with the branch point given whole
+
+    For the tests which need to say something about the branch point that
+    `branched_at` does not, or a child from another project.
+    """
+    child_entry = dataset(1, project=child_project)
+    control_entry = dataset(2, experiment="piControl")
+    catalogue = InMemoryCatalogueWithTimeInfo(
+        entries=(child_entry, control_entry),
+        parents={1: 2, 2: None},
+        time_ranges={1: child, 2: control},
+        branch_points={1: point},
+    )
+
+    return child_entry, control_entry, catalogue
+
+
+def test_the_child_is_mapped_through_where_it_branched(dataset):
+    """
+    Not through where its data starts: those are different instants here
+
+    The child holds [0, 150) but branched 10 years in, so its end is 140 years after
+    the branch, and lands at 100 + 140 = 240 on the control's axis.
+    """
+    child, control, catalogue = child_and_control(
+        dataset,
+        child=recorded_range(0, 150, YEARLY_AXIS),
+        control=recorded_range(0, 200, YEARLY_AXIS),
+        branch=None,
+    )
+    catalogue = InMemoryCatalogueWithTimeInfo(
+        entries=catalogue.entries,
+        parents=catalogue.parents,
+        time_ranges=catalogue.time_ranges,
+        branch_points={1: branched_at(100, YEARLY_AXIS, in_child=10)},
+    )
+
+    outcome = containment().evaluate(lineage_view(child, control), catalogue)
+
+    assert isinstance(outcome, Fail)
+    assert "needs [100, 240)" in outcome.message
+
+
+def test_a_missing_leading_file_fails_rather_than_shifting_everything(dataset):
+    """
+    The child branched at 0 and its data starts at 10, so its first files are missing
+
+    Mapping through its first data step instead would quietly move every position
+    above it by ten years, which is the worst way for a stitch to go wrong.
+    """
+    child, control, catalogue = child_and_control(
+        dataset,
+        child=recorded_range(10, 160, YEARLY_AXIS),
+        control=recorded_range(0, 1000, YEARLY_AXIS),
+        branch=100,
+    )
+
+    outcome = containment().evaluate(lineage_view(child, control), catalogue)
+
+    assert isinstance(outcome, Fail)
+    assert "#1 branched at 0 on its own axis" in outcome.message
+    assert "outside the [10, 160) it holds" in outcome.message
+
+
+def test_a_cmip5_child_is_assumed_to_start_at_its_branch_and_says_so(dataset):
+    # CMIP5 publishes no `branch_time_in_child`, so the first time bound, 10, stands
+    # in: the end, 160, is 150 years after it, and lands at 250.
+    child, control, catalogue = branched_pair(
+        dataset,
+        child=recorded_range(10, 160, YEARLY_AXIS),
+        control=recorded_range(0, 250, YEARLY_AXIS),
+        point=BranchPoint(in_parent=Position(100, YEARLY_AXIS)),
+        child_project="CMIP5",
+    )
+
+    outcome = containment().evaluate(lineage_view(child, control), catalogue)
+
+    # A pass which rests on an assumption is still a pass, and names it.
+    assert isinstance(outcome, Pass)
+    assert "assumed to be #1's first time bound, 10 in years" in outcome.message
+    assert "a fix which states `branch_time_in_child`" in outcome.message
+
+
+def test_a_failure_which_rests_on_the_assumption_names_it_too(dataset):
+    child, control, catalogue = branched_pair(
+        dataset,
+        child=recorded_range(10, 160, YEARLY_AXIS),
+        control=recorded_range(0, 200, YEARLY_AXIS),
+        point=BranchPoint(in_parent=Position(100, YEARLY_AXIS)),
+        child_project="CMIP5",
+    )
+
+    outcome = containment().evaluate(lineage_view(child, control), catalogue)
+
+    assert isinstance(outcome, Fail)
+    assert "needs [100, 250)" in outcome.message
+    assert "assumed to be #1's first time bound" in outcome.message
+
+
+def test_the_assumption_reaches_the_solutions_notes(dataset):
+    _, _, catalogue = branched_pair(
+        dataset,
+        child=recorded_range(10, 160, YEARLY_AXIS),
+        control=recorded_range(0, 250, YEARLY_AXIS),
+        point=BranchPoint(in_parent=Position(100, YEARLY_AXIS)),
+        child_project="CMIP5",
+    )
+    contained = requirement(
+        name="tcr",
+        tree=leaf(Query(variable="tas", experiment="abrupt-4xCO2"), "tas")
+        .with_lineage(TO_CONTROL)
+        .with_constraints(containment()),
+        group_by=GROUP_BY,
+    )
+
+    (solution,) = solve(contained, catalogue).satisfied.values()
+
+    assert len(solution.notes) == 1
+    assert "assumed to be #1's first time bound" in solution.notes[0]
+
+
+def test_a_fix_which_states_where_a_cmip5_child_branched_replaces_the_assumption(
+    dataset,
+):
+    # With `in_child` given there is nothing to assume, so nothing is said, and the
+    # given value is what the mapping uses: 160 is 160 years after 0, so 260.
+    child, control, catalogue = branched_pair(
+        dataset,
+        child=recorded_range(10, 160, YEARLY_AXIS),
+        control=recorded_range(0, 260, YEARLY_AXIS),
+        point=BranchPoint(
+            in_parent=Position(100, YEARLY_AXIS), in_child=Position(0, YEARLY_AXIS)
+        ),
+        child_project="CMIP5",
+    )
+
+    outcome = containment().evaluate(lineage_view(child, control), catalogue)
+
+    # The fix says the run branched at 0 and its data starts at 10, so its leading
+    # files are missing, which the assumption would have hidden.
+    assert isinstance(outcome, Fail)
+    assert "#1 branched at 0 on its own axis" in outcome.message
+    assert "assumed" not in outcome.message
+
+
+def test_a_fix_which_agrees_with_the_assumption_passes_without_a_note(dataset):
+    child, control, catalogue = branched_pair(
+        dataset,
+        child=recorded_range(0, 150, YEARLY_AXIS),
+        control=recorded_range(0, 250, YEARLY_AXIS),
+        point=BranchPoint(
+            in_parent=Position(100, YEARLY_AXIS), in_child=Position(0, YEARLY_AXIS)
+        ),
+        child_project="CMIP5",
+    )
+
+    assert containment().evaluate(lineage_view(child, control), catalogue) == Pass()
+
+
+def test_a_cmip6_child_without_where_it_branched_needs_enrichment(dataset):
+    """
+    CMIP6 publishes it, so a branch point without it has not been recorded yet
+    """
+    child, control, catalogue = branched_pair(
+        dataset,
+        child=recorded_range(0, 150, YEARLY_AXIS),
+        control=recorded_range(0, 250, YEARLY_AXIS),
+        point=BranchPoint(in_parent=Position(100, YEARLY_AXIS)),
+    )
+
+    outcome = containment().evaluate(lineage_view(child, control), catalogue)
+
+    assert isinstance(outcome, NeedsEnrichment)
+    assert outcome.inputs == (
+        EnrichmentInput(dataset_id=1, missing=MissingTimeFact.BRANCH_POINT),
+    )
+
+
+def test_a_child_from_a_project_we_know_nothing_about_is_not_supported(dataset):
+    child, control, catalogue = branched_pair(
+        dataset,
+        child=recorded_range(0, 150, YEARLY_AXIS),
+        control=recorded_range(0, 250, YEARLY_AXIS),
+        point=BranchPoint(in_parent=Position(100, YEARLY_AXIS)),
+        child_project="MIP1",
+    )
+
+    outcome = containment().evaluate(lineage_view(child, control), catalogue)
+
+    assert isinstance(outcome, MissingFeature)
+    assert "BRANCH_TIME_IN_CHILD_BY_PROJECT" in outcome.message
+
+
+def test_the_child_end_of_a_branch_point_off_the_childs_axis_fails(dataset):
+    # The same disagreement as the parent end's, at the other end.
+    child, control, catalogue = child_and_control(
+        dataset,
+        child=recorded_range(0, 150, YEARLY_AXIS),
+        control=recorded_range(0, 250, YEARLY_AXIS),
+        branch=100,
+        child_axis=MONTHLY_AXIS,
+    )
+
+    outcome = containment().evaluate(lineage_view(child, control), catalogue)
+
+    assert isinstance(outcome, Fail)
+    assert "the child end of #1's branch point" in outcome.message
+    assert "have to be the same axis" in outcome.message
+
+
+NOLEAP_SINCE_1850 = TimeAxis(TimeUnits(TimeStep.DAYS, "1850-01-01"), "noleap")
+"""A child's axis, as a CMIP6 header gives it"""
+
+NOLEAP_SINCE_0001 = TimeAxis(TimeUnits(TimeStep.DAYS, "0001-01-01"), "noleap")
+"""Its control's: the same calendar, counted from a different date"""
+
+
+def test_a_child_and_parent_counted_from_different_dates_line_up(dataset):
+    """
+    The epochs cancel, because what crosses from one axis to the other is a length
+
+    The child's end is 60225 days after it branched, so it lands 60225 days after
+    the control's 182500, at 242725.
+    """
+    pytest.importorskip("cftime", reason="the optional `calendars` extra")
+    point = BranchPoint(
+        in_parent=Position(182500, NOLEAP_SINCE_0001),
+        in_child=Position(0, NOLEAP_SINCE_1850),
+    )
+    child, control, enough = branched_pair(
+        dataset,
+        child=recorded_range(0, 60225, NOLEAP_SINCE_1850),
+        control=recorded_range(0, 300_000, NOLEAP_SINCE_0001),
+        point=point,
+    )
+    _, _, short = branched_pair(
+        dataset,
+        child=recorded_range(0, 60225, NOLEAP_SINCE_1850),
+        control=recorded_range(0, 200_000, NOLEAP_SINCE_0001),
+        point=point,
+    )
+    view = lineage_view(child, control)
+
+    assert containment().evaluate(view, enough) == Pass()
+    outcome = containment().evaluate(view, short)
+    assert isinstance(outcome, Fail)
+    assert "needs [182500, 242725), in days since 0001-01-01" in outcome.message
+
+
+def test_a_child_and_parent_in_different_calendars_is_not_supported_yet(dataset):
+    in_360_days = TimeAxis(TimeUnits(TimeStep.DAYS, "0001-01-01"), "360_day")
+    child, control, catalogue = branched_pair(
+        dataset,
+        child=recorded_range(0, 60225, NOLEAP_SINCE_1850),
+        control=recorded_range(0, 300_000, in_360_days),
+        point=BranchPoint(
+            in_parent=Position(180_000, in_360_days),
+            in_child=Position(0, NOLEAP_SINCE_1850),
+        ),
+    )
+
+    outcome = containment().evaluate(lineage_view(child, control), catalogue)
+
+    assert isinstance(outcome, MissingFeature)
+    assert "is in calendar 'noleap' and #2 in '360_day'" in outcome.message
+
+
+def test_a_natural_child_and_a_dated_parent_is_not_supported_yet(dataset):
+    """
+    Both count months, one as a plain ordinal and one from a date
+
+    The message says that, rather than that one of them has no calendar.
+    """
+    dated_months = TimeAxis(TimeUnits(TimeStep.MONTHS, "1850-01-01"), "noleap")
+    child, control, catalogue = branched_pair(
+        dataset,
+        child=recorded_range(0, 1200, MONTHLY_AXIS),
+        control=recorded_range(0, 12_000, dated_months),
+        point=BranchPoint(
+            in_parent=Position(1200, dated_months),
+            in_child=Position(0, MONTHLY_AXIS),
+        ),
+    )
+
+    outcome = containment().evaluate(lineage_view(child, control), catalogue)
+
+    assert isinstance(outcome, MissingFeature)
+    assert "#1 counts months as a plain ordinal" in outcome.message
+    assert "calendar None" not in outcome.message
+
+
 # ------------------------------------------------------------------- along a chain
 
 
@@ -796,7 +1090,7 @@ def branch_chain_catalogue(dataset, control_end: int):
         },
         # The ZEC run branches 70 years into 1pctCO2, which branches 100 years into
         # piControl
-        branch_times_in_parent={
+        branch_points={
             1: branched_at(70, YEARLY_AXIS),
             2: branched_at(100, YEARLY_AXIS),
         },
@@ -837,6 +1131,96 @@ def test_a_hop_of_the_chain_can_be_asked_about_on_its_own(dataset):
 
     assert list(result.unsatisfied) == [ONLY_GROUP]
     assert "needs [70, 170)" in result.explain()
+
+
+def scenario_chain(dataset, scenario_branch: int):
+    """
+    Get a scenario, the historical run it branched from, their control, and what a
+    check on all three sees
+
+    In years: historical holds [0, 165) and branched 100 years into the control; the
+    scenario holds [0, 86) and branched `scenario_branch` years into historical.
+    """
+    scenario = dataset(1, experiment="ssp585")
+    historical = dataset(2, experiment="historical")
+    control = dataset(3, experiment="piControl")
+    catalogue = InMemoryCatalogueWithTimeInfo(
+        entries=(scenario, historical, control),
+        parents={1: 2, 2: 3, 3: None},
+        time_ranges={
+            1: recorded_range(0, 86, YEARLY_AXIS),
+            2: recorded_range(0, 165, YEARLY_AXIS),
+            3: recorded_range(0, 1000, YEARLY_AXIS),
+        },
+        branch_points={
+            1: branched_at(scenario_branch, YEARLY_AXIS),
+            2: branched_at(100, YEARLY_AXIS),
+        },
+    )
+
+    return lineage_view(scenario, historical, control), catalogue
+
+
+def test_a_run_which_branches_where_its_parent_stops_joins_up(dataset):
+    """
+    ssp585 branches off historical on the first instant after historical's data
+
+    165 is historical's `end_exclusive`, which it does not *hold* -- but its data
+    runs right up to it, which is all a parent has to do at a join.
+    """
+    view, catalogue = scenario_chain(dataset, 165)
+
+    assert containment().evaluate(view, catalogue) == Pass()
+
+
+def test_a_run_which_branches_after_its_parent_stops_breaks_the_series(dataset):
+    # One year past historical's end is a year nobody has data for.
+    view, catalogue = scenario_chain(dataset, 166)
+
+    outcome = containment().evaluate(view, catalogue)
+
+    assert isinstance(outcome, Fail)
+    assert "#1 branched from #2 at 166, outside #2's data" in outcome.message
+
+
+def test_a_broken_series_fails_before_an_unsupported_calendar_is_reported(dataset):
+    """
+    `Fail` outranks `MissingFeature`, as it does when the outcomes are combined
+
+    The scenario's data starts after it branched, which no feature would fix, and
+    historical and the control are in different calendars, which one would.
+    """
+    in_360_days = TimeAxis(TimeUnits(TimeStep.DAYS, "0001-01-01"), "360_day")
+    noleap_since_2015 = TimeAxis(TimeUnits(TimeStep.DAYS, "2015-01-01"), "noleap")
+    scenario = dataset(1, experiment="ssp585")
+    historical = dataset(2, experiment="historical")
+    control = dataset(3, experiment="piControl")
+    catalogue = InMemoryCatalogueWithTimeInfo(
+        entries=(scenario, historical, control),
+        parents={1: 2, 2: 3, 3: None},
+        time_ranges={
+            1: recorded_range(3650, 31390, noleap_since_2015),
+            2: recorded_range(0, 60225, NOLEAP_SINCE_1850),
+            3: recorded_range(0, 300_000, in_360_days),
+        },
+        branch_points={
+            1: BranchPoint(
+                in_parent=Position(60225, NOLEAP_SINCE_1850),
+                in_child=Position(0, noleap_since_2015),
+            ),
+            2: BranchPoint(
+                in_parent=Position(180_000, in_360_days),
+                in_child=Position(0, NOLEAP_SINCE_1850),
+            ),
+        },
+    )
+
+    outcome = containment().evaluate(
+        lineage_view(scenario, historical, control), catalogue
+    )
+
+    assert isinstance(outcome, Fail)
+    assert "#1 branched at 0 on its own axis" in outcome.message
 
 
 # ------------------------------------------------------ what the solve hands back
@@ -900,7 +1284,7 @@ def test_enrichment_inputs_are_what_the_enricher_takes_back(dataset):
             each.dataset_id: enrichments[each.dataset_id]
             for each in first.enrichment_inputs
         },
-        branch_times_in_parent=before.branch_times_in_parent,
+        branch_points=before.branch_points,
     )
 
     second = solve(unenriched, enriched)
@@ -920,11 +1304,11 @@ def test_branch_points_can_still_be_corrected_by_wrapping_the_catalogue(dataset)
     """
 
     class Corrected(InMemoryCatalogueWithTimeInfo):
-        def get_branch_time_in_parent(self, entry: CatalogueEntry):
+        def get_branch_point(self, entry: CatalogueEntry):
             if entry.id == 1:
                 return branched_at(0, YEARLY_AXIS)
 
-            return super().get_branch_time_in_parent(entry)
+            return super().get_branch_point(entry)
 
     child, control, recorded = child_and_control(
         dataset,
@@ -936,7 +1320,7 @@ def test_branch_points_can_still_be_corrected_by_wrapping_the_catalogue(dataset)
         entries=recorded.entries,
         parents=recorded.parents,
         time_ranges=recorded.time_ranges,
-        branch_times_in_parent=recorded.branch_times_in_parent,
+        branch_points=recorded.branch_points,
     )
     view = lineage_view(child, control)
 
@@ -960,7 +1344,6 @@ def test_a_covers_survives_being_stored_and_read_back():
     assert check.model_dump(mode="json") == {
         "role": "control",
         "target": "self",
-        "align": "branch",
         "mode": "overlap",
         "min_overlap": {"count": 100, "step": "years"},
         "pad": [{"count": 10, "step": "years"}, {"count": 10, "step": "years"}],
@@ -1003,6 +1386,4 @@ def test_the_mode_errors_message_survives_pydantic():
     assert issubclass(CoversModeError, ValueError)
 
     with pytest.raises(ValidationError, match="needs `min_overlap`"):
-        Covers.model_validate(
-            {"role": "control", "align": "branch", "mode": "overlap", "pad": None}
-        )
+        Covers.model_validate({"role": "control", "mode": "overlap", "pad": None})

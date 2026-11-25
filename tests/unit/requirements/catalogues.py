@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 
 from esmporium.datasets import (
     BranchPoint,
+    Position,
     TimeAxis,
     TimeRange,
     TimeStep,
@@ -69,24 +70,45 @@ def recorded_range(
     )
 
 
-def branched_at(position: int, axis: TimeAxis = MONTHLY_AXIS) -> BranchPoint:
+def branched_at(
+    position: int,
+    axis: TimeAxis = MONTHLY_AXIS,
+    *,
+    in_child: int | None = 0,
+    child_axis: TimeAxis | None = None,
+) -> BranchPoint:
     """
-    Get a branch point on a parent's axis
+    Get a branch point, on the parent's axis and the child's
 
     Parameters
     ----------
     position
-        Where the child's data starts, as a position on the parent's axis
+        Where the child branched, as a position on the parent's axis
 
     axis
         The parent's axis
+
+    in_child
+        Where the child branched, as a position on its own axis
+
+        `0` by default, because the child's data in most tests starts at 0, and
+        `None` for a branch point which does not say, as a CMIP5 one does not.
+
+    child_axis
+        The child's axis, or `None` for the same as `axis`
 
     Returns
     -------
     :
         The branch point
     """
-    return BranchPoint(in_parent=position, parent_axis=axis)
+    if in_child is None:
+        return BranchPoint(in_parent=Position(position, axis))
+
+    return BranchPoint(
+        in_parent=Position(position, axis),
+        in_child=Position(in_child, axis if child_axis is None else child_axis),
+    )
 
 
 @dataclass(frozen=True)
@@ -106,13 +128,13 @@ class InMemoryCatalogueWithTimeInfo(InMemoryCatalogue):
     time_ranges: Mapping[int, VersionTimeRange] = field(default_factory=dict)
     """Entry ID -> what its files were combined to add up to"""
 
-    branch_times_in_parent: Mapping[int, BranchPoint] = field(default_factory=dict)
-    """Entry ID -> where it branched from its parent, on the parent's axis"""
+    branch_points: Mapping[int, BranchPoint] = field(default_factory=dict)
+    """Entry ID -> where it branched from its parent, on both runs' axes"""
 
     def get_time_range(self, entry: CatalogueEntry) -> VersionTimeRange | None:
         """Get the span of a dataset's data, or `None` if nothing recorded it"""
         return self.time_ranges.get(entry.id)
 
-    def get_branch_time_in_parent(self, entry: CatalogueEntry) -> BranchPoint | None:
+    def get_branch_point(self, entry: CatalogueEntry) -> BranchPoint | None:
         """Get where a dataset branched, or `None` if nothing recorded it"""
-        return self.branch_times_in_parent.get(entry.id)
+        return self.branch_points.get(entry.id)
