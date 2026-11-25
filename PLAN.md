@@ -110,9 +110,9 @@ interpreted.
 | 11 | `Ancestors` lineage in requirements | 2 | 10 | done · [#67](https://github.com/esmporium/esmporium/pull/67) |
 | **12a** | The `Constraint` protocol, nothing shipped | 3 | 11 | done · [#69](https://github.com/esmporium/esmporium/pull/69) |
 | **12b** | `Covers`: the constraint itself | 3 | 12c PR D | shipped, unfinished · [#69](https://github.com/esmporium/esmporium/pull/69), [#72](https://github.com/esmporium/esmporium/pull/72), [#73](https://github.com/esmporium/esmporium/pull/73) |
-| **12c** | Enrichment: the time information ESGF does not publish | 3 | 12a | **in progress** · R1 next |
+| **12c** | Enrichment: the time information ESGF does not publish | 3 | 12a | **in progress** · R3 next |
 | 13 | `any_of`, `optional` | 3 | — | ready |
-| 14 | `scope` and `SameTimeRange` | 3 | 12c PR R2 | blocked by R2 |
+| 14 | `scope` and `SameTimeRange` | 3 | 12c PR R2 | ready |
 | 15 | `Aux` | 3 | — | ready |
 | 16 | Rework `prefer` | 3 | 15 | blocked by 15 |
 | 17 | Data loading | 4 | — | needs a design pass first |
@@ -144,11 +144,11 @@ the constraint at once.
 | [#72](https://github.com/esmporium/esmporium/pull/72) | **PR B** — the new `Covers` (explicit `mode`, no fractional years, `fx` refused out loud), `couldnt_answer`, `enrichment_inputs` | 12c, 12b | done |
 | [#73](https://github.com/esmporium/esmporium/pull/73) | **PR B2** — coverage along a chain | 12c, 12b | done |
 | [#74](https://github.com/esmporium/esmporium/pull/74) | the design notes [part two](docs/further-background/enrichment-sources.md) and [part three](docs/further-background/enrichment-storage.md) | 12c | done |
-| this one | `PLAN.md` and part one brought back in step with parts two and three | 12c | in progress |
-| **R1** | the values carry their units and only say what was published: `extent` returns a `Span`, axes checked inline, `BranchPoint` stops flooring floats, no default calendar, no guessing in the stamp reader, `measure` renamed. Also edits `changelog/71.feature.md`, whose `measure_version` cross-reference CI resolves | 12c, 12b | **next** |
-| **R2** | `Covers` checks units where it computes, maps through `branch_time_in_child`, and loses `align` | 12c, 12b, 14 | after R1 |
-| **R3** | a catalogue entry is a version; an unresolved parent reports "not yet" | 12c, 11, 16 | before C3 |
-| **C1** | readers: the range-backed byte source, the classic variable-list walk, `h5netcdf` for netCDF-4, the time-bounds read | 12c, 10 | after R1-R3 |
+| [#76](https://github.com/esmporium/esmporium/pull/76) | `PLAN.md` and part one brought back in step with parts two and three | 12c | done |
+| [#77](https://github.com/esmporium/esmporium/pull/77) | **PR R1** — the values carry their units and only say what was published: `extent` returns a `Span`, two axes are comparable only on the same units and calendar, `BranchPoint` keeps published floats and gains a child axis, no default calendar, `PublishedRange` holds the stamps as published, `measure_version` renamed `combine_file_ranges` | 12c, 12b | done |
+| [#78](https://github.com/esmporium/esmporium/pull/78) | **PR R2** — `Covers` maps a child onto its parent through both ends of the branch point, checks axes where it computes, and loses `align`. `Position` (a number with its axis), `BranchPoint` built from two, the per-project `branch_time_in_child` registry, every join checked on both sides | 12c, 12b, 14 | done |
+| **R3** | a catalogue entry is a version; an unresolved parent reports "not yet" | 12c, 11, 16 | **next** |
+| **C1** | readers: the range-backed byte source, the classic variable-list walk, `h5netcdf` for netCDF-4, the time-bounds read | 12c, 10 | after R3 |
 | **C2** | the `parse_*` functions, pure, one per source, plus the consistency comparison | 12c | after C1 |
 | **C3** | storage: the five tables, the `DatasetVersionParentInfo` rename, one alembic revision | 12c | after R3 |
 | **C4** | `enrich_datasets`, serial: plan, retrieve, parse, record, back-fill, fixes | 12c | after C1-C3 |
@@ -211,10 +211,11 @@ and `Ancestors` in requirements all work -- and the watched searches and the nig
 downloads off them run in `CMIP-Output-Tracking`, which is steps 5 and 9.
 
 **Phase 3 is the requirement language, and step 12c is the work in hand.** Its three
-design notes and its pure half are built; three corrective PRs (R1 to R3) come next,
-then the readers, the parsers, the storage, the enrich step, and the integration tests
-that finish 12b. Steps 13, 15 and 18 are ready whenever we want them; 14 and 16 are
-waiting on R2 and on 15. **Phase 4 has not started**, and step 17 (data loading)
+design notes and its pure half are built, and two of its three corrective PRs have
+landed: R1 gave the values their units, and R2 made `Covers` map through both ends of a
+branch point. R3 comes next, then the readers, the parsers, the storage, the enrich
+step, and the integration tests that finish 12b. Steps 13, 14, 15 and 18 are ready
+whenever we want them; 16 is waiting on 15. **Phase 4 has not started**, and step 17 (data loading)
 wants a design pass of its own before it is picked up.
 
 ## Before the two plans merged
@@ -1006,7 +1007,7 @@ What landed differently from the sketch above, and why:
   landed. What landed instead is the pattern described in `constraints.py`'s module
   docstring: a constraint needing more than `Catalogue` provides declares a protocol
   beside itself, so `Covers` is a `Constraint[CatalogueWithTimeInfo]` with
-  `get_time_range` and `get_branch_time_in_parent` on it. That is the better shape --
+  `get_time_range` and `get_branch_point` on it. That is the better shape --
   one generic `metadata(key)` would have been stringly-typed and uncheckable -- but
   see step 12c, which moves it again.
 - **The `undetermined` status did not land either**, and nor did
@@ -1030,8 +1031,10 @@ What landed differently from the sketch above, and why:
 ## 12b. `Covers`
 
 SHIPPED, UNFINISHED: the constraint landed across #69, #72 and #73. What is left is
-not constraint code but the data under it: **12c's PR D** is what finishes this step,
-and 12c's R1 and R2 pass through `covers.py` on the way.
+not constraint code but the data under it: **12c's PR D** is what finishes this step.
+12c's R1 ([#77](https://github.com/esmporium/esmporium/pull/77)) and R2
+([#78](https://github.com/esmporium/esmporium/pull/78)) have already passed through
+`covers.py`.
 
 *Was R7.*
 
@@ -1054,10 +1057,10 @@ with [#69](https://github.com/esmporium/esmporium/pull/69), was rewritten by
 against a 35-line test-only catalogue answering from two hand-written dicts, so this
 step is finished not by writing a constraint but by
 [step 12c](#12c-enrichment-the-time-information-esgf-does-not-publish)'s **PR D**,
-which runs it against `DatabaseCatalogue`. Two of 12c's corrective PRs land here
-first: **R1** gives the value types their units, and **R2** checks those units at every
+which runs it against `DatabaseCatalogue`. Two of 12c's corrective PRs have landed
+here: **R1** gave the value types their units, and **R2** checks those units at every
 computation, maps through `branch_time_in_child` rather than the child's own start, and
-removes `align`.
+removed `align`.
 
 The questions this section used to leave open -- which convention per project, what a
 version whose files disagree or have gaps spans, and which calendar the numbers are in
@@ -1201,6 +1204,37 @@ work, and where we are up to.
   included. Fixed pools, configurable; adaptation only if a measurement asks for it,
   which is step 8's lesson applied again.
 
+### What R1 and R2 leave for the rest of the ladder
+
+What the later rungs build on, as it now is in code:
+
+- **Every time number is read off a stated axis.** `TimeRange` holds two numbers on
+  one axis; `Position` holds one number and its axis; `BranchPoint` is two `Position`s,
+  `in_parent` on the parent's axis and `in_child` on the child's, or `None` where it was
+  not published. Two numbers are compared only when their axes are comparable: the same
+  units, epoch included, and on a dated axis the same known calendar.
+- **`Covers` expects each end of a branch point on its own run's recorded range axis**,
+  and fails loudly otherwise. That is what C4's derived branch point provides, and
+  what D's `DatabaseCatalogue` has to hand back, built from the `in_parent_*` and
+  `in_child_*` columns.
+- **A child is mapped through both ends.** A point in the child's data lands on the
+  parent's axis the same distance after the branch as it is on the child's, so the
+  two may count from different dates. A different step, a natural axis against a
+  dated one, or a different calendar is `MISSING_FEATURE_PLEASE_RAISE_ISSUE`.
+- **What stands in for an unpublished `branch_time_in_child` is per project**, in
+  `BRANCH_TIME_IN_CHILD_BY_PROJECT` in `esmporium.datasets`, so C4's enricher reads the
+  same rule. CMIP5 is assumed to start at its first time bound, and every answer built
+  on that names it, a pass included (as a solution note); a fix which states
+  `in_child` replaces it. CMIP6 and CMIP7 publish it, so one missing is
+  `NEEDS_ENRICHMENT`.
+- **Every join along a chain is checked on both sides.** A child has to hold data at
+  the step it branched at (`TimeRange.holds`, half-open), which is what catches a
+  missing leading file; a parent in between has to run up to the branch
+  (`TimeRange.runs_up_to`, `end_exclusive` included), so a scenario branching on the
+  first instant after `historical`'s data joins up.
+- **Every stored `requirement_hash` changed again with R2**, because `Covers` lost a
+  field. Clear or re-stem any tracked search before its next run.
+
 ### The PR ladder
 
 ```text
@@ -1216,8 +1250,8 @@ full under its own name in part three ("PR R1", "PR C1", and so on). A rung is *
 a step of this plan: a step is a goal, a rung is a unit of work, and the whole reason
 this step grew fifteen of them is that the goal is one and the work is not.
 
-Ordering, stated once: R1 before R2, because `Covers` uses R1's types. R3 is
-independent of both and has to land before C3, which is keyed on entries being
+Ordering, stated once: R1 before R2, because `Covers` uses R1's types; both have
+landed. R3 is independent of both and has to land before C3, which is keyed on entries being
 versions. C1 before C2 before C4; C3 can land beside C1 or C2. D needs C4. **P comes
 after D**, so that it changes how retrievals are run rather than what they return. **E
 is independent** and can land any time after R3.
@@ -1235,7 +1269,7 @@ comments written before 2026-11-16 still assume them:
 - **`cftime` at solve time** became **at enrich time**, with the derived positions
   stored, so nothing is converted while solving;
 - **`Covers` for a direct parent only, with the chain as its own PR** — the chain
-  landed in B2, and `Covers` loses `align` in R2 rather than keeping two alignment
+  landed in B2, and `Covers` lost `align` in R2 rather than keeping two alignment
   modes;
 - **an entry is a `Dataset` row whose describing version is resolved per lookup**
   became **an entry is a version, chosen once**.
@@ -1278,15 +1312,15 @@ better the other way when we get there.*
   searches, with roles prefixed.
 
 **`SameTimeRange` inherits calendar alignment from step 12c.** By its decision 33,
-`Covers` is only ever about branch alignment and loses its `align` argument in PR R2,
-so comparing two datasets on a shared calendar is this step's job and nobody else's.
-The developer note in `covers.py` that draws the distinction -- a misaligned axis is
-normal for ancestry and resolved by the branch point, while for a sibling pair it is a
-loud `Fail` because something is wrong with the data -- is kept and re-pointed by R2 so
-this step still finds it. The value types, the half-open convention and the calendar
-arithmetic are all in place by then, so what is left here is the comparison and the
-three outcomes (identical passes, overlapping degrades naming the overlap, disjoint
-fails).
+`Covers` is only ever about branch alignment, and has had no `align` argument since PR
+R2 ([#78](https://github.com/esmporium/esmporium/pull/78)), so comparing two datasets
+on a shared calendar is this step's job and nobody else's. The developer note in
+`covers.py` that draws the distinction -- a misaligned axis is normal for ancestry and
+resolved by the branch point, while for a sibling pair it is a loud `Fail` because
+something is wrong with the data -- points at this step. The value types, `Position`,
+the half-open convention (`TimeRange.holds`, `TimeRange.contains`) and the calendar
+arithmetic are all in place, so what is left here is the comparison and the three
+outcomes (identical passes, overlapping degrades naming the overlap, disjoint fails).
 
 The third attachment level lands, completing the design note's table of where a check goes and
 what its failure costs. Worth restating that there is deliberately no "one experiment" node:
