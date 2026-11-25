@@ -34,14 +34,14 @@ reported in full rather than cut off part way through.
 """
 
 
-class HeaderParser(Protocol):
+class HeaderReader(Protocol):
     """
     Something which reads a file's header out of a byte source
 
     One per [HeaderLayout][esmporium.headers.HeaderLayout], collected in
-    [PARSERS_BY_LAYOUT][(m).PARSERS_BY_LAYOUT].
+    [READERS_BY_LAYOUT][(m).READERS_BY_LAYOUT].
 
-    Takes a source and nothing else -- no URL, no route, no client. A parser cannot
+    Takes a source and nothing else -- no URL, no route, no client. A reader cannot
     tell where its bytes come from, which is what makes every one of them testable
     from bytes in hand, and what keeps "this node is broken" and "these bytes are
     wrong" from being decided in the same place.
@@ -78,12 +78,12 @@ class HeaderParser(Protocol):
         """
 
 
-PARSERS_BY_LAYOUT: Mapping[HeaderLayout, HeaderParser] = {
+READERS_BY_LAYOUT: Mapping[HeaderLayout, HeaderReader] = {
     HeaderLayout.NETCDF3: read_netcdf3_file_header,
     HeaderLayout.NETCDF4_HDF5: read_hdf5_file_header,
 }
 """
-Which [HeaderParser][(m).HeaderParser] reads each layout
+Which [HeaderReader][(m).HeaderReader] reads each layout
 
 Exhaustive by construction: [sniff_layout][(m).sniff_layout] can only return a layout
 that is a key here, because recognising a layout and reading it are the same list.
@@ -151,7 +151,7 @@ def read_file_header(
     Read everything a file's header says, whatever layout it is in
 
     The entry point to this package's reading half: sniff the layout, then hand the
-    source to the parser for it. One read gives every global attribute and every
+    source to the reader for it. One read gives every global attribute and every
     variable's attributes, because they sit together at the start of the file, so
     whatever is wanted from a header later does not need another read.
 
@@ -189,7 +189,7 @@ def read_file_header(
     UnsupportedHeaderFormatError
         The bytes are not a layout this package reads, or they are netCDF-4 and the
         optional `headers` extra is not installed (a
-        [HeaderParserUnavailableError][esmporium.headers.HeaderParserUnavailableError],
+        [HeaderReaderUnavailableError][esmporium.headers.HeaderReaderUnavailableError],
         which is one of these).
 
     esmporium.headers.TruncatedHeaderError
@@ -221,9 +221,9 @@ def read_file_header(
     (<HeaderLayout.NETCDF3: 'netcdf3'>, {'parent_experiment_id': 'piControl'})
     """
     start = source.read(0, min(MAGIC_BYTES_NEEDED, source.size))
-    parser = PARSERS_BY_LAYOUT[sniff_layout(start)]
+    reader = READERS_BY_LAYOUT[sniff_layout(start)]
 
-    return parser(source, time_variable=time_variable if time_bounds else None)
+    return reader(source, time_variable=time_variable if time_bounds else None)
 
 
 def read_global_attributes(source: ByteSource) -> Mapping[str, object]:

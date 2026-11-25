@@ -801,7 +801,7 @@ src/esmporium/headers/
     netcdf3.py         grows a variable-list walk and record offsets, and
     hdf5.py            reads netCDF-4 through h5netcdf rather than bare h5py,
     fetching.py        over one byte source that is HTTP ranges or a local file,
-    parsing.py         so that read_variable_attributes(source, "time", ...) and
+    reading.py         so that read_variable_attributes(source, "time", ...) and
                        read_first_and_last_time_bounds(source) exist at all
                        (decision 21 and part two; PR C1, where the reads live)
 ```

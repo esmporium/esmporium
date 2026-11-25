@@ -8,7 +8,7 @@ import pytest
 from tests.conftest import CMIP6_FILE_SIZE
 
 from esmporium.headers import (
-    PARSERS_BY_LAYOUT,
+    READERS_BY_LAYOUT,
     HeaderLayout,
     HeldBytesSource,
     MissingVariableAttributesError,
@@ -62,14 +62,14 @@ def test_the_refusal_reports_the_bytes_it_saw():
     assert caught.value.magic == b"GRIB\x00\x00\x00\x02"
 
 
-def test_every_recognisable_layout_has_a_parser():
+def test_every_recognisable_layout_has_a_reader():
     """
     Recognising a layout and being able to read it are the same list
 
     If these ever came apart, `read_file_header` would raise `KeyError` for a layout
     it had just successfully identified.
     """
-    assert set(PARSERS_BY_LAYOUT) == set(HeaderLayout)
+    assert set(READERS_BY_LAYOUT) == set(HeaderLayout)
 
 
 def test_a_real_cmip5_file_is_dispatched_to_the_classic_reader(recorded_source):

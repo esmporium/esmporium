@@ -19,8 +19,8 @@ from esmporium.headers.contents import (
 )
 from esmporium.headers.errors import (
     HeaderParseError,
-    HeaderParserUnavailableError,
     HeaderReadError,
+    HeaderReaderUnavailableError,
     UnreadableHeaderError,
 )
 
@@ -345,7 +345,7 @@ def read_hdf5_file_header(
 
     Raises
     ------
-    HeaderParserUnavailableError
+    HeaderReaderUnavailableError
         `h5netcdf` is not installed, so netCDF-4 files cannot be read at all.
 
     TruncatedHeaderError
@@ -359,7 +359,7 @@ def read_hdf5_file_header(
     try:
         import h5netcdf  # noqa: PLC0415 - the optional `headers` extra, imported on use
     except ImportError as error:
-        raise HeaderParserUnavailableError(HDF5_MAGIC) from error
+        raise HeaderReaderUnavailableError(HDF5_MAGIC) from error
 
     try:
         with h5netcdf.File(_SourceFile(source), "r") as handle:

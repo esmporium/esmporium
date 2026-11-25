@@ -262,7 +262,7 @@ class UnsupportedHeaderFormatError(HeaderParseError):
         )
 
 
-class HeaderParserUnavailableError(UnsupportedHeaderFormatError):
+class HeaderReaderUnavailableError(UnsupportedHeaderFormatError):
     """
     The bytes are netCDF-4/HDF5 and the optional `headers` extra is not installed
 

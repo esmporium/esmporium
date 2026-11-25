@@ -11,7 +11,7 @@ from tests.conftest import CMIP6_FILE_SIZE
 
 from esmporium.headers import (
     HeaderLayout,
-    HeaderParserUnavailableError,
+    HeaderReaderUnavailableError,
     HeldBytesSource,
     TruncatedHeaderError,
     UnreadableHeaderError,
@@ -158,7 +158,7 @@ def test_a_missing_extra_says_how_to_install_it(monkeypatch, cmip6_netcdf4_prefi
 
     monkeypatch.setattr(builtins, "__import__", refuse_h5netcdf)
 
-    with pytest.raises(HeaderParserUnavailableError) as caught:
+    with pytest.raises(HeaderReaderUnavailableError) as caught:
         read_hdf5_file_header(
             HeldBytesSource(cmip6_netcdf4_prefix, size=CMIP6_FILE_SIZE)
         )

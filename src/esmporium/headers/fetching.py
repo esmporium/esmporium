@@ -32,7 +32,7 @@ from esmporium.headers.errors import (
     UnreadableHeaderError,
 )
 from esmporium.headers.health import HeaderReadCall
-from esmporium.headers.parsing import read_file_header
+from esmporium.headers.reading import read_file_header
 from esmporium.headers.retry import build_header_retrying
 from esmporium.headers.sources import (
     DEFAULT_BLOCK_BYTES,
