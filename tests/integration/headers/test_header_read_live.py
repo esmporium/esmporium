@@ -12,12 +12,13 @@ import pytest
 from esmporium.datasets import AccessService, ContainerFormat, HeaderReadOutcome
 from esmporium.downloads import Route, prepare_routes
 from esmporium.headers import (
+    DEFAULT_BLOCK_BYTES,
     HeaderLayout,
+    HeaderReadCall,
     HeaderReadError,
     HeaderRequest,
     read_header,
     read_headers,
-    sniff_layout,
 )
 
 pytestmark = pytest.mark.reads_file_headers
@@ -131,7 +132,12 @@ def requests_for(project: str, **facets: str) -> list[HeaderRequest]:
     return found
 
 
-def first_header(requests: list[HeaderRequest]):
+def first_header(
+    requests: list[HeaderRequest],
+    *,
+    time_bounds: bool = False,
+    calls: list[HeaderReadCall] | None = None,
+):
     """
     Read the first header any of these files will give us
 
@@ -139,6 +145,12 @@ def first_header(requests: list[HeaderRequest]):
     ----------
     requests
         The files to try
+
+    time_bounds
+        Whether to read the first and last time values too
+
+    calls
+        Where to collect every call made, if anywhere
 
     Returns
     -------
@@ -151,10 +163,14 @@ def first_header(requests: list[HeaderRequest]):
     if not requests:
         pytest.skip("the index returned no files with a fetchable route")
 
-    results = read_headers(requests[:4])
+    results = read_headers(
+        requests[:4],
+        time_bounds=time_bounds,
+        observer=None if calls is None else calls.append,
+    )
     for result in results:
         if result.header is not None:
-            return result.header
+            return result.request, result.header
 
     pytest.skip(
         "no data node served a header for any of "
@@ -172,23 +188,23 @@ def test_a_live_cmip5_header_really_reads():
     is no parent model, era or activity in a CMIP5 header, which is why
     `read_cmip5_parent_header` has to infer two of them.
     """
-    header = first_header(
+    _, header = first_header(
         requests_for(
             "CMIP5", experiment="abrupt4xCO2", variable="tas", time_frequency="mon"
         )
     )
 
-    assert sniff_layout(header.bytes_read.prefix) == HeaderLayout.NETCDF3
-    assert header.attributes["project_id"] == "CMIP5"
-    assert "parent_experiment_id" in header.attributes
+    assert header.layout == HeaderLayout.NETCDF3
+    assert header.global_attributes["project_id"] == "CMIP5"
+    assert "parent_experiment_id" in header.global_attributes
     # The spelling that differs from CMIP6's, which is the reason for a reader per
     # project rather than per format.
-    assert "parent_experiment_rip" in header.attributes
-    assert "branch_time" in header.attributes
+    assert "parent_experiment_rip" in header.global_attributes
+    assert "branch_time" in header.global_attributes
     # And the ones CMIP5 does not have.
-    assert "parent_source_id" not in header.attributes
-    assert "parent_mip_era" not in header.attributes
-    assert "parent_time_units" not in header.attributes
+    assert "parent_source_id" not in header.global_attributes
+    assert "parent_mip_era" not in header.global_attributes
+    assert "parent_time_units" not in header.global_attributes
 
 
 def test_a_live_cmip6_header_really_reads():
@@ -197,7 +213,7 @@ def test_a_live_cmip6_header_really_reads():
 
     CMIP6 publishes the parent completely, which is the contrast with CMIP5 above.
     """
-    header = first_header(
+    _, header = first_header(
         requests_for(
             "CMIP6",
             experiment_id="abrupt-4xCO2",
@@ -206,8 +222,8 @@ def test_a_live_cmip6_header_really_reads():
         )
     )
 
-    assert sniff_layout(header.bytes_read.prefix) == HeaderLayout.NETCDF4_HDF5
-    assert header.attributes["mip_era"] == "CMIP6"
+    assert header.layout == HeaderLayout.NETCDF4_HDF5
+    assert header.global_attributes["mip_era"] == "CMIP6"
     for name in (
         "parent_experiment_id",
         "parent_source_id",
@@ -218,10 +234,10 @@ def test_a_live_cmip6_header_really_reads():
         "branch_time_in_parent",
         "branch_time_in_child",
     ):
-        assert name in header.attributes, name
+        assert name in header.global_attributes, name
 
     # Nothing numpy-shaped escapes the reader.
-    assert {type(value) for value in header.attributes.values()} <= {
+    assert {type(value) for value in header.global_attributes.values()} <= {
         str,
         int,
         float,
@@ -237,18 +253,16 @@ def test_a_header_costs_a_fraction_of_the_file():
     hundreds of megabytes. If this ever stopped being true -- a node ignoring every
     range request, say -- reading a header would be no cheaper than downloading.
     """
-    header = first_header(
+    _, header = first_header(
         requests_for(
             "CMIP5", experiment="abrupt4xCO2", variable="tas", time_frequency="mon"
         )
     )
 
-    read = len(header.bytes_read.prefix)
-    whole = header.bytes_read.file_size
-
-    assert whole is not None, "the data node reported no file size"
-    assert read <= 64 * 1024
-    assert read < whole / 10
+    assert header.n_requests == 1
+    assert header.bytes_read <= DEFAULT_BLOCK_BYTES
+    assert header.bytes_read < header.file_size / 10
+    assert "calendar" in header.variable_attributes["time"]
 
 
 def test_the_data_nodes_still_honour_a_range_request():
@@ -256,34 +270,94 @@ def test_the_data_nodes_still_honour_a_range_request():
     Sampled at 47 out of 47 on 2026-11-04, and worth knowing if it changes
 
     A node answering `200` with the whole body still gives us a usable header -- we
-    read our prefix and abandon the connection -- so this is not a correctness test.
-    It is a cost test: such a node makes us open a connection it is about to pour a
-    multi-gigabyte file down.
+    read our first block and abandon the connection -- but nothing further into the
+    file, so its time values cannot be read. And it makes us open a connection it is
+    about to pour a multi-gigabyte file down.
     """
-    header = first_header(
+    calls: list[HeaderReadCall] = []
+    _, header = first_header(
         requests_for(
             "CMIP6",
             experiment_id="abrupt-4xCO2",
             variable_id="tas",
             frequency="mon",
-        )
+        ),
+        calls=calls,
     )
 
-    assert header.bytes_read.range_honoured, (
+    assert header.route is not None
+    served = [call for call in calls if call.url == header.route.url]
+    assert all(call.range_honoured for call in served), (
         f"{header.route.data_node} answered our range request with the whole file; "
-        "the header still read, but see HeaderReadCallRecord.range_honoured"
+        "see HeaderReadCallRecord.range_honoured"
     )
+
+
+def months_between_stamps(filename: str) -> int:
+    """
+    How many months a monthly file's `YYYYMM-YYYYMM` stamps span, both included
+
+    Parameters
+    ----------
+    filename
+        The file's name
+
+    Returns
+    -------
+    :
+        The number of months, the same in every calendar
+    """
+    first, last = filename.removesuffix(".nc").rsplit("_", 1)[-1].split("-")
+
+    return (
+        (int(last[:-2]) - int(first[:-2])) * 12 + int(last[-2:]) - int(first[-2:]) + 1
+    )
+
+
+@pytest.mark.parametrize(
+    ("project", "facets"),
+    [
+        pytest.param(
+            "CMIP5",
+            {"experiment": "abrupt4xCO2", "variable": "tas", "time_frequency": "mon"},
+            id="cmip5-classic",
+        ),
+        pytest.param(
+            "CMIP6",
+            {"experiment_id": "abrupt-4xCO2", "variable_id": "tas", "frequency": "mon"},
+            id="cmip6-netcdf4",
+        ),
+    ],
+)
+def test_first_and_last_time_bounds_agree_with_the_filename(project, facets):
+    """
+    A monthly file has one time step per month its filename stamps span
+
+    Months are the same in every calendar, so this checks the bounds against the
+    filename without converting anything.
+    """
+    request, header = first_header(requests_for(project, **facets), time_bounds=True)
+
+    bounds = header.time_bounds
+    assert bounds is not None
+    assert bounds.first_bounds is not None
+    assert bounds.last_bounds is not None
+    assert request.filename is not None
+    assert bounds.n_steps == months_between_stamps(request.filename)
+    assert bounds.first_bounds[0] < bounds.first_bounds[1] <= bounds.last_bounds[0]
+    assert bounds.last_bounds[0] < bounds.last_bounds[1]
 
 
 def test_a_url_that_is_not_there_is_reported_as_missing():
     """
     A real 404 from a real node, classified by its status code
     """
-    header = first_header(
+    _, header = first_header(
         requests_for(
             "CMIP5", experiment="abrupt4xCO2", variable="tas", time_frequency="mon"
         )
     )
+    assert header.route is not None
     missing = Route(
         url=f"{header.route.url}.does-not-exist",
         data_node=header.route.data_node,

@@ -129,3 +129,57 @@ def collect_calls() -> tuple[HeaderReadCallObserver, list[HeaderReadCall]]:
     calls: list[HeaderReadCall] = []
 
     return calls.append, calls
+
+
+def serving(
+    held: bytes | dict[int, bytes], *, size: int, asked: list[str] | None = None
+) -> Callable[[httpx.Request], httpx.Response]:
+    """
+    Get a handler which answers range requests the way a well-behaved data node does
+
+    Parameters
+    ----------
+    held
+        The file's bytes: its start, or pieces keyed by offset, as a recording holds
+        them
+
+        Bytes between pieces are served as zeros. A recording holds every byte the
+        readers looked at, and they look at the same bytes whatever block size
+        fetched them, so the zeros are never read.
+
+    size
+        How long the whole file is, reported in `Content-Range`
+
+    asked
+        Where to note each `Range` header asked for
+
+    Returns
+    -------
+    :
+        The handler
+    """
+    pieces = {0: held} if isinstance(held, bytes) else held
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        wanted = request.headers["Range"]
+        if asked is not None:
+            asked.append(wanted)
+
+        first, last = wanted.removeprefix("bytes=").split("-")
+        start, end = int(first), min(int(last) + 1, size)
+        body = bytearray(end - start)
+        for offset, piece in pieces.items():
+            overlap_start = max(start, offset)
+            overlap_end = min(end, offset + len(piece))
+            if overlap_start < overlap_end:
+                body[overlap_start - start : overlap_end - start] = piece[
+                    overlap_start - offset : overlap_end - offset
+                ]
+
+        return httpx.Response(
+            206,
+            content=bytes(body),
+            headers={"Content-Range": f"bytes {start}-{end - 1}/{size}"},
+        )
+
+    return handler

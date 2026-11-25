@@ -104,6 +104,8 @@ griffelib==2.1.0
     #   mkdocstrings-python
 h11==0.16.0
     # via httpcore
+h5netcdf==1.8.3
+    # via esmporium
 h5py==3.14.0
     # via esmporium
 httpcore==1.0.9
@@ -281,6 +283,7 @@ numpy==2.2.6 ; python_full_version < '3.11'
     # via
     #   cftime
     #   contourpy
+    #   h5netcdf
     #   h5py
     #   matplotlib
     #   pandas
@@ -288,6 +291,7 @@ numpy==2.4.6 ; python_full_version == '3.11.*'
     # via
     #   cftime
     #   contourpy
+    #   h5netcdf
     #   h5py
     #   matplotlib
     #   pandas
@@ -295,6 +299,7 @@ numpy==2.5.1 ; python_full_version >= '3.12'
     # via
     #   cftime
     #   contourpy
+    #   h5netcdf
     #   h5py
     #   matplotlib
     #   pandas
@@ -302,6 +307,7 @@ overrides==7.7.0 ; python_full_version < '3.12'
     # via jupyter-server
 packaging==26.3
     # via
+    #   h5netcdf
     #   ipykernel
     #   jupyter-events
     #   jupyter-server

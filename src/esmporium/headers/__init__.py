@@ -1,15 +1,30 @@
 """
-Reading a file's header from a data node, without downloading the file
+Reading a file's header, and the first and last of its time values, without the file
 
 ESGF's search index publishes only the facets a dataset is catalogued by, so anything
-else a file knows about itself has to be read out of the file. The thing we want is its
-global attributes -- specifically the `parent_*` ones, which say what simulation a run
-branched from and which CMIP5 and CMIP6 publish nowhere else.
+else a file knows about itself has to be read out of the file: its global attributes
+(the `parent_*` ones say what simulation a run branched from), its variables'
+attributes (the time variable's `units` and `calendar`), and the first and last
+values of its time coordinate and bounds (where its data starts and ends).
 
-A header is a few kilobytes at the start of a file that can be hundreds of megabytes,
-so this fetches a prefix with one HTTP range request and reads the attributes out of it.
+All of that is a few kilobytes at the start of a file that can be hundreds of
+megabytes, plus a few values stored further in. So every reader here takes a
+[ByteSource][esmporium.headers.ByteSource] and asks for only the bytes it needs: from
+a data node over HTTP range requests
+([RangeSource][esmporium.headers.RangeSource]), from a local file
+([LocalFileSource][esmporium.headers.LocalFileSource]), or from bytes already in hand
+([HeldBytesSource][esmporium.headers.HeldBytesSource]).
+
+Classic netCDF is read by this package's own parser; netCDF-4/HDF5 by `h5netcdf`,
+the optional `headers` extra.
 """
 
+from esmporium.headers.contents import (
+    DEFAULT_TIME_VARIABLE,
+    FileHeader,
+    FirstAndLastTimeBounds,
+    HeaderLayout,
+)
 from esmporium.headers.errors import (
     HeaderNeedsCredentialsError,
     HeaderNodeBlockedError,
@@ -20,20 +35,20 @@ from esmporium.headers.errors import (
     HeaderReadTimeoutError,
     HeaderRouteMissingError,
     HeaderTransportError,
+    MissingVariableAttributesError,
+    NoSuchVariableError,
+    RangesNotHonouredError,
     TruncatedHeaderError,
     UnreadableHeaderError,
     UnsupportedHeaderFormatError,
 )
 from esmporium.headers.fetching import (
     DEFAULT_CONNECT_TIMEOUT_SECONDS,
-    DEFAULT_MAX_WANT_BYTES,
     DEFAULT_READ_TIMEOUT_SECONDS,
-    DEFAULT_WANT_BYTES,
-    FileHeader,
-    HeaderBytes,
+    RangeSource,
     read_header,
 )
-from esmporium.headers.hdf5 import HDF5_MAGIC, read_hdf5_global_attributes
+from esmporium.headers.hdf5 import HDF5_MAGIC, read_hdf5_file_header
 from esmporium.headers.health import (
     HeaderReadCall,
     HeaderReadCallObserver,
@@ -43,14 +58,16 @@ from esmporium.headers.netcdf3 import (
     NETCDF3_MAGIC_64BIT_OFFSET,
     NETCDF3_MAGIC_CLASSIC,
     NETCDF3_MAGICS,
-    read_netcdf3_global_attributes,
+    read_netcdf3_file_header,
 )
 from esmporium.headers.parsing import (
     MAGIC_BYTES_NEEDED,
     PARSERS_BY_LAYOUT,
-    HeaderLayout,
     HeaderParser,
+    read_file_header,
+    read_first_and_last_time_bounds,
     read_global_attributes,
+    read_variable_attributes,
     sniff_layout,
 )
 from esmporium.headers.retry import (
@@ -67,22 +84,33 @@ from esmporium.headers.run import (
     read_headers,
     read_one_header,
 )
+from esmporium.headers.sources import (
+    DEFAULT_BLOCK_BYTES,
+    DEFAULT_MAX_BYTES,
+    DEFAULT_MAX_REQUESTS,
+    ByteSource,
+    HeldBytesSource,
+    LocalFileSource,
+)
 
 __all__ = [
     "DEFAULT_ATTEMPTS",
+    "DEFAULT_BLOCK_BYTES",
     "DEFAULT_CONNECT_TIMEOUT_SECONDS",
-    "DEFAULT_MAX_WANT_BYTES",
+    "DEFAULT_MAX_BYTES",
+    "DEFAULT_MAX_REQUESTS",
     "DEFAULT_PER_DATA_NODE",
     "DEFAULT_READ_TIMEOUT_SECONDS",
-    "DEFAULT_WANT_BYTES",
+    "DEFAULT_TIME_VARIABLE",
     "HDF5_MAGIC",
     "MAGIC_BYTES_NEEDED",
     "NETCDF3_MAGICS",
     "NETCDF3_MAGIC_64BIT_OFFSET",
     "NETCDF3_MAGIC_CLASSIC",
     "PARSERS_BY_LAYOUT",
+    "ByteSource",
     "FileHeader",
-    "HeaderBytes",
+    "FirstAndLastTimeBounds",
     "HeaderLayout",
     "HeaderNeedsCredentialsError",
     "HeaderNodeBlockedError",
@@ -98,6 +126,12 @@ __all__ = [
     "HeaderRequest",
     "HeaderRouteMissingError",
     "HeaderTransportError",
+    "HeldBytesSource",
+    "LocalFileSource",
+    "MissingVariableAttributesError",
+    "NoSuchVariableError",
+    "RangeSource",
+    "RangesNotHonouredError",
     "ResultCallback",
     "RouteFailure",
     "TruncatedHeaderError",
@@ -106,11 +140,14 @@ __all__ = [
     "build_header_retrying",
     "fan_out",
     "is_worth_retrying",
+    "read_file_header",
+    "read_first_and_last_time_bounds",
     "read_global_attributes",
-    "read_hdf5_global_attributes",
+    "read_hdf5_file_header",
     "read_header",
     "read_headers",
-    "read_netcdf3_global_attributes",
+    "read_netcdf3_file_header",
     "read_one_header",
+    "read_variable_attributes",
     "sniff_layout",
 ]

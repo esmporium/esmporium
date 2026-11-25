@@ -528,7 +528,7 @@ class TestTheProvider:
         return httpx.Client(transport=httpx.MockTransport(handler))
 
     def test_one_read_answers_every_dataset_of_a_simulation(
-        self, engine, a_dataset_version, cmip5_netcdf3_prefix
+        self, engine, a_dataset_version, cmip5_netcdf3_header
     ):
         """
         The headline claim, measured rather than asserted
@@ -545,7 +545,7 @@ class TestTheProvider:
             session.commit()
 
             with self._client(
-                cmip5_netcdf3_prefix, size=CMIP5_FILE_SIZE, requests=requests
+                cmip5_netcdf3_header, size=CMIP5_FILE_SIZE, requests=requests
             ) as client:
                 provider = build_header_facts_provider(
                     client=client, record_health=False
@@ -565,7 +565,7 @@ class TestTheProvider:
         assert None not in {row.file_id for row in rows}
 
     def test_a_second_file_is_tried_when_the_first_ones_node_is_dead(
-        self, engine, a_dataset_version, cmip5_netcdf3_prefix
+        self, engine, a_dataset_version, cmip5_netcdf3_header
     ):
         """
         The case that really happens, and the reason one file is not enough
@@ -605,8 +605,8 @@ class TestTheProvider:
 
                 return httpx.Response(
                     206,
-                    content=cmip5_netcdf3_prefix,
-                    headers={"Content-Range": served_range(cmip5_netcdf3_prefix)},
+                    content=cmip5_netcdf3_header,
+                    headers={"Content-Range": served_range(cmip5_netcdf3_header)},
                 )
 
             with httpx.Client(transport=httpx.MockTransport(handler)) as client:
@@ -668,7 +668,7 @@ class TestTheProvider:
         assert len(asked) == DEFAULT_MAX_FILE_CANDIDATES
 
     def test_the_inferred_cmip5_model_is_the_one_a_search_will_match(
-        self, engine, a_dataset_version, cmip5_netcdf3_prefix
+        self, engine, a_dataset_version, cmip5_netcdf3_header
     ):
         """
         End to end, with the two spellings deliberately different
@@ -682,7 +682,7 @@ class TestTheProvider:
             version_ids = _cmip5_simulation(session, a_dataset_version)
             session.commit()
 
-            with self._client(cmip5_netcdf3_prefix, size=CMIP5_FILE_SIZE) as client:
+            with self._client(cmip5_netcdf3_header, size=CMIP5_FILE_SIZE) as client:
                 build_header_facts_provider(client=client, record_health=False)(
                     session, version_ids
                 )
@@ -697,7 +697,7 @@ class TestTheProvider:
         assert row.parent_time_units is None
 
     def test_health_is_recorded_through_the_walks_own_session(
-        self, engine, a_dataset_version, cmip5_netcdf3_prefix
+        self, engine, a_dataset_version, cmip5_netcdf3_header
     ):
         """
         Attempts land in `HeaderReadCallRecord`, written by the session we were handed
@@ -714,7 +714,7 @@ class TestTheProvider:
             version_ids = _cmip5_simulation(session, a_dataset_version)
             session.commit()
 
-            with self._client(cmip5_netcdf3_prefix, size=CMIP5_FILE_SIZE) as client:
+            with self._client(cmip5_netcdf3_header, size=CMIP5_FILE_SIZE) as client:
                 build_header_facts_provider(client=client)(session, version_ids)
                 session.commit()
 
@@ -754,7 +754,7 @@ class TestTheProvider:
         assert health[NODE].n_success == 0
 
     def test_a_simulation_no_node_serves_leaves_the_others_recorded(
-        self, engine, a_dataset_version, cmip5_netcdf3_prefix
+        self, engine, a_dataset_version, cmip5_netcdf3_header
     ):
         """
         One failure does not take the rest of the hop down with it
@@ -777,7 +777,7 @@ class TestTheProvider:
             _a_file_with_a_route(session, bad, "broken.nc")
             session.commit()
 
-            served = f"bytes 0-{len(cmip5_netcdf3_prefix) - 1}/{CMIP5_FILE_SIZE}"
+            served = f"bytes 0-{len(cmip5_netcdf3_header) - 1}/{CMIP5_FILE_SIZE}"
 
             def handler(request: httpx.Request) -> httpx.Response:
                 if "broken" in str(request.url):
@@ -785,7 +785,7 @@ class TestTheProvider:
 
                 return httpx.Response(
                     206,
-                    content=cmip5_netcdf3_prefix,
+                    content=cmip5_netcdf3_header,
                     headers={"Content-Range": served},
                 )
 
@@ -851,7 +851,7 @@ def _serving(prefix: bytes, *, size: int = CMIP5_FILE_SIZE):
 
 
 class TestApplyingAFixAlongsideAHeader:
-    def test_both_rows_are_kept(self, engine, a_dataset_version, cmip5_netcdf3_prefix):
+    def test_both_rows_are_kept(self, engine, a_dataset_version, cmip5_netcdf3_header):
         """
         A fix does not replace the header; it sits beside it
 
@@ -863,7 +863,7 @@ class TestApplyingAFixAlongsideAHeader:
             version_id = _a_cmip5_dataset(session, a_dataset_version)
             session.commit()
 
-            with _serving(cmip5_netcdf3_prefix) as client:
+            with _serving(cmip5_netcdf3_header) as client:
                 build_header_facts_provider(
                     client=client,
                     record_health=False,
@@ -879,7 +879,7 @@ class TestApplyingAFixAlongsideAHeader:
         }
 
     def test_the_reader_believes_the_fix(
-        self, engine, a_dataset_version, cmip5_netcdf3_prefix
+        self, engine, a_dataset_version, cmip5_netcdf3_header
     ):
         """
         Precedence, which already put a fix above a header before this existed
@@ -888,7 +888,7 @@ class TestApplyingAFixAlongsideAHeader:
             version_id = _a_cmip5_dataset(session, a_dataset_version)
             session.commit()
 
-            with _serving(cmip5_netcdf3_prefix) as client:
+            with _serving(cmip5_netcdf3_header) as client:
                 build_header_facts_provider(
                     client=client,
                     record_health=False,
@@ -935,7 +935,7 @@ class TestApplyingAFixAlongsideAHeader:
         assert rows[0].parent_variant_label == "r1i1p1"
 
     def test_a_simulation_nobody_asked_about_is_not_touched(
-        self, engine, a_dataset_version, cmip5_netcdf3_prefix
+        self, engine, a_dataset_version, cmip5_netcdf3_header
     ):
         """
         A fix for one model does not reach another
@@ -947,7 +947,7 @@ class TestApplyingAFixAlongsideAHeader:
             )
             session.commit()
 
-            with _serving(cmip5_netcdf3_prefix) as client:
+            with _serving(cmip5_netcdf3_header) as client:
                 build_header_facts_provider(
                     client=client,
                     record_health=False,
@@ -960,13 +960,13 @@ class TestApplyingAFixAlongsideAHeader:
         assert [row.source for row in rows] == [ParentInfoSource.FILE_HEADER]
 
     def test_no_fixes_given_means_none_applied(
-        self, engine, a_dataset_version, cmip5_netcdf3_prefix
+        self, engine, a_dataset_version, cmip5_netcdf3_header
     ):
         with Session(engine) as session:
             version_id = _a_cmip5_dataset(session, a_dataset_version)
             session.commit()
 
-            with _serving(cmip5_netcdf3_prefix) as client:
+            with _serving(cmip5_netcdf3_header) as client:
                 build_header_facts_provider(client=client, record_health=False)(
                     session, [version_id]
                 )
@@ -977,7 +977,7 @@ class TestApplyingAFixAlongsideAHeader:
         assert [row.source for row in rows] == [ParentInfoSource.FILE_HEADER]
 
     def test_a_fix_can_be_supplied_without_being_one_of_ours(
-        self, engine, a_dataset_version, cmip5_netcdf3_prefix
+        self, engine, a_dataset_version, cmip5_netcdf3_header
     ):
         """
         The seam, used the way a user would use it
@@ -1009,7 +1009,7 @@ class TestApplyingAFixAlongsideAHeader:
             )
             session.commit()
 
-            with _serving(cmip5_netcdf3_prefix) as client:
+            with _serving(cmip5_netcdf3_header) as client:
                 build_header_facts_provider(
                     client=client,
                     record_health=False,
@@ -1025,7 +1025,7 @@ class TestApplyingAFixAlongsideAHeader:
 
 
 def test_a_fix_is_not_reapplied_to_a_version_that_already_has_one(
-    engine, a_dataset_version, cmip5_netcdf3_prefix
+    engine, a_dataset_version, cmip5_netcdf3_header
 ):
     """
     A second pass over the same datasets changes nothing and asks nothing
@@ -1038,14 +1038,14 @@ def test_a_fix_is_not_reapplied_to_a_version_that_already_has_one(
 
         requests: list[str] = []
 
-        served = f"bytes 0-{len(cmip5_netcdf3_prefix) - 1}/{CMIP5_FILE_SIZE}"
+        served = f"bytes 0-{len(cmip5_netcdf3_header) - 1}/{CMIP5_FILE_SIZE}"
 
         def handler(request: httpx.Request) -> httpx.Response:
             requests.append(str(request.url))
 
             return httpx.Response(
                 206,
-                content=cmip5_netcdf3_prefix,
+                content=cmip5_netcdf3_header,
                 headers={"Content-Range": served},
             )
 

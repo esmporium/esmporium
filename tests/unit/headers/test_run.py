@@ -72,7 +72,7 @@ def served(prefix: bytes) -> httpx.Response:
 
 
 def test_the_first_route_that_serves_it_wins(
-    client_for, no_retry, cmip5_netcdf3_prefix
+    client_for, no_retry, cmip5_netcdf3_header
 ):
     request = HeaderRequest(
         routes=(route_on("dead.example.org"), route_on("alive.example.org")),
@@ -83,14 +83,14 @@ def test_the_first_route_that_serves_it_wins(
         if "dead" in str(http_request.url):
             return httpx.Response(404)
 
-        return served(cmip5_netcdf3_prefix)
+        return served(cmip5_netcdf3_header)
 
     with client_for(handler) as client:
         result = read_one_header(client, request, retrying=no_retry)
 
     assert result.succeeded
     assert result.header is not None
-    assert result.header.attributes["parent_experiment_id"] == "piControl"
+    assert result.header.global_attributes["parent_experiment_id"] == "piControl"
     # The failure on the way is kept: "it took two mirrors" is worth knowing.
     assert [failure.outcome for failure in result.failures] == [
         HeaderReadOutcome.MISSING
@@ -148,7 +148,7 @@ class TestGivingUpOnADataNodeNotJustARoute:
         )
 
     def test_an_unreachable_node_costs_one_attempt_not_one_per_url(
-        self, client_for, no_retry, cmip5_netcdf3_prefix
+        self, client_for, no_retry, cmip5_netcdf3_header
     ):
         tried: list[str] = []
 
@@ -159,7 +159,7 @@ class TestGivingUpOnADataNodeNotJustARoute:
                     "no route", request=http_request
                 ) from socket.gaierror(8)
 
-            return served(cmip5_netcdf3_prefix)
+            return served(cmip5_netcdf3_header)
 
         with client_for(handler) as client:
             result = read_one_header(
@@ -174,7 +174,7 @@ class TestGivingUpOnADataNodeNotJustARoute:
         assert sum("dead" in url for url in tried) == 1
 
     def test_a_per_file_failure_does_not_abandon_the_node(
-        self, client_for, no_retry, cmip5_netcdf3_prefix
+        self, client_for, no_retry, cmip5_netcdf3_header
     ):
         """
         A 404 is an answer about one file, so the node's other URLs are still worth it
@@ -186,7 +186,7 @@ class TestGivingUpOnADataNodeNotJustARoute:
             if "part1" in str(http_request.url):
                 return httpx.Response(404)
 
-            return served(cmip5_netcdf3_prefix)
+            return served(cmip5_netcdf3_header)
 
         request = self._request()
         with client_for(handler) as client:
@@ -203,7 +203,7 @@ class TestGivingUpOnADataNodeNotJustARoute:
 
 
 def test_results_come_back_in_the_order_they_were_asked_for(
-    client_for, no_retry, cmip5_netcdf3_prefix
+    client_for, no_retry, cmip5_netcdf3_header
 ):
     requests = tuple(
         HeaderRequest(routes=(route_on(f"node{index}.example.org"),), file_id=index)
@@ -211,7 +211,7 @@ def test_results_come_back_in_the_order_they_were_asked_for(
     )
 
     def handler(http_request: httpx.Request) -> httpx.Response:
-        return served(cmip5_netcdf3_prefix)
+        return served(cmip5_netcdf3_header)
 
     with client_for(handler) as client:
         results = read_headers(
@@ -223,7 +223,7 @@ def test_results_come_back_in_the_order_they_were_asked_for(
 
 
 def test_one_file_failing_does_not_stop_the_others(
-    client_for, no_retry, cmip5_netcdf3_prefix
+    client_for, no_retry, cmip5_netcdf3_header
 ):
     requests = tuple(
         HeaderRequest(routes=(route_on(f"node{index}.example.org"),), file_id=index)
@@ -234,7 +234,7 @@ def test_one_file_failing_does_not_stop_the_others(
         if "node2" in str(http_request.url):
             return httpx.Response(500)
 
-        return served(cmip5_netcdf3_prefix)
+        return served(cmip5_netcdf3_header)
 
     with client_for(handler) as client:
         results = read_headers(
@@ -251,7 +251,7 @@ def test_one_file_failing_does_not_stop_the_others(
 
 
 def test_each_result_is_handed_over_as_it_finishes(
-    client_for, no_retry, cmip5_netcdf3_prefix
+    client_for, no_retry, cmip5_netcdf3_header
 ):
     """
     What makes a long run survive being killed
@@ -268,7 +268,7 @@ def test_each_result_is_handed_over_as_it_finishes(
         for index in range(4)
     )
 
-    with client_for(lambda http_request: served(cmip5_netcdf3_prefix)) as client:
+    with client_for(lambda http_request: served(cmip5_netcdf3_header)) as client:
         read_headers(
             requests,
             client=client,
@@ -281,7 +281,7 @@ def test_each_result_is_handed_over_as_it_finishes(
 
 
 def test_no_more_than_the_cap_runs_against_one_node_at_once(
-    client_for, no_retry, cmip5_netcdf3_prefix
+    client_for, no_retry, cmip5_netcdf3_header
 ):
     """
     The per-node cap, which is what keeps us a polite guest on a shared archive
@@ -311,7 +311,7 @@ def test_no_more_than_the_cap_runs_against_one_node_at_once(
         with guard:
             in_flight -= 1
 
-        return served(cmip5_netcdf3_prefix)
+        return served(cmip5_netcdf3_header)
 
     requests = tuple(
         HeaderRequest(routes=(route_on("busy.example.org", f"tas{index}.nc"),))

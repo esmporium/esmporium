@@ -1,0 +1,73 @@
+{
+  "description": "The byte ranges that reading this file's header and its first and last time values touched, for replaying that read offline. Each piece is stored in the .bin beside this, one after another, in this order; every other byte of the file was not read.",
+  "url": "https://crd-esgf-drc.ec.gc.ca/thredds/fileServer/esg_ng/MIP-DRS7/CMIP7/CMIP/CCCma/CanESM5-1/1pctCO2/r1i1p2f1/glb/day/tas/tavg-h2m-hxy-u/g120/v20190429/tas_tavg-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_18500101-18601231.nc",
+  "file": "tas_tavg-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_18500101-18601231.nc",
+  "file_size": 78586053,
+  "fetched": "2026-11-25",
+  "pieces": [
+    {
+      "offset": 0,
+      "length": 21436
+    },
+    {
+      "offset": 21556,
+      "length": 512
+    },
+    {
+      "offset": 22580,
+      "length": 4056
+    },
+    {
+      "offset": 28552,
+      "length": 568
+    },
+    {
+      "offset": 29240,
+      "length": 512
+    },
+    {
+      "offset": 32880,
+      "length": 606
+    },
+    {
+      "offset": 35338,
+      "length": 568
+    },
+    {
+      "offset": 36026,
+      "length": 512
+    },
+    {
+      "offset": 39666,
+      "length": 985
+    },
+    {
+      "offset": 40711,
+      "length": 512
+    },
+    {
+      "offset": 44871,
+      "length": 348
+    },
+    {
+      "offset": 45446,
+      "length": 146
+    },
+    {
+      "offset": 45712,
+      "length": 512
+    },
+    {
+      "offset": 46736,
+      "length": 5632
+    },
+    {
+      "offset": 59530,
+      "length": 1702
+    },
+    {
+      "offset": 78581957,
+      "length": 4096
+    }
+  ]
+}

@@ -43,7 +43,7 @@ def test_only_a_busy_node_or_a_broken_connection_is_retried(error):
         pytest.param(HeaderReadTimeoutError(URL, "stalled"), id="timeout"),
         pytest.param(HeaderRouteMissingError(URL, "404"), id="missing"),
         pytest.param(HeaderNeedsCredentialsError(URL, "401"), id="credentials"),
-        pytest.param(TruncatedHeaderError(99, bytes_given=10), id="truncated"),
+        pytest.param(TruncatedHeaderError(99, reason="a test says so"), id="truncated"),
         pytest.param(UnreadableHeaderError("mangled"), id="unreadable"),
         pytest.param(UnsupportedHeaderFormatError(b"GRIB"), id="unsupported"),
         pytest.param(ValueError("not a header failure at all"), id="unclassified"),

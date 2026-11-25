@@ -69,7 +69,7 @@ def is_worth_retrying(exc: BaseException) -> bool:
     A parse failure is not about the node, so it is not retried anywhere:
 
     >>> from esmporium.headers.errors import TruncatedHeaderError
-    >>> is_worth_retrying(TruncatedHeaderError(99, bytes_given=10))
+    >>> is_worth_retrying(TruncatedHeaderError(99, reason="the budget is spent"))
     False
 
     Anything we never classified is not a flaky data node:
