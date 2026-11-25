@@ -14,10 +14,10 @@ from pydantic import ValidationError
 
 from esmporium.datasets import (
     BranchPoint,
-    NegativeSpanError,
-    Position,
-    Span,
+    NegativeLengthError,
     TimeAxis,
+    TimeDelta,
+    TimePoint,
     TimeStep,
     TimeUnits,
 )
@@ -77,9 +77,9 @@ YEARS = TimeStep.YEARS
 """Shorthand, because almost every span below is a number of years"""
 
 
-def years(count: int) -> tuple[Span, Span]:
+def years(count: int) -> tuple[TimeDelta, TimeDelta]:
     """Get the same number of years of padding either side"""
-    return (Span(count, YEARS), Span(count, YEARS))
+    return (TimeDelta(count, YEARS), TimeDelta(count, YEARS))
 
 
 NO_PAD = years(0)
@@ -103,7 +103,7 @@ def overlap(count: int, **overrides) -> Covers:
     settings = {
         "role": "control",
         "mode": "overlap",
-        "min_overlap": Span(count, YEARS),
+        "min_overlap": TimeDelta(count, YEARS),
         "pad": NO_PAD,
         **overrides,
     }
@@ -298,7 +298,7 @@ def test_containment_refuses_a_min_overlap_and_overlap_requires_one():
             role="control",
             mode="containment",
             pad=NO_PAD,
-            min_overlap=Span(1, YEARS),
+            min_overlap=TimeDelta(1, YEARS),
         )
 
 
@@ -376,7 +376,7 @@ def test_an_ideal_overlap_the_covered_run_cannot_supply_says_so(dataset):
         control=recorded_range(0, 1000, YEARLY_AXIS),
         branch=100,
     )
-    check = overlap(100, ideal_min_overlap=Span(150, YEARS))
+    check = overlap(100, ideal_min_overlap=TimeDelta(150, YEARS))
 
     outcome = check.evaluate(lineage_view(child, control), catalogue)
 
@@ -413,7 +413,9 @@ def test_an_ideal_overlap_not_met_is_degraded(worked_example):
     view, catalogue = worked_example
 
     # Needs [100, 110) hard, and [100, 250) ideally, which 200 does not reach.
-    outcome = overlap(10, ideal_min_overlap=Span(150, YEARS)).evaluate(view, catalogue)
+    outcome = overlap(10, ideal_min_overlap=TimeDelta(150, YEARS)).evaluate(
+        view, catalogue
+    )
 
     assert isinstance(outcome, Degraded)
 
@@ -427,9 +429,9 @@ def test_an_unstated_ideal_falls_back_to_the_hard_requirement(worked_example):
     """
     view, catalogue = worked_example
 
-    outcome = overlap(10, pad=years(10), ideal_min_overlap=Span(100, YEARS)).evaluate(
-        view, catalogue
-    )
+    outcome = overlap(
+        10, pad=years(10), ideal_min_overlap=TimeDelta(100, YEARS)
+    ).evaluate(view, catalogue)
 
     assert isinstance(outcome, Degraded)
     # 10 years of padding, carried over rather than reset to zero.
@@ -506,13 +508,13 @@ def test_months_of_padding_against_a_yearly_axis_needs_a_finer_axis(worked_examp
     # requirement either: a header read puts the data on a dated axis, where it is.
     view, catalogue = worked_example
 
-    outcome = containment(pad=(Span(6, TimeStep.MONTHS), Span(0, YEARS))).evaluate(
-        view, catalogue
-    )
+    outcome = containment(
+        pad=(TimeDelta(6, TimeStep.MONTHS), TimeDelta(0, YEARS))
+    ).evaluate(view, catalogue)
 
     assert isinstance(outcome, NeedsEnrichment)
     assert outcome.inputs == (
-        EnrichmentInput(dataset_id=2, missing=MissingTimeFact.CALENDAR),
+        EnrichmentInput(dataset_version_id=2, missing=MissingTimeFact.CALENDAR),
     )
 
 
@@ -549,7 +551,7 @@ def test_an_unenriched_range_needs_enrichment(dataset, missing, expected):
 
     assert isinstance(outcome, NeedsEnrichment)
     assert outcome.inputs == tuple(
-        EnrichmentInput(dataset_id=entry_id, missing=MissingTimeFact.TIME_RANGE)
+        EnrichmentInput(dataset_version_id=entry_id, missing=MissingTimeFact.TIME_RANGE)
         for entry_id in expected
     )
 
@@ -568,7 +570,7 @@ def test_an_unrecorded_branch_point_needs_enrichment(dataset):
 
     assert isinstance(outcome, NeedsEnrichment)
     assert outcome.inputs == (
-        EnrichmentInput(dataset_id=1, missing=MissingTimeFact.BRANCH_POINT),
+        EnrichmentInput(dataset_version_id=1, missing=MissingTimeFact.BRANCH_POINT),
     )
 
 
@@ -724,7 +726,7 @@ def test_padding_finer_than_a_month_is_a_missing_feature(worked_example, step):
     """
     view, catalogue = worked_example
 
-    outcome = containment(pad=(Span(10, step), Span(10, step))).evaluate(
+    outcome = containment(pad=(TimeDelta(10, step), TimeDelta(10, step))).evaluate(
         view, catalogue
     )
 
@@ -740,7 +742,7 @@ def test_an_unsupported_unit_does_not_stop_the_other_groups(dataset):
         tree=leaf(Query(variable="tas", experiment="abrupt-4xCO2"), "tas")
         .with_lineage(TO_CONTROL)
         .with_constraints(
-            containment(pad=(Span(1, TimeStep.DAYS), Span(1, TimeStep.DAYS)))
+            containment(pad=(TimeDelta(1, TimeStep.DAYS), TimeDelta(1, TimeStep.DAYS)))
         ),
         group_by=GROUP_BY,
     )
@@ -836,7 +838,7 @@ def test_a_cmip5_child_is_assumed_to_start_at_its_branch_and_says_so(dataset):
         dataset,
         child=recorded_range(10, 160, YEARLY_AXIS),
         control=recorded_range(0, 250, YEARLY_AXIS),
-        point=BranchPoint(in_parent=Position(100, YEARLY_AXIS)),
+        point=BranchPoint(in_parent=TimePoint(100, YEARLY_AXIS)),
         child_project="CMIP5",
     )
 
@@ -844,7 +846,7 @@ def test_a_cmip5_child_is_assumed_to_start_at_its_branch_and_says_so(dataset):
 
     # A pass which rests on an assumption is still a pass, and names it.
     assert isinstance(outcome, Pass)
-    assert "assumed to be #1's first time bound, 10 in years" in outcome.message
+    assert "assumed to be #1's first time bound, 10 years" in outcome.message
     assert "a fix which states `branch_time_in_child`" in outcome.message
 
 
@@ -853,7 +855,7 @@ def test_a_failure_which_rests_on_the_assumption_names_it_too(dataset):
         dataset,
         child=recorded_range(10, 160, YEARLY_AXIS),
         control=recorded_range(0, 200, YEARLY_AXIS),
-        point=BranchPoint(in_parent=Position(100, YEARLY_AXIS)),
+        point=BranchPoint(in_parent=TimePoint(100, YEARLY_AXIS)),
         child_project="CMIP5",
     )
 
@@ -869,7 +871,7 @@ def test_the_assumption_reaches_the_solutions_notes(dataset):
         dataset,
         child=recorded_range(10, 160, YEARLY_AXIS),
         control=recorded_range(0, 250, YEARLY_AXIS),
-        point=BranchPoint(in_parent=Position(100, YEARLY_AXIS)),
+        point=BranchPoint(in_parent=TimePoint(100, YEARLY_AXIS)),
         child_project="CMIP5",
     )
     contained = requirement(
@@ -896,7 +898,7 @@ def test_a_fix_which_states_where_a_cmip5_child_branched_replaces_the_assumption
         child=recorded_range(10, 160, YEARLY_AXIS),
         control=recorded_range(0, 260, YEARLY_AXIS),
         point=BranchPoint(
-            in_parent=Position(100, YEARLY_AXIS), in_child=Position(0, YEARLY_AXIS)
+            in_parent=TimePoint(100, YEARLY_AXIS), in_child=TimePoint(0, YEARLY_AXIS)
         ),
         child_project="CMIP5",
     )
@@ -916,7 +918,7 @@ def test_a_fix_which_agrees_with_the_assumption_passes_without_a_note(dataset):
         child=recorded_range(0, 150, YEARLY_AXIS),
         control=recorded_range(0, 250, YEARLY_AXIS),
         point=BranchPoint(
-            in_parent=Position(100, YEARLY_AXIS), in_child=Position(0, YEARLY_AXIS)
+            in_parent=TimePoint(100, YEARLY_AXIS), in_child=TimePoint(0, YEARLY_AXIS)
         ),
         child_project="CMIP5",
     )
@@ -932,14 +934,14 @@ def test_a_cmip6_child_without_where_it_branched_needs_enrichment(dataset):
         dataset,
         child=recorded_range(0, 150, YEARLY_AXIS),
         control=recorded_range(0, 250, YEARLY_AXIS),
-        point=BranchPoint(in_parent=Position(100, YEARLY_AXIS)),
+        point=BranchPoint(in_parent=TimePoint(100, YEARLY_AXIS)),
     )
 
     outcome = containment().evaluate(lineage_view(child, control), catalogue)
 
     assert isinstance(outcome, NeedsEnrichment)
     assert outcome.inputs == (
-        EnrichmentInput(dataset_id=1, missing=MissingTimeFact.BRANCH_POINT),
+        EnrichmentInput(dataset_version_id=1, missing=MissingTimeFact.BRANCH_POINT),
     )
 
 
@@ -948,7 +950,7 @@ def test_a_child_from_a_project_we_know_nothing_about_is_not_supported(dataset):
         dataset,
         child=recorded_range(0, 150, YEARLY_AXIS),
         control=recorded_range(0, 250, YEARLY_AXIS),
-        point=BranchPoint(in_parent=Position(100, YEARLY_AXIS)),
+        point=BranchPoint(in_parent=TimePoint(100, YEARLY_AXIS)),
         child_project="MIP1",
     )
 
@@ -991,8 +993,8 @@ def test_a_child_and_parent_counted_from_different_dates_line_up(dataset):
     """
     pytest.importorskip("cftime", reason="the optional `calendars` extra")
     point = BranchPoint(
-        in_parent=Position(182500, NOLEAP_SINCE_0001),
-        in_child=Position(0, NOLEAP_SINCE_1850),
+        in_parent=TimePoint(182500, NOLEAP_SINCE_0001),
+        in_child=TimePoint(0, NOLEAP_SINCE_1850),
     )
     child, control, enough = branched_pair(
         dataset,
@@ -1021,8 +1023,8 @@ def test_a_child_and_parent_in_different_calendars_is_not_supported_yet(dataset)
         child=recorded_range(0, 60225, NOLEAP_SINCE_1850),
         control=recorded_range(0, 300_000, in_360_days),
         point=BranchPoint(
-            in_parent=Position(180_000, in_360_days),
-            in_child=Position(0, NOLEAP_SINCE_1850),
+            in_parent=TimePoint(180_000, in_360_days),
+            in_child=TimePoint(0, NOLEAP_SINCE_1850),
         ),
     )
 
@@ -1044,8 +1046,8 @@ def test_a_natural_child_and_a_dated_parent_is_not_supported_yet(dataset):
         child=recorded_range(0, 1200, MONTHLY_AXIS),
         control=recorded_range(0, 12_000, dated_months),
         point=BranchPoint(
-            in_parent=Position(1200, dated_months),
-            in_child=Position(0, MONTHLY_AXIS),
+            in_parent=TimePoint(1200, dated_months),
+            in_child=TimePoint(0, MONTHLY_AXIS),
         ),
     )
 
@@ -1205,12 +1207,12 @@ def test_a_broken_series_fails_before_an_unsupported_calendar_is_reported(datase
         },
         branch_points={
             1: BranchPoint(
-                in_parent=Position(60225, NOLEAP_SINCE_1850),
-                in_child=Position(0, noleap_since_2015),
+                in_parent=TimePoint(60225, NOLEAP_SINCE_1850),
+                in_child=TimePoint(0, noleap_since_2015),
             ),
             2: BranchPoint(
-                in_parent=Position(180_000, in_360_days),
-                in_child=Position(0, NOLEAP_SINCE_1850),
+                in_parent=TimePoint(180_000, in_360_days),
+                in_child=TimePoint(0, NOLEAP_SINCE_1850),
             ),
         },
     )
@@ -1250,8 +1252,8 @@ def test_a_group_which_needs_enrichment_is_not_unsatisfied(dataset):
     (group,) = result.couldnt_answer.values()
     assert group.status is ExplanationStatusNotOk.NEEDS_ENRICHMENT
     assert result.enrichment_inputs == (
-        EnrichmentInput(dataset_id=1, missing=MissingTimeFact.TIME_RANGE),
-        EnrichmentInput(dataset_id=2, missing=MissingTimeFact.TIME_RANGE),
+        EnrichmentInput(dataset_version_id=1, missing=MissingTimeFact.TIME_RANGE),
+        EnrichmentInput(dataset_version_id=2, missing=MissingTimeFact.TIME_RANGE),
     )
     assert ExplanationStatusNotOk.NEEDS_ENRICHMENT.value in result.explain()
 
@@ -1281,7 +1283,7 @@ def test_enrichment_inputs_are_what_the_enricher_takes_back(dataset):
         entries=before.entries,
         parents=before.parents,
         time_ranges={
-            each.dataset_id: enrichments[each.dataset_id]
+            each.dataset_version_id: enrichments[each.dataset_version_id]
             for each in first.enrichment_inputs
         },
         branch_points=before.branch_points,
@@ -1333,11 +1335,12 @@ def test_branch_points_can_still_be_corrected_by_wrapping_the_catalogue(dataset)
 
 def test_a_covers_survives_being_stored_and_read_back():
     """
-    Spans have to round trip, because the requirement hash depends on them
+    Lengths have to round trip, because the requirement hash depends on them
 
-    A `Span` is a plain frozen dataclass rather than a pydantic model, so how pydantic
-    writes one down is worth pinning: the hash covers the constraint, and a change to
-    this JSON is a change to the identity of every requirement using it.
+    A `TimeDelta` is a plain frozen dataclass rather than a pydantic model,
+    so how pydantic writes one down is worth pinning:
+    the hash covers the constraint,
+    and a change to this JSON is a change to the identity of every requirement using it.
     """
     check = overlap(100, pad=years(10), ideal_pad=years(20))
 
@@ -1345,10 +1348,16 @@ def test_a_covers_survives_being_stored_and_read_back():
         "role": "control",
         "target": "self",
         "mode": "overlap",
-        "min_overlap": {"count": 100, "step": "years"},
-        "pad": [{"count": 10, "step": "years"}, {"count": 10, "step": "years"}],
+        "min_overlap": {"count": 100, "step": "years", "calendar": None},
+        "pad": [
+            {"count": 10, "step": "years", "calendar": None},
+            {"count": 10, "step": "years", "calendar": None},
+        ],
         "ideal_min_overlap": None,
-        "ideal_pad": [{"count": 20, "step": "years"}, {"count": 20, "step": "years"}],
+        "ideal_pad": [
+            {"count": 20, "step": "years", "calendar": None},
+            {"count": 20, "step": "years", "calendar": None},
+        ],
     }
 
     stored = requirement(
@@ -1364,13 +1373,125 @@ def test_a_covers_survives_being_stored_and_read_back():
     assert loaded.tree.constraints[0] == check
 
 
-def test_a_negative_span_is_refused():
+def test_a_negative_length_is_refused():
     # A length cannot be negative, and asking for data *before* a point is said at the
-    # point of use -- `pad[0]` -- rather than with a negative number. Refused by the
-    # span itself, before a check is even built, so this is `NegativeSpanError` rather
-    # than something pydantic wrapped.
-    with pytest.raises(NegativeSpanError, match="cannot be negative"):
-        containment(pad=(Span(-10, YEARS), Span(0, YEARS)))
+    # point of use -- `pad[0]` -- rather than with a negative number.
+    # A `TimeDelta` can be negative, because the difference of two time points can be,
+    # so it is `Covers` which refuses it, and pydantic wraps what it raises.
+    assert issubclass(NegativeLengthError, ValueError)
+
+    with pytest.raises(ValidationError, match="cannot be negative"):
+        containment(pad=(TimeDelta(-10, YEARS), TimeDelta(0, YEARS)))
+
+
+# ------------------------------------------- lengths stated in a calendar
+
+
+def daily_pair(dataset, calendar: str):
+    """
+    Get a child and its control on one daily axis, branching at day 36500
+
+    The child holds [36500, 73000) and the control [0, 109500), so with no padding
+    the control covers the child, and with ten years either side it does too in
+    `noleap` and `360_day` alike.
+    """
+    axis = TimeAxis(TimeUnits(TimeStep.DAYS, "0001-01-01"), calendar)
+
+    return branched_pair(
+        dataset,
+        child=recorded_range(36500, 73000, axis),
+        control=recorded_range(0, 109_500, axis),
+        point=BranchPoint(
+            in_parent=TimePoint(36500, axis), in_child=TimePoint(36500, axis)
+        ),
+    )
+
+
+def test_a_length_in_the_datas_own_calendar_is_just_a_length(dataset):
+    """
+    Ten `noleap` years either side of `noleap` data is ten years either side
+    """
+    pytest.importorskip("cftime", reason="the optional `calendars` extra")
+    child, control, catalogue = daily_pair(dataset, "noleap")
+    in_noleap = TimeDelta(10, YEARS, "noleap")
+
+    outcome = containment(pad=(in_noleap, in_noleap)).evaluate(
+        lineage_view(child, control), catalogue
+    )
+
+    assert outcome == Pass()
+
+
+def test_a_length_in_another_calendar_fails_and_says_how_to_restate_it(dataset):
+    """
+    Ten `noleap` years against `360_day` data: ten calendar years, or 3650 days?
+
+    Neither is guessed. Enriching will not change which calendar the data is in, so
+    it is a definite answer about this data and this requirement as written.
+    """
+    pytest.importorskip("cftime", reason="the optional `calendars` extra")
+    child, control, catalogue = daily_pair(dataset, "360_day")
+    in_noleap = TimeDelta(10, YEARS, "noleap")
+
+    outcome = containment(pad=(in_noleap, in_noleap)).evaluate(
+        lineage_view(child, control), catalogue
+    )
+
+    assert isinstance(outcome, Fail)
+    assert "10 years (noleap) is stated in calendar 'noleap'" in outcome.message
+    assert "#2's data is in calendar '360_day'" in outcome.message
+    assert ".in_any_calendar()" in outcome.message
+    assert ".in_steps(TimeStep.DAYS)" in outcome.message
+
+
+def test_restating_a_length_in_any_calendar_judges_it(dataset):
+    pytest.importorskip("cftime", reason="the optional `calendars` extra")
+    child, control, catalogue = daily_pair(dataset, "360_day")
+    anywhere = TimeDelta(10, YEARS, "noleap").in_any_calendar()
+
+    outcome = containment(pad=(anywhere, anywhere)).evaluate(
+        lineage_view(child, control), catalogue
+    )
+
+    assert outcome == Pass()
+
+
+def test_an_ideal_in_another_calendar_is_degraded(dataset):
+    """
+    The soft check, so what it cannot judge is degraded, as an ideal not met is
+    """
+    pytest.importorskip("cftime", reason="the optional `calendars` extra")
+    child, control, catalogue = daily_pair(dataset, "360_day")
+
+    outcome = containment(
+        ideal_pad=(TimeDelta(0, YEARS), TimeDelta(5, YEARS, "noleap"))
+    ).evaluate(lineage_view(child, control), catalogue)
+
+    assert isinstance(outcome, Degraded)
+    assert "is stated in calendar 'noleap'" in outcome.message
+
+
+def test_a_length_in_a_calendar_against_monthly_data_is_counted_in_months(dataset):
+    """
+    A monthly axis counts months, which are the same count in every calendar, so
+    there is nothing for the length's calendar to disagree with
+
+    Needs nothing installed.
+    """
+    child, control, catalogue = child_and_control(
+        dataset,
+        child=recorded_range(0, 1800, MONTHLY_AXIS),
+        control=recorded_range(960, 3240, MONTHLY_AXIS),
+        branch=1200,
+        axis=MONTHLY_AXIS,
+    )
+    in_360_days = TimeDelta(20, YEARS, "360_day")
+
+    outcome = containment(pad=(in_360_days, in_360_days)).evaluate(
+        lineage_view(child, control), catalogue
+    )
+
+    assert outcome == Pass()
 
 
 def test_the_mode_errors_message_survives_pydantic():

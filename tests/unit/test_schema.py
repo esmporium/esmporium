@@ -346,14 +346,15 @@ def test_dataset_facets_mirror_dataset_columns():
 
 
 # `CatalogueEntry.id` is the one place the entry deliberately differs from the column
-# it mirrors: an entry describes a row which is already stored, so its ID has been
-# assigned, whereas `Dataset.id` is `None` until the database assigns it.
+# it mirrors: an entry describes a version which is already stored, so its ID has
+# been assigned, whereas `DatasetVersion.id` is `None` until the database assigns it.
 CATALOGUE_ENTRY_EXCEPTIONS = {"id": (int, int | None)}
 
 # The entry's own additions, with no column behind them: the two mappings a catalogue
 # puts facets we have no column for into. `project_facets` holds the ones we model,
 # under canonical names; `other_terms` holds the ones only a search document knows,
-# under the document's own spelling.
+# under the document's own spelling. Both are read from the entry's own version's
+# documents.
 #
 # `facets_loaded` is a third, and differs from the two mappings in kind rather than in
 # where its values come from: it is not facets at all, it is the record of which facets
@@ -361,14 +362,22 @@ CATALOGUE_ENTRY_EXCEPTIONS = {"id": (int, int | None)}
 # `Dataset` grows.
 CATALOGUE_ENTRY_ONLY_FIELDS = {"project_facets", "other_terms", "facets_loaded"}
 
+# The columns an entry leaves out, and why. `DatasetVersion.dataset_id` because nothing
+# in a solve needs dataset identity (groups form on facet values, and a lookup finds
+# one version per dataset); `Dataset.id` because the entry's `id` is the version's.
+VERSION_COLUMNS_NOT_ON_THE_ENTRY = {"dataset_id"}
+DATASET_COLUMNS_NOT_ON_THE_ENTRY = {"id"}
+
 
 def test_catalogue_entry_mirrors_dataset_columns():
-    """`CatalogueEntry` declares every column of `Dataset`, same name and same type.
+    """`CatalogueEntry` declares every column of its version, then of its dataset
 
     The sibling of the test above, for the read side. `DatasetFacets` is what a parser
-    produces on the way in; `CatalogueEntry` is what reading a stored row gives back,
-    and what the requirements layer compares. So a facet added to `Dataset` and not to
-    the entry means requirements silently cannot select on it.
+    produces on the way in; `CatalogueEntry` is what reading a stored version gives
+    back, and what the requirements layer compares. So a facet added to `Dataset` and
+    not to the entry means requirements silently cannot select on it, and a column
+    added to `DatasetVersion` and not to the entry means nothing downstream of `find`
+    can see it.
 
     It lives here, beside its sibling and `test_facet_columns_are_the_declared_facets`,
     because this is the file someone opens when they change `Dataset`. Split across
@@ -384,17 +393,29 @@ def test_catalogue_entry_mirrors_dataset_columns():
         for name, hint in entry_hints.items()
         if name not in CATALOGUE_ENTRY_ONLY_FIELDS
     }
+    columns = {
+        **{
+            name: info.annotation
+            for name, info in DatasetVersion.model_fields.items()
+            if name not in VERSION_COLUMNS_NOT_ON_THE_ENTRY
+        },
+        **{
+            name: info.annotation
+            for name, info in Dataset.model_fields.items()
+            if name not in DATASET_COLUMNS_NOT_ON_THE_ENTRY
+        },
+    }
 
-    # Same columns, in the same order, so the two read as one list side by side.
-    assert list(mirrored) == list(Dataset.model_fields)
+    # Same columns, in the same order, so the entry reads as the version's columns
+    # followed by its dataset's.
+    assert list(mirrored) == list(columns)
 
     for name, hint in mirrored.items():
-        column_hint = Dataset.model_fields[name].annotation
         if name in CATALOGUE_ENTRY_EXCEPTIONS:
-            assert (hint, column_hint) == CATALOGUE_ENTRY_EXCEPTIONS[name]
+            assert (hint, columns[name]) == CATALOGUE_ENTRY_EXCEPTIONS[name]
             continue
 
-        assert hint == column_hint, f"{name} differs from Dataset.{name}"
+        assert hint == columns[name], f"{name} differs from its column"
 
 
 def test_assignment_is_validated():

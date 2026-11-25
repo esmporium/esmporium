@@ -3,7 +3,9 @@ The datasets we have stored, as the solver sees them
 
 [esmporium.requirements][] defines what a catalogue is.
 This identifies what datasets exist in the database which fulfil the requirement:
-it answers from the [Dataset][(m).Dataset] rows a search saved.
+it answers from the [Dataset][(m).Dataset] and [DatasetVersion][(m).DatasetVersion]
+rows a search saved, one entry per dataset, being the version a
+[VersionFilter][esmporium.requirements.VersionFilter] chose.
 """
 
 from __future__ import annotations
@@ -47,7 +49,7 @@ from esmporium.search.result_normalisation import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Collection, Mapping, Sequence
+    from collections.abc import Collection, Iterable, Mapping, Sequence
 
     from sqlalchemy import ColumnElement, Engine
 
@@ -115,45 +117,6 @@ def facet_filters(
         raise UnrecordedFacetError(not_columns)
 
     return [col(getattr(Dataset, name)).in_(values) for name, values in facets.items()]
-
-
-def version_filter(versions: VersionFilter) -> ColumnElement[bool] | None:
-    """
-    Get the `where` clause which keeps only the datasets a version filter allows
-
-    An `EXISTS` over [DatasetVersion][esmporium.db.schema.DatasetVersion] rather than
-    a join, because a dataset has many versions and a join would return it once per
-    version.
-
-    Parameters
-    ----------
-    versions
-        Which datasets to keep. See [VersionFilter][(m).VersionFilter].
-
-    Returns
-    -------
-    :
-        The clause, or `None` for
-        [VersionFilter.ANY][esmporium.requirements.VersionFilter], which
-        filters nothing
-
-    Raises
-    ------
-    UnknownVersionFilterError
-        `versions` is not one of the settings we know
-    """
-    version_is_ok = version_clause(versions)
-    if version_is_ok is None:
-        return None
-
-    return (
-        select(DatasetVersion.id)
-        .where(
-            col(DatasetVersion.dataset_id) == col(Dataset.id),
-            version_is_ok,
-        )
-        .exists()
-    )
 
 
 def version_clause(versions: VersionFilter) -> ColumnElement[bool] | None:
@@ -261,7 +224,9 @@ def _canonical_name_for(
 # one project in `tests/test-data/search/` differ by ten field names. An entry has to
 # answer one string per facet, because that is what a group key and a `prefer` ranking
 # compare, so the documents are merged first-writer-wins in the order
-# [_documents_by_dataset][(m)._documents_by_dataset] returns them.
+# [_documents_by_version][(m)._documents_by_version] returns them. Only the documents
+# of the version the entry is are merged: another version of the same dataset never
+# fills a facet in.
 #
 # The cost of merging rather than taking the first document whole: the entry can end up
 # asserting a combination no single node published. We merge anyway, because the
@@ -280,7 +245,7 @@ def _canonical_name_for(
 # later search reaching a different node can only add facets no stored document
 # carried; it cannot overwrite one already answered. So this does not drift under you
 # as you work, and the only things which legitimately change an answer are a new
-# version being published and `versions` changing which version qualifies.
+# version being published and `versions` changing which version the entry is.
 #
 # Where it does bite is **rebuilding**. Which node answered first is the order a
 # search happened to return and which endpoints were reachable that day -- see
@@ -320,7 +285,7 @@ def _facets_from_documents(
     project_query_map: Mapping[str, type[QueryProtocol]],
 ) -> tuple[dict[str, str | None], dict[str, str | None]]:
     """
-    Build an entry's two facet mappings from the raw documents describing it
+    Build an entry's two facet mappings from the raw documents describing its version
 
     One pass per document per mapping, over documents which have already been parsed,
     because this is the hot part of a `find`: the fetch-and-parse above it is the bulk
@@ -333,9 +298,9 @@ def _facets_from_documents(
         their names translate
 
     documents
-        The raw documents, as `(parsed JSON, format tag)` pairs, in the order they
-        should win: the first document to record a facet is the one that answers for
-        it
+        The raw documents of one version, as `(parsed JSON, format tag)` pairs, in
+        the order they should win: the first document to record a facet is the one
+        that answers for it
 
     normalisers
         See [DEFAULT_NORMALISERS][esmporium.search.DEFAULT_NORMALISERS].
@@ -433,85 +398,65 @@ def _facets_from_documents(
     return project_facets, other_terms
 
 
-def _documents_by_dataset(
-    session: Session, dataset_ids: list[int], versions: VersionFilter
+def _documents_by_version(
+    session: Session, version_ids: list[int]
 ) -> dict[int, list[tuple[dict[str, Any], str]]]:
     """
-    Get the raw documents which answer for each dataset, newest available version first
+    Get the raw documents which describe each version
 
     Parameters
     ----------
     session
         Session to read with
 
-    dataset_ids
-        The datasets to get documents for
-
-    versions
-        Which versions count, matching the filter the datasets were selected with
+    version_ids
+        The versions to get documents for
 
     Returns
     -------
     :
-        Dataset ID -> its documents, as `(parsed JSON, format tag)` pairs
+        Dataset version ID -> its documents, as `(parsed JSON, format tag)` pairs
 
-        Ordered by version descending then document ID ascending, so the first entry
-        is from the newest qualifying version and, within a version, the
-        earliest-stored document. A dataset with no documents is absent.
+        Ordered by document ID ascending, i.e. earliest-stored first. A version with
+        no documents is absent.
     """
-    if not dataset_ids:
+    if not version_ids:
         return {}
 
-    # Only the three values we read are selected. `version` and the document's own ID
-    # decide the order (below) without needing to come back with the rows.
     statement = (
         select(
-            DatasetVersion.dataset_id,
+            RawDocVersionLink.dataset_version_id,
             DatasetRawDoc.raw_json,
             DatasetRawDoc.raw_docs_format_tag,
         )
-        .join(
-            RawDocVersionLink,
-            col(RawDocVersionLink.dataset_version_id) == col(DatasetVersion.id),
-        )
         .join(DatasetRawDoc, col(DatasetRawDoc.id) == col(RawDocVersionLink.raw_doc_id))
-        .where(col(DatasetVersion.dataset_id).in_(dataset_ids))
-    )
-
-    version_is_ok = version_clause(versions)
-    if version_is_ok is not None:
-        statement = statement.where(version_is_ok)
-
-    # Version descending, so the newest qualifying version answers; then document ID
-    # ascending, so several documents for one version (one per data node, typically)
-    # resolve the same way every time. Version strings are compared as strings, which
-    # is right for the dates ESGF usually publishes and is noted as unreliable for
-    # CMIP5 replicas on `DatasetVersion.version` itself.
-    #
-    # `DatasetRawDoc.id` ascending is first-ingested, which is the order a search
-    # happened to return and which endpoint was up -- arbitrary, chosen for
-    # determinism within one database rather than for authority. The note above
-    # [_facets_from_documents][(m)._facets_from_documents] says what follows from
-    # that, and it is the thing to read before trusting a facet no column holds.
-    statement = statement.order_by(
-        col(DatasetVersion.version).desc(), col(DatasetRawDoc.id).asc()
+        .where(col(RawDocVersionLink.dataset_version_id).in_(version_ids))
+        # Several documents for one version (one per data node, typically) resolve the
+        # same way every time. `DatasetRawDoc.id` ascending is first-ingested, which is
+        # the order a search happened to return and which endpoint was up --
+        # arbitrary, chosen for determinism within one database rather than for
+        # authority. The note above [_facets_from_documents][(m)._facets_from_documents]
+        # says what follows from that, and it is the thing to read before trusting a
+        # facet no column holds.
+        .order_by(col(DatasetRawDoc.id).asc())
     )
 
     found: dict[int, list[tuple[dict[str, Any], str]]] = {}
-    for dataset_id, raw_json, tag in session.exec(statement):
-        found.setdefault(dataset_id, []).append((json.loads(raw_json), tag))
+    for version_id, raw_json, tag in session.exec(statement):
+        found.setdefault(version_id, []).append((json.loads(raw_json), tag))
 
     return found
 
 
 def to_catalogue_entry(
     dataset: Dataset,
+    version: DatasetVersion,
     project_facets: Mapping[str, str | None] | None = None,
     other_terms: Mapping[str, str | None] | None = None,
     facets_loaded: frozenset[str] | None = None,
 ) -> CatalogueEntry:
     """
-    Read a stored dataset row as the solver's view of it
+    Read a stored dataset version as the solver's view of it
 
     The write-side mirror of this is
     [DatasetFacets][esmporium.search.DatasetFacets], which is what a parser produces
@@ -520,7 +465,10 @@ def to_catalogue_entry(
     Parameters
     ----------
     dataset
-        The row to read
+        The dataset the version belongs to, which supplies the facet columns
+
+    version
+        The version the entry is, which supplies `id` and the version columns
 
     project_facets
         The facets we model which are not columns, as
@@ -547,21 +495,33 @@ def to_catalogue_entry(
     Raises
     ------
     ValueError
-        `dataset.id` is `None`, i.e. the row has not been saved
+        `version.id` is `None`, i.e. the version has not been saved, or `version` is
+        not a version of `dataset`
 
-        An entry describes a dataset which is in the database, so it has an ID. A row
+        An entry describes a version which is in the database, so it has an ID. A row
         which has not been flushed yet has no entry.
     """
-    if dataset.id is None:
+    if version.id is None:
         msg = (
-            "A dataset which has not been saved has no catalogue entry: "
-            f"{dataset.id_project_specific!r} has no `id` yet. "
-            "Flush or commit the row first."
+            "A dataset version which has not been saved has no catalogue entry: "
+            f"version {version.version!r} of {dataset.id_project_specific!r} has no "
+            "`id` yet. Flush or commit the row first."
+        )
+        raise ValueError(msg)
+
+    if version.dataset_id != dataset.id:
+        msg = (
+            f"Dataset version {version.id} belongs to dataset {version.dataset_id}, "
+            f"not to {dataset.id_project_specific!r} (dataset {dataset.id}), so the "
+            "two cannot make one entry."
         )
         raise ValueError(msg)
 
     return CatalogueEntry(
-        id=dataset.id,
+        id=version.id,
+        version=version.version,
+        is_latest=version.is_latest,
+        retracted=version.retracted,
         id_project_specific=dataset.id_project_specific,
         **{column: getattr(dataset, column) for column in DATASET_FACET_COLUMNS},
         project_facets={} if project_facets is None else dict(project_facets),
@@ -572,9 +532,8 @@ def to_catalogue_entry(
 
 def _entries_from_rows(  # noqa: PLR0913 - one argument per thing reading a row needs
     session: Session,
-    rows: Sequence[Dataset],
+    rows: Sequence[tuple[Dataset, DatasetVersion]],
     *,
-    versions: VersionFilter,
     needs_facets: Collection[str] | None,
     matched_on_entry: bool,
     normalisers: Mapping[str, NormaliseFunc],
@@ -584,7 +543,7 @@ def _entries_from_rows(  # noqa: PLR0913 - one argument per thing reading a row 
     """
     Turn stored rows into entries, reading their documents only if anybody will ask
 
-    Shared by every lookup which hands rows back, so that a dataset describes itself
+    Shared by every lookup which hands rows back, so that a version describes itself
     the same way however it was reached -- found by a query, or arrived at by following
     a parent link.
 
@@ -594,10 +553,7 @@ def _entries_from_rows(  # noqa: PLR0913 - one argument per thing reading a row 
         Session to read with
 
     rows
-        The datasets to describe
-
-    versions
-        Which versions count, matching the filter the rows were selected with
+        The versions to describe, each with the dataset it belongs to
 
     needs_facets
         The facets the caller will ask the entries about, or `None` for all of them
@@ -643,26 +599,58 @@ def _entries_from_rows(  # noqa: PLR0913 - one argument per thing reading a row 
 
     if not documents_wanted:
         return tuple(
-            to_catalogue_entry(row, facets_loaded=facets_loaded) for row in rows
+            to_catalogue_entry(dataset, version, facets_loaded=facets_loaded)
+            for dataset, version in rows
         )
 
-    documents = _documents_by_dataset(
-        session, [row.id for row in rows if row.id is not None], versions
+    documents = _documents_by_version(
+        session, [version.id for _, version in rows if version.id is not None]
     )
 
     return tuple(
         to_catalogue_entry(
-            row,
+            dataset,
+            version,
             *_facets_from_documents(
-                row.project,
-                documents.get(row.id, []) if row.id else [],
+                dataset.project,
+                documents.get(version.id, []) if version.id is not None else [],
                 normalisers,
                 verbatim_normalisers,
                 project_query_map,
             ),
         )
-        for row in rows
+        for dataset, version in rows
     )
+
+
+def _newest_per_dataset(
+    rows: Iterable[tuple[Dataset, DatasetVersion]],
+) -> list[tuple[Dataset, DatasetVersion]]:
+    """
+    Keep the version which speaks for each dataset
+
+    Parameters
+    ----------
+    rows
+        Versions with their datasets, ordered by dataset, then by version string
+        descending, then by version ID ascending
+
+    Returns
+    -------
+    :
+        The first row of each dataset, i.e. its newest version by version string, in
+        the order the datasets came
+
+        Version strings are compared as strings, which is right for the dates ESGF
+        usually publishes and is noted as unreliable for CMIP5 replicas on
+        [DatasetVersion.version][(m).DatasetVersion]. Two versions which somehow carry
+        one version string resolve to the lower ID, the same way every time.
+    """
+    kept: dict[int | None, tuple[Dataset, DatasetVersion]] = {}
+    for dataset, version in rows:
+        kept.setdefault(dataset.id, (dataset, version))
+
+    return list(kept.values())
 
 
 def find_datasets(  # noqa: PLR0913 - one argument per thing a find has to be told
@@ -676,7 +664,11 @@ def find_datasets(  # noqa: PLR0913 - one argument per thing a find has to be to
     project_query_map: Mapping[str, type[QueryProtocol]] = PROJECT_QUERY_MAP_DEFAULT,
 ) -> tuple[CatalogueEntry, ...]:
     """
-    Find every stored dataset which matches a query
+    Find every stored dataset which matches a query, as the version which speaks for it
+
+    The version is chosen here, once: the newest by version string which `versions`
+    accepts. Each entry *is* that version, and everything read from it afterwards --
+    its documents, its parent, and the facts recorded about it -- is that version's.
 
     The session-level primitive behind
     [DatabaseCatalogue.find][(m).DatabaseCatalogue], for a caller who wants one
@@ -692,6 +684,7 @@ def find_datasets(  # noqa: PLR0913 - one argument per thing a find has to be to
 
     versions
         Which of a dataset's versions count. See [VersionFilter][(m).VersionFilter].
+        A dataset with no version which counts is not found.
 
     needs_facets
         The facets the caller will ask the entries about. See
@@ -711,8 +704,8 @@ def find_datasets(  # noqa: PLR0913 - one argument per thing a find has to be to
     Returns
     -------
     :
-        Matching datasets, ordered by [Dataset.id][(m).Dataset], which is the order
-        they were first saved in
+        One entry per matching dataset, being its chosen version, ordered by
+        [Dataset.id][(m).Dataset], which is the order the datasets were first saved in
 
         Each entry answers for `needs_facets` and for its columns; see
         [CatalogueEntry.facets_loaded][esmporium.requirements.CatalogueEntry.facets_loaded]
@@ -745,21 +738,33 @@ def find_datasets(  # noqa: PLR0913 - one argument per thing a find has to be to
         name not in DATASET_FACET_COLUMNS for name in asked.modelled
     )
 
-    statement = select(Dataset).where(*facet_filters(column_facets))
+    statement = (
+        select(Dataset, DatasetVersion)
+        .join(DatasetVersion, col(DatasetVersion.dataset_id) == col(Dataset.id))
+        .where(*facet_filters(column_facets))
+    )
 
-    keep_available = version_filter(versions)
-    if keep_available is not None:
-        statement = statement.where(keep_available)
+    version_is_ok = version_clause(versions)
+    if version_is_ok is not None:
+        statement = statement.where(version_is_ok)
 
-    # By ID, which is the order the rows were saved in, so the result is stable and
-    # the ordering costs nothing (it is the primary key).
-    rows = list(session.exec(statement.order_by(col(Dataset.id))))
+    # By dataset ID, which is the order the datasets were saved in, so the result is
+    # stable; then newest version first within each, which is what
+    # `_newest_per_dataset` keeps.
+    rows = _newest_per_dataset(
+        session.exec(
+            statement.order_by(
+                col(Dataset.id),
+                col(DatasetVersion.version).desc(),
+                col(DatasetVersion.id).asc(),
+            )
+        )
+    )
 
     entries = list(
         _entries_from_rows(
             session,
             rows,
-            versions=versions,
             needs_facets=needs_facets,
             matched_on_entry=matched_on_entry,
             normalisers=normalisers,
@@ -858,55 +863,11 @@ class ParentLinkMissingError(RuntimeError):
         )
 
 
-def describing_version(
-    session: Session, dataset_id: int, versions: VersionFilter
-) -> DatasetVersion | None:
-    """
-    Get the version of a dataset which speaks for it
-
-    Parameters
-    ----------
-    session
-        Session to read with
-
-    dataset_id
-        The dataset
-
-    versions
-        Which versions count. See
-        [VersionFilter][esmporium.requirements.VersionFilter].
-
-    Returns
-    -------
-    :
-        The version, or `None` if the dataset has none which passes the filter
-
-    Raises
-    ------
-    UnknownVersionFilterError
-        `versions` is not one of the settings we know
-    """
-    statement = select(DatasetVersion).where(DatasetVersion.dataset_id == dataset_id)
-
-    version_is_ok = version_clause(versions)
-    if version_is_ok is not None:
-        statement = statement.where(version_is_ok)
-
-    # Version descending for the same reason, and compared the same way (as strings),
-    # as in `_documents_by_dataset`; then ID ascending so that two releases which
-    # somehow carry one version string resolve the same way every time.
-    return session.exec(
-        statement.order_by(
-            col(DatasetVersion.version).desc(), col(DatasetVersion.id).asc()
-        )
-    ).first()
-
-
 def _parent_provenance(
     info: DatasetVersionParent, link: DatasetParentLink | None
 ) -> str:
     """
-    Describe how a parent came to be this dataset's parent
+    Describe how a parent came to be this dataset version's parent
 
     Parameters
     ----------
@@ -932,7 +893,7 @@ def _parent_provenance(
     return "; ".join(phrase for phrase in said if phrase)
 
 
-def parent_of_dataset(  # noqa: PLR0913 - one argument per thing reading a row needs
+def parent_of_version(  # noqa: PLR0913 - one argument per thing reading a row needs
     session: Session,
     entry: CatalogueEntry,
     *,
@@ -943,7 +904,13 @@ def parent_of_dataset(  # noqa: PLR0913 - one argument per thing reading a row n
     project_query_map: Mapping[str, type[QueryProtocol]] = PROJECT_QUERY_MAP_DEFAULT,
 ) -> ParentLookup:
     """
-    Get the dataset a stored dataset branched from
+    Get the dataset version a stored dataset version branched from
+
+    The parent's version is the one its
+    [DatasetParentLink][esmporium.db.schema.DatasetParentLink] records, i.e. the one
+    [find_parents][esmporium.db.find_parents] chose (with its `version_chooser`) and
+    then climbed from, so it is the release whose own parent is recorded. `versions`
+    is a check on that release rather than a choice of another.
 
     The session-level primitive behind
     [DatabaseCatalogue.parent_of][(m).DatabaseCatalogue.parent_of], for a caller who
@@ -955,11 +922,12 @@ def parent_of_dataset(  # noqa: PLR0913 - one argument per thing reading a row n
         Session to read with
 
     entry
-        Dataset whose parent is wanted. Only its `id` is read.
+        Version whose parent is wanted. Only its `id` is read.
 
     versions
-        Which versions count, on both ends of the link. See
-        [VersionFilter][esmporium.requirements.VersionFilter].
+        Which versions count. A recorded parent version it does not accept is
+        [NO_USABLE_VERSION][esmporium.requirements.ParentStatus.NO_USABLE_VERSION].
+        See [VersionFilter][esmporium.requirements.VersionFilter].
 
     needs_facets
         The facets the caller will ask the parent about
@@ -987,18 +955,10 @@ def parent_of_dataset(  # noqa: PLR0913 - one argument per thing reading a row n
     UnknownVersionFilterError
         `versions` is not one of the settings we know
     """
-    child_version = describing_version(session, entry.id, versions)
-    if child_version is None or child_version.id is None:
-        # No release of the child qualifies, so there is no release whose parent to
-        # ask about. Reported as the question not having been asked rather than as an
-        # absence in the data, which is what it is: a different `versions` may well
-        # find one.
-        return ParentLookup(ParentStatus.NOT_LOOKED_FOR)
-
     rows = list(
         session.exec(
             select(DatasetVersionParent).where(
-                col(DatasetVersionParent.dataset_version_id) == child_version.id
+                col(DatasetVersionParent.dataset_version_id) == entry.id
             )
         )
     )
@@ -1027,14 +987,16 @@ def parent_of_dataset(  # noqa: PLR0913 - one argument per thing reading a row n
         )
     ).first()
     if link is None:
-        raise ParentLinkMissingError(preferred.id, child_version.id)
+        raise ParentLinkMissingError(preferred.id, entry.id)
 
-    # The same version filter the child was asked under, so one solve is answered from
-    # one set of versions at both ends of every link.
-    statement = select(Dataset).where(col(Dataset.id) == link.parent_dataset_id)
-    keep_available = version_filter(versions)
-    if keep_available is not None:
-        statement = statement.where(keep_available)
+    statement = (
+        select(Dataset, DatasetVersion)
+        .join(DatasetVersion, col(DatasetVersion.dataset_id) == col(Dataset.id))
+        .where(col(DatasetVersion.id) == link.parent_dataset_version_id)
+    )
+    version_is_ok = version_clause(versions)
+    if version_is_ok is not None:
+        statement = statement.where(version_is_ok)
 
     parent_rows = list(session.exec(statement))
     if not parent_rows:
@@ -1046,7 +1008,6 @@ def parent_of_dataset(  # noqa: PLR0913 - one argument per thing reading a row n
     (parent,) = _entries_from_rows(
         session,
         parent_rows,
-        versions=versions,
         needs_facets=needs_facets,
         matched_on_entry=False,
         normalisers=normalisers,
@@ -1066,7 +1027,9 @@ class DatabaseCatalogue:
     """
     A [Catalogue][esmporium.requirements.Catalogue] backed by our own database
 
-    Answers from the [Dataset][(m).Dataset] rows a search saved, so
+    Answers from the [Dataset][(m).Dataset] and [DatasetVersion][(m).DatasetVersion]
+    rows a search saved, one entry per dataset, being the version the requirement's
+    [VersionFilter][esmporium.requirements.VersionFilter] chose, so
     [solve][esmporium.requirements.solve] can be run against everything found so far.
     Run the same requirement
     again tomorrow and the difference between the two
@@ -1131,7 +1094,9 @@ class DatabaseCatalogue:
         needs_facets: Collection[str] | None = None,
     ) -> tuple[CatalogueEntry, ...]:
         """
-        Find every stored dataset which matches a query
+        Find every stored dataset which matches a query, as one version of each
+
+        See [find_datasets][(m).find_datasets], which this calls, for which version.
 
         A session per call, deliberately. A held session would hold a transaction, and
         a transaction's snapshot is the wrong thing here: a catalogue opened before a
@@ -1149,7 +1114,7 @@ class DatabaseCatalogue:
             Query to match, in any query style
 
         versions
-            Which of a dataset's versions count.
+            Which of a dataset's versions count, and so which one each entry is.
 
         needs_facets
             The facets the caller will ask the entries about. See
@@ -1161,7 +1126,8 @@ class DatabaseCatalogue:
         Returns
         -------
         :
-            Matching datasets, in a stable order
+            One entry per matching dataset, being its chosen version, in a stable
+            order
 
         Raises
         ------
@@ -1190,16 +1156,18 @@ class DatabaseCatalogue:
         needs_facets: Collection[str] | None = None,
     ) -> ParentLookup:
         """
-        Get the dataset a dataset branched from, out of the stored parent links
+        Get the version a version branched from, out of the stored parent links
+
+        See [parent_of_version][(m).parent_of_version], which this calls.
 
         Parameters
         ----------
         entry
-            Dataset whose parent is wanted
+            Version whose parent is wanted
 
         versions
-            Which of a dataset's versions count, on both ends of the link. See
-            [VersionFilter][esmporium.requirements.VersionFilter].
+            Which versions count, as a check on the parent version the link
+            records. See [VersionFilter][esmporium.requirements.VersionFilter].
 
         needs_facets
             The facets the caller will ask the parent about
@@ -1218,7 +1186,7 @@ class DatabaseCatalogue:
             `versions` is not one of the version filters we know
         """
         with Session(self.engine) as session:
-            return parent_of_dataset(
+            return parent_of_version(
                 session,
                 entry,
                 versions=versions,

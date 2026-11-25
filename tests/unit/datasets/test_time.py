@@ -9,12 +9,13 @@ import pytest
 from esmporium.datasets.time import (
     BranchPoint,
     EmptyTimeRangeError,
+    FractionalCalendarFreeDeltaError,
     MismatchedTimeAxisError,
-    NegativeSpanError,
+    NeedsAnAnchorError,
     NotAWholeStepError,
-    Position,
-    Span,
     TimeAxis,
+    TimeDelta,
+    TimePoint,
     TimeRange,
     TimeStep,
     TimeUnits,
@@ -42,14 +43,18 @@ def test_a_single_step_dataset_has_an_extent_of_one():
     """
     january = total_months(3200, 1)
 
-    assert TimeRange(january, january + 1, MONTHLY).extent == Span(1, TimeStep.MONTHS)
+    assert TimeRange.from_values(january, january + 1, MONTHLY).extent == TimeDelta(
+        1, TimeStep.MONTHS
+    )
 
 
 def test_yearly_data_from_1850_to_1860_is_eleven_years():
     """
     Both ends are in the data, so there are eleven years and not ten
     """
-    assert TimeRange(1850, 1861, YEARLY).extent == Span(11, TimeStep.YEARS)
+    assert TimeRange.from_values(1850, 1861, YEARLY).extent == TimeDelta(
+        11, TimeStep.YEARS
+    )
 
 
 def test_the_first_month_of_year_one_is_month_one():
@@ -92,10 +97,12 @@ def test_fifty_one_years_of_monthly_data_is_six_hundred_and_twelve_months():
 
     A monthly file named `..._320001-325012.nc`.
     """
-    published = TimeRange(total_months(3200, 1), total_months(3250, 12) + 1, MONTHLY)
+    published = TimeRange.from_values(
+        total_months(3200, 1), total_months(3250, 12) + 1, MONTHLY
+    )
 
-    assert (published.start, published.end_exclusive) == (38389, 39001)
-    assert published.extent == Span(612, TimeStep.MONTHS)
+    assert (published.start.value, published.end_exclusive.value) == (38389, 39001)
+    assert published.extent == TimeDelta(612, TimeStep.MONTHS)
     assert published.extent.count // 12 == 51
 
 
@@ -106,8 +113,10 @@ def test_two_files_which_meet_are_adjacent():
     """
     One file's `end_exclusive` being the next one's `start` is what adjacency is
     """
-    first = TimeRange(total_months(1850, 1), total_months(1860, 1), MONTHLY)
-    second = TimeRange(total_months(1860, 1), total_months(1870, 1), MONTHLY)
+    first = TimeRange.from_values(total_months(1850, 1), total_months(1860, 1), MONTHLY)
+    second = TimeRange.from_values(
+        total_months(1860, 1), total_months(1870, 1), MONTHLY
+    )
 
     assert first.is_adjacent_to(second)
 
@@ -116,8 +125,8 @@ def test_adjacency_does_not_care_which_file_comes_first():
     """
     Symmetric, so a caller never has to sort first to ask
     """
-    first = TimeRange(0, 120, MONTHLY)
-    second = TimeRange(120, 240, MONTHLY)
+    first = TimeRange.from_values(0, 120, MONTHLY)
+    second = TimeRange.from_values(120, 240, MONTHLY)
 
     assert second.is_adjacent_to(first)
 
@@ -126,8 +135,8 @@ def test_one_month_missing_is_not_adjacency():
     """
     The gap this exists to find
     """
-    first = TimeRange(0, 120, MONTHLY)
-    after_a_gap = TimeRange(121, 240, MONTHLY)
+    first = TimeRange.from_values(0, 120, MONTHLY)
+    after_a_gap = TimeRange.from_values(121, 240, MONTHLY)
 
     assert not first.is_adjacent_to(after_a_gap)
 
@@ -136,8 +145,8 @@ def test_an_overlap_is_not_adjacency():
     """
     Two files covering the same month are as wrong as a month nobody published
     """
-    first = TimeRange(0, 120, MONTHLY)
-    overlapping = TimeRange(119, 240, MONTHLY)
+    first = TimeRange.from_values(0, 120, MONTHLY)
+    overlapping = TimeRange.from_values(119, 240, MONTHLY)
 
     assert not first.is_adjacent_to(overlapping)
 
@@ -157,7 +166,10 @@ def test_an_overlap_is_not_adjacency():
 def test_contains(covering, covered, expected):
     """One range covering the whole of another"""
     assert (
-        TimeRange(*covering, MONTHLY).contains(TimeRange(*covered, MONTHLY)) is expected
+        TimeRange.from_values(*covering, MONTHLY).contains(
+            TimeRange.from_values(*covered, MONTHLY)
+        )
+        is expected
     )
 
 
@@ -168,8 +180,8 @@ def test_ranges_on_different_units_cannot_be_compared():
     """
     Months and years are different numbers, so comparing them is refused out loud
     """
-    monthly = TimeRange(0, 240, MONTHLY)
-    yearly = TimeRange(0, 20, YEARLY)
+    monthly = TimeRange.from_values(0, 240, MONTHLY)
+    yearly = TimeRange.from_values(0, 20, YEARLY)
 
     with pytest.raises(MismatchedTimeAxisError):
         monthly.contains(yearly)
@@ -179,8 +191,8 @@ def test_ranges_in_different_calendars_cannot_be_compared():
     """
     The same day count means different spans in different calendars
     """
-    noleap = TimeRange(0, 3650, DAILY_NOLEAP)
-    gregorian = TimeRange(
+    noleap = TimeRange.from_values(0, 3650, DAILY_NOLEAP)
+    gregorian = TimeRange.from_values(
         0, 3650, TimeAxis(TimeUnits(TimeStep.DAYS, "1850-01-01"), "standard")
     )
 
@@ -192,7 +204,9 @@ def test_a_dated_range_which_does_not_know_its_calendar_is_not_compared():
     """
     Not even with itself: a day count means nothing until its calendar is known
     """
-    unknown = TimeRange(0, 3650, TimeAxis(TimeUnits(TimeStep.DAYS, "1850-01-01")))
+    unknown = TimeRange.from_values(
+        0, 3650, TimeAxis(TimeUnits(TimeStep.DAYS, "1850-01-01"))
+    )
 
     with pytest.raises(MismatchedTimeAxisError):
         unknown.contains(unknown)
@@ -203,8 +217,10 @@ def test_a_natural_range_is_not_compared_with_a_dated_one():
     A month count and a day count are related only through a calendar, by a
     conversion
     """
-    with pytest.raises(MismatchedTimeAxisError, match="convert_position"):
-        TimeRange(0, 240, MONTHLY).contains(TimeRange(0, 3650, DAILY_NOLEAP))
+    with pytest.raises(MismatchedTimeAxisError, match="convert_time_point"):
+        TimeRange.from_values(0, 240, MONTHLY).contains(
+            TimeRange.from_values(0, 3650, DAILY_NOLEAP)
+        )
 
 
 def test_a_range_must_hold_at_least_one_step():
@@ -212,7 +228,39 @@ def test_a_range_must_hold_at_least_one_step():
     `end_exclusive` is the first step *not* in the data, so it comes after `start`
     """
     with pytest.raises(EmptyTimeRangeError):
-        TimeRange(240, 240, MONTHLY)
+        TimeRange.from_values(240, 240, MONTHLY)
+
+
+def test_both_ends_of_a_range_are_on_one_axis():
+    """
+    A start in months and an end in years is not a range at all
+    """
+    with pytest.raises(MismatchedTimeAxisError):
+        TimeRange(TimePoint(0, MONTHLY), TimePoint(20, YEARLY))
+
+
+def test_a_range_on_an_axis_which_does_not_know_its_calendar_still_has_an_extent():
+    """
+    Which is what a daily range looks like before any header has been read
+
+    Its two ends are on the same axis, even though that axis is comparable with
+    nothing, so the range is built and its extent is a plain subtraction.
+    """
+    unknown = TimeAxis(TimeUnits(TimeStep.DAYS, "1850-01-01"))
+
+    assert TimeRange.from_values(0, 3650, unknown).extent == TimeDelta(
+        3650, TimeStep.DAYS
+    )
+
+
+def test_the_extent_of_a_dated_range_carries_its_calendar():
+    """
+    3650 days measured in `noleap` is exactly ten `noleap` years
+    """
+    extent = TimeRange.from_values(0, 3650, DAILY_NOLEAP).extent
+
+    assert extent == TimeDelta(3650, TimeStep.DAYS, "noleap")
+    assert extent.in_steps(TimeStep.YEARS) == TimeDelta(10, TimeStep.YEARS, "noleap")
 
 
 # --------------------------------------------------------------------------- units
@@ -290,35 +338,191 @@ def test_which_steps_are_the_same_in_every_calendar(step, expected):
     assert step.is_calendar_free is expected
 
 
-# --------------------------------------------------------------------------- spans
+# ---------------------------------------------------------------------- time deltas
 
 
-def test_a_span_is_a_length_so_it_cannot_be_negative():
+def test_a_time_delta_can_be_negative():
     """
-    Direction is said at the point of use, not with a negative length
+    The difference of two time points can go either way
+
+    Where a length has to be positive, e.g. padding, the place which needs it says so.
     """
-    with pytest.raises(NegativeSpanError):
-        Span(-1, TimeStep.YEARS)
+    assert TimeDelta(-1, TimeStep.YEARS).is_negative
 
 
-def test_a_span_of_zero_is_fine():
+def test_a_time_delta_of_zero_is_fine():
     """
     "No padding required" is a coherent thing to ask for
     """
-    assert Span(0, TimeStep.YEARS).count == 0
+    assert TimeDelta(0, TimeStep.YEARS).count == 0
+
+
+def test_a_fractional_number_of_years_is_refused():
+    """
+    A part of a year is stated in months
+    """
+    with pytest.raises(FractionalCalendarFreeDeltaError, match="6 months"):
+        TimeDelta(0.5, TimeStep.YEARS)
+
+
+def test_a_fractional_number_of_days_is_fine():
+    """
+    Which is what the extent of sub-daily data on a `days since` axis comes to
+    """
+    assert TimeDelta(0.125, TimeStep.DAYS).count == 0.125
 
 
 @pytest.mark.parametrize(
-    ("span", "rendered"),
+    ("delta", "rendered"),
     [
-        (Span(20, TimeStep.YEARS), "20 years"),
-        (Span(1, TimeStep.YEARS), "1 year"),
-        (Span(3, TimeStep.HOURS), "3 hours"),
+        (TimeDelta(20, TimeStep.YEARS), "20 years"),
+        (TimeDelta(1, TimeStep.YEARS), "1 year"),
+        (TimeDelta(3, TimeStep.HOURS), "3 hours"),
+        (TimeDelta(730, TimeStep.DAYS, "noleap"), "730 days (noleap)"),
+        (TimeDelta(-10, TimeStep.YEARS), "-10 years"),
     ],
 )
-def test_spans_read_as_english(span, rendered):
+def test_time_deltas_read_as_english(delta, rendered):
     """Because they end up in messages a user reads"""
-    assert str(span) == rendered
+    assert str(delta) == rendered
+
+
+def test_negating_a_time_delta_keeps_its_step_and_calendar():
+    assert TimeDelta(10, TimeStep.DAYS, "noleap").negated() == TimeDelta(
+        -10, TimeStep.DAYS, "noleap"
+    )
+
+
+def test_a_time_delta_in_any_calendar_drops_only_the_calendar():
+    assert TimeDelta(2, TimeStep.YEARS, "noleap").in_any_calendar() == TimeDelta(
+        2, TimeStep.YEARS
+    )
+
+
+def test_equality_of_time_deltas_is_strict():
+    """
+    Twelve months and a year are the same length, and not the same value
+
+    Comparing lengths is `in_steps`' job.
+    """
+    year = TimeDelta(1, TimeStep.YEARS)
+    twelve_months = TimeDelta(12, TimeStep.MONTHS)
+
+    assert year != twelve_months
+    assert year.in_steps(TimeStep.MONTHS) == twelve_months
+
+
+# ---------------------------------------------------- converting a time delta's step
+
+
+@pytest.mark.parametrize(
+    ("delta", "step", "expected"),
+    [
+        # Years and months, in any calendar.
+        (TimeDelta(2, TimeStep.YEARS), TimeStep.MONTHS, TimeDelta(24, TimeStep.MONTHS)),
+        (TimeDelta(36, TimeStep.MONTHS), TimeStep.YEARS, TimeDelta(3, TimeStep.YEARS)),
+        (
+            TimeDelta(1, TimeStep.YEARS, "standard"),
+            TimeStep.MONTHS,
+            TimeDelta(12, TimeStep.MONTHS, "standard"),
+        ),
+        # Days, hours and minutes, in any calendar.
+        (TimeDelta(1, TimeStep.DAYS), TimeStep.HOURS, TimeDelta(24, TimeStep.HOURS)),
+        (
+            TimeDelta(90, TimeStep.MINUTES),
+            TimeStep.HOURS,
+            TimeDelta(1.5, TimeStep.HOURS),
+        ),
+        (
+            TimeDelta(36, TimeStep.HOURS, "standard"),
+            TimeStep.DAYS,
+            TimeDelta(1.5, TimeStep.DAYS, "standard"),
+        ),
+        # Between the two, where the calendar fixes the length.
+        (
+            TimeDelta(2, TimeStep.YEARS, "noleap"),
+            TimeStep.DAYS,
+            TimeDelta(730, TimeStep.DAYS, "noleap"),
+        ),
+        (
+            TimeDelta(1, TimeStep.YEARS, "365_day"),
+            TimeStep.HOURS,
+            TimeDelta(8760, TimeStep.HOURS, "365_day"),
+        ),
+        (
+            TimeDelta(1, TimeStep.YEARS, "all_leap"),
+            TimeStep.DAYS,
+            TimeDelta(366, TimeStep.DAYS, "all_leap"),
+        ),
+        (
+            TimeDelta(1, TimeStep.YEARS, "366_day"),
+            TimeStep.DAYS,
+            TimeDelta(366, TimeStep.DAYS, "366_day"),
+        ),
+        (
+            TimeDelta(1, TimeStep.YEARS, "360_day"),
+            TimeStep.DAYS,
+            TimeDelta(360, TimeStep.DAYS, "360_day"),
+        ),
+        (
+            TimeDelta(3, TimeStep.MONTHS, "360_day"),
+            TimeStep.DAYS,
+            TimeDelta(90, TimeStep.DAYS, "360_day"),
+        ),
+        (
+            TimeDelta(73000, TimeStep.DAYS, "noleap"),
+            TimeStep.YEARS,
+            TimeDelta(200, TimeStep.YEARS, "noleap"),
+        ),
+        (
+            TimeDelta(60, TimeStep.DAYS, "360_day"),
+            TimeStep.MONTHS,
+            TimeDelta(2, TimeStep.MONTHS, "360_day"),
+        ),
+    ],
+)
+def test_converting_a_time_delta(delta, step, expected):
+    assert delta.in_steps(step) == expected
+
+
+def test_converting_a_time_delta_to_its_own_step_changes_nothing():
+    delta = TimeDelta(1, TimeStep.YEARS, "standard")
+
+    assert delta.in_steps(TimeStep.YEARS) is delta
+
+
+@pytest.mark.parametrize(
+    ("delta", "step"),
+    [
+        # A year is 365 or 366 days, depending on which year.
+        (TimeDelta(1, TimeStep.YEARS, "standard"), TimeStep.DAYS),
+        (TimeDelta(1, TimeStep.YEARS, "gregorian"), TimeStep.DAYS),
+        (TimeDelta(1, TimeStep.YEARS, "proleptic_gregorian"), TimeStep.DAYS),
+        (TimeDelta(1, TimeStep.YEARS, "julian"), TimeStep.DAYS),
+        (TimeDelta(365, TimeStep.DAYS, "standard"), TimeStep.YEARS),
+        # With no calendar there is nothing to fix it.
+        (TimeDelta(1, TimeStep.YEARS), TimeStep.DAYS),
+        (TimeDelta(365, TimeStep.DAYS), TimeStep.YEARS),
+        # A `noleap` month is 28 to 31 days, depending on which month.
+        (TimeDelta(1, TimeStep.MONTHS, "noleap"), TimeStep.DAYS),
+        (TimeDelta(31, TimeStep.DAYS, "noleap"), TimeStep.MONTHS),
+    ],
+)
+def test_converting_a_time_delta_which_needs_an_anchor_is_refused(delta, step):
+    with pytest.raises(NeedsAnAnchorError, match=r"TimePoint\.plus"):
+        delta.in_steps(step)
+
+
+@pytest.mark.parametrize(
+    ("delta", "step"),
+    [
+        (TimeDelta(13, TimeStep.MONTHS), TimeStep.YEARS),
+        (TimeDelta(400, TimeStep.DAYS, "noleap"), TimeStep.YEARS),
+    ],
+)
+def test_converting_to_a_part_of_a_year_is_refused(delta, step):
+    with pytest.raises(FractionalCalendarFreeDeltaError):
+        delta.in_steps(step)
 
 
 # -------------------------------------------------------------------------- spanned
@@ -328,9 +532,14 @@ def test_spanned_is_earliest_start_to_latest_end():
     """
     And says nothing about whether the ranges fill it
     """
-    across = spanned([TimeRange(120, 240, MONTHLY), TimeRange(0, 60, MONTHLY)])
+    across = spanned(
+        [
+            TimeRange.from_values(120, 240, MONTHLY),
+            TimeRange.from_values(0, 60, MONTHLY),
+        ]
+    )
 
-    assert (across.start, across.end_exclusive) == (0, 240)
+    assert (across.start.value, across.end_exclusive.value) == (0, 240)
 
 
 def test_spanning_nothing_is_refused():
@@ -346,30 +555,35 @@ def test_spanning_ranges_on_different_axes_is_refused():
     Which is a fact about the publication, not about the question
     """
     with pytest.raises(MismatchedTimeAxisError):
-        spanned([TimeRange(0, 240, MONTHLY), TimeRange(0, 20, YEARLY)])
+        spanned(
+            [
+                TimeRange.from_values(0, 240, MONTHLY),
+                TimeRange.from_values(0, 20, YEARLY),
+            ]
+        )
 
 
-# ------------------------------------------------------------------------ positions
+# ---------------------------------------------------------------------- time points
 
 
-def test_a_position_on_a_natural_axis_is_a_whole_number_of_steps():
+def test_a_time_point_on_a_natural_axis_is_a_whole_number_of_steps():
     """
     A fraction of a month is not a month: placing one there is a conversion
     """
     with pytest.raises(NotAWholeStepError):
-        Position(1850.5, YEARLY)
+        TimePoint(1850.5, YEARLY)
 
 
-def test_a_position_on_a_dated_axis_is_kept_as_published():
-    assert Position(438000.5, DAILY_NOLEAP).value == 438000.5
+def test_a_time_point_on_a_dated_axis_is_kept_as_published():
+    assert TimePoint(438000.5, DAILY_NOLEAP).value == 438000.5
 
 
-def test_a_position_says_which_ruler_it_was_read_off():
+def test_a_time_point_says_which_ruler_it_was_read_off():
     """
     So that a number in a message is never a bare number
     """
-    assert str(Position(91615, DAILY_NOLEAP)) == (
-        "91615 in days since 1850-01-01, calendar 'noleap'"
+    assert str(TimePoint(91615, DAILY_NOLEAP)) == (
+        "91615 days since 1850-01-01, calendar 'noleap'"
     )
 
 
@@ -387,7 +601,10 @@ def test_a_position_says_which_ruler_it_was_read_off():
     ],
 )
 def test_holds_is_half_open(position, expected):
-    assert TimeRange(100, 200, YEARLY).holds(Position(position, YEARLY)) is expected
+    assert (
+        TimeRange.from_values(100, 200, YEARLY).holds(TimePoint(position, YEARLY))
+        is expected
+    )
 
 
 @pytest.mark.parametrize(
@@ -404,17 +621,18 @@ def test_holds_is_half_open(position, expected):
 )
 def test_runs_up_to_counts_end_exclusive(position, expected):
     assert (
-        TimeRange(100, 200, YEARLY).runs_up_to(Position(position, YEARLY)) is expected
+        TimeRange.from_values(100, 200, YEARLY).runs_up_to(TimePoint(position, YEARLY))
+        is expected
     )
 
 
 @pytest.mark.parametrize("check", ["holds", "runs_up_to"])
-def test_a_position_off_another_ruler_cannot_be_asked_about(check):
+def test_a_time_point_off_another_ruler_cannot_be_asked_about(check):
     """
     Year 150 and month 150 are not the same instant
     """
     with pytest.raises(MismatchedTimeAxisError):
-        getattr(TimeRange(100, 200, YEARLY), check)(Position(150, MONTHLY))
+        getattr(TimeRange.from_values(100, 200, YEARLY), check)(TimePoint(150, MONTHLY))
 
 
 # --------------------------------------------------------------------- branch point
@@ -425,8 +643,8 @@ def test_a_branch_point_keeps_a_published_float_as_published():
     `branch_time_in_parent` on a dated axis is not rounded to a whole day
     """
     branch = BranchPoint(
-        in_parent=Position(438000.5, DAILY_NOLEAP),
-        in_child=Position(0.0, DAILY_NOLEAP),
+        in_parent=TimePoint(438000.5, DAILY_NOLEAP),
+        in_child=TimePoint(0.0, DAILY_NOLEAP),
     )
 
     assert branch.in_child is not None
@@ -437,7 +655,7 @@ def test_a_branch_point_need_not_know_where_it_is_in_the_child():
     """
     CMIP5 does not publish it
     """
-    branch = BranchPoint(in_parent=Position(0, MONTHLY))
+    branch = BranchPoint(in_parent=TimePoint(0, MONTHLY))
 
     assert branch.in_child is None
 
@@ -447,4 +665,4 @@ def test_a_branch_point_on_a_natural_axis_is_a_whole_number_of_steps():
     Checked by the position, so no end of a branch point can get past it
     """
     with pytest.raises(NotAWholeStepError):
-        BranchPoint(in_parent=Position(100.5, YEARLY))
+        BranchPoint(in_parent=TimePoint(100.5, YEARLY))

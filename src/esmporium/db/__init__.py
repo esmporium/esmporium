@@ -12,13 +12,11 @@ from esmporium.db.database_catalogue import (
     DatabaseCatalogue,
     ParentLinkMissingError,
     UnknownVersionFilterError,
-    describing_version,
     facet_filters,
     find_datasets,
-    parent_of_dataset,
+    parent_of_version,
     to_catalogue_entry,
     version_clause,
-    version_filter,
 )
 from esmporium.db.dataset_uniqueness import (
     MISSING,
@@ -383,7 +381,6 @@ __all__ = [
     "copy_parent_facts",
     "data_node_id",
     "describe_moved",
-    "describing_version",
     "download",
     "download_summary",
     "ensure_parent_facts",
@@ -410,7 +407,7 @@ __all__ = [
     "match_on_facets",
     "matcher_for_project",
     "parent_fact_differences",
-    "parent_of_dataset",
+    "parent_of_version",
     "parent_simulation",
     "plan_downloads",
     "plan_header_reads",
@@ -448,6 +445,5 @@ __all__ = [
     "to_requirement",
     "unreliable_data_nodes",
     "version_clause",
-    "version_filter",
     "write_header_read_calls",
 ]

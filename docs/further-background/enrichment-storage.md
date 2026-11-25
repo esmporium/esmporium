@@ -53,7 +53,7 @@ they are reused here for the revised set, and "What changed in review" maps old 
 | 29 | **Disagreements between sources are kept and surfaced, never overwritten.** When a more trusted row is written, it is compared with the less trusted rows for the same version, and a disagreement is recorded. The more trusted row answers. |
 | 30 | **Every number travels with its units, and every comparison checks them where it happens.** Written out at the call site rather than buried in a helper or an operator, so a reader can see at each comparison that units were checked. |
 | 31 | **Published numbers are stored as published, and conversions are stored beside them.** A branch time published as a float stays a float with its units, untouched. Its position on the parent's recorded axis is computed at enrich time, with `cftime`, and stored as a separate, derived value naming what it was derived from, so the solve never has to convert. The first note's "no fractional years" (decision 4) is about how we *state and compare* extents, not about raw data. |
-| 32 | **A catalogue entry is one *version* of a dataset, chosen once, when it is found, and its `id` is that version's id.** `VersionFilter` is used by `find` and `parent_of`, and nowhere after: not by `Covers`, not by the time lookups, not by the enricher, which is handed version ids. Enriching from a *query* goes through `find`, which is where the filter belongs. See "Fixes to what is built", PR R3. |
+| 32 | **A catalogue entry is one *version* of a dataset, chosen once, when it is found, and its `id` is that version's id.** `VersionFilter` is used by `find`, and by `parent_of` as a check on the parent version the link records, and nowhere after: not by `Covers`, not by the time lookups, not by the enricher, which is handed version ids. Enriching from a *query* goes through `find`, which is where the filter belongs. See "Fixes to what is built", PR R3. |
 | 33 | **`Covers` is only ever about branch alignment.** Its `align` argument goes; aligning on the calendar is `SameTimeRange`'s job (PLAN step 14). |
 | 34 | **A parent which has not been looked for is "not yet", not "no".** `NOT_LOOKED_FOR` (and `UNRESOLVED`) put a group in `couldnt_answer` pointing at `esmporium.db.find_parents`, as `NEEDS_ENRICHMENT` points at the enricher, rather than in `unsatisfied`. |
 | 35 | **`read_variable_attributes` returns the attributes it was asked for, and reports every attribute it found when it cannot find the ones it is looking for.** |
@@ -151,12 +151,13 @@ Each is `breaking` where it touches a requirement's hash or a public signature.
 ### PR R3 — a catalogue entry is a version
 
 `src/esmporium/requirements/`, `src/esmporium/db/database_catalogue.py`.
+Built in [#79](https://github.com/esmporium/esmporium/pull/79).
 
-Today an entry is a `Dataset` row,
-and "which version speaks for it" is answered by `describing_version` at **every** lookup:
+Before it, an entry was a `Dataset` row,
+and "which version speaks for it" was answered by `describing_version` at **every** lookup:
 the newest version (by version string, ties broken by id) which passes the lookup's `VersionFilter`.
-Facets are read through it at `find`, parents through it at `parent_of`,
-and PR D's time lookups would have had to do the same.
+Facets were read through it at `find` (merged from every version that passed),
+parents through it at `parent_of`, and PR D's time lookups would have had to do the same.
 `CatalogueWithTimeInfo.get_time_range(entry)` takes no filter,
 so it could only have guessed which filter the solve used,
 and answered for a different version than the one whose facets and parent the solve had read.
@@ -174,8 +175,16 @@ So:
   A human still sees which dataset an entry is from `id_project_specific`.
   `test_catalogue_entry_mirrors_dataset_columns` changes accordingly:
   the facet fields still mirror `Dataset`'s columns, and `id` and the version fields mirror `DatasetVersion`'s.
-- `parent_of` keeps its `VersionFilter`: a parent is a dataset, and choosing which of its versions to use
-  is exactly the choice a filter makes. `NO_USABLE_VERSION` stays.
+- `parent_of` returns the parent version the link records
+  (`DatasetParentLink.parent_dataset_version_id`, with its `version_choice`),
+  and its `VersionFilter` is a **check** on that version, not a second choice:
+  a recorded version the filter refuses is `NO_USABLE_VERSION`, with no fallback to another release.
+  The link's version is the one `find_parents` chose, through its `version_chooser`, and then climbed from,
+  so it is the release whose own parent is recorded;
+  picking another by the filter would read `NOT_LOOKED_FOR` at the next hop,
+  overrule a chooser the user injected,
+  and describe a different release from the one the provenance names.
+  *Revised 2026-11-25, while building R3*: this bullet said the filter chooses the parent's version.
 - Everything downstream reads `entry.id` as a version: `Covers`, `CatalogueWithTimeInfo`, `EnrichmentInput`
   (whose `dataset_id` becomes `dataset_version_id`, so the enricher has no version to choose),
   and `download_by_id` (PR E), since a version is what gets downloaded.
@@ -183,9 +192,20 @@ So:
 - Enriching from a query is `find` then enrich, so the filter appears there and only there.
 - Decision 34 lands here: an unresolved parent puts the group in `couldnt_answer`
   with a status pointing at `find_parents`, so coverage never has to break a deadlock with a filter.
+  The status is `NEEDS_FIND_PARENTS`, ranked between `MISSING_FEATURE_PLEASE_RAISE_ISSUE` and
+  `NEEDS_ENRICHMENT` (a parent's facts cannot be named until it is found),
+  and `SolveResult.find_parents_inputs` carries the version ids each lineage stopped at,
+  which is what `find_parents` takes.
 - The developer note above `Catalogue` ("one entry describes one `Dataset` row, not one `DatasetVersion`")
   and the first note's "What does a catalogue entry carry, and for which version?"
   are updated to say this.
+- As built, beyond the above:
+  `parent_of_dataset` is renamed `parent_of_version`, and `describing_version` and `version_filter` are deleted;
+  `plan_downloads` plans exactly the entries' versions and loses `latest_version_only`;
+  `InMemoryCatalogue` applies the `VersionFilter` to each entry (`passes_version_filter`),
+  without choosing one version per dataset;
+  an entry's description in messages carries its version;
+  and a dataset with no versions is never found, under any filter.
 
 Not done, and not needed: the commented-out `Relationship()` in `schema.py`.
 Explicit `select`s are the state of the code rather than a recorded decision,
@@ -319,7 +339,7 @@ which is what lets a `Fail` resting on filenames say
 "these ranges come from filenames only; enrich #3 and #7 from variable values to check them" (decision 28).
 
 `CatalogueWithTimeInfo.get_time_range` gains the `wanted` step in PR D:
-`Covers` knows it, because `pad` and `min_overlap` are `Span`s.
+`Covers` knows it, because `pad` and `min_overlap` are `TimeDelta`s.
 
 ### Consistency between sources
 

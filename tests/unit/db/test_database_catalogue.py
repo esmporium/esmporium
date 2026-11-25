@@ -26,7 +26,7 @@ from esmporium.db import (
     facet_filters,
     find_datasets,
     find_parents,
-    parent_of_dataset,
+    parent_of_version,
     resolve_parent_links,
     save_parent_info,
     to_catalogue_entry,
@@ -326,19 +326,14 @@ def test_the_default_describes_a_superseded_dataset_by_its_live_version(engine, 
     assert any_entry.facet("realm") == "ocean"
 
 
-def test_a_dataset_with_no_versions_is_only_found_under_any(engine, store):
+@pytest.mark.parametrize("versions", list(VersionFilter))
+def test_a_dataset_with_no_versions_is_never_found(engine, store, versions):
+    """An entry is a version, so a dataset with none has nothing to be found as"""
     store("no-versions", variable="tas", versions=())
 
     catalogue = DatabaseCatalogue(engine)
 
-    assert found(catalogue, Query(variable="tas")) == []
-    assert (
-        found(catalogue, Query(variable="tas"), versions=VersionFilter.NOT_RETRACTED)
-        == []
-    )
-    assert found(catalogue, Query(variable="tas"), versions=VersionFilter.ANY) == [
-        "no-versions_ps"
-    ]
+    assert found(catalogue, Query(variable="tas"), versions=versions) == []
 
 
 def test_a_version_filter_we_do_not_know_is_refused(engine):
@@ -528,6 +523,64 @@ def test_the_newest_accepted_version_wins_over_an_older_one(engine, store):
     (entry,) = DatabaseCatalogue(engine).find(Query(variable="tas"))
 
     assert entry.facet("realm") == "atmos"
+
+
+def test_an_entry_is_the_version_it_was_chosen_as(engine, store):
+    """`id` and the version fields are the chosen `DatasetVersion` row's"""
+    dataset_id = store(
+        "one",
+        variable="tas",
+        versions=(
+            ("20200101", False, False, None),
+            ("20200202", True, True, None),
+        ),
+    )
+
+    catalogue = DatabaseCatalogue(engine)
+    with Session(engine) as session:
+        by_version = {
+            row.version: row
+            for row in session.exec(
+                select(DatasetVersion).where(DatasetVersion.dataset_id == dataset_id)
+            )
+        }
+
+    for versions, expected in (
+        (VersionFilter.NOT_RETRACTED, "20200101"),
+        (VersionFilter.ANY, "20200202"),
+    ):
+        (entry,) = catalogue.find(Query(variable="tas"), versions=versions)
+        row = by_version[expected]
+        assert (entry.id, entry.version, entry.is_latest, entry.retracted) == (
+            row.id,
+            row.version,
+            row.is_latest,
+            row.retracted,
+        )
+
+
+def test_another_versions_documents_never_fill_a_facet_in(engine, store):
+    """
+    The entry is described by its own version's documents and nobody else's
+
+    The older version records `realm` and the chosen one does not, so the entry has
+    no `realm`: borrowing it would describe a release which is not the one chosen.
+    """
+    store(
+        "one",
+        project="CMIP6",
+        variable="tas",
+        versions=(
+            ("20200101", False, False, [{"realm": ["ocean"]}]),
+            ("20200202", True, False, [{"activity_id": ["CMIP"]}]),
+        ),
+    )
+
+    (entry,) = DatabaseCatalogue(engine).find(Query(variable="tas"))
+
+    assert entry.version == "20200202"
+    assert entry.facet("activity") == "CMIP"
+    assert entry.facet("realm") is None
 
 
 # A note for developers:
@@ -854,10 +907,25 @@ def test_find_datasets_and_the_catalogue_agree(engine, store):
     assert directly == DatabaseCatalogue(engine).find(query)
 
 
-def test_to_catalogue_entry_refuses_an_unsaved_row(get_dataset_kwargs):
-    """A row with no ID yet describes no stored dataset, so it has no entry"""
+def test_to_catalogue_entry_refuses_an_unsaved_version(get_dataset_kwargs):
+    """A version with no ID yet is no stored version, so it has no entry"""
+    dataset = Dataset(id=1, **get_dataset_kwargs("unsaved"))
+    version = DatasetVersion(
+        dataset_id=1, version="20200101", is_latest=True, retracted=False
+    )
+
     with pytest.raises(ValueError, match="has not been saved"):
-        to_catalogue_entry(Dataset(**get_dataset_kwargs("unsaved")))
+        to_catalogue_entry(dataset, version)
+
+
+def test_to_catalogue_entry_refuses_a_version_of_another_dataset(get_dataset_kwargs):
+    dataset = Dataset(id=1, **get_dataset_kwargs("one"))
+    version = DatasetVersion(
+        id=5, dataset_id=2, version="20200101", is_latest=True, retracted=False
+    )
+
+    with pytest.raises(ValueError, match="belongs to dataset 2"):
+        to_catalogue_entry(dataset, version)
 
 
 def test_solving_against_the_database_matches_the_in_memory_catalogue(engine, store):
@@ -885,6 +953,9 @@ def test_solving_against_the_database_matches_the_in_memory_catalogue(engine, st
         entries=tuple(
             CatalogueEntry(
                 id=index + 1,
+                version="20200101",
+                is_latest=True,
+                retracted=False,
                 id_project_specific=f"{label}_ps",
                 project="CMIP6",
                 institution="institution",
@@ -982,7 +1053,15 @@ def test_both_catalogues_answer_alike_about_a_facet_nothing_records(
     store("one", variable="tas", versions=live())
 
     in_memory = InMemoryCatalogue(
-        entries=(CatalogueEntry(id=1, **get_dataset_kwargs("one", variable="tas")),)
+        entries=(
+            CatalogueEntry(
+                id=1,
+                version="20200101",
+                is_latest=True,
+                retracted=False,
+                **get_dataset_kwargs("one", variable="tas"),
+            ),
+        )
     )
 
     assert outcome(DatabaseCatalogue(engine), query) == outcome(in_memory, query)
@@ -1028,7 +1107,7 @@ def entry_of(engine):
             dataset = session.get(Dataset, version.dataset_id)
             assert dataset is not None
 
-            return to_catalogue_entry(dataset, **kwargs)
+            return to_catalogue_entry(dataset, version, **kwargs)
 
     return factory
 
@@ -1337,7 +1416,55 @@ def test_a_decided_release_says_so(engine, a_dataset_version, entry_of):
     assert "release defaulted" in found.provenance
 
 
-def test_parent_of_dataset_and_the_catalogue_agree(engine, a_dataset_version, entry_of):
+def test_the_parent_is_the_release_the_link_records(
+    engine, a_dataset_version, entry_of
+):
+    """
+    A newer live release of the parent is not substituted for the recorded one
+
+    The link records the release carrying the child's own version string, so that is
+    the parent, even though `NOT_RETRACTED` alone would have taken the newest.
+    """
+    with Session(engine) as session:
+        child = a_dataset_version(session, version="20261008")
+        recorded = a_dataset_version(
+            session, experiment="piControl", version="20261008"
+        )
+        existing = session.get(DatasetVersion, recorded)
+        assert existing is not None
+        session.add(
+            DatasetVersion(
+                dataset_id=existing.dataset_id,
+                version="20270101",
+                is_latest=True,
+                retracted=False,
+            )
+        )
+        existing.is_latest = False
+        session.add(existing)
+        save_parent_info(
+            session, child, a_declared_parent(), ParentInfoSource.SEARCH_METADATA
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            resolve_parent_links(session)
+        session.commit()
+
+    catalogue = DatabaseCatalogue(engine)
+    found = catalogue.parent_of(entry_of(child))
+
+    assert found.parent is not None
+    assert (found.parent.id, found.parent.version) == (recorded, "20261008")
+    assert "matched the child's version string" in found.provenance
+
+    # A filter the recorded release fails is a check, not a reason to take another.
+    strict = catalogue.parent_of(
+        entry_of(child), versions=VersionFilter.LATEST_NOT_RETRACTED
+    )
+    assert strict.status is ParentStatus.NO_USABLE_VERSION
+
+
+def test_parent_of_version_and_the_catalogue_agree(engine, a_dataset_version, entry_of):
     """The session-level primitive gives what the engine-level wrapper gives"""
     with Session(engine) as session:
         child = a_dataset_version(session)
@@ -1350,7 +1477,7 @@ def test_parent_of_dataset_and_the_catalogue_agree(engine, a_dataset_version, en
 
     entry = entry_of(child)
     with Session(engine) as session:
-        directly = parent_of_dataset(session, entry)
+        directly = parent_of_version(session, entry)
 
     assert directly == DatabaseCatalogue(engine).parent_of(entry)
 

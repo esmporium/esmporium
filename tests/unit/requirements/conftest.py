@@ -26,8 +26,10 @@ def make_entry(get_dataset_kwargs):
     come from the column names and types rather than being written out here.
     Adding a facet to the model therefore does not mean editing these tests.
 
-    The factory takes the entry's `id` and, optionally, `project_facets`,
-    `other_terms`, `facets_loaded` and any facet to override. `id` also seeds
+    The factory takes the entry's `id` and, optionally, `version`, `is_latest`,
+    `retracted`, `project_facets`, `other_terms`, `facets_loaded` and any facet to
+    override. The version fields default to a current, live release, which is what
+    most tests mean by "a dataset". `id` also seeds
     `id_project_specific`, so distinct IDs give distinct datasets unless a test
     deliberately says otherwise.
 
@@ -36,9 +38,12 @@ def make_entry(get_dataset_kwargs):
     everything.
     """
 
-    def factory(
+    def factory(  # noqa: PLR0913 - one argument per field a test may set
         entry_id,
         *,
+        version="20200101",
+        is_latest=True,
+        retracted=False,
         project_facets=None,
         other_terms=None,
         facets_loaded=None,
@@ -47,6 +52,9 @@ def make_entry(get_dataset_kwargs):
     ):
         return CatalogueEntry(
             id=entry_id,
+            version=version,
+            is_latest=is_latest,
+            retracted=retracted,
             project_facets={} if project_facets is None else project_facets,
             other_terms={} if other_terms is None else other_terms,
             facets_loaded=(None if facets_loaded is None else frozenset(facets_loaded)),

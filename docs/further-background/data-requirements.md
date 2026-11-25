@@ -295,7 +295,7 @@ attaching them at three levels:
 
 Shipped checks:
 
-- **`Covers(role, target, mode="containment" | "overlap", min_overlap=, pad=, ideal_min_overlap=, ideal_pad=)`** — e.g. the control covers the dataset's span, mapped through branch times along the whole chain. `mode` is stated rather than inferred, because containment cannot be written as a number; `min_overlap` and `pad` are `Span`s on the data's own axis rather than fractional years, and calendars are handled. The `ideal_*` thresholds are the soft ones, and are what produce `Degraded`. `role` and `target` name datasets **as the lineage names them**, which is why a lineage's `role` is required: `Covers(role="control")` and `Ancestors(role="control")` are visibly the same thing. `"self"` is the anchor, `"chain.<i>"` an intermediate parent, `"end"` works without knowing the name. Two things are still moving: nothing records a time range yet, so against `DatabaseCatalogue` the group comes back in `couldnt_answer` with `NEEDS_ENRICHMENT` rather than as unsatisfied, and the `align` argument it still carries is removed in PR R2, after which comparing on a shared calendar is `SameTimeRange`'s job. See [the enrichment notes](enrichment.md) and `PLAN.md` step 12c.
+- **`Covers(role, target, mode="containment" | "overlap", min_overlap=, pad=, ideal_min_overlap=, ideal_pad=)`** — e.g. the control covers the dataset's span, mapped through branch times along the whole chain. `mode` is stated rather than inferred, because containment cannot be written as a number; `min_overlap` and `pad` are `TimeDelta`s, stated in no calendar, rather than fractional years, and calendars are handled. The `ideal_*` thresholds are the soft ones, and are what produce `Degraded`. `role` and `target` name datasets **as the lineage names them**, which is why a lineage's `role` is required: `Covers(role="control")` and `Ancestors(role="control")` are visibly the same thing. `"self"` is the anchor, `"chain.<i>"` an intermediate parent, `"end"` works without knowing the name. Two things are still moving: nothing records a time range yet, so against `DatabaseCatalogue` the group comes back in `couldnt_answer` with `NEEDS_ENRICHMENT` rather than as unsatisfied, and the `align` argument it still carries is removed in PR R2, after which comparing on a shared calendar is `SameTimeRange`'s job. See [the enrichment notes](enrichment.md) and `PLAN.md` step 12c.
 - **`SameTimeRange(roles)`** — a cross-leaf check: a Gregory regression uses temperature and radiation together, so ECS puts this on its scope. Identical periods pass, overlapping ones degrade (naming the overlap), disjoint ones fail.
 
 **Serialisation:** constraints are stored with their import path, so they must be pydantic models if their requirement is to be stored in a database. Solving does not need this.
@@ -311,15 +311,19 @@ Shipped checks:
 
 `Catalogue` is a protocol with `find`, `parent_of` and `linked`.
 `find` and `parent_of` each have two implementations: `InMemoryCatalogue`, written out
-by hand, and `esmporium.db.DatabaseCatalogue`, which answers from the `Dataset` rows a
-search saved and the parent links a parent walk recorded. The two have to agree, and a
+by hand, and `esmporium.db.DatabaseCatalogue`, which answers from the dataset versions a
+search saved and the parent links a parent walk recorded. An entry is one *version* of a
+dataset: `find` chooses it once, with the requirement's `versions` filter, and a parent
+is the version its link records. The two have to agree, and a
 test holds them to it; the in-memory one is how each new piece of this design gets
 written and is expected to stay. `linked` is still ahead of us, on both.
 
 `parent_of` answers with a reason as well as a parent, because "nobody has read a parent
 for this dataset yet" and "this dataset declares no parent" are different facts and only
 the second is settled. Reporting the first as an absence would send a reader looking for
-data which is very likely already published.
+data which is very likely already published, so a lineage which stops there puts its
+group in `couldnt_answer` as `NEEDS_FIND_PARENTS`, with the versions to hand
+`esmporium.db.find_parents` in `SolveResult.find_parents_inputs`.
 
 ## Flow and storage
 

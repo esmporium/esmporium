@@ -152,25 +152,23 @@ for name in sys.modules:
 
     assert outside == {
         "esmporium.datasets",
-        # `datasets.calendars` imports `cftime` at point of use rather than here, so
-        # loading it costs nothing and needs nothing installed. It is in this closure
-        # because `datasets/__init__.py` exports from it, and it is allowed to be
-        # because `Covers` needs calendar arithmetic at solve time -- which is why it
-        # lives in `datasets` rather than in `esmporium.enrich`, a package this one may
-        # not import at all.
-        "esmporium.datasets.calendars",
         "esmporium.datasets.data_access",
         "esmporium.datasets.facets",
         # Which frequencies mean a dataset has no time axis at all, which `Covers`
         # refuses against. Project knowledge, so it would sit beside the rest of it
         # in `esmporium.enrich` -- except that the refusal happens both when a
         # requirement is built and when it is solved, and this package may not import
-        # that one. Same reason as `datasets.calendars` above.
+        # that one. Same reason as `datasets.time` below.
         "esmporium.datasets.no_time_axis",
         # Where each project's `branch_time_in_child` comes from, which `Covers` needs
         # at solve time and the enricher when it derives a branch point. Same reason as
         # `datasets.no_time_axis` above.
         "esmporium.datasets.branch_time_in_child",
+        # The time values and the calendar arithmetic on them, which `Covers` needs
+        # at solve time -- which is why it lives in `datasets` rather than in
+        # `esmporium.enrich`, a package this one may not import at all. It imports
+        # `cftime` at the point of use rather than at import, so loading it costs
+        # nothing and needs nothing installed.
         "esmporium.datasets.time",
         "esmporium.formatting",
         "esmporium.query",

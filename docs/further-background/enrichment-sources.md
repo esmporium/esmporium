@@ -55,7 +55,7 @@ and the time bounds are what check it:
 | filename end | the last step is one reporting interval wide | the last upper bound |
 | search record start and end | each is a time *point* inside its own step, and the steps are as wide as the reporting interval says | the first lower and last upper bound |
 | a missing `branch_time_in_child` (CMIP5) | the child branched at its own first time bound | a fix |
-| the width of a reporting interval (`SPAN_BY_REPORTING_INTERVAL`) | `mon` is a month, `3hr` three hours, and so on | the bounds |
+| the width of a reporting interval (`DELTA_BY_REPORTING_INTERVAL`) | `mon` is a month, `3hr` three hours, and so on | the bounds |
 
 Every value that rests on an assumption is stored with the assumption named,
 and every answer built on one says so,

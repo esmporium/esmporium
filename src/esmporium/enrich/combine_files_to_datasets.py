@@ -68,7 +68,10 @@ def combine_file_ranges(ranges: Iterable[TimeRange]) -> VersionTimeRange:
     >>> from esmporium.datasets.time import TimeAxis, TimeStep, TimeUnits
     >>> monthly = TimeAxis(TimeUnits(TimeStep.MONTHS))
     >>> combined = combine_file_ranges(
-    ...     [TimeRange(0, 120, monthly), TimeRange(120, 240, monthly)]
+    ...     [
+    ...         TimeRange.from_values(0, 120, monthly),
+    ...         TimeRange.from_values(120, 240, monthly),
+    ...     ]
     ... )
     >>> str(combined.range.extent), combined.is_contiguous, combined.n_files
     ('240 months', True, 2)
@@ -77,17 +80,23 @@ def combine_file_ranges(ranges: Iterable[TimeRange]) -> VersionTimeRange:
     than quietly reporting 239 months of data as 240:
 
     >>> gapped = combine_file_ranges(
-    ...     [TimeRange(0, 120, monthly), TimeRange(121, 240, monthly)]
+    ...     [
+    ...         TimeRange.from_values(0, 120, monthly),
+    ...         TimeRange.from_values(121, 240, monthly),
+    ...     ]
     ... )
     >>> str(gapped.range.extent), gapped.is_contiguous
     ('240 months', False)
 
     One file is contiguous with itself:
 
-    >>> combine_file_ranges([TimeRange(0, 1, monthly)]).is_contiguous
+    >>> combine_file_ranges([TimeRange.from_values(0, 1, monthly)]).is_contiguous
     True
     """
-    in_order = sorted(tuple(ranges), key=lambda each: (each.start, each.end_exclusive))
+    # By value: the axes are checked when the ranges are spanned, just below.
+    in_order = sorted(
+        tuple(ranges), key=lambda each: (each.start.value, each.end_exclusive.value)
+    )
     if not in_order:
         raise NoFilesToCombineError
 

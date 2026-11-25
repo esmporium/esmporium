@@ -130,7 +130,7 @@ class DuplicateEntryIDError(ValueError):
     This is about the *code*: an ID identifies one row, so a catalogue which repeats
     one has been built wrongly.
     It cannot arise from the database, where `id` is
-    [Dataset.id][esmporium.db.schema.Dataset.id], a primary key.
+    [DatasetVersion.id][esmporium.db.schema.DatasetVersion.id], a primary key.
     """
 
     def __init__(self, collisions: Mapping[int, int]) -> None:
@@ -149,7 +149,7 @@ class DuplicateEntryIDError(ValueError):
         )
         super().__init__(
             f"A catalogue's entries must have unique IDs, but {listed}. "
-            "An ID identifies one dataset row, "
+            "An ID identifies one dataset version, "
             "so a repeat makes two entries indistinguishable. "
             "This is a mistake in whatever built the catalogue: "
             "read from the database, `id` is a primary key and cannot repeat. "
@@ -190,10 +190,19 @@ class UnknownReferenceError(ValueError):
 @dataclass(frozen=True)
 class CatalogueEntry:
     """
-    A dataset, as far as the solver is concerned
+    One version of a dataset, as far as the solver is concerned
 
-    The fields mirror the columns of [Dataset][esmporium.db.schema.Dataset],
-    so that the two cannot drift apart unnoticed.
+    An entry is one [DatasetVersion][esmporium.db.schema.DatasetVersion]: its id, its
+    version columns, and the facet columns of the
+    [Dataset][esmporium.db.schema.Dataset] it belongs to, mirrored field for field so
+    that the two cannot drift apart unnoticed -- **plus** what else is known about that
+    version. [Catalogue.find][(m).Catalogue.find] chooses the version, with the
+    requirement's [VersionFilter][(m).VersionFilter], so everything downstream of it
+    answers for that version and has no version left to choose.
+    `project_facets`, `other_terms` and `facets_loaded` are on that second footing:
+    they come from the version's stored search documents, or record which of them were
+    read, and no column  in our dataset model holds them.
+
     [DatasetFacets][esmporium.search.DatasetFacets] is the mirror image of this
     class on the write side: parsers produce those, and this is what reading a
     stored row gives back.
@@ -204,13 +213,24 @@ class CatalogueEntry:
 
     id: int
     """
-    See [Dataset.id][esmporium.db.schema.Dataset.id]
+    See [DatasetVersion.id][esmporium.db.schema.DatasetVersion.id]
+
+    The id of the version this entry is, not of its dataset.
 
     Not optional, unlike the column it mirrors:
     an entry describes a row which is already in the database,
     so its ID has been assigned.
-    A dataset which has not been saved yet has no entry.
+    A version which has not been saved yet has no entry.
     """
+
+    version: str
+    """See [DatasetVersion.version][esmporium.db.schema.DatasetVersion.version]."""
+
+    is_latest: bool
+    """See [DatasetVersion.is_latest][esmporium.db.schema.DatasetVersion.is_latest]."""
+
+    retracted: bool
+    """See [DatasetVersion.retracted][esmporium.db.schema.DatasetVersion.retracted]."""
 
     id_project_specific: str
     """
@@ -746,27 +766,28 @@ def matches(query: QueryProtocol, entry: CatalogueEntry) -> bool:
 # things about doing it from documents are decisions rather than details, and belong
 # here:
 #
-# - **Which document answers.** A dataset has many versions and a version can be
-#   described by several documents. The one that answers belongs to the newest version
-#   which passed the lookup's [VersionFilter][(m).VersionFilter] -- not simply the
-#   newest version -- so a caller who excluded a retracted version is not then
-#   described by it.
+# - **Which document answers.** An entry is one version, and a version can be
+#   described by several documents. Only that version's documents are read, so a
+#   caller who excluded a retracted version is not then described by it, and a facet
+#   the chosen version's documents do not record is not filled in from another
+#   version's.
 #
-#   TODO future: this is the piece to revisit when a requirement can ask for a
-#   particular version, which it cannot today. The reason is not that version is hard
-#   to plumb, it is what an entry *is*: **one entry describes one `Dataset` row, not one
-#   `DatasetVersion`**, and the versions filter decides which version's documents
-#   speak for it. So "prefer version X" has nothing to range over -- there is a single
-#   entry per dataset however many versions exist -- and expressing it needs either a
-#   `version` field on the entry (making "prefer latest" trivially true and "this
-#   version" a filter rather than a preference) or one entry per
-#   `(dataset, version)`, which changes what `id` means and what a group is.
+# - **Which version an entry is.** [Catalogue.find][(m).Catalogue.find] chooses it,
+#   once, with the lookup's [VersionFilter][(m).VersionFilter]: the newest version
+#   which passes, by version string, ties broken by id. Nothing after `find` chooses a
+#   version again. A parent's version is chosen when the parent link is recorded (see
+#   [esmporium.db.find_parents][]), and the filter is a check on that choice rather
+#   than a second one.
 #
-#   Note also where version would *not* go. It is not a facet: facets are what a query
-#   matches on, and version is metadata about which snapshot answered, like `id`. So it
-#   belongs as a field of its own rather than in `project_facets` or `other_terms`,
-#   both of which are built *from* a particular version's documents and so cannot be
-#   how you choose between them.
+#   TODO future: a requirement cannot yet ask for a particular version. The entry
+#   carries `version`, `is_latest` and `retracted`, so "prefer version X" is a ranking
+#   over a field the candidates already have; what is missing is a way for `prefer`
+#   to say it.
+#
+#   Version is not a facet: facets are what a query matches on, and version is which
+#   snapshot answered, like `id`. So it is a field of its own rather than a key of
+#   `project_facets` or `other_terms`, both of which are built *from* one version's
+#   documents and so cannot be how you choose between them.
 
 
 # TODO future: these three settings are meant to become two, and the first half of that
@@ -790,10 +811,9 @@ def matches(query: QueryProtocol, entry: CatalogueEntry) -> bool:
 # last step, not the first.
 #
 # Important to note:
-# - The preference half needs a version on the entry first. Why that is not a small
-#   change is in the note above [Catalogue][(m).Catalogue]: an entry describes a
-#   `Dataset`, not a `DatasetVersion`, so today there is nothing for a preference to
-#   range over.
+# - The preference half has what it needs on the entry: `version`, `is_latest` and
+#   `retracted` (see the note above [Catalogue][(m).Catalogue]). What it lacks is a
+#   `prefer` which can rank on them.
 #
 # `test_a_retracted_dataset_drops_its_group_from_the_solve` and
 # `test_a_group_whose_other_leaf_is_retracted_becomes_unsatisfied` in
@@ -814,10 +834,14 @@ class VersionFilter(str, Enum):
     Which of a dataset's stored versions count when looking for it
 
     A dataset has many versions and this says which of them a lookup accepts. It
-    decides two things, not one: whether the dataset is found at all (it needs a
-    version which qualifies), and which version's search documents describe it (the
-    newest which qualifies). So this is not a filter applied to a finished answer,
-    it is part of how the answer is read.
+    decides two things: whether the dataset is found at all (it needs a
+    version which qualifies), and which of its versions the entry is (the newest which
+    qualifies). So this is not a filter applied to a finished answer, it is part of
+    how the answer is read.
+
+    For a parent, the version was chosen when the parent link was recorded, and this
+    is a check on that version rather than a second choice: see
+    [ParentStatus.NO_USABLE_VERSION][(m).ParentStatus.NO_USABLE_VERSION].
     """
 
     ANY = "any"
@@ -833,8 +857,8 @@ class VersionFilter(str, Enum):
 
     The default, because a dataset's newest usable version beats nothing. A dataset
     whose latest version was retracted is still usable from the one before it, and the
-    document which describes it here is that older version's -- so what the entry says
-    matches what a caller would get.
+    entry is that older version -- so what the entry says matches what a caller would
+    get.
     """
 
     # Note: Expected to go once recency can be expressed as a *preference* rather
@@ -850,6 +874,45 @@ class VersionFilter(str, Enum):
     """
 
 
+def passes_version_filter(entry: CatalogueEntry, versions: VersionFilter) -> bool:
+    """
+    Determine whether an entry's version is one a version filter accepts
+
+    The per-version half of [VersionFilter][(m).VersionFilter]: it says whether *this*
+    version counts, and nothing about whether another version of the same dataset
+    would be chosen instead.
+
+    Parameters
+    ----------
+    entry
+        Entry to check
+
+    versions
+        Which versions count
+
+    Returns
+    -------
+    :
+        `True` if `versions` accepts `entry`'s version
+
+    Raises
+    ------
+    ValueError
+        `versions` is not one of the members of
+        [VersionFilter][(m).VersionFilter]
+    """
+    accepted = {
+        VersionFilter.ANY: True,
+        VersionFilter.NOT_RETRACTED: not entry.retracted,
+        VersionFilter.LATEST_NOT_RETRACTED: entry.is_latest and not entry.retracted,
+    }
+    try:
+        return accepted[versions]
+    except KeyError:
+        msg = f"{versions!r} is not a version filter we know"
+        raise ValueError(msg) from None
+
+
 class ParentStatus(str, Enum):
     """
     What came of asking a catalogue for a dataset's parent
@@ -860,7 +923,7 @@ class ParentStatus(str, Enum):
 
     NOT_LOOKED_FOR = "not_looked_for"
     """
-    Nothing has looked for a parent for this dataset yet
+    Nothing has looked for a parent for this dataset version yet
 
     This is not an answer about the data.
     Rather, it says that the question has not been asked.
@@ -868,6 +931,8 @@ class ParentStatus(str, Enum):
     (a separate function because it can require network access,
     and we don't our requirements solving step to start firing off network requests
     without an explicit opt in).
+    A solve reports it as
+    [NEEDS_FIND_PARENTS][esmporium.requirements.ExplanationStatusNotOk.NEEDS_FIND_PARENTS].
     """
 
     ROOT = "root"
@@ -884,7 +949,8 @@ class ParentStatus(str, Enum):
 
     Either nothing has searched for the parent yet,
     or it was searched for but not stored at the time.
-    Searching again can change this.
+    Searching again can change this, which is why a solve reports it as
+    [NEEDS_FIND_PARENTS][esmporium.requirements.ExplanationStatusNotOk.NEEDS_FIND_PARENTS].
     """
 
     PARENT_NOT_FOUND = "parent_not_found"
@@ -908,14 +974,17 @@ class ParentStatus(str, Enum):
 
     NO_USABLE_VERSION = "no_usable_version"
     """
-    The parent is a dataset we hold, but no version of it passes the version filter
+    The parent is a dataset we hold, and the version of it the link records does not
+    pass the version filter
 
     The one answer which is about the question rather than the data:
     the parent is there, and was excluded by the [VersionFilter][(m).VersionFilter]
-    the lookup was given -- every release of it retracted,
+    the lookup was given -- the recorded release retracted,
     say, when the caller asked for [NOT_RETRACTED][(m).VersionFilter.NOT_RETRACTED].
-    Asking differently e.g. with [ANY][(m).VersionFilter.ANY]
-    can change this into finding a parent.
+    No other release is substituted, because the recorded one is the release whose
+    own parent was read. Asking differently e.g. with [ANY][(m).VersionFilter.ANY],
+    or recording a different release by running [esmporium.db.find_parents][] with a
+    `version_chooser`, can change this into finding a parent.
     """
 
 
@@ -968,6 +1037,8 @@ class Catalogue(Protocol):
     Every dataset we have, and what is known about them
 
     A catalogue is the *contents*: every dataset on record and every version of each.
+    What it hands back is versions: each [CatalogueEntry][(m).CatalogueEntry] is one
+    version of one dataset.
     """
 
     def find(
@@ -978,7 +1049,7 @@ class Catalogue(Protocol):
         needs_facets: Collection[str] | None = None,
     ) -> tuple[CatalogueEntry, ...]:
         """
-        Find every dataset which matches a query
+        Find every dataset which matches a query, as one version of each
 
         The first two arguments narrow a lookup along two different axes, and neither
         is a property of the catalogue: `query` says which facet values are acceptable,
@@ -995,10 +1066,10 @@ class Catalogue(Protocol):
             Which of a dataset's versions count. See
             [VersionFilter][(m).VersionFilter].
 
-            Not only a filter on what comes back: it also decides which version's
-            search documents describe each entry, so two lookups which differ only in
-            this can report different values for a facet no column holds. They are
-            therefore not subsets of one another.
+            Not only a filter on what comes back: it also decides which version each
+            entry is, so two lookups which differ only in this can return different
+            versions of one dataset, with different values for a facet no column
+            holds. They are therefore not subsets of one another.
 
         needs_facets
             The facets the caller will ask the entries about
@@ -1019,7 +1090,8 @@ class Catalogue(Protocol):
         Returns
         -------
         :
-            Matching datasets, in a stable order
+            One entry per matching dataset, being the version `versions` chose, in a
+            stable order
         """
         ...
 
@@ -1031,15 +1103,16 @@ class Catalogue(Protocol):
         needs_facets: Collection[str] | None = None,
     ) -> ParentLookup:
         """
-        Get the dataset a dataset branched from
+        Get the dataset version a dataset version branched from
 
         Parameters
         ----------
         entry
-            Dataset whose parent is wanted
+            Version whose parent is wanted
 
         versions
-            Which of a dataset's versions count, on both ends of the link. See
+            Which versions count. The parent's version is the one its link records,
+            and this is a check on it rather than a choice. See
             [VersionFilter][(m).VersionFilter].
 
         needs_facets
@@ -1109,27 +1182,24 @@ class InMemoryCatalogue:
     -- and `test_solving_against_the_database_matches_the_in_memory_catalogue` is what
     holds them together.
 
-    It has no concept of a version, so every
-    [VersionFilter][(m).VersionFilter] gives the same entries back. That is the true
-    answer rather than the argument being ignored: an entry here is a dataset somebody
-    wrote down as present, so there is no retracted version to leave out and no newer
-    one to prefer. A test which needs retraction to matter needs
-    [esmporium.db.DatabaseCatalogue][], because retraction is something stored versions
-    have and written-down entries do not.
+    Each entry is a version, and the
+    [VersionFilter][(m).VersionFilter] is applied to each entry on its own, by
+    [passes_version_filter][(m).passes_version_filter]. There is no choosing between
+    versions of one dataset, because nothing here says which entries are versions of
+    the same dataset: write down the version a lookup should find. Two entries which
+    are both written down and both pass are both found.
     """
 
-    # When we come back to handling VersionFilter more carefully,
-    # add the concept of version to this catalogue.
-    # We don't want to have to pull out an entire DatabaseCatalogue
-    # to be able to test whether our logic around picking latest versions,
-    # second-latest, non-retracted etc. works
+    # TODO future: choosing between versions of one dataset (newest, second-newest,
+    # non-retracted) cannot be tested here, because entries carry no dataset identity.
+    # We don't want to have to pull out an entire DatabaseCatalogue to test that logic.
 
     entries: tuple[CatalogueEntry, ...]
-    """The datasets available"""
+    """The dataset versions available"""
 
     parents: Mapping[int, int | None] = field(default_factory=dict)
     """
-    Entry ID -> the ID of the dataset it branched from, or `None` for a root
+    Entry ID -> the ID of the version it branched from, or `None` for a root
 
     The three cases are written as three different things, so that this can say
     everything [ParentStatus][(m).ParentStatus] can say about a root or an absence:
@@ -1187,7 +1257,7 @@ class InMemoryCatalogue:
         needs_facets: Collection[str] | None = None,
     ) -> tuple[CatalogueEntry, ...]:
         """
-        Find every dataset which matches a query
+        Find every entry which matches a query and whose version counts
 
         Parameters
         ----------
@@ -1195,8 +1265,7 @@ class InMemoryCatalogue:
             Query to match
 
         versions
-            Accepted, and makes no difference, for the reason given on the class: these
-            entries have no versions for it to choose between.
+            Which versions count, applied to each entry on its own. See the class.
 
         needs_facets
             Honoured, although there is nothing here to skip: these entries are already
@@ -1211,7 +1280,7 @@ class InMemoryCatalogue:
         Returns
         -------
         :
-            Matching datasets, in the order they were given to the catalogue
+            Matching entries, in the order they were given to the catalogue
 
             Narrowed to `needs_facets` when one was given, as `_narrowed` in this
             module describes.
@@ -1220,9 +1289,16 @@ class InMemoryCatalogue:
         ------
         ClashingFacetsError
             `query` sets the same facet in more than one place
+
+        ValueError
+            `versions` is not one of the version filters we know
         """
         asked = asked_facets(query)
-        found = tuple(entry for entry in self.entries if matches_facets(asked, entry))
+        found = tuple(
+            entry
+            for entry in self.entries
+            if passes_version_filter(entry, versions) and matches_facets(asked, entry)
+        )
 
         if needs_facets is None:
             return found
@@ -1237,17 +1313,18 @@ class InMemoryCatalogue:
         needs_facets: Collection[str] | None = None,
     ) -> ParentLookup:
         """
-        Get the dataset a dataset branched from, as `parents` records it
+        Get the version a version branched from, as `parents` records it
 
         Parameters
         ----------
         entry
-            Dataset whose parent is wanted. Only its `id` is read, so an entry
+            Version whose parent is wanted. Only its `id` is read, so an entry
             narrowed to a few facets can still be asked.
 
         versions
-            Accepted, and makes no difference, for the reason given on the class:
-            these entries have no versions for it to choose between.
+            Which versions count. The parent `parents` records is checked against
+            it, and is [NO_USABLE_VERSION][(m).ParentStatus.NO_USABLE_VERSION] if it
+            does not pass.
 
         needs_facets
             Honoured, so that a parent from here answers for exactly what a parent
@@ -1261,6 +1338,11 @@ class InMemoryCatalogue:
             `provenance` is always empty: nothing here knows where its answers came
             from, and inventing a phrase would make this catalogue claim more than it
             was told.
+
+        Raises
+        ------
+        ValueError
+            `versions` is not one of the version filters we know
         """
         if entry.id not in self.parents:
             return ParentLookup(ParentStatus.NOT_LOOKED_FOR)
@@ -1272,6 +1354,9 @@ class InMemoryCatalogue:
         # `__post_init__` checked that every ID here is one of ours, so this cannot
         # come up empty.
         parent = next(each for each in self.entries if each.id == parent_id)
+        if not passes_version_filter(parent, versions):
+            return ParentLookup(ParentStatus.NO_USABLE_VERSION)
+
         if needs_facets is not None:
             parent = _narrowed(parent, needs_facets)
 

@@ -54,6 +54,9 @@ def catalogue_entry(
     """Get one stored dataset, as the solver sees it."""
     return CatalogueEntry(
         id=entry_id,
+        version="20200101",
+        is_latest=True,
+        retracted=False,
         id_project_specific=f"CMIP6.{model}.{experiment}.{variable}.{grid_label}",
         project="CMIP6",
         model=model,
