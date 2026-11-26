@@ -8,14 +8,6 @@ fills the gap itself, between searching and solving:
 ```text
 Requirement --> search --> database --> ENRICH --> solve --> outcome
 ```
-
-What each source says is parsed by one pure function per source, each returning
-everything that source can say: [parse_filename][esmporium.enrich.parse_filename],
-[parse_file_header][esmporium.enrich.parse_file_header],
-[parse_variable_attributes][esmporium.enrich.parse_variable_attributes] and
-[parse_variable_values][esmporium.enrich.parse_variable_values] here, and
-[parse_search_record][esmporium.search.parse_search_record] beside the other search
-result parsing, because which fields carry the values is the search API's convention.
 """
 
 from esmporium.enrich.combine_files_to_datasets import (

@@ -3,8 +3,9 @@ Parsing a file's first and last time bounds into the range its data spans
 
 The bounds are the data itself, so the dated range read off them rests on no
 assumption: the first lower bound is where the data starts and the last upper bound is
-where it ends. The range of whole months (or years) is worked out from that, and
-rests on an assumption only when a bound falls part way through a step.
+where it ends. The natural range, in whole months or whole years, is worked out from
+that, and rests on an assumption only when a bound falls part way through one of its
+steps. The dated range is never widened or rounded.
 """
 
 from __future__ import annotations
@@ -79,11 +80,13 @@ class ParsedTimeValues:
 
     natural: SourcedTimeRange | None
     """
-    The same data as a range of whole months, or whole years for yearly data
+    The same data on a natural axis: whole years for yearly data, whole months for
+    everything else
 
-    Each end is widened to the edge of the step it falls in, so a step the data covers
-    only part of is counted as covered. When that happened at either end the range
-    rests on
+    Each end is widened to the edge of the natural step it falls in, so a month (or
+    year) the data covers only part of is counted as covered. Only this natural range
+    is widened; `dated` is the bounds as published. When widening happened at either
+    end the range rests on
     [Assumption.PART_STEPS_COUNT_AS_COVERED][esmporium.datasets.Assumption.PART_STEPS_COUNT_AS_COVERED];
     when both bounds are on step edges it rests on none. `None` exactly when `dated`
     is.

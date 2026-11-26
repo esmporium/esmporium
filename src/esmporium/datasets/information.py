@@ -189,13 +189,20 @@ class Assumption(str, Enum):
 
     PART_STEPS_COUNT_AS_COVERED = "part_steps_count_as_covered"
     """
-    A step the data covers only part of is counted as covered
+    On a natural axis, a step the data covers only part of is counted as covered
+
+    **Natural ranges only**, i.e. ranges in whole months or whole years, the two steps
+    which count the same in every calendar. A dated range (e.g. on
+    `days since 1850-01-01`) is never widened: it is the bounds as published.
 
     How time bounds which do not fall on the edges of a month (or a year) become a
-    range of whole months (or years): the range is widened to the edges, so a run
-    whose last upper bound is 16 December 2014 is taken to cover December. Only named
-    on a range where widening actually happened. The dated range read off the same
-    bounds says exactly where the data starts and ends.
+    natural range: the range is widened to the edges, so a run whose last upper bound is
+    16 December 2014 is taken to cover December. Yearly data is widened to whole years
+    and everything else to whole months, so this is named most often for daily and
+    finer data, whose runs need not start or end on a month edge, and rarely for monthly
+    data, whose bounds usually sit on month edges. Only named on a range where widening
+    actually happened. The dated range read off the same bounds says exactly where the
+    data starts and ends.
     """
 
 

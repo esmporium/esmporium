@@ -40,7 +40,7 @@ different ones -- so neither a missing attribute nor a `None` is enough on its o
   CMIP6 convention, and does not occur in CMIP7, which announces a root by carrying
   none of the keys at all.
 
-Checked live on 2026-11-04 and 2026-11-05.
+Checked live on 2026-11-05.
 """
 
 
