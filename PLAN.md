@@ -2,7 +2,7 @@
 
 What we are building, in the order we mean to build it.
 
-Last updated: 2026-11-24
+Last updated: 2026-11-26
 
 ## What changed about this document
 
@@ -110,7 +110,7 @@ interpreted.
 | 11 | `Ancestors` lineage in requirements | 2 | 10 | done · [#67](https://github.com/esmporium/esmporium/pull/67) |
 | **12a** | The `Constraint` protocol, nothing shipped | 3 | 11 | done · [#69](https://github.com/esmporium/esmporium/pull/69) |
 | **12b** | `Covers`: the constraint itself | 3 | 12c PR D | shipped, unfinished · [#69](https://github.com/esmporium/esmporium/pull/69), [#72](https://github.com/esmporium/esmporium/pull/72), [#73](https://github.com/esmporium/esmporium/pull/73) |
-| **12c** | Enrichment: the time information ESGF does not publish | 3 | 12a | **in progress** · C1 next |
+| **12c** | Enrichment: the time information ESGF does not publish | 3 | 12a | **in progress** · C2 next |
 | 13 | `any_of`, `optional` | 3 | — | ready |
 | 14 | `scope` and `SameTimeRange` | 3 | 12c PR R2 | ready |
 | 15 | `Aux` | 3 | — | ready |
@@ -148,8 +148,9 @@ the constraint at once.
 | [#77](https://github.com/esmporium/esmporium/pull/77) | **PR R1** — the values carry their units and only say what was published: `extent` returns a `Span`, two axes are comparable only on the same units and calendar, `BranchPoint` keeps published floats and gains a child axis, no default calendar, `PublishedRange` holds the stamps as published, `measure_version` renamed `combine_file_ranges` | 12c, 12b | done |
 | [#78](https://github.com/esmporium/esmporium/pull/78) | **PR R2** — `Covers` maps a child onto its parent through both ends of the branch point, checks axes where it computes, and loses `align`. `Position` (a number with its axis), `BranchPoint` built from two, the per-project `branch_time_in_child` registry, every join checked on both sides | 12c, 12b, 14 | done |
 | [#79](https://github.com/esmporium/esmporium/pull/79) | **PR R3** — a catalogue entry is one `DatasetVersion`, chosen once by `find`; `parent_of` returns the parent version the link records, the filter only checking it; an unwalked lineage is `couldnt_answer` / `NEEDS_FIND_PARENTS` with `find_parents_inputs`; `EnrichmentInput.dataset_version_id`; `plan_downloads` plans the entries' versions | 12c, 11, 16 | done |
-| **C1** | readers: the range-backed byte source, the classic variable-list walk, `h5netcdf` for netCDF-4, the time-bounds read | 12c, 10 | **next** |
-| **C2** | the `parse_*` functions, pure, one per source, plus the consistency comparison | 12c | after C1 |
+| [#80](https://github.com/esmporium/esmporium/pull/80) | time handling moved around: `Position` renamed `TimePoint`, `Span` replaced by the signed `TimeDelta` with an optional calendar, `datasets/calendars.py` folded into `datasets/time.py`, `TimePoint.delta_from` and `TimePoint.plus`, `Covers` padding stated in a calendar | 12c, 12b | done |
+| [#81](https://github.com/esmporium/esmporium/pull/81) | **PR C1** — readers: one `ByteSource` (`RangeSource`, `LocalFileSource`, `HeldBytesSource`) fetching only what a reader asks for, within a byte and request budget; the classic parser walks the whole header and reads record values; `h5netcdf` for netCDF-4; `read_file_header`, `read_variable_attributes`, `read_first_and_last_time_bounds`; `RANGES_NOT_HONOURED` | 12c, 10 | done |
+| **C2** | the `parse_*` functions, pure, one per source, plus the consistency comparison | 12c | **next** |
 | **C3** | storage: the five tables, the `DatasetVersionParentInfo` rename, one alembic revision | 12c | ready |
 | **C4** | `enrich_datasets`, serial: plan, retrieve, parse, record, back-fill, fixes | 12c | after C1-C3 |
 | **D** | the catalogue serves it, and the integration tests that were the point | 12c, 12b | after C4 — **this is what finishes 12b** |
@@ -213,9 +214,11 @@ downloads off them run in `CMIP-Output-Tracking`, which is steps 5 and 9.
 **Phase 3 is the requirement language, and step 12c is the work in hand.** Its three
 design notes and its pure half are built, and all three of its corrective PRs have
 landed: R1 gave the values their units, R2 made `Covers` map through both ends of a
-branch point, and R3 made a catalogue entry one version, chosen once. The readers come
-next, then the parsers, the storage, the enrich step, and the integration tests that
-finish 12b; the storage and `download_by_id` can start beside the readers. Steps 13, 14, 15 and 18 are ready
+branch point, and R3 made a catalogue entry one version, chosen once. The readers (C1)
+have landed too, so a file's variable attributes and first and last time bounds can be
+read from a data node or a local file. The parsers come next, then the storage, the
+enrich step, and the integration tests that finish 12b; the storage and
+`download_by_id` can start beside the parsers. Steps 13, 14, 15 and 18 are ready
 whenever we want them; 16 is waiting on 15. **Phase 4 has not started**, and step 17 (data loading)
 wants a design pass of its own before it is picked up.
 
@@ -1202,9 +1205,11 @@ work, and where we are up to.
   `NOT_LOOKED_FOR` or `UNRESOLVED`, with `find_parents_inputs` ready to hand back).
 - **The calendar is not a global attribute.** Measured against this repository's own
   captured header prefixes, not assumed: `calendar` and the time units are attributes
-  of the *time variable*, and `esmporium.headers` reads globals only. The CMIP5 netCDF3
-  prefix does not contain the word `calendar` anywhere. A missing calendar is an error
-  listing the attributes found, not a silent default to `standard`.
+  of the *time variable*, which `esmporium.headers` reads since C1
+  (`read_variable_attributes`, `FileHeader.variable_attributes`). The CMIP5 netCDF3
+  file's global attributes do not contain the word `calendar` anywhere. A missing
+  calendar is an error listing the attributes found, not a silent default to
+  `standard`.
 - **Fixes outrank every published source**, with a mandatory reason and evidence, and a
   branch-time fix is refused if it places the branch outside the parent's recorded
   range.
@@ -1213,7 +1218,7 @@ work, and where we are up to.
   included. Fixed pools, configurable; adaptation only if a measurement asks for it,
   which is step 8's lesson applied again.
 
-### What R1 and R2 leave for the rest of the ladder
+### What R1 to C1 leave for the rest of the ladder
 
 What the later rungs build on, as it now is in code:
 
@@ -1252,6 +1257,26 @@ What the later rungs build on, as it now is in code:
   first instant after `historical`'s data joins up.
 - **Every stored `requirement_hash` changed again with R2**, because `Covers` lost a
   field. Clear or re-stem any tracked search before its next run.
+- **One read gives everything a header holds** (C1). `read_header(client, route,
+  time_bounds=True)` returns a `FileHeader`: the global attributes, every variable's
+  attributes, the layout, the cost (`bytes_read`, `n_requests`, `file_size`) and,
+  when asked, `FirstAndLastTimeBounds`: the time variable's first and last values,
+  its first and last bounds pairs, the bounds variable's name and the number of
+  steps. The values are raw numbers as stored; turning them into a `TimeRange` is
+  C2's `parse_variable_values`, and C3's `FileMetadataDoc` maps onto `FileHeader`.
+- **Local and remote reads share every reader** (C1). C4's `prefer_local` passes a
+  `LocalFileSource` to `read_file_header` where `read_header` builds a `RangeSource`.
+  Neither knows the project or the URL.
+- **Only `bounds` is followed** (C1). A time variable naming its bounds with CF's
+  `climatology` attribute instead, as CMIP7's `tminavg` and `tmaxavg` files do, comes
+  back with its first and last values and no bounds. Whether C2 reads climatology
+  bounds is open.
+- **The first and last bounds cost 2 requests on the CMIP5 and CMIP7 files recorded,
+  and 6 on the CMIP6 one** (C1), whose time values sit 128 MB and 216 MB into the
+  file. The default budget is 8 requests and 1 MiB per file. The recordings are in
+  `tests/test-data/headers/`, made with `scripts/record_header_ranges.py`.
+- **The live header tests have not passed against C1 yet**: CEDA's search index
+  answered 503 while it was built. `make test-headers` still has to be run.
 
 ### The PR ladder
 
@@ -1269,7 +1294,7 @@ a step of this plan: a step is a goal, a rung is a unit of work, and the whole r
 this step grew fifteen of them is that the goal is one and the work is not.
 
 Ordering, stated once: R1 before R2, because `Covers` uses R1's types; both have
-landed, and so has R3, which C3 is keyed on. C1 before C2 before C4; C3 can land beside C1 or C2. D needs C4. **P comes
+landed, and so has R3, which C3 is keyed on. C1 before C2 before C4; C1 has landed, and C3 can land beside C2. D needs C4. **P comes
 after D**, so that it changes how retrievals are run rather than what they return. **E
 is independent** and can land any time.
 
