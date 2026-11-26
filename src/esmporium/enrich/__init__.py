@@ -34,13 +34,16 @@ from esmporium.enrich.file_header import (
 )
 from esmporium.enrich.filename import ParsedFilename, parse_filename
 from esmporium.enrich.known_parsers import (
+    CLIMATOLOGY_INTERVALS_BY_PROJECT,
     CLIMATOLOGY_SUFFIX,
     DELTA_BY_REPORTING_INTERVAL,
     FILENAME_TIME_PARSERS_BY_PROJECT,
     STEP_BY_STAMP_LENGTH,
+    UnknownProjectClimatologyIntervalsError,
     UnknownProjectFilenameTimeParserError,
     UnknownReportingIntervalError,
     delta_of_reporting_interval,
+    is_climatology_interval,
     parse_trailing_range,
     parser_for_project,
     step_of_stamp,
@@ -66,6 +69,7 @@ from esmporium.enrich.variable_values import (
 )
 
 __all__ = [
+    "CLIMATOLOGY_INTERVALS_BY_PROJECT",
     "CLIMATOLOGY_SUFFIX",
     "DELTA_BY_REPORTING_INTERVAL",
     "FILENAME_TIME_PARSERS_BY_PROJECT",
@@ -88,6 +92,7 @@ __all__ = [
     "PublishedRange",
     "StampPrecisionMismatchError",
     "TimeRangeDisagreement",
+    "UnknownProjectClimatologyIntervalsError",
     "UnknownProjectFileHeaderParserError",
     "UnknownProjectFilenameTimeParserError",
     "UnknownReportingIntervalError",
@@ -97,6 +102,7 @@ __all__ = [
     "compare_time_ranges",
     "delta_of_reporting_interval",
     "file_header_parser_for_project",
+    "is_climatology_interval",
     "natural_step_for",
     "parse_cmip5_file_header",
     "parse_cmip6_file_header",

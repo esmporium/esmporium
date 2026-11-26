@@ -14,10 +14,13 @@ from esmporium.datasets.information import (
     SourcedTimeRange,
 )
 from esmporium.enrich.known_parsers import (
+    CLIMATOLOGY_INTERVALS_BY_PROJECT,
+    CLIMATOLOGY_SUFFIX,
     DELTA_BY_REPORTING_INTERVAL,
     FILENAME_TIME_PARSERS_BY_PROJECT,
     STEP_BY_STAMP_LENGTH,
     delta_of_reporting_interval,
+    is_climatology_interval,
     parser_for_project,
     step_of_stamp,
 )
@@ -57,8 +60,9 @@ class ParsedFilename:
 
     [FINER_THAN_A_MONTH][esmporium.datasets.NoRangeReason.FINER_THAN_A_MONTH] for a
     daily or finer stamp, and
-    [CLIMATOLOGY][esmporium.datasets.NoRangeReason.CLIMATOLOGY] for a range carrying a
-    suffix, whose stamps are the period averaged over rather than a run of data.
+    [CLIMATOLOGY][esmporium.datasets.NoRangeReason.CLIMATOLOGY] for a multi-year
+    climatology, labelled by a `-clim` suffix or by its reporting interval, whose
+    stamps are the period averaged over rather than a run of data.
     """
 
 
@@ -70,6 +74,9 @@ def parse_filename(  # noqa: PLR0913 - one argument per injection seam
     parsers: Mapping[str, FilenameTimeParser] = FILENAME_TIME_PARSERS_BY_PROJECT,
     deltas: Mapping[str, TimeDelta] = DELTA_BY_REPORTING_INTERVAL,
     steps: Mapping[int, TimeStep] = STEP_BY_STAMP_LENGTH,
+    climatology_intervals: Mapping[str, frozenset[str]] = (
+        CLIMATOLOGY_INTERVALS_BY_PROJECT
+    ),
 ) -> ParsedFilename | None:
     """
     Parse everything a filename says about time
@@ -95,6 +102,9 @@ def parse_filename(  # noqa: PLR0913 - one argument per injection seam
     steps
         The precision each length of stamp is written to
 
+    climatology_intervals
+        Which reporting intervals mean a multi-year climatology, per project
+
     Returns
     -------
     :
@@ -106,6 +116,9 @@ def parse_filename(  # noqa: PLR0913 - one argument per injection seam
     ------
     UnknownProjectFilenameTimeParserError
         We have no parser for `project`
+
+    UnknownProjectClimatologyIntervalsError
+        We do not know which of `project`'s reporting intervals are climatologies
 
     UnknownReportingIntervalError
         We do not know how wide one step of `reporting_interval` is
@@ -153,7 +166,9 @@ def parse_filename(  # noqa: PLR0913 - one argument per injection seam
     if step_of_stamp(published.end_raw, steps) != precision:
         raise StampPrecisionMismatchError(published.end_raw, precision)
 
-    if published.suffix is not None:
+    if published.suffix == CLIMATOLOGY_SUFFIX or is_climatology_interval(
+        project, reporting_interval, climatology_intervals
+    ):
         return ParsedFilename(
             published=published,
             precision=precision,

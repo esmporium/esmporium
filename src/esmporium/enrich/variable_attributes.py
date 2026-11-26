@@ -37,11 +37,10 @@ CF_CLIMATOLOGY_ATTRIBUTE = "climatology"
 The CF attribute naming the variable which holds a time coordinate's climatology
 bounds
 
-Carried instead of `bounds` by a statistic computed in two stages over time (CF
-conventions, section 7.4), of which there are two kinds. A multi-year climatology, e.g.
-the average January over 1961 to 1990, has bounds spanning the whole period averaged
-over. A statistic taken within a shorter period, e.g. a monthly mean of daily minima,
-has bounds which are each month's own. The data variable's `cell_methods` says which.
+Carried instead of `bounds` by a time variable on climatological time (CF conventions,
+section 7.4), where each value comes from a set of sub-periods which need not be
+contiguous. Whether those bounds give a time range depends on whether they meet end to
+end; see [parse_variable_values][esmporium.enrich.parse_variable_values].
 """
 
 
@@ -66,7 +65,7 @@ class ParsedTimeVariable:
     """
     The variable holding its climatology bounds, from its `climatology` attribute
 
-    `None` unless the data is a statistic computed in two stages over time. See
+    `None` unless the time variable is on climatological time. See
     [CF_CLIMATOLOGY_ATTRIBUTE][(m).CF_CLIMATOLOGY_ATTRIBUTE].
     """
 

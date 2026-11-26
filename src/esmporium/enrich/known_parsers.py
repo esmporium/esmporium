@@ -106,6 +106,109 @@ which is the point: there is no width to guess at.
 """
 
 
+CLIMATOLOGY_INTERVALS_BY_PROJECT: Mapping[str, frozenset[str]] = {
+    "CMIP5": frozenset({"monClim"}),
+    "CMIP6": frozenset({"monC", "1hrCM"}),
+    # CMIP6Plus's frequency vocabulary is CMIP6's, checked on both ESGF-NG mirrors on
+    # 2026-11-27. No CMIP6Plus climatology dataset was published to read, so how one
+    # is labelled in its files is not confirmed.
+    "CMIP6Plus": frozenset({"monC", "1hrCM"}),
+    # TODO: check the CMIP7 vocabulary for a frequency or temporal label meaning a
+    # climatology. Until then a CMIP7 climatology is told apart by whether its
+    # climatology bounds meet end to end.
+    # Checked and CMIP7 doesn't have a climatology frequency, but the 'statistical
+    # climatology' as per CF (contiguous) could be caught in processing_id.
+    # Decision to make about if we include here or not.
+    "CMIP7": frozenset(),
+}
+"""
+Which reporting intervals mean a dataset is a multi-year climatology, per project
+
+A multi-year climatology, e.g. the average January over 1961 to 1990, holds values
+describing a typical year, so the period it is labelled with is the period averaged
+over and not a run of data, and no time range is read off it. These projects label one
+in three ways at once: this reporting interval, a `-clim` suffix on the filename
+([CLIMATOLOGY_SUFFIX][(m).CLIMATOLOGY_SUFFIX]) and `climatology` bounds on the time
+variable. Seen on CMIP6 `monC` (E3SM-1-0 `phalf`) and `1hrCM` (HadGEM3-GC31-LL `rsut`)
+files. The label is believed over the bounds: an E3SM-1-0 `monC` file carries bounds a
+month wide which meet end to end, and is still published as a climatology.
+
+Pass a mapping of your own to add a project, or override one of ours, e.g.
+`{**CLIMATOLOGY_INTERVALS_BY_PROJECT, "MIP1": frozenset({"monC"})}`.
+"""
+
+
+class UnknownProjectClimatologyIntervalsError(NotImplementedError):
+    """
+    Raised when we cannot say which of a project's reporting intervals are climatologies
+    """
+
+    def __init__(self, project: str, intervals: Mapping[str, frozenset[str]]) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        project
+            The project we know nothing about
+
+        intervals
+            The per-project vocabularies which were available
+        """
+        self.project = project
+        self.intervals = intervals
+        known = ", ".join(sorted(intervals)) or "none"
+        super().__init__(
+            f"Do not know which of project {project!r}'s reporting intervals mean a "
+            f"dataset is a multi-year climatology. Known projects: {known}. Answering "
+            f"'none of them' would let a climatology's averaging period be read as a "
+            f"run of data, so pass your own `intervals` mapping instead."
+        )
+
+
+def is_climatology_interval(
+    project: str,
+    reporting_interval: str,
+    intervals: Mapping[str, frozenset[str]] = CLIMATOLOGY_INTERVALS_BY_PROJECT,
+) -> bool:
+    """
+    Determine whether a reporting interval means a dataset is a multi-year climatology
+
+    Parameters
+    ----------
+    project
+        The project the dataset belongs to
+
+    reporting_interval
+        The dataset's reporting interval
+
+    intervals
+        Which intervals mean a climatology, per project
+
+    Returns
+    -------
+    :
+        `True` if the project uses this interval only for multi-year climatologies
+
+    Raises
+    ------
+    UnknownProjectClimatologyIntervalsError
+        We know nothing about that project, so we cannot say
+
+    Examples
+    --------
+    >>> (
+    ...     is_climatology_interval("CMIP6", "monC"),
+    ...     is_climatology_interval("CMIP6", "mon"),
+    ... )
+    (True, False)
+    """
+    if project not in intervals:
+        raise UnknownProjectClimatologyIntervalsError(project, intervals)
+
+    return reporting_interval in intervals[project]
+
+
 class UnknownProjectFilenameTimeParserError(NotImplementedError):
     """
     Raised when we have no filename time parser for a project

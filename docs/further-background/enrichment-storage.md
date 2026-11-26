@@ -58,7 +58,7 @@ they are reused here for the revised set, and "What changed in review" maps old 
 | 34 | **A parent which has not been looked for is "not yet", not "no".** `NOT_LOOKED_FOR` (and `UNRESOLVED`) put a group in `couldnt_answer` pointing at `esmporium.db.find_parents`, as `NEEDS_ENRICHMENT` points at the enricher, rather than in `unsatisfied`. |
 | 35 | **`read_variable_attributes` returns the attributes it was asked for, and reports every attribute it found when it cannot find the ones it is looking for.** |
 | 36 | **Expensive retrievals are asked for, never defaulted into.** Reading time bounds is opt-in, per call. The default path is search records, filenames, and one 64 KiB prefix per simulation where a header is needed, read from a local copy where one exists (`prefer_local=True`, the default) and from a data node otherwise. |
-| 36b | **Enrichment reads only the first and last time bounds of a file, never every value.** Checking a file's contents for gaps, irregular steps or missing values is a different and much more expensive thing, and not enrichment. |
+| 36b | **Enrichment reads only the first and last time bounds of a file, never every value.** Checking a file's contents for gaps, irregular steps or missing values is a different and much more expensive thing, and not enrichment. *One exception, added in C2:* climatology bounds are read in full when they are stored in one piece, because then it costs nothing and whether they meet end to end decides whether they give a range at all. |
 | 36c | **A fast path may guess, if the guess is named and the slow path can check it.** Filename ends, search-record points, the width of a reporting interval and a missing `branch_time_in_child` all rest on an assumption; each stored value names its assumption, and each answer built on one says so. See [part two](enrichment-sources.md#fast-paths-that-guess-and-the-slow-path-that-checks). |
 | 37 | **Parallel enrichment is pluggable per kind of retrieval**, with a default for each, because what is slow depends on the system (local reads included). See "Parallel enrichment". |
 
@@ -546,18 +546,32 @@ As built, beyond the above:
   through a month counts that month as covered, and the range names
   `PART_STEPS_COUNT_AS_COVERED` when that happened (bounds within a second of a step
   edge count as on it). Daily and finer data gets a monthly natural range too.
-- **Climatology bounds are read, and the data variable's `cell_methods` decides what
-  they mean.** CF names two kinds of statistic with `climatology` rather than `bounds`
-  (section 7.4): a multi-year climatology (`... over years`, the average January over
-  1961 to 1990), whose bounds are the period averaged over, and a statistic taken
-  within a shorter period (`time: minimum within days time: mean over days`), whose
-  bounds are each step's own. CMIP7's `tminavg` and `tmaxavg` files are the second
-  kind: 336 monthly values from 2022-01 to 2049-12, measured on the recording. So C1's
-  readers follow `climatology` as well as `bounds` and say which they followed
-  (`FirstAndLastTimeBounds.bounds_attribute`), and `parse_variable_values` takes
-  `cell_methods`: over years gives no range, anything else a range like ordinary
-  bounds, and climatology bounds with no `cell_methods` no range either.
-  `cmip7-netcdf4-climatology` was re-recorded to hold the climatology bounds.
+- **A climatology is decided by its project's labels first, and by contiguity after.**
+  CF defines climatological time (the `climatology` attribute, in place of `bounds`) as
+  "a set of subintervals which are not necessarily contiguous", and leaves the reader to
+  work out whether they are. Measured on live files on 2026-11-27:
+  - CMIP5 and CMIP6 publish a monthly mean of daily minima (`tasmin`) with ordinary
+    `bounds`. Their multi-year climatologies carry three labels at once: a "C"
+    frequency (`monC`, `1hrCM`; CMIP5's `monClim`), a `-clim` filename and
+    `climatology` bounds (CMIP6 E3SM-1-0 `phalf` `monC`, HadGEM3-GC31-LL `rsut` `1hrCM`).
+  - CMIP7 publishes the same monthly mean of daily minima (`tminavg`) with
+    `climatology` bounds, a `mon` frequency and a plain filename: 336 one-month steps
+    meeting end to end.
+  - One CMIP6 `monC` file (E3SM-1-0 `phalf`) has 600 one-month steps meeting end to
+    end under all three climatology labels, so the labels and the bounds disagree.
+
+  So: a reporting interval in `CLIMATOLOGY_INTERVALS_BY_PROJECT`, or a `-clim`
+  filename, gives no range (`CLIMATOLOGY`), whatever the bounds say. Otherwise
+  climatology bounds give a range only when every step starts where the previous one
+  ended (`CLIMATOLOGY_BOUNDS_NOT_CONTIGUOUS` when not), which needs every pair. The
+  readers read every pair only when the bounds variable is stored in one piece, as a
+  repacked CMIP7 file stores it, where the first and last pairs have already brought the
+  rest: 0 extra requests on both CMIP7 files measured. Stored a pair at a time, as
+  CMOR wrote CMIP6 (about 900 more requests, about 23 minutes) or as a classic record
+  variable (about 1,755 more, about 44 minutes), they are not read
+  (`CLIMATOLOGY_BOUNDS_NOT_CHECKED`). `cell_methods` is not used.
+  `cmip7-netcdf4-climatology` was re-recorded to hold the climatology bounds; the file
+  has since gone from CEDA (404 on 2026-11-27).
 - No range is given from a time variable with no bounds, from a multi-year
   climatology, from a filename carrying a suffix, or from a search record or filename
   finer than a month; each says why (`NoRangeReason`).

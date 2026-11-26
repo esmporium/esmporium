@@ -184,6 +184,7 @@ class TestTimeBounds:
         assert bounds.n_steps == 150 * 12
         assert bounds.bounds_attribute is BoundsAttribute.BOUNDS
         assert bounds.bounds_variable == "time_bnds"
+        assert bounds.climatology_bounds is None
         assert bounds.first_bounds == (0.0, 31.0)
         assert bounds.last_bounds == (54719.0, 150 * 365.0)
         assert (bounds.first_value, bounds.last_value) == (15.5, 54734.5)
@@ -212,7 +213,8 @@ class TestTimeBounds:
         `202201-204912` on a 360-day calendar: one value per month. CF names a
         statistic computed in two stages over time this way, and the reader reads its
         bounds all the same, saying which attribute named them, because what they mean
-        is a question for whoever interprets them.
+        is a question for whoever interprets them. Because these bounds are stored in
+        one piece, every pair is read too, at no extra cost.
         """
         header = read_hdf5_file_header(
             recorded_source("cmip7-netcdf4-climatology"), time_variable="time"
@@ -228,6 +230,12 @@ class TestTimeBounds:
         # 2022-01-01 and 2050-01-01 on a 360-day calendar counting from 1850.
         assert bounds.first_bounds == (172 * 360.0, 172 * 360.0 + 30)
         assert bounds.last_bounds == (200 * 360.0 - 30, 200 * 360.0)
+        # Stored in one chunk, so every pair came with the first and last: one month
+        # each, meeting end to end.
+        assert bounds.climatology_bounds == tuple(
+            (172 * 360.0 + 30 * step, 172 * 360.0 + 30 * (step + 1))
+            for step in range(28 * 12)
+        )
 
     def test_no_time_values_are_read_unless_asked_for(
         self, needs_h5netcdf, cmip6_netcdf4_prefix

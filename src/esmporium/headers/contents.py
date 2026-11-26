@@ -46,9 +46,10 @@ class BoundsAttribute(str, Enum):
     """
     Which attribute of a time variable names the variable holding its bounds
 
-    CF has two, and a time variable carries at most one of them. What the bounds mean
-    is the same in both cases -- where each step starts and ends -- but which one was
-    used says how the values were computed, so it is kept for whoever interprets them.
+    CF has two, and a time variable carries at most one of them. Which one was used
+    says whether the time is ordinary or climatological, and that can change what the
+    bounds mean: for a multi-year climatology they are the period averaged over, not
+    the time the data covers. So it is kept for whoever interprets them.
     """
 
     BOUNDS = "bounds"
@@ -60,13 +61,16 @@ class BoundsAttribute(str, Enum):
 
     CLIMATOLOGY = "climatology"
     """
-    `climatology`: a statistic computed in two stages over time (CF section 7.4)
+    `climatology`: the time is climatological time (CF section 7.4)
 
-    The data variable's `cell_methods` says which two. A monthly mean of daily minima
-    (`time: minimum within days time: mean over days`) still has one value per month,
-    bounded by that month. A multi-year climatology
-    (`time: mean within years time: mean over years`) has one value per month of a
-    typical year, bounded by the whole period averaged over.
+    CF defines each value of climatological time as drawn from "a set of subintervals
+    which are not necessarily contiguous". When the steps' bounds meet end to end, the
+    data is a run of data like any other, e.g. CMIP7's monthly mean of daily minima,
+    each value bounded by its own month. When they do not, e.g. a multi-year
+    climatology, whose every value is bounded by the whole period averaged over, there
+    is no span to read off them. Which of the two a file is, is for whoever interprets
+    the bounds, which is why every pair is read when that costs nothing
+    ([FirstAndLastTimeBounds.climatology_bounds][(m).FirstAndLastTimeBounds.climatology_bounds]).
     """
 
 
@@ -152,6 +156,21 @@ class FirstAndLastTimeBounds:
     The last step's lower and upper bound, or `None` when there are no bounds
 
     The upper bound is where the file's data ends.
+    """
+
+    climatology_bounds: tuple[tuple[float | int, float | int], ...] | None = None
+    """
+    Every step's lower and upper bound, in order, when they are climatology bounds
+    stored in one piece
+
+    Read only when `bounds_attribute` is
+    [CLIMATOLOGY][(m).BoundsAttribute.CLIMATOLOGY], because only then does whether the
+    steps meet end to end decide what the bounds mean. Read only when the bounds
+    variable is stored in one piece (a single chunk, or contiguously), which is how a
+    repacked file stores it: then the first and last pairs have already brought every
+    other pair with them, and reading them all costs nothing more. `None` otherwise,
+    including when they are stored a pair at a time, where reading them all would take
+    about one request per step.
     """
 
 

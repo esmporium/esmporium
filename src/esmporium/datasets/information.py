@@ -221,25 +221,34 @@ class NoRangeReason(str, Enum):
 
     CLIMATOLOGY = "climatology"
     """
-    The data is a multi-year climatology, so its time range is the period averaged over
+    The data is labelled a multi-year climatology, so its time range is the period
+    averaged over
 
-    E.g. the average January, February and so on over 1850 to 1859: twelve values
-    describing a typical year, which are not a ten-year run of data. Marked in the file
-    by climatology bounds and a `cell_methods` taking a statistic over years, and in
-    CMIP filenames by a `-clim` suffix.
-
-    Not every statistic with climatology bounds is one of these. A monthly mean of
-    daily minima has climatology bounds too, one month wide each, and is an ordinary
-    run of monthly data.
+    E.g. the average January, February and so on over 1961 to 1990: twelve values
+    describing a typical year, which are not a thirty-year run of data. Recognised by
+    its labels, which are believed over anything its bounds suggest: a reporting
+    interval the project uses only for climatologies (CMIP6's `monC`), or a `-clim`
+    suffix on the filename.
     """
 
-    CLIMATOLOGY_OF_AN_UNSTATED_KIND = "climatology_of_an_unstated_kind"
+    CLIMATOLOGY_BOUNDS_NOT_CONTIGUOUS = "climatology_bounds_not_contiguous"
     """
-    The time bounds are climatology bounds, and nothing says which kind of climatology
+    The time variable has climatology bounds, and its steps do not meet end to end
 
-    A multi-year climatology's bounds are the period averaged over, and another
-    climatological statistic's are the time its data covers, so the bounds cannot be
-    read as a range until the data variable's `cell_methods` says which it is.
+    A step that starts before the previous one ends, or after it, is what a multi-year
+    climatology or an average day looks like: each value is drawn from pieces of many
+    periods. What span such data covers is not defined, so no range is read off it.
+    """
+
+    CLIMATOLOGY_BOUNDS_NOT_CHECKED = "climatology_bounds_not_checked"
+    """
+    The time variable has climatology bounds, and whether they meet end to end could
+    not be checked
+
+    Checking needs every pair of bounds. They are read only when the bounds are stored
+    in one piece, where reading them costs nothing beyond the first and last pairs, and
+    not when they are stored a pair at a time, where it would take about one request per
+    step.
     """
 
     NO_BOUNDS = "no_bounds"

@@ -13,6 +13,7 @@ import io
 from typing import TYPE_CHECKING, Any
 
 from esmporium.headers.contents import (
+    BoundsAttribute,
     FileHeader,
     FirstAndLastTimeBounds,
     HeaderLayout,
@@ -22,6 +23,7 @@ from esmporium.headers.errors import (
     HeaderParseError,
     HeaderReadError,
     HeaderReaderUnavailableError,
+    TruncatedHeaderError,
     UnreadableHeaderError,
 )
 
@@ -303,6 +305,12 @@ def _first_and_last_time_bounds(
     first_pair = bounds[0]
     last_pair = bounds[n_steps - 1]
 
+    climatology_bounds = None
+    if bounds_attribute is BoundsAttribute.CLIMATOLOGY and _is_one_piece(
+        bounds, n_steps
+    ):
+        climatology_bounds = _every_pair(bounds, variable=str(bounds_name))
+
     return FirstAndLastTimeBounds(
         time_variable=time_variable,
         n_steps=n_steps,
@@ -318,6 +326,63 @@ def _first_and_last_time_bounds(
             _number(last_pair[0], variable=str(bounds_name)),
             _number(last_pair[1], variable=str(bounds_name)),
         ),
+        climatology_bounds=climatology_bounds,
+    )
+
+
+def _is_one_piece(bounds: Any, n_steps: int) -> bool:
+    """
+    Determine whether a bounds variable is stored in one piece
+
+    Parameters
+    ----------
+    bounds
+        The bounds variable, an untyped `h5netcdf.Variable`
+
+    n_steps
+        How many steps the time coordinate has
+
+    Returns
+    -------
+    :
+        `True` if it is stored contiguously or in a single chunk along time, so that
+        reading its first and last pairs has already read every pair
+    """
+    chunks = bounds.chunks
+    if chunks is None:
+        return True
+
+    return int(chunks[0]) >= n_steps
+
+
+def _every_pair(
+    bounds: Any, *, variable: str
+) -> tuple[tuple[float | int, float | int], ...] | None:
+    """
+    Read every lower and upper bound of a bounds variable stored in one piece
+
+    Parameters
+    ----------
+    bounds
+        The bounds variable, an untyped `h5netcdf.Variable`
+
+    variable
+        Its name, for messages
+
+    Returns
+    -------
+    :
+        Every pair, in order, or `None` if the source's byte or request budget would
+        not stretch to them
+    """
+    try:
+        values = bounds[:]
+    except TruncatedHeaderError:
+        return None
+
+    return tuple(
+        (_number(lower, variable=variable), _number(upper, variable=variable))
+        for lower, upper in values
     )
 
 

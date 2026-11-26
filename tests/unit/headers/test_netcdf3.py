@@ -333,6 +333,23 @@ class TestTimeBounds:
         assert bounds.bounds_attribute is BoundsAttribute.CLIMATOLOGY
         assert bounds.bounds_variable == "time_bnds"
         assert bounds.last_bounds == (30.0 * 23, 30.0 * 24)
+        # A record variable is spread across the file a pair per record, so its pairs
+        # are not all read.
+        assert bounds.climatology_bounds is None
+
+    def test_every_climatology_pair_is_read_when_they_are_in_one_piece(self):
+        """
+        A fixed-size bounds variable is one block, reached by its first and last pairs
+        """
+        variables = monthly_time(3)
+        time_attributes = variables[0].attributes
+        time_attributes["climatology"] = time_attributes.pop("bounds")
+        built = build({"time": 3, "bnds": 2}, variables)
+
+        bounds = read(built.whole(), time_variable="time").time_bounds
+
+        assert bounds is not None
+        assert bounds.climatology_bounds == ((0.0, 30.0), (30.0, 60.0), (60.0, 90.0))
 
     def test_records_are_padded_when_there_are_several_record_variables(self):
         """
