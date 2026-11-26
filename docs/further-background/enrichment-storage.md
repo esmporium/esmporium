@@ -58,7 +58,7 @@ they are reused here for the revised set, and "What changed in review" maps old 
 | 34 | **A parent which has not been looked for is "not yet", not "no".** `NOT_LOOKED_FOR` (and `UNRESOLVED`) put a group in `couldnt_answer` pointing at `esmporium.db.find_parents`, as `NEEDS_ENRICHMENT` points at the enricher, rather than in `unsatisfied`. |
 | 35 | **`read_variable_attributes` returns the attributes it was asked for, and reports every attribute it found when it cannot find the ones it is looking for.** |
 | 36 | **Expensive retrievals are asked for, never defaulted into.** Reading time bounds is opt-in, per call. The default path is search records, filenames, and one 64 KiB prefix per simulation where a header is needed, read from a local copy where one exists (`prefer_local=True`, the default) and from a data node otherwise. |
-| 36b | **Enrichment reads only the first and last time bounds of a file, never every value.** Checking a file's contents for gaps, irregular steps or missing values is a different and much more expensive thing, and not enrichment. |
+| 36b | **Enrichment reads only the first and last time bounds of a file, never every value.** Checking a file's contents for gaps, irregular steps or missing values is a different and much more expensive thing, and not enrichment. *One exception, added in C2:* climatology bounds are read in full when they are stored in one piece, because then it costs nothing and whether they meet end to end decides whether they give a range at all. |
 | 36c | **A fast path may guess, if the guess is named and the slow path can check it.** Filename ends, search-record points, the width of a reporting interval and a missing `branch_time_in_child` all rest on an assumption; each stored value names its assumption, and each answer built on one says so. See [part two](enrichment-sources.md#fast-paths-that-guess-and-the-slow-path-that-checks). |
 | 37 | **Parallel enrichment is pluggable per kind of retrieval**, with a default for each, because what is slow depends on the system (local reads included). See "Parallel enrichment". |
 
@@ -369,7 +369,7 @@ enrich_datasets(session, inputs, *, sources=…, prefer_local=True, executors=�
      ├─ parse_information_source   every artefact to every parser that applies
      │      ├─ parse_search_record
      │      ├─ parse_filename
-     │      ├─ parse_file_header          (parent facts too: this absorbs db/parent_headers.py's parsing)
+     │      ├─ parse_file_header          (parent facts too: db/parent_headers.py parses through it)
      │      ├─ parse_variable_attributes
      │      └─ parse_variable_values
      │
@@ -521,11 +521,62 @@ R1 before R2 (Covers uses R1's types); R3 is independent of both and must land b
 ### PR C2 — the `parse_*` functions, pure
 
 No database and no network, as PRs A and B were.
-`parse_search_record` in the search result parsers (field names are per API);
+`parse_search_record` in `esmporium.search`, its field names looked up by the stored
+`raw_docs_format_tag` (ESGF-1's Solr and the 1.5 bridge share the `solr` tag and spell
+the end `datetime_stop` and `datetime_end`, so both are read);
 `parse_filename`, `parse_file_header`, `parse_variable_attributes`, `parse_variable_values`
 in `esmporium.enrich`; and the consistency comparison.
+The six sources, the named assumptions and a range carrying both are values in
+`esmporium.datasets`, because `Covers` names a source at solve time.
 Unit tests on every recorded search response and header fixture we hold,
 and the cases from "Consistency between sources".
+
+As built, beyond the above:
+
+- `db/parent_headers.py`'s per-project parent parsing moved into `parse_file_header`
+  here rather than in C4, so there is one copy of it; `record_header_parent_facts`
+  calls it. C4 is left with making a prefix read for parents and one read for time the
+  same read.
+- C1's vocabulary is applied to `esmporium.enrich`: what interprets values already in
+  hand is a parser (`FilenameTimeParser`, `FILENAME_TIME_PARSERS_BY_PROJECT`,
+  `FILE_HEADER_PARSERS_BY_PROJECT`, `parse_cmip5_file_header`, ...), and
+  `read_time_axis` became `parse_variable_attributes`, which also names the bounds and
+  climatology variables.
+- A natural range from time bounds is **widened to whole steps**: a bound part way
+  through a month counts that month as covered, and the range names
+  `PART_STEPS_COUNT_AS_COVERED` when that happened (bounds within a second of a step
+  edge count as on it). Daily and finer data gets a monthly natural range too.
+- **A climatology is decided by its project's labels first, and by contiguity after.**
+  CF defines climatological time (the `climatology` attribute, in place of `bounds`) as
+  "a set of subintervals which are not necessarily contiguous", and leaves the reader to
+  work out whether they are. Measured on live files on 2026-11-27:
+  - CMIP5 and CMIP6 publish a monthly mean of daily minima (`tasmin`) with ordinary
+    `bounds`. Their multi-year climatologies carry three labels at once: a "C"
+    frequency (`monC`, `1hrCM`; CMIP5's `monClim`), a `-clim` filename and
+    `climatology` bounds (CMIP6 E3SM-1-0 `phalf` `monC`, HadGEM3-GC31-LL `rsut` `1hrCM`).
+  - CMIP7 publishes the same monthly mean of daily minima (`tminavg`) with
+    `climatology` bounds, a `mon` frequency and a plain filename: 336 one-month steps
+    meeting end to end.
+  - One CMIP6 `monC` file (E3SM-1-0 `phalf`) has 600 one-month steps meeting end to
+    end under all three climatology labels, so the labels and the bounds disagree.
+
+  So: a reporting interval in `CLIMATOLOGY_INTERVALS_BY_PROJECT`, or a `-clim`
+  filename, gives no range (`CLIMATOLOGY`), whatever the bounds say. Otherwise
+  climatology bounds give a range only when every step starts where the previous one
+  ended (`CLIMATOLOGY_BOUNDS_NOT_CONTIGUOUS` when not), which needs every pair. The
+  readers read every pair only when the bounds variable is stored in one piece, as a
+  repacked CMIP7 file stores it, where the first and last pairs have already brought the
+  rest: 0 extra requests on both CMIP7 files measured. Stored a pair at a time, as
+  CMOR wrote CMIP6 (about 900 more requests, about 23 minutes) or as a classic record
+  variable (about 1,755 more, about 44 minutes), they are not read
+  (`CLIMATOLOGY_BOUNDS_NOT_CHECKED`). `cell_methods` is not used.
+  `cmip7-netcdf4-climatology` was re-recorded to hold the climatology bounds; the file
+  has since gone from CEDA (404 on 2026-11-27).
+- No range is given from a time variable with no bounds, from a multi-year
+  climatology, from a filename carrying a suffix, or from a search record or filename
+  finer than a month; each says why (`NoRangeReason`).
+- `parse_search_record` is not yet called when results are saved; that and the
+  back-fill are C4's.
 
 ### PR C3 — storage
 
@@ -538,8 +589,8 @@ and round-trip tests beside `tests/integration/db/test_headers_against_migration
 
 Planning, retrieving (serially), parsing, recording, back-filling search records,
 `sources`, `prefer_local`, fixes and the fix check.
-`db/parent_headers.py`'s parsing moves into `parse_file_header`,
-so a prefix read for parents and one read for time are the same read.
+`db/parent_headers.py` already parses through `parse_file_header` (C2);
+what C4 changes is that a prefix read for parents and one read for time are the same read.
 
 ### PR D — the catalogue serves it, and the integration tests that were the point
 

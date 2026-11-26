@@ -1,7 +1,7 @@
 """
-The projects we know how to read a time range out of, and how
+The projects whose filenames we know how to parse a time range out of, and how
 
-These readers are specific to obtaining time ranges from the filename,
+These parsers are specific to obtaining time ranges from the filename,
 which can be wrong. Our assumptions about the data are explicit in this
 module.
 
@@ -9,8 +9,8 @@ Every public function takes its mapping as a defaulted argument, so a caller can
 project, or override one of ours, without forking anything:
 
 ```python
-reader_for_project(
-    "MIP1", readers={**FILENAME_TIME_READERS_BY_PROJECT, "MIP1": my_reader}
+parser_for_project(
+    "MIP1", parsers={**FILENAME_TIME_PARSERS_BY_PROJECT, "MIP1": my_parser}
 )
 ```
 """
@@ -26,7 +26,7 @@ from esmporium.enrich.protocol import PublishedRange, UnreadableTimestampError
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from esmporium.enrich.protocol import FilenameTimeReader
+    from esmporium.enrich.protocol import FilenameTimeParser
 
 STEP_BY_STAMP_LENGTH: Mapping[int, TimeStep] = {
     4: TimeStep.YEARS,
@@ -39,7 +39,7 @@ STEP_BY_STAMP_LENGTH: Mapping[int, TimeStep] = {
 How precisely a filename's timestamp is written, by how many digits it has
 
 `YYYY`, `YYYYMM`, `YYYYMMDD`, `YYYYMMDDHH`, `YYYYMMDDHHmm`: how the projects in
-[FILENAME_TIME_READERS_BY_PROJECT][(m).FILENAME_TIME_READERS_BY_PROJECT] write a
+[FILENAME_TIME_PARSERS_BY_PROJECT][(m).FILENAME_TIME_PARSERS_BY_PROJECT] write a
 stamp, so the precision is read off the string's own length. Twelve digits is the
 ordinary spelling for sub-daily data, not an edge case -- a `3hr` file is stamped
 `185001010300-185101010000`. A project which spells its stamps some other way needs
@@ -56,7 +56,7 @@ What CMIP filenames append to the time range of a climatology, e.g.
 `185001-185012-clim`
 
 Every project in
-[FILENAME_TIME_READERS_BY_PROJECT][(m).FILENAME_TIME_READERS_BY_PROJECT] writes it this
+[FILENAME_TIME_PARSERS_BY_PROJECT][(m).FILENAME_TIME_PARSERS_BY_PROJECT] writes it this
 way. Another project may mark a climatology differently, or not in the filename at all.
 The suffix is not part of the range, so it comes off before the stamps are read -- but
 it is kept, as published, on
@@ -106,32 +106,135 @@ which is the point: there is no width to guess at.
 """
 
 
-class UnknownProjectFilenameTimeReaderError(NotImplementedError):
+CLIMATOLOGY_INTERVALS_BY_PROJECT: Mapping[str, frozenset[str]] = {
+    "CMIP5": frozenset({"monClim"}),
+    "CMIP6": frozenset({"monC", "1hrCM"}),
+    # CMIP6Plus's frequency vocabulary is CMIP6's, checked on both ESGF-NG mirrors on
+    # 2026-11-27. No CMIP6Plus climatology dataset was published to read, so how one
+    # is labelled in its files is not confirmed.
+    "CMIP6Plus": frozenset({"monC", "1hrCM"}),
+    # TODO: check the CMIP7 vocabulary for a frequency or temporal label meaning a
+    # climatology. Until then a CMIP7 climatology is told apart by whether its
+    # climatology bounds meet end to end.
+    # Checked and CMIP7 doesn't have a climatology frequency, but the 'statistical
+    # climatology' as per CF (contiguous) could be caught in processing_id.
+    # Decision to make about if we include here or not.
+    "CMIP7": frozenset(),
+}
+"""
+Which reporting intervals mean a dataset is a multi-year climatology, per project
+
+A multi-year climatology, e.g. the average January over 1961 to 1990, holds values
+describing a typical year, so the period it is labelled with is the period averaged
+over and not a run of data, and no time range is read off it. These projects label one
+in three ways at once: this reporting interval, a `-clim` suffix on the filename
+([CLIMATOLOGY_SUFFIX][(m).CLIMATOLOGY_SUFFIX]) and `climatology` bounds on the time
+variable. Seen on CMIP6 `monC` (E3SM-1-0 `phalf`) and `1hrCM` (HadGEM3-GC31-LL `rsut`)
+files. The label is believed over the bounds: an E3SM-1-0 `monC` file carries bounds a
+month wide which meet end to end, and is still published as a climatology.
+
+Pass a mapping of your own to add a project, or override one of ours, e.g.
+`{**CLIMATOLOGY_INTERVALS_BY_PROJECT, "MIP1": frozenset({"monC"})}`.
+"""
+
+
+class UnknownProjectClimatologyIntervalsError(NotImplementedError):
     """
-    Raised when we have no filename time reader for a project
+    Raised when we cannot say which of a project's reporting intervals are climatologies
     """
 
-    def __init__(self, project: str, readers: Mapping[str, FilenameTimeReader]) -> None:
+    def __init__(self, project: str, intervals: Mapping[str, frozenset[str]]) -> None:
         """
         Initialise the error
 
         Parameters
         ----------
         project
-            The project we have no reader for
+            The project we know nothing about
 
-        readers
-            The readers which were available
+        intervals
+            The per-project vocabularies which were available
         """
         self.project = project
-        self.readers = readers
-        known = ", ".join(sorted(readers)) or "none"
+        self.intervals = intervals
+        known = ", ".join(sorted(intervals)) or "none"
         super().__init__(
-            f"No filename time reader for project {project!r}. Known projects: "
+            f"Do not know which of project {project!r}'s reporting intervals mean a "
+            f"dataset is a multi-year climatology. Known projects: {known}. Answering "
+            f"'none of them' would let a climatology's averaging period be read as a "
+            f"run of data, so pass your own `intervals` mapping instead."
+        )
+
+
+def is_climatology_interval(
+    project: str,
+    reporting_interval: str,
+    intervals: Mapping[str, frozenset[str]] = CLIMATOLOGY_INTERVALS_BY_PROJECT,
+) -> bool:
+    """
+    Determine whether a reporting interval means a dataset is a multi-year climatology
+
+    Parameters
+    ----------
+    project
+        The project the dataset belongs to
+
+    reporting_interval
+        The dataset's reporting interval
+
+    intervals
+        Which intervals mean a climatology, per project
+
+    Returns
+    -------
+    :
+        `True` if the project uses this interval only for multi-year climatologies
+
+    Raises
+    ------
+    UnknownProjectClimatologyIntervalsError
+        We know nothing about that project, so we cannot say
+
+    Examples
+    --------
+    >>> (
+    ...     is_climatology_interval("CMIP6", "monC"),
+    ...     is_climatology_interval("CMIP6", "mon"),
+    ... )
+    (True, False)
+    """
+    if project not in intervals:
+        raise UnknownProjectClimatologyIntervalsError(project, intervals)
+
+    return reporting_interval in intervals[project]
+
+
+class UnknownProjectFilenameTimeParserError(NotImplementedError):
+    """
+    Raised when we have no filename time parser for a project
+    """
+
+    def __init__(self, project: str, parsers: Mapping[str, FilenameTimeParser]) -> None:
+        """
+        Initialise the error
+
+        Parameters
+        ----------
+        project
+            The project we have no parser for
+
+        parsers
+            The parsers which were available
+        """
+        self.project = project
+        self.parsers = parsers
+        known = ", ".join(sorted(parsers)) or "none"
+        super().__init__(
+            f"No filename time parser for project {project!r}. Known projects: "
             f"{known}. Where a filename puts its time range is a project's own "
-            f"convention, so there is no generic fallback -- pass your own `readers` "
+            f"convention, so there is no generic fallback -- pass your own `parsers` "
             f"mapping, e.g. "
-            f"{{**FILENAME_TIME_READERS_BY_PROJECT, {project!r}: my_reader}}."
+            f"{{**FILENAME_TIME_PARSERS_BY_PROJECT, {project!r}: my_parser}}."
         )
 
 
@@ -230,11 +333,11 @@ def step_of_stamp(
     return steps[len(stamp)]
 
 
-def read_trailing_range(filename: str) -> PublishedRange | None:
+def parse_trailing_range(filename: str) -> PublishedRange | None:
     """
-    Read a time range written as the last underscore-separated field of a filename
+    Parse a time range written as the last underscore-separated field of a filename
 
-    The convention every project in `FILENAME_TIME_READERS_BY_PROJECT` shares.
+    The convention every project in `FILENAME_TIME_PARSERS_BY_PROJECT` shares.
 
     Parameters
     ----------
@@ -251,7 +354,7 @@ def read_trailing_range(filename: str) -> PublishedRange | None:
 
     Examples
     --------
-    >>> published = read_trailing_range(
+    >>> published = parse_trailing_range(
     ...     "tas_Amon_HadGEM2-ES_historical_r1i1p1_185912-188411.nc"
     ... )
     >>> published.start_raw, published.end_raw, published.suffix
@@ -259,7 +362,7 @@ def read_trailing_range(filename: str) -> PublishedRange | None:
 
     A climatology keeps its range, and the suffix it was marked with:
 
-    >>> clim = read_trailing_range(
+    >>> clim = parse_trailing_range(
     ...     "tas_Amon_ACCESS-ESM1-5_historical_r1i1p1f1_gn_185001-185012-clim.nc"
     ... )
     >>> clim.start_raw, clim.suffix
@@ -267,7 +370,7 @@ def read_trailing_range(filename: str) -> PublishedRange | None:
 
     A fixed field has no range, and says so quietly:
 
-    >>> read_trailing_range("areacella_fx_HadGEM2-ES_historical_r0i0p0.nc") is None
+    >>> parse_trailing_range("areacella_fx_HadGEM2-ES_historical_r0i0p0.nc") is None
     True
     """
     field = pathlib.PurePath(filename).stem.rsplit("_", 1)[-1]
@@ -289,60 +392,60 @@ def read_trailing_range(filename: str) -> PublishedRange | None:
     return PublishedRange(start_raw=start_raw, end_raw=end_raw, suffix=suffix)
 
 
-FILENAME_TIME_READERS_BY_PROJECT: Mapping[str, FilenameTimeReader] = {
-    "CMIP5": read_trailing_range,
-    "CMIP6": read_trailing_range,
-    "CMIP6Plus": read_trailing_range,
-    "CMIP7": read_trailing_range,
+FILENAME_TIME_PARSERS_BY_PROJECT: Mapping[str, FilenameTimeParser] = {
+    "CMIP5": parse_trailing_range,
+    "CMIP6": parse_trailing_range,
+    "CMIP6Plus": parse_trailing_range,
+    "CMIP7": parse_trailing_range,
 }
 """
-Which [FilenameTimeReader][esmporium.enrich.FilenameTimeReader] reads each project
+Which [FilenameTimeParser][esmporium.enrich.FilenameTimeParser] parses each project
 
 Every project we know shares one convention today -- the range is the last
-underscore-separated field -- so they share one reader rather than four copies of it.
+underscore-separated field -- so they share one parser rather than four copies of it.
 That holds across a change of DRS: a CMIP7 filename looks nothing like a CMIP6 one
 (`tas_tavg-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1_18500101-18601231.nc`)
 and its range is still the last field.
 """
 
 
-def reader_for_project(
+def parser_for_project(
     project: str,
-    readers: Mapping[str, FilenameTimeReader] = FILENAME_TIME_READERS_BY_PROJECT,
-) -> FilenameTimeReader:
+    parsers: Mapping[str, FilenameTimeParser] = FILENAME_TIME_PARSERS_BY_PROJECT,
+) -> FilenameTimeParser:
     """
-    Get the filename time reader for a project
+    Get the filename time parser for a project
 
     Parameters
     ----------
     project
-        The project whose filenames are to be read
+        The project whose filenames are to be parsed
 
-    readers
-        The readers to choose from
+    parsers
+        The parsers to choose from
 
     Returns
     -------
     :
-        The reader for that project
+        The parser for that project
 
     Raises
     ------
-    UnknownProjectFilenameTimeReaderError
-        We have no reader for that project, and there is no generic fallback
+    UnknownProjectFilenameTimeParserError
+        We have no parser for that project, and there is no generic fallback
 
     Examples
     --------
-    >>> reader_for_project("CMIP6") is read_trailing_range
+    >>> parser_for_project("CMIP6") is parse_trailing_range
     True
 
     >>> try:
-    ...     reader_for_project("MIP1")
-    ... except UnknownProjectFilenameTimeReaderError as error:
+    ...     parser_for_project("MIP1")
+    ... except UnknownProjectFilenameTimeParserError as error:
     ...     error.project
     'MIP1'
     """
     try:
-        return readers[project]
+        return parsers[project]
     except KeyError as error:
-        raise UnknownProjectFilenameTimeReaderError(project, readers) from error
+        raise UnknownProjectFilenameTimeParserError(project, parsers) from error

@@ -728,14 +728,14 @@ The pattern to mirror is `PARENT_HEADER_READERS_BY_PROJECT` in
 `Mapping[str, Reader]` keyed by project, and every public function taking that
 mapping as a defaulted argument so a caller can override one project without
 forking anything. Its docstring already documents the idiom —
-`{**PARENT_HEADER_READERS_BY_PROJECT, "CMIP5": my_reader}` — and
+`{**FILE_HEADER_PARSERS_BY_PROJECT, "CMIP5": my_parser}` — and
 `tests/integration/unmodelled_project/` exists to exercise exactly this.
 
 **Project-specific, so it needs a registry:**
 
 1. **The filename time convention.** CMIP5/6/7 put the range in the last
    underscore-separated field (`…_320001-325012.nc`), but its precision varies with
-   frequency and other projects may differ. → `FILENAME_TIME_READERS_BY_PROJECT`.
+   frequency and other projects may differ. → `FILENAME_TIME_PARSERS_BY_PROJECT`.
 2. **Which `reporting_interval` values mean "no time axis"** (`fx`, `Ofx`, and CMIP5's
    own spelling). → `NO_TIME_AXIS_INTERVALS_BY_PROJECT`, which is what settled
    decision 15 checks against. It lives in `esmporium.datasets` rather than beside the
@@ -743,18 +743,18 @@ forking anything. Its docstring already documents the idiom —
 
 **Both are keyed to the projects esmporium has a query class for, and no others**:
 CMIP5, CMIP6, CMIP6Plus and CMIP7. An entry is a claim about a convention we have
-seen, so a project we cannot search is one we do not register a reader for either,
-however likely it is that the shared reader would work. CORDEX-CMIP6 is the case which
+seen, so a project we cannot search is one we do not register a parser for either,
+however likely it is that the shared parser would work. CORDEX-CMIP6 is the case which
 makes the rule worth stating: its trailing field looks like everyone else's, and
 `tests/integration/requirements/test_cordex_other_terms_live.py` searches it end to
 end — but only by injecting a facade, a selector and a query mapping, none of which
 ship, and no CORDEX filename has ever been recorded in this repository to check a
-reader against. These two registries are simply two more mappings to inject beside the
+parser against. These two registries are simply two more mappings to inject beside the
 others.
 
 The asymmetry in the cost is what settles it. A missing project is an
-`UnknownProjectFilenameTimeReaderError` naming the override to pass. A *wrong* project
-is silent: `read_trailing_range` answers `None` for any filename whose last field is
+`UnknownProjectFilenameTimeParserError` naming the override to pass. A *wrong* project
+is silent: `parse_trailing_range` answers `None` for any filename whose last field is
 not two numbers, and `None` means "this file carries no range", which is the ordinary
 answer for a fixed field. A convention we had misread would be recorded as a dataset
 with no time axis.
@@ -782,16 +782,29 @@ src/esmporium/datasets/
     no_time_axis.py    NO_TIME_AXIS_INTERVALS_BY_PROJECT, has_no_time_axis
                        (here for the same reason: `Covers` refuses `fx` data
                         both when a requirement is built and when it is solved)
+    information.py     InformationSource (the six sources), TIME_RANGE_TRUST_ORDER,
+                       Assumption, NoRangeReason, SourcedTimeRange
+                       (here for the same reason: `Covers` names a source
+                        at solve time; PR C2)
 
 src/esmporium/enrich/
-    protocol.py        FilenameTimeReader, and the raw range it returns
-    known_readers.py   FILENAME_TIME_READERS_BY_PROJECT
+    protocol.py        FilenameTimeParser, and the raw range it returns
+    known_parsers.py   FILENAME_TIME_PARSERS_BY_PROJECT
                        DELTA_BY_REPORTING_INTERVAL
-                       reader_for_project(project, readers=...)
-    headers.py         read_time_axis(attributes) -> TimeAxis   (project-independent;
+                       parser_for_project(project, parsers=...)
+    filename.py        parse_filename(filename, project=, reporting_interval=)
+    file_header.py     parse_file_header(attributes, project=, model=) -> ParentInfo,
+                       FILE_HEADER_PARSERS_BY_PROJECT (the per-project parent rules)
+    variable_attributes.py
+                       parse_variable_attributes(attributes) -> axis, bounds and
+                       climatology variable names (project-independent;
                        `attributes` are the time variable's, per decision 21.
-                        PR R1: raises rather than defaulting to `standard`
+                        Raises rather than defaulting to `standard`
                         when `calendar` is absent)
+    variable_values.py parse_variable_values(bounds, variable, reporting_interval=)
+                       -> dated range, and a natural one widened to whole steps
+    consistency.py     compare_time_ranges, compare_branch_time_in_child
+                       (PR C2: the parsers, pure)
     combine_files_to_datasets.py
                        per-file ranges -> per-version range + contiguity
                        (built as measure.py; PR R1 renames it, because
@@ -806,7 +819,9 @@ src/esmporium/headers/
                        (decision 21 and part two; PR C1, where the reads live)
 ```
 
-The one `parse_*` function per source, and the tables they are written to, are
+`parse_search_record` sits in `esmporium.search` (`search_record_time.py`), because
+which fields carry a record's first and last time value is the search format's
+convention. The tables the parsers' results are written to are
 [part three](enrichment-storage.md#the-enrich-step-prs-c1-to-c4)'s, and so is the
 enrich step which dispatches an artefact to every parser that applies.
 

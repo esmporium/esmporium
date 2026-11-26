@@ -222,7 +222,7 @@ def _missing_cmip5_variant_label(
 PARENT_FIXES: Mapping[ParentSimulation, ParentFix] = dict(
     [
         # `inmcm4` -- spelled `INM-CM4` by CMIP5's search index, see
-        # `esmporium.db.read_cmip5_parent_header` -- publishes no
+        # `esmporium.enrich.parse_cmip5_file_header` -- publishes no
         # `parent_experiment_rip` attribute at all, in either of these experiments.
         _missing_cmip5_variant_label(
             model="INM-CM4",

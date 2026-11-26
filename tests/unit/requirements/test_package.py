@@ -164,6 +164,9 @@ for name in sys.modules:
         # at solve time and the enricher when it derives a branch point. Same reason as
         # `datasets.no_time_axis` above.
         "esmporium.datasets.branch_time_in_child",
+        # Where a time fact came from and the guess it rests on, which `Covers` names
+        # in its answers at solve time. Same reason as `datasets.no_time_axis` above.
+        "esmporium.datasets.information",
         # The time values and the calendar arithmetic on them, which `Covers` needs
         # at solve time -- which is why it lives in `datasets` rather than in
         # `esmporium.enrich`, a package this one may not import at all. It imports

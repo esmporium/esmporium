@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 import threading
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 from sqlmodel import Session, col, select
 
@@ -28,6 +28,10 @@ from esmporium.db.schema import (
     ParentInfoSource,
 )
 from esmporium.downloads import DEFAULT_DATA_NODE_SELECTOR, prepare_routes
+from esmporium.enrich.file_header import (
+    FILE_HEADER_PARSERS_BY_PROJECT,
+    parse_file_header,
+)
 from esmporium.headers import (
     DEFAULT_BLOCK_BYTES,
     DEFAULT_MAX_BYTES,
@@ -54,6 +58,7 @@ if TYPE_CHECKING:
         ParentSearchPlanItem,
     )
     from esmporium.downloads import DataNodeSelector, Route
+    from esmporium.enrich.file_header import FileHeaderParser
     from esmporium.fixes import ParentFixes
     from esmporium.headers import (
         FileHeader,
@@ -64,403 +69,6 @@ if TYPE_CHECKING:
     from esmporium.search.search_api_facade.selectors import SearchAPIFacadeSelector
 
 logger = logging.getLogger(__name__)
-
-NOT_SAID = frozenset({"", "n/a", "na", "none", "null", "no parent", "not applicable"})
-"""
-Attribute values which mean "this was not said", rather than being a value
-
-Matched case-insensitively and after stripping whitespace.
-
-Needed because the two projects whose headers we read both use a sentinel, and they use
-different ones -- so neither a missing attribute nor a `None` is enough on its own.
-
-- **CMIP5 writes `N/A`.** And it does so in two quite different situations, which is
-  why this is a per-field rule rather than a whole-record one. A CMIP5 `piControl` says
-  `parent_experiment_id = "N/A"` and carries nothing else, which is how it says it is a
-  root. But `CMCC-CM`'s `rcp85` says `parent_experiment_rip = "N/A"` while naming
-  `historical` as its parent experiment -- there, one field is unknown and the record
-  still declares a parent.
-- **CMIP6 writes `no parent`.** A literal `parent_experiment_id` of `"no parent"` is a
-  CMIP6 convention, and does not occur in CMIP7, which announces a root by carrying
-  none of the keys at all.
-
-Checked live on 2026-11-04 and 2026-11-05.
-"""
-
-
-def _said(attributes: Mapping[str, object], name: str) -> str | None:
-    """
-    Read one attribute as text, treating a sentinel as not having been said
-
-    Parameters
-    ----------
-    attributes
-        Every global attribute the file declared
-
-    name
-        The attribute to read
-
-    Returns
-    -------
-    :
-        Its value, or `None` if it is absent, empty or one of
-        [NOT_SAID][(m).NOT_SAID]
-
-    Examples
-    --------
-    >>> _said({"parent_experiment_id": "piControl"}, "parent_experiment_id")
-    'piControl'
-
-    A CMIP5 root run, which says so with a sentinel:
-
-    >>> print(_said({"parent_experiment_id": "N/A"}, "parent_experiment_id"))
-    None
-
-    And a CMIP6 one, which says so with a different sentinel:
-
-    >>> print(_said({"parent_experiment_id": "no parent"}, "parent_experiment_id"))
-    None
-
-    >>> print(_said({}, "parent_experiment_id"))
-    None
-    """
-    raw = attributes.get(name)
-    if raw is None:
-        return None
-
-    text = str(raw).strip()
-    if text.casefold() in NOT_SAID:
-        return None
-
-    return text
-
-
-def _number(attributes: Mapping[str, object], name: str) -> float | None:
-    """
-    Read one attribute as a number, if it is one
-
-    Parameters
-    ----------
-    attributes
-        Every global attribute the file declared
-
-    name
-        The attribute to read
-
-    Returns
-    -------
-    :
-        Its value as a `float`, or `None` if absent or not a number
-
-        A value that is not a number is read as "not said" rather than raising: this
-        is metadata written by dozens of modelling centres over twenty years, and one
-        of them putting a word where a number belongs should cost us that field, not
-        the whole header.
-
-    Examples
-    --------
-    >>> _number({"branch_time": 240.0}, "branch_time")
-    240.0
-
-    A string that happens to be a number is still a number:
-
-    >>> _number({"branch_time": "240"}, "branch_time")
-    240.0
-
-    >>> print(_number({"branch_time": "unknown"}, "branch_time"))
-    None
-    """
-    raw = attributes.get(name)
-
-    # `bool` first: it is an `int` subclass, so `True` would otherwise read as `1.0`.
-    if isinstance(raw, bool):
-        return None
-
-    if isinstance(raw, (int, float)):
-        return float(raw)
-
-    if isinstance(raw, str):
-        try:
-            return float(raw)
-        except ValueError:
-            return None
-
-    return None
-
-
-class ParentHeaderReader(Protocol):
-    """
-    Turns one file's global attributes into what it says about its parent
-
-    One per project, collected in
-    [PARENT_HEADER_READERS_BY_PROJECT][(m).PARENT_HEADER_READERS_BY_PROJECT].
-    """
-
-    def __call__(
-        self, attributes: Mapping[str, object], *, child: ParentSimulation
-    ) -> ParentInfo:
-        """
-        Read what a file says about its parent
-
-        Parameters
-        ----------
-        attributes
-            Every global attribute the file declared, as
-            [read_global_attributes][esmporium.headers.read_global_attributes]
-            returned them
-
-        child
-            The simulation whose file this is, as the database holds it
-
-            For a project which publishes its parent completely this is unused. It is
-            here for CMIP5, which publishes no parent model and so has to take the
-            child's -- and which must take it from **here** rather than from the
-            file's own `model_id`, for the reason
-            [read_cmip5_parent_header][(m).read_cmip5_parent_header] gives.
-
-        Returns
-        -------
-        :
-            What the file said
-
-            An instance whose every field is `None` means the file was read and
-            declared **no parent** -- which is how a root of the tree says so, and is
-            a different statement from not having looked.
-        """
-
-
-def read_cmip6_parent_header(
-    attributes: Mapping[str, object], *, child: ParentSimulation | None = None
-) -> ParentInfo:
-    """
-    Read a CMIP6 or CMIP7 file's parent attributes
-
-    These projects publish the parent completely, so nothing here is inferred: the
-    file names the parent's era, activity, model, experiment and variant, and both
-    branch times. Confirmed against live CMIP6 files on 2026-11-05.
-
-    Parameters
-    ----------
-    attributes
-        Every global attribute the file declared
-
-    child
-        The simulation whose file this is. **Unused**, and accepted only so that this
-        satisfies [ParentHeaderReader][(m).ParentHeaderReader] -- a project which
-        publishes its parent in full has nothing to infer.
-
-    Returns
-    -------
-    :
-        What the file said about its parent
-
-    Examples
-    --------
-    >>> parent = read_cmip6_parent_header(
-    ...     {
-    ...         "parent_mip_era": "CMIP6",
-    ...         "parent_activity_id": "CMIP",
-    ...         "parent_source_id": "TaiESM1",
-    ...         "parent_experiment_id": "piControl",
-    ...         "parent_variant_label": "r1i1p1f1",
-    ...         "parent_time_units": "days since 0701-01-01",
-    ...         "branch_time_in_parent": 438000.0,
-    ...         "branch_time_in_child": 0.0,
-    ...     }
-    ... )
-    >>> parent.parent_model, parent.parent_experiment
-    ('TaiESM1', 'piControl')
-    >>> parent.branch_time_in_parent
-    438000.0
-
-    A root run, which CMIP6 announces with a sentinel:
-
-    >>> read_cmip6_parent_header(
-    ...     {"parent_experiment_id": "no parent"}
-    ... ).declares_a_parent
-    False
-    """
-    return ParentInfo(
-        parent_project=_said(attributes, "parent_mip_era"),
-        parent_activity=_said(attributes, "parent_activity_id"),
-        parent_model=_said(attributes, "parent_source_id"),
-        parent_experiment=_said(attributes, "parent_experiment_id"),
-        parent_variant_label=_said(attributes, "parent_variant_label"),
-        parent_time_units=_said(attributes, "parent_time_units"),
-        branch_time_in_parent=_number(attributes, "branch_time_in_parent"),
-        branch_time_in_child=_number(attributes, "branch_time_in_child"),
-    )
-
-
-def read_cmip5_parent_header(
-    attributes: Mapping[str, object], *, child: ParentSimulation
-) -> ParentInfo:
-    """
-    Read a CMIP5 file's parent attributes, inferring the two it does not publish
-
-    CMIP5 publishes far less than CMIP6 and spells what it does publish differently.
-    Measured across 47 models on 2026-11-04, a CMIP5 header carries
-    `parent_experiment_id`, `parent_experiment_rip` and `branch_time`, **and nothing
-    else about the parent at all**.
-
-    Parameters
-    ----------
-    attributes
-        Every global attribute the file declared
-
-    child
-        The simulation whose file this is, as the database holds it. Its project and
-        model are what get inferred onto the parent.
-
-    Returns
-    -------
-    :
-        What the file said about its parent, plus the two inferred facts
-
-    Examples
-    --------
-    >>> from esmporium.db import ParentSimulation
-    >>> child = ParentSimulation(
-    ...     project="CMIP5",
-    ...     model="BCC-CSM1.1(m)",
-    ...     experiment="abrupt4xCO2",
-    ...     variant_label="r1i1p1",
-    ... )
-    >>> parent = read_cmip5_parent_header(
-    ...     {
-    ...         "parent_experiment_id": "piControl",
-    ...         "parent_experiment_rip": "r1i1p1",
-    ...         "branch_time": 240.0,
-    ...         "model_id": "bcc-csm1-1-m",
-    ...     },
-    ...     child=child,
-    ... )
-    >>> parent.parent_experiment, parent.parent_variant_label
-    ('piControl', 'r1i1p1')
-
-    Note which spelling the parent's model gets: the child's, not the file's own
-    `model_id`, because that is the one a search will match.
-
-    >>> parent.parent_model, parent.parent_project
-    ('BCC-CSM1.1(m)', 'CMIP5')
-
-    `branch_time` is recorded verbatim, never interpreted:
-
-    >>> parent.branch_time_in_parent
-    240.0
-
-    A root run declares no parent, and nothing is inferred onto it:
-
-    >>> root = read_cmip5_parent_header({"parent_experiment_id": "N/A"}, child=child)
-    >>> root.declares_a_parent
-    False
-    >>> print(root.parent_model)
-    None
-
-    A model which publishes no usable variant label still declares its parent, and the
-    gap is left as a gap for a fix to close:
-
-    >>> partial = read_cmip5_parent_header(
-    ...     {"parent_experiment_id": "historical", "parent_experiment_rip": "N/A"},
-    ...     child=child,
-    ... )
-    >>> partial.parent_experiment
-    'historical'
-    >>> print(partial.parent_variant_label)
-    None
-    """
-    experiment = _said(attributes, "parent_experiment_id")
-    variant_label = _said(attributes, "parent_experiment_rip")
-    branch_time = _number(attributes, "branch_time")
-
-    declares = experiment is not None or variant_label is not None
-
-    return ParentInfo(
-        # Inferred, and only once the file has declared a parent -- see above.
-        parent_project=child.project if declares else None,
-        parent_activity=None,
-        parent_model=child.model if declares else None,
-        parent_experiment=experiment,
-        parent_variant_label=variant_label,
-        # CMIP5 publishes no parent time units, so `branch_time` has no stated origin.
-        parent_time_units=None,
-        branch_time_in_parent=branch_time if declares else None,
-        branch_time_in_child=None,
-    )
-
-
-PARENT_HEADER_READERS_BY_PROJECT: Mapping[str, ParentHeaderReader] = {
-    "CMIP5": read_cmip5_parent_header,
-    "CMIP6": read_cmip6_parent_header,
-}
-"""
-Which reader turns each project's global attributes into a
-[ParentInfo][esmporium.search.ParentInfo]
-
-Keyed by [Dataset.project][esmporium.db.schema.Dataset.project]. **Keyed by project
-and not by file format**, which is worth stating because the formats vary within a
-project: CMIP5 is mostly classic netCDF but `EC-EARTH`'s rcp85 output is netCDF-4. The
-format decides who reads the bytes ([esmporium.headers][] settles that from the bytes
-themselves); the project decides what the attributes mean.
-
-Pass a mapping of your own to override one, or to add a project, e.g.
-`{**PARENT_HEADER_READERS_BY_PROJECT, "CMIP5": my_reader}`.
-"""
-
-
-class UnknownProjectHeaderReaderError(KeyError):
-    """
-    Raised when a project's header has no reader
-    """
-
-    def __init__(self, project: str, known: Collection[str]) -> None:
-        self.project = project
-        """The project we have no reader for"""
-
-        self.known = tuple(sorted(known))
-        """The projects we do have one for"""
-
-        super().__init__(
-            f"No parent header reader is registered for project {project!r}. "
-            f"Known projects: {', '.join(repr(one) for one in self.known)}. "
-            "Which global attributes carry a parent differs by project -- CMIP5 "
-            "calls the parent's variant label `parent_experiment_rip` where CMIP6 "
-            "calls it `parent_variant_label` -- so there is no sensible default to "
-            "fall back on. Pass a reader of your own in `readers`."
-        )
-
-
-def header_reader_for_project(
-    project: str,
-    readers: Mapping[str, ParentHeaderReader] = PARENT_HEADER_READERS_BY_PROJECT,
-) -> ParentHeaderReader:
-    """
-    Get the header reader for one project
-
-    Parameters
-    ----------
-    project
-        The project to read for, as
-        [Dataset.project][esmporium.db.schema.Dataset.project] spells it
-
-    readers
-        The readers to choose from
-
-    Returns
-    -------
-    :
-        The reader to use
-
-    Raises
-    ------
-    UnknownProjectHeaderReaderError
-        `project` has no reader.
-    """
-    found = readers.get(project)
-    if found is None:
-        raise UnknownProjectHeaderReaderError(project, readers)
-
-    return found
 
 
 @dataclass(frozen=True)
@@ -876,7 +484,7 @@ def record_header_parent_facts(
     item: HeaderReadPlanItem,
     header: FileHeader,
     *,
-    readers: Mapping[str, ParentHeaderReader] = PARENT_HEADER_READERS_BY_PROJECT,
+    parsers: Mapping[str, FileHeaderParser] = FILE_HEADER_PARSERS_BY_PROJECT,
     file_id: int | None = None,
 ) -> tuple[DatasetVersionParent, ...]:
     """
@@ -893,9 +501,9 @@ def record_header_parent_facts(
     header
         What the file said
 
-    readers
-        Which reader to use per project. See
-        [PARENT_HEADER_READERS_BY_PROJECT][(m).PARENT_HEADER_READERS_BY_PROJECT].
+    parsers
+        Which parser to use per project. See
+        [FILE_HEADER_PARSERS_BY_PROJECT][esmporium.enrich.FILE_HEADER_PARSERS_BY_PROJECT].
 
     file_id
         The file whose header this is, or `None` for the item's first candidate
@@ -910,11 +518,15 @@ def record_header_parent_facts(
 
     Raises
     ------
-    UnknownProjectHeaderReaderError
-        The simulation's project has no reader registered.
+    UnknownProjectFileHeaderParserError
+        The simulation's project has no parser registered.
     """
-    reader = header_reader_for_project(item.simulation.project, readers)
-    info = reader(header.global_attributes, child=item.simulation)
+    info = parse_file_header(
+        header.global_attributes,
+        project=item.simulation.project,
+        model=item.simulation.model,
+        parsers=parsers,
+    )
     read_from = file_id if file_id is not None else item.file_id
 
     logger.debug(
@@ -1007,7 +619,7 @@ def _read_and_record(  # noqa: PLR0913 - one argument per injection seam
     session: Session,
     items: Sequence[HeaderReadPlanItem],
     *,
-    readers: Mapping[str, ParentHeaderReader],
+    parsers: Mapping[str, FileHeaderParser],
     client: httpx.Client | None,
     selector: DataNodeSelector,
     observer: HeaderReadCallObserver | None,
@@ -1035,8 +647,8 @@ def _read_and_record(  # noqa: PLR0913 - one argument per injection seam
     items
         The simulations to read, each with its candidate files
 
-    readers
-        Which reader turns each project's attributes into a parent
+    parsers
+        Which parser turns each project's attributes into a parent
 
     client
         The client to request with, or `None` to build one per pass
@@ -1126,7 +738,7 @@ def _read_and_record(  # noqa: PLR0913 - one argument per injection seam
                     session,
                     item,
                     result.header,
-                    readers=readers,
+                    parsers=parsers,
                     file_id=item.candidates[attempt].file_id,
                 )
                 del pending[item.simulation]
@@ -1143,7 +755,7 @@ def build_header_facts_provider(  # noqa: PLR0913 - one argument per injection s
     *,
     client: httpx.Client | None = None,
     selector: DataNodeSelector = DEFAULT_DATA_NODE_SELECTOR,
-    readers: Mapping[str, ParentHeaderReader] = PARENT_HEADER_READERS_BY_PROJECT,
+    parsers: Mapping[str, FileHeaderParser] = FILE_HEADER_PARSERS_BY_PROJECT,
     fixes: ParentFixes | None = None,
     observer: HeaderReadCallObserver | None = None,
     record_health: bool = True,
@@ -1169,9 +781,9 @@ def build_header_facts_provider(  # noqa: PLR0913 - one argument per injection s
         [build_header_read_health_selector][esmporium.db.build_header_read_health_selector]
         for one that prefers the nodes that have answered quickly before.
 
-    readers
-        Which reader turns each project's attributes into a parent. See
-        [PARENT_HEADER_READERS_BY_PROJECT][(m).PARENT_HEADER_READERS_BY_PROJECT].
+    parsers
+        Which parser turns each project's attributes into a parent. See
+        [FILE_HEADER_PARSERS_BY_PROJECT][esmporium.enrich.FILE_HEADER_PARSERS_BY_PROJECT].
 
     fixes
         Corrections for simulations whose published parent is wrong, or `None` for none
@@ -1271,7 +883,7 @@ def build_header_facts_provider(  # noqa: PLR0913 - one argument per injection s
         unanswered = _read_and_record(
             session,
             plan.to_read,
-            readers=readers,
+            parsers=parsers,
             client=client,
             selector=selector,
             observer=observer,

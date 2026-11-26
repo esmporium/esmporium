@@ -177,6 +177,13 @@ from esmporium.search.search_api_facade import (
     identity_string,
     merge_other_terms,
 )
+from esmporium.search.search_record_time import (
+    SEARCH_RECORD_TIME_FIELDS_BY_FORMAT_TAG,
+    ParsedSearchRecordTime,
+    SearchRecordTimeFields,
+    UnknownSearchRecordTimeFormatError,
+    parse_search_record,
+)
 
 __all__ = [
     "DATASET_DOCUMENTS",
@@ -192,6 +199,7 @@ __all__ = [
     "FILE_DOCUMENTS",
     "INBUILT_SEARCH_API_FACADE_STORE",
     "MULTIHASH_ALGORITHMS",
+    "SEARCH_RECORD_TIME_FIELDS_BY_FORMAT_TAG",
     "SOLR_FORMAT_TAG",
     "SOLR_SERVICE_TO_CONTAINER_FORMAT",
     "SOLR_SERVICE_TO_SERVICE",
@@ -247,6 +255,7 @@ __all__ = [
     "ParentInfo",
     "ParsedDocument",
     "ParsedFileDocument",
+    "ParsedSearchRecordTime",
     "ProcessorFactory",
     "ProjectPrefixMismatchError",
     "Request",
@@ -268,6 +277,7 @@ __all__ = [
     "SearchAPIRequestError",
     "SearchOutcome",
     "SearchPlan",
+    "SearchRecordTimeFields",
     "SelectorOfferedNoAPIFacadeError",
     "SolrSearchAPI",
     "SolrSingleRowResultParser",
@@ -278,6 +288,7 @@ __all__ = [
     "UnknownAccessServiceError",
     "UnknownContainerFormatError",
     "UnknownRawDocFormatTagError",
+    "UnknownSearchRecordTimeFormatError",
     "UnreadableResponseError",
     "UnreadableURLTripleError",
     "ValueCheckOutcome",
@@ -311,6 +322,7 @@ __all__ = [
     "media_type_without_parameters",
     "merge_other_terms",
     "normalise_stored_document",
+    "parse_search_record",
     "plan_sub_searches",
     "read_response_path",
     "search",

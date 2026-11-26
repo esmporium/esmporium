@@ -13,14 +13,17 @@ import io
 from typing import TYPE_CHECKING, Any
 
 from esmporium.headers.contents import (
+    BoundsAttribute,
     FileHeader,
     FirstAndLastTimeBounds,
     HeaderLayout,
+    bounds_named_by,
 )
 from esmporium.headers.errors import (
     HeaderParseError,
     HeaderReadError,
     HeaderReaderUnavailableError,
+    TruncatedHeaderError,
     UnreadableHeaderError,
 )
 
@@ -266,22 +269,28 @@ def _first_and_last_time_bounds(
     first_value = _number(time[0], variable=time_variable)
     last_value = _number(time[n_steps - 1], variable=time_variable)
 
-    bounds_name = _plain_python(time.attrs.get("bounds"))
-    if bounds_name is None:
+    named = bounds_named_by(
+        {name: _plain_python(value) for name, value in time.attrs.items()}
+    )
+    if named is None:
         return FirstAndLastTimeBounds(
             time_variable=time_variable,
             n_steps=n_steps,
             first_value=first_value,
             last_value=last_value,
+            bounds_attribute=None,
             bounds_variable=None,
             first_bounds=None,
             last_bounds=None,
         )
 
+    bounds_attribute, bounds_name = named
+
     if str(bounds_name) not in variables:
         msg = (
             f"the time variable {time_variable!r} names {bounds_name!r} as its "
-            "bounds, and the file has no variable of that name"
+            f"bounds (in its {bounds_attribute.value!r} attribute), and the file has "
+            "no variable of that name"
         )
         raise UnreadableHeaderError(msg)
 
@@ -296,11 +305,18 @@ def _first_and_last_time_bounds(
     first_pair = bounds[0]
     last_pair = bounds[n_steps - 1]
 
+    climatology_bounds = None
+    if bounds_attribute is BoundsAttribute.CLIMATOLOGY and _is_one_piece(
+        bounds, n_steps
+    ):
+        climatology_bounds = _every_pair(bounds, variable=str(bounds_name))
+
     return FirstAndLastTimeBounds(
         time_variable=time_variable,
         n_steps=n_steps,
         first_value=first_value,
         last_value=last_value,
+        bounds_attribute=bounds_attribute,
         bounds_variable=str(bounds_name),
         first_bounds=(
             _number(first_pair[0], variable=str(bounds_name)),
@@ -310,6 +326,63 @@ def _first_and_last_time_bounds(
             _number(last_pair[0], variable=str(bounds_name)),
             _number(last_pair[1], variable=str(bounds_name)),
         ),
+        climatology_bounds=climatology_bounds,
+    )
+
+
+def _is_one_piece(bounds: Any, n_steps: int) -> bool:
+    """
+    Determine whether a bounds variable is stored in one piece
+
+    Parameters
+    ----------
+    bounds
+        The bounds variable, an untyped `h5netcdf.Variable`
+
+    n_steps
+        How many steps the time coordinate has
+
+    Returns
+    -------
+    :
+        `True` if it is stored contiguously or in a single chunk along time, so that
+        reading its first and last pairs has already read every pair
+    """
+    chunks = bounds.chunks
+    if chunks is None:
+        return True
+
+    return int(chunks[0]) >= n_steps
+
+
+def _every_pair(
+    bounds: Any, *, variable: str
+) -> tuple[tuple[float | int, float | int], ...] | None:
+    """
+    Read every lower and upper bound of a bounds variable stored in one piece
+
+    Parameters
+    ----------
+    bounds
+        The bounds variable, an untyped `h5netcdf.Variable`
+
+    variable
+        Its name, for messages
+
+    Returns
+    -------
+    :
+        Every pair, in order, or `None` if the source's byte or request budget would
+        not stretch to them
+    """
+    try:
+        values = bounds[:]
+    except TruncatedHeaderError:
+        return None
+
+    return tuple(
+        (_number(lower, variable=variable), _number(upper, variable=variable))
+        for lower, upper in values
     )
 
 

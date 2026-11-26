@@ -10,6 +10,7 @@ import pytest
 from tests.conftest import CMIP6_FILE_SIZE
 
 from esmporium.headers import (
+    BoundsAttribute,
     HeaderLayout,
     HeaderReaderUnavailableError,
     HeldBytesSource,
@@ -181,7 +182,9 @@ class TestTimeBounds:
 
         assert bounds is not None
         assert bounds.n_steps == 150 * 12
+        assert bounds.bounds_attribute is BoundsAttribute.BOUNDS
         assert bounds.bounds_variable == "time_bnds"
+        assert bounds.climatology_bounds is None
         assert bounds.first_bounds == (0.0, 31.0)
         assert bounds.last_bounds == (54719.0, 150 * 365.0)
         assert (bounds.first_value, bounds.last_value) == (15.5, 54734.5)
@@ -201,15 +204,17 @@ class TestTimeBounds:
         assert bounds.first_bounds == (0.0, 1.0)
         assert bounds.last_bounds == (4014.0, 11 * 365.0)
 
-    def test_a_climatological_statistic_names_no_bounds(
+    def test_a_climatological_statistic_has_its_climatology_bounds_read(
         self, needs_h5netcdf, recorded_source
     ):
         """
-        A monthly mean of daily minima carries `climatology`, not `bounds`
+        A monthly mean of daily minima names its bounds with `climatology`
 
-        CF gives climatological statistics their own attribute naming their bounds,
-        and what those bounds mean is not what a time step's bounds mean. So only
-        `bounds` is followed, and this file's values come back without bounds.
+        `202201-204912` on a 360-day calendar: one value per month. CF names a
+        statistic computed in two stages over time this way, and the reader reads its
+        bounds all the same, saying which attribute named them, because what they mean
+        is a question for whoever interprets them. Because these bounds are stored in
+        one piece, every pair is read too, at no extra cost.
         """
         header = read_hdf5_file_header(
             recorded_source("cmip7-netcdf4-climatology"), time_variable="time"
@@ -219,9 +224,18 @@ class TestTimeBounds:
         assert "bounds" not in header.variable_attributes["time"]
         bounds = header.time_bounds
         assert bounds is not None
-        assert bounds.bounds_variable is None
-        assert bounds.first_bounds is None
+        assert bounds.bounds_attribute is BoundsAttribute.CLIMATOLOGY
+        assert bounds.bounds_variable == "climatology_bnds"
         assert bounds.n_steps == 28 * 12
+        # 2022-01-01 and 2050-01-01 on a 360-day calendar counting from 1850.
+        assert bounds.first_bounds == (172 * 360.0, 172 * 360.0 + 30)
+        assert bounds.last_bounds == (200 * 360.0 - 30, 200 * 360.0)
+        # Stored in one chunk, so every pair came with the first and last: one month
+        # each, meeting end to end.
+        assert bounds.climatology_bounds == tuple(
+            (172 * 360.0 + 30 * step, 172 * 360.0 + 30 * (step + 1))
+            for step in range(28 * 12)
+        )
 
     def test_no_time_values_are_read_unless_asked_for(
         self, needs_h5netcdf, cmip6_netcdf4_prefix

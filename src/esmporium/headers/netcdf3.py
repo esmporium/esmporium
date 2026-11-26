@@ -48,11 +48,13 @@ from math import prod
 from typing import TYPE_CHECKING
 
 from esmporium.headers.contents import (
+    BoundsAttribute,
     FileHeader,
     FirstAndLastTimeBounds,
     HeaderLayout,
+    bounds_named_by,
 )
-from esmporium.headers.errors import UnreadableHeaderError
+from esmporium.headers.errors import TruncatedHeaderError, UnreadableHeaderError
 
 if TYPE_CHECKING:
     from esmporium.headers.sources import ByteSource
@@ -724,23 +726,26 @@ def _first_and_last_time_bounds(
     first_value = _value_at(source, header, time, record=0, within=0)
     last_value = _value_at(source, header, time, record=n_steps - 1, within=0)
 
-    bounds_name = time.attributes.get("bounds")
-    if bounds_name is None:
+    named = bounds_named_by(time.attributes)
+    if named is None:
         return FirstAndLastTimeBounds(
             time_variable=time.name,
             n_steps=n_steps,
             first_value=first_value,
             last_value=last_value,
+            bounds_attribute=None,
             bounds_variable=None,
             first_bounds=None,
             last_bounds=None,
         )
 
-    bounds = header.variables.get(str(bounds_name))
+    bounds_attribute, bounds_name = named
+    bounds = header.variables.get(bounds_name)
     if bounds is None:
         msg = (
-            f"the time variable {time.name!r} names {bounds_name!r} as its bounds, "
-            "and the file has no variable of that name"
+            f"the time variable {time.name!r} names {bounds_name!r} as its bounds "
+            f"(in its {bounds_attribute.value!r} attribute), and the file has no "
+            "variable of that name"
         )
         raise UnreadableHeaderError(msg)
 
@@ -765,15 +770,64 @@ def _first_and_last_time_bounds(
         _value_at(source, header, bounds, record=n_steps - 1, within=1),
     )
 
+    climatology_bounds = None
+    # A record variable is spread one pair per record across the whole file, so
+    # reading every pair would take about one request per step. A fixed-size one is in
+    # one piece, already reached by its first and last pairs.
+    if bounds_attribute is BoundsAttribute.CLIMATOLOGY and not _is_record_variable(
+        header, bounds
+    ):
+        climatology_bounds = _every_pair(source, header, bounds, n_steps=n_steps)
+
     return FirstAndLastTimeBounds(
         time_variable=time.name,
         n_steps=n_steps,
         first_value=first_value,
         last_value=last_value,
+        bounds_attribute=bounds_attribute,
         bounds_variable=bounds.name,
         first_bounds=first_bounds,
         last_bounds=last_bounds,
+        climatology_bounds=climatology_bounds,
     )
+
+
+def _every_pair(
+    source: ByteSource, header: _Header, bounds: _Variable, *, n_steps: int
+) -> tuple[tuple[float | int, float | int], ...] | None:
+    """
+    Read every lower and upper bound of a bounds variable stored in one piece
+
+    Parameters
+    ----------
+    source
+        The file's bytes
+
+    header
+        The header
+
+    bounds
+        The bounds variable, which is not a record variable
+
+    n_steps
+        How many steps the time coordinate has
+
+    Returns
+    -------
+    :
+        Every pair, in order, or `None` if the source's byte or request budget would
+        not stretch to them
+    """
+    try:
+        return tuple(
+            (
+                _value_at(source, header, bounds, record=step, within=0),
+                _value_at(source, header, bounds, record=step, within=1),
+            )
+            for step in range(n_steps)
+        )
+    except TruncatedHeaderError:
+        return None
 
 
 def read_netcdf3_file_header(

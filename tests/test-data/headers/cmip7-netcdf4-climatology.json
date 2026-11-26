@@ -3,7 +3,7 @@
   "url": "https://esgf.ceda.ac.uk/data/esg_cmip7/MIP-DRS7/CMIP7/ScenarioMIP/UKNCSP/UKESM1-3-LL/esm-scen7-vl/r1i1p1f1/glb/mon/tas/tminavg-h2m-hxy-u/g110/v20260825/tas_tminavg-h2m-hxy-u_mon_glb_g110_UKESM1-3-LL_esm-scen7-vl_r1i1p1f1_202201-204912.nc",
   "file": "tas_tminavg-h2m-hxy-u_mon_glb_g110_UKESM1-3-LL_esm-scen7-vl_r1i1p1f1_202201-204912.nc",
   "file_size": 21470532,
-  "fetched": "2026-11-25",
+  "fetched": "2026-11-26",
   "pieces": [
     {
       "offset": 0,
@@ -15,11 +15,7 @@
     },
     {
       "offset": 20848,
-      "length": 680
-    },
-    {
-      "offset": 23900,
-      "length": 606
+      "length": 3658
     },
     {
       "offset": 26358,
@@ -63,6 +59,10 @@
     },
     {
       "offset": 77378,
+      "length": 4927
+    },
+    {
+      "offset": 21466436,
       "length": 4096
     }
   ]
