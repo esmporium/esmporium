@@ -1,0 +1,21 @@
+{
+  "description": "The byte ranges that reading this file's header and its first and last time values touched, for replaying that read offline. Each piece is stored in the .bin beside this, one after another, in this order; every other byte of the file was not read.",
+  "url": "https://esgf.ceda.ac.uk/thredds/fileServer/esg_dataroot/cmip5/output1/BCC/bcc-csm1-1-m/abrupt4xCO2/mon/atmos/Amon/r1i1p1/v20120910/tas/tas_Amon_bcc-csm1-1-m_abrupt4xCO2_r1i1p1_024001-038912.nc",
+  "file": "tas_Amon_bcc-csm1-1-m_abrupt4xCO2_r1i1p1_024001-038912.nc",
+  "file_size": 368702896,
+  "fetched": "2026-11-25",
+  "pieces": [
+    {
+      "offset": 0,
+      "length": 7952
+    },
+    {
+      "offset": 19696,
+      "length": 24
+    },
+    {
+      "offset": 368498072,
+      "length": 24
+    }
+  ]
+}

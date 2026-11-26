@@ -29,9 +29,9 @@ from esmporium.db.schema import (
 )
 from esmporium.downloads import DEFAULT_DATA_NODE_SELECTOR, prepare_routes
 from esmporium.headers import (
-    DEFAULT_MAX_WANT_BYTES,
+    DEFAULT_BLOCK_BYTES,
+    DEFAULT_MAX_BYTES,
     DEFAULT_PER_DATA_NODE,
-    DEFAULT_WANT_BYTES,
     HeaderRequest,
     fan_out,
     read_headers,
@@ -914,7 +914,7 @@ def record_header_parent_facts(
         The simulation's project has no reader registered.
     """
     reader = header_reader_for_project(item.simulation.project, readers)
-    info = reader(header.attributes, child=item.simulation)
+    info = reader(header.global_attributes, child=item.simulation)
     read_from = file_id if file_id is not None else item.file_id
 
     logger.debug(
@@ -925,7 +925,7 @@ def record_header_parent_facts(
             "simulation": str(item.simulation),
             "file_name": item.filename,
             "file_id": read_from,
-            "data_node": header.route.data_node,
+            "data_node": None if header.route is None else header.route.data_node,
             "declares_a_parent": info.declares_a_parent,
             "n_versions_answered": len(item.dataset_version_ids),
         },
@@ -1012,8 +1012,8 @@ def _read_and_record(  # noqa: PLR0913 - one argument per injection seam
     selector: DataNodeSelector,
     observer: HeaderReadCallObserver | None,
     record_health: bool,
-    want_bytes: int,
-    max_want_bytes: int,
+    block_bytes: int,
+    max_bytes: int,
     max_workers: int | None,
     per_data_node: int | None,
 ) -> tuple[HeaderReadPlanItem, ...]:
@@ -1050,11 +1050,11 @@ def _read_and_record(  # noqa: PLR0913 - one argument per injection seam
     record_health
         Whether to record the attempts into the database
 
-    want_bytes
-        How many bytes to ask for first
+    block_bytes
+        The least to fetch per request
 
-    max_want_bytes
-        The most to ask for before giving up on a file
+    max_bytes
+        The most to fetch from one file before giving up on it
 
     max_workers
         How many headers to read at once
@@ -1112,8 +1112,8 @@ def _read_and_record(  # noqa: PLR0913 - one argument per injection seam
                 client=client,
                 selector=selector,
                 observer=fan_out(*watching) if watching else None,
-                want_bytes=want_bytes,
-                max_want_bytes=max_want_bytes,
+                block_bytes=block_bytes,
+                max_bytes=max_bytes,
                 max_workers=max_workers,
                 per_data_node=per_data_node,
             )
@@ -1147,8 +1147,8 @@ def build_header_facts_provider(  # noqa: PLR0913 - one argument per injection s
     fixes: ParentFixes | None = None,
     observer: HeaderReadCallObserver | None = None,
     record_health: bool = True,
-    want_bytes: int = DEFAULT_WANT_BYTES,
-    max_want_bytes: int = DEFAULT_MAX_WANT_BYTES,
+    block_bytes: int = DEFAULT_BLOCK_BYTES,
+    max_bytes: int = DEFAULT_MAX_BYTES,
     max_workers: int | None = None,
     per_data_node: int | None = DEFAULT_PER_DATA_NODE,
 ) -> ParentFactsProvider:
@@ -1207,11 +1207,11 @@ def build_header_facts_provider(  # noqa: PLR0913 - one argument per injection s
         which is worth having in a test but loses the only evidence a later run could
         rank data nodes by.
 
-    want_bytes
-        How many bytes of each file to ask for first
+    block_bytes
+        The least to fetch per request
 
-    max_want_bytes
-        The most to ask for before giving up on a file
+    max_bytes
+        The most to fetch from one file before giving up on it
 
     max_workers
         How many headers to read at once, or `None` to read them one at a time
@@ -1276,8 +1276,8 @@ def build_header_facts_provider(  # noqa: PLR0913 - one argument per injection s
             selector=selector,
             observer=observer,
             record_health=record_health,
-            want_bytes=want_bytes,
-            max_want_bytes=max_want_bytes,
+            block_bytes=block_bytes,
+            max_bytes=max_bytes,
             max_workers=max_workers,
             per_data_node=per_data_node,
         )

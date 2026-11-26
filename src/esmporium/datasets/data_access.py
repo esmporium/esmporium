@@ -356,13 +356,15 @@ class HeaderReadOutcome(str, Enum):
 
     SUCCESS = "success"
     """
-    The bytes arrived and a header was read out of them
+    The bytes arrived, and a header was read out of the bytes this read fetched
 
     Reported whether or not the data node honoured our range request: a node which
-    ignored it and started sending the whole file still gave us a usable prefix, and
-    what it cost us is recorded on
+    ignored it and started sending the whole file still gave us a usable first block,
+    and what it cost us is recorded on
     [HeaderReadCallRecord.range_honoured][esmporium.db.schema.HeaderReadCallRecord.range_honoured]
-    rather than by calling a usable answer a failure.
+    rather than by calling a usable answer a failure. A read which needed more than
+    that first block from such a node is
+    [RANGES_NOT_HONOURED][(c).RANGES_NOT_HONOURED].
     """
 
     MISSING = "missing"
@@ -419,14 +421,26 @@ class HeaderReadOutcome(str, Enum):
     abandons recoverable ones.
     """
 
+    RANGES_NOT_HONOURED = "ranges_not_honoured"
+    """
+    The data node serves files only whole, and the read needed more than the start
+
+    A node which answers a range request with the whole file still gives us its first
+    block, but reaching anything further in would mean streaming the file from byte
+    zero. **Never retried, counted against the node, and it stops us trying this
+    node's other routes**: they are served the same way, and another mirror may
+    honour ranges.
+    """
+
     TRUNCATED_HEADER = "truncated_header"
     """
-    The bytes are a file we understand, but we did not fetch enough of them
+    The bytes are a file we understand, and reading them needs more than we may fetch
 
-    The header reader needs more than it asked for -- a netCDF-4 file whose root
-    object header sits late in the file, say. The fix is to ask for more, not to try
-    another mirror: every replica of a file has this same layout. So this is not
-    counted against the data node, which served exactly what we asked for.
+    The reader needs bytes beyond the budget of bytes or requests a read is allowed --
+    a netCDF-4 file whose root object header sits late in the file, say. The fix is a
+    bigger budget, not another mirror: every replica of a file has this same layout.
+    So this is not counted against the data node, which served exactly what we asked
+    for.
     """
 
     UNREADABLE_BYTES = "unreadable_bytes"
@@ -513,6 +527,8 @@ class HeaderReadOutcome(str, Enum):
             HeaderReadOutcome.TIMEOUT,
             # Still refusing us after its retries; stop asking this node for now.
             HeaderReadOutcome.BLOCKED,
+            # Serves files only whole. Its other URLs are served the same way.
+            HeaderReadOutcome.RANGES_NOT_HONOURED,
         }
 
     @property

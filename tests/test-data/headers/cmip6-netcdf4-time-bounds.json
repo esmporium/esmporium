@@ -1,0 +1,105 @@
+{
+  "description": "The byte ranges that reading this file's header and its first and last time values touched, for replaying that read offline. Each piece is stored in the .bin beside this, one after another, in this order; every other byte of the file was not read.",
+  "url": "https://esgf.ceda.ac.uk/thredds/fileServer/esg_cmip6/CMIP6/CMIP/AS-RCEC/TaiESM1/abrupt-4xCO2/r1i1p1f1/Amon/tas/gn/v20200310/tas_Amon_TaiESM1_abrupt-4xCO2_r1i1p1f1_gn_000101-015012.nc",
+  "file": "tas_Amon_TaiESM1_abrupt-4xCO2_r1i1p1f1_gn_000101-015012.nc",
+  "file_size": 218823170,
+  "fetched": "2026-11-25",
+  "pieces": [
+    {
+      "offset": 0,
+      "length": 1906
+    },
+    {
+      "offset": 2026,
+      "length": 512
+    },
+    {
+      "offset": 3050,
+      "length": 1024
+    },
+    {
+      "offset": 5098,
+      "length": 767
+    },
+    {
+      "offset": 5985,
+      "length": 512
+    },
+    {
+      "offset": 7009,
+      "length": 3395
+    },
+    {
+      "offset": 10464,
+      "length": 512
+    },
+    {
+      "offset": 11488,
+      "length": 749
+    },
+    {
+      "offset": 12357,
+      "length": 512
+    },
+    {
+      "offset": 13381,
+      "length": 4398
+    },
+    {
+      "offset": 17831,
+      "length": 316
+    },
+    {
+      "offset": 18267,
+      "length": 512
+    },
+    {
+      "offset": 19529,
+      "length": 146
+    },
+    {
+      "offset": 19757,
+      "length": 512
+    },
+    {
+      "offset": 20781,
+      "length": 254
+    },
+    {
+      "offset": 21089,
+      "length": 21142
+    },
+    {
+      "offset": 43775,
+      "length": 22
+    },
+    {
+      "offset": 51815,
+      "length": 4712
+    },
+    {
+      "offset": 128284461,
+      "length": 2616
+    },
+    {
+      "offset": 128291221,
+      "length": 2096
+    },
+    {
+      "offset": 216573431,
+      "length": 8
+    },
+    {
+      "offset": 216576543,
+      "length": 2096
+    },
+    {
+      "offset": 216641543,
+      "length": 2616
+    },
+    {
+      "offset": 216644531,
+      "length": 20
+    }
+  ]
+}

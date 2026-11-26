@@ -6,9 +6,10 @@ so the formats are per-file, not per-project
 
 Note what the input is. These are the attributes of the file's **time variable**, not
 its global attributes: a CMIP file does not publish its own calendar globally.
-Fetching variable attributes is a job for [esmporium.headers][], and lands with
-the step which does the fetching; this function is the pure half, and takes whatever
-that returns.
+[esmporium.headers][] reads them
+([read_variable_attributes][esmporium.headers.read_variable_attributes], or
+[FileHeader.variable_attributes][esmporium.headers.FileHeader.variable_attributes]);
+this function is the pure half, and takes whatever that returns.
 """
 
 from __future__ import annotations

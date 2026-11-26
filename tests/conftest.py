@@ -5,9 +5,11 @@ See https://docs.pytest.org/en/7.1.x/reference/fixtures.html#conftest-py-sharing
 """
 
 import datetime
+import json
 import pathlib
 import types
 import typing
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import pandas as pd
@@ -23,6 +25,7 @@ from esmporium.db import (
     SearchSummary,
     VersionRecord,
 )
+from esmporium.headers import HeldBytesSource
 from esmporium.requirements import VersionFilter
 
 OPT_IN_MARKERS: dict[str, str] = {
@@ -422,20 +425,86 @@ CMIP6_FILE_SIZE = 218823170
 
 
 @pytest.fixture
-def needs_h5py() -> None:
+def needs_h5netcdf() -> None:
     """
     Skip a test which cannot run without the optional `headers` extra
 
-    Reading a netCDF-4/HDF5 header needs `h5py`, which is the `headers` extra rather
+    Reading a netCDF-4/HDF5 file needs `h5netcdf`, which is the `headers` extra rather
     than a dependency, because a classic-netCDF archive needs nothing installed. CI
     runs the suite without extras to keep that true, so a test which really reads
     netCDF-4 bytes has to stand aside there rather than fail.
 
     Not put on [cmip6_netcdf4_prefix][(m).cmip6_netcdf4_prefix] itself, because
-    recognising those bytes as netCDF-4 needs no `h5py` at all -- only reading their
-    attributes does.
+    recognising those bytes as netCDF-4 needs no `h5netcdf` at all -- only reading
+    them does.
     """
-    pytest.importorskip("h5py", reason="needs the optional `headers` extra")
+    pytest.importorskip("h5netcdf", reason="needs the optional `headers` extra")
+
+
+def recorded_pieces(name: str) -> tuple[dict[int, bytes], int]:
+    """
+    Load a recording of the bytes a header and time-bounds read touched
+
+    Made by `scripts/record_header_ranges.py`.
+
+    Parameters
+    ----------
+    name
+        The recording's file stem in `tests/test-data/headers/`
+
+    Returns
+    -------
+    :
+        Each piece keyed by the offset it starts at, and the whole file's size
+    """
+    manifest = json.loads((HEADER_TEST_DATA / f"{name}.json").read_text())
+    blob = (HEADER_TEST_DATA / f"{name}.bin").read_bytes()
+
+    pieces: dict[int, bytes] = {}
+    at = 0
+    for piece in manifest["pieces"]:
+        pieces[piece["offset"]] = blob[at : at + piece["length"]]
+        at += piece["length"]
+
+    return pieces, manifest["file_size"]
+
+
+@pytest.fixture
+def recorded_source() -> Callable[[str], HeldBytesSource]:
+    """
+    Get a factory for a byte source replaying one recording
+
+    Returns
+    -------
+    :
+        A factory taking a recording's name and returning a source which holds
+        exactly the bytes that recording kept, and raises for any other
+    """
+
+    def factory(name: str) -> HeldBytesSource:
+        pieces, size = recorded_pieces(name)
+
+        return HeldBytesSource(pieces, size=size)
+
+    return factory
+
+
+@pytest.fixture
+def cmip5_netcdf3_header() -> bytes:
+    """
+    Get the whole header of a real CMIP5 file, which is classic netCDF
+
+    Returns
+    -------
+    :
+        The first 7,952 bytes of
+        `tas_Amon_bcc-csm1-1-m_abrupt4xCO2_r1i1p1_024001-038912.nc`: its global
+        attributes and every variable's attributes, which is everything a read
+        that does not ask for time values needs
+    """
+    pieces, _ = recorded_pieces("cmip5-netcdf3-time-bounds")
+
+    return pieces[0]
 
 
 @pytest.fixture

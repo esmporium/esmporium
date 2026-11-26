@@ -50,22 +50,25 @@ Issues = "https://github.com/esmporium/esmporium/issues"
 plots = [
     "matplotlib>=3.7.1",  # pin based on minimum supported python version
 ]
-# Reading a netCDF-4/HDF5 file's global attributes, which is how parent information
-# reaches us for CMIP6 (and for the handful of CMIP5 models published as netCDF-4).
-# An extra rather than a dependency because classic netCDF -- most of CMIP5 -- is read
-# by `esmporium.headers.netcdf3` with nothing installed, so requiring a compiled HDF5
-# library of every user would charge all of them for one file format.
+# Reading a netCDF-4/HDF5 file's header and first and last time values, which is how
+# parent and time information reaches us for CMIP6 and CMIP7 (and for the handful of
+# CMIP5 models published as netCDF-4). An extra rather than a dependency because
+# classic netCDF -- most of CMIP5 -- is read by `esmporium.headers.netcdf3` with
+# nothing installed, so requiring a compiled HDF5 library of every user would charge
+# all of them for one file format.
 #
-# h5py specifically, and not netCDF4, even though netCDF4 can also do this: netCDF4
+# h5netcdf over h5py, and not netCDF4, even though netCDF4 can also do this: netCDF4
 # opens a URL and does its own HTTP inside the C library, which makes a stalled read
 # impossible to time out from Python and turns an HTTP status into text inside an
-# OSError. h5py opens a file-like object, so `esmporium.headers.fetching` keeps the
-# request in httpx. See the module docstring of `esmporium.headers.hdf5`.
+# OSError. h5netcdf opens a file-like object, so `esmporium.headers.fetching` keeps the
+# requests in httpx, and it presents the netCDF data model rather than HDF5's own
+# bookkeeping attributes. See the module docstring of `esmporium.headers.hdf5`.
 headers = [
     # 3.6 is the floor because it is the first release with a wheel for Python 3.10,
     # the oldest version we support. Earlier releases ship an sdist only, so our
     # lowest-direct CI job would have to build HDF5 from source to install one.
     "h5py>=3.6",
+    "h5netcdf>=1.8.3",
 ]
 # Calendar arithmetic on a daily or sub-daily time axis, which is how "twenty years of
 # overlap" becomes a position when the data is finer than monthly. An extra rather than
@@ -113,16 +116,17 @@ dev = [
     "ty==0.0.33",
     "typer>=0.27.1",
     # Note on reading data files: downloading one still does not open it, and the
-    # general-purpose engines for that (xarray, fsspec, h5netcdf, scipy, kerchunk,
-    # zarr and friends) are still not dependencies of this package, dev or otherwise.
+    # general-purpose engines for that (xarray, fsspec, scipy, kerchunk, zarr and
+    # friends) are still not dependencies of this package, dev or otherwise.
     # They were here briefly, for a one-off probe which opened the routes we had
     # recorded; what it found is written up on `esmporium.datasets.ContainerFormat`
     # and in PLAN.md's download step, so the dependencies went when the probe did.
     #
-    # The one exception is h5py, which `esmporium.headers` needs to read a
-    # netCDF-4 file's global attributes. It is the `headers` *extra* rather than a
-    # dependency, and it is in the test groups below so that CI covers both the
-    # classic-netCDF reader (which needs nothing) and the netCDF-4 one.
+    # The one exception is h5netcdf, with h5py beneath it, which `esmporium.headers`
+    # needs to read a netCDF-4 file's header and first and last time values. It is
+    # the `headers` *extra* rather than a dependency, and it is in the test groups
+    # below so that CI covers both the classic-netCDF reader (which needs nothing)
+    # and the netCDF-4 one.
 ]
 docs = [
     # Key dependencies
@@ -153,11 +157,13 @@ tests-min = [
     # everything else here; a test run should not change because a wheel did.
     #
     # Excluded on 3.14, where no h5py release ships a wheel: installing one there
-    # builds it from source, which needs an HDF5 library the runners do not have. The
-    # netCDF-4 reader's tests skip themselves without h5py (`pytest.importorskip` in
+    # builds it from source, which needs an HDF5 library the runners do not have.
+    # h5netcdf is pure Python but needs h5py, so it goes with it. The netCDF-4
+    # reader's tests skip themselves without h5netcdf (`pytest.importorskip` in
     # `tests/conftest.py`), so 3.14 covers everything else and 3.10-3.13 cover that
     # reader. Drop the marker once h5py publishes a 3.14 wheel.
     "h5py==3.14.0 ; python_full_version < '3.14'",
+    "h5netcdf==1.8.3 ; python_full_version < '3.14'",
     "hypothesis==6.165.3",
     "pytest==8.3.4",
     "pytest-regressions==2.11.0",
@@ -218,18 +224,20 @@ show_error_context = true
 warn_unreachable = true
 follow_imports = "normal"
 
-# h5py ships no type stubs and no `py.typed` marker. It is the optional `headers`
-# extra, imported in one function in `esmporium.headers.hdf5`, and nothing it returns
-# reaches a public signature -- `_plain_python` reduces every value it hands back to a
-# plain Python object before it leaves that module.
+# h5netcdf, and the h5py beneath it, ship no type stubs and no `py.typed` marker. They
+# are the optional `headers` extra, imported in one function in
+# `esmporium.headers.hdf5`, and nothing they return reaches a public signature --
+# `_plain_python` reduces every value handed back to a plain Python object before it
+# leaves that module.
 [[tool.mypy.overrides]]
-module = ["h5py"]
+module = ["h5netcdf", "h5py"]
 ignore_missing_imports = true
 
 # cftime ships no `py.typed` marker. It is the optional `calendars` extra, imported by
 # one function in `esmporium.datasets.time`, and nothing it returns reaches a
 # signature -- every value it hands back is reduced to a plain `int` or `float` before
-# it leaves the module, the same discipline `esmporium.headers.hdf5` keeps with h5py.
+# it leaves the module, the same discipline `esmporium.headers.hdf5` keeps with
+# h5netcdf.
 [[tool.mypy.overrides]]
 module = ["cftime"]
 ignore_missing_imports = true

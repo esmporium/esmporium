@@ -1,0 +1,69 @@
+{
+  "description": "The byte ranges that reading this file's header and its first and last time values touched, for replaying that read offline. Each piece is stored in the .bin beside this, one after another, in this order; every other byte of the file was not read.",
+  "url": "https://esgf.ceda.ac.uk/data/esg_cmip7/MIP-DRS7/CMIP7/ScenarioMIP/UKNCSP/UKESM1-3-LL/esm-scen7-vl/r1i1p1f1/glb/mon/tas/tminavg-h2m-hxy-u/g110/v20260825/tas_tminavg-h2m-hxy-u_mon_glb_g110_UKESM1-3-LL_esm-scen7-vl_r1i1p1f1_202201-204912.nc",
+  "file": "tas_tminavg-h2m-hxy-u_mon_glb_g110_UKESM1-3-LL_esm-scen7-vl_r1i1p1f1_202201-204912.nc",
+  "file_size": 21470532,
+  "fetched": "2026-11-25",
+  "pieces": [
+    {
+      "offset": 0,
+      "length": 19704
+    },
+    {
+      "offset": 19824,
+      "length": 512
+    },
+    {
+      "offset": 20848,
+      "length": 680
+    },
+    {
+      "offset": 23900,
+      "length": 606
+    },
+    {
+      "offset": 26358,
+      "length": 568
+    },
+    {
+      "offset": 27046,
+      "length": 512
+    },
+    {
+      "offset": 30686,
+      "length": 606
+    },
+    {
+      "offset": 33144,
+      "length": 568
+    },
+    {
+      "offset": 33832,
+      "length": 512
+    },
+    {
+      "offset": 37472,
+      "length": 985
+    },
+    {
+      "offset": 38517,
+      "length": 512
+    },
+    {
+      "offset": 42677,
+      "length": 488
+    },
+    {
+      "offset": 43302,
+      "length": 658
+    },
+    {
+      "offset": 44472,
+      "length": 4608
+    },
+    {
+      "offset": 77378,
+      "length": 4096
+    }
+  ]
+}

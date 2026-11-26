@@ -906,11 +906,13 @@ calendars = [
 full = [
     { name = "cftime", version = "1.6.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "cftime", version = "1.6.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "h5netcdf" },
     { name = "h5py" },
     { name = "matplotlib", version = "3.10.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "matplotlib", version = "3.11.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
 headers = [
+    { name = "h5netcdf" },
     { name = "h5py" },
 ]
 plots = [
@@ -921,6 +923,7 @@ plots = [
 [package.dev-dependencies]
 all-dev = [
     { name = "attrs" },
+    { name = "h5netcdf", marker = "python_full_version < '3.14'" },
     { name = "h5py", marker = "python_full_version < '3.14'" },
     { name = "hypothesis" },
     { name = "jupyterlab" },
@@ -981,6 +984,7 @@ docs = [
     { name = "ruff" },
 ]
 tests = [
+    { name = "h5netcdf", marker = "python_full_version < '3.14'" },
     { name = "h5py", marker = "python_full_version < '3.14'" },
     { name = "hypothesis" },
     { name = "pytest" },
@@ -991,6 +995,7 @@ tests-full = [
     { name = "pytest-cov" },
 ]
 tests-min = [
+    { name = "h5netcdf", marker = "python_full_version < '3.14'" },
     { name = "h5py", marker = "python_full_version < '3.14'" },
     { name = "hypothesis" },
     { name = "pytest" },
@@ -1004,6 +1009,7 @@ requires-dist = [
     { name = "esmporium", extras = ["calendars"], marker = "extra == 'full'" },
     { name = "esmporium", extras = ["headers"], marker = "extra == 'full'" },
     { name = "esmporium", extras = ["plots"], marker = "extra == 'full'" },
+    { name = "h5netcdf", marker = "extra == 'headers'", specifier = ">=1.8.3" },
     { name = "h5py", marker = "extra == 'headers'", specifier = ">=3.6" },
     { name = "httpx", specifier = ">=0.28.0" },
     { name = "matplotlib", marker = "extra == 'plots'", specifier = ">=3.7.1" },
@@ -1016,6 +1022,7 @@ provides-extras = ["plots", "headers", "calendars", "full"]
 [package.metadata.requires-dev]
 all-dev = [
     { name = "attrs", specifier = "==25.3.0" },
+    { name = "h5netcdf", marker = "python_full_version < '3.14'", specifier = "==1.8.3" },
     { name = "h5py", marker = "python_full_version < '3.14'", specifier = "==3.14.0" },
     { name = "hypothesis", specifier = "==6.165.3" },
     { name = "jupyterlab", specifier = "==4.4.5" },
@@ -1076,6 +1083,7 @@ docs = [
     { name = "ruff", specifier = "==0.15.12" },
 ]
 tests = [
+    { name = "h5netcdf", marker = "python_full_version < '3.14'", specifier = "==1.8.3" },
     { name = "h5py", marker = "python_full_version < '3.14'", specifier = "==3.14.0" },
     { name = "hypothesis", specifier = "==6.165.3" },
     { name = "pytest", specifier = "==8.3.4" },
@@ -1084,6 +1092,7 @@ tests = [
 ]
 tests-full = [{ name = "pytest-cov", specifier = "==6.0.0" }]
 tests-min = [
+    { name = "h5netcdf", marker = "python_full_version < '3.14'", specifier = "==1.8.3" },
     { name = "h5py", marker = "python_full_version < '3.14'", specifier = "==3.14.0" },
     { name = "hypothesis", specifier = "==6.165.3" },
     { name = "pytest", specifier = "==8.3.4" },
@@ -1319,6 +1328,21 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/01/ee/02a2c011bdab74c6fb3c75474d40b3052059d95df7e73351460c8588d963/h11-0.16.0.tar.gz", hash = "sha256:4e35b956cf45792e4caa5885e69fba00bdbc6ffafbfa020300e549b208ee5ff1", size = 101250, upload-time = "2025-04-24T03:35:25.427Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/04/4b/29cac41a4d98d144bf5f6d33995617b185d14b22401f75ca86f384e87ff1/h11-0.16.0-py3-none-any.whl", hash = "sha256:63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86", size = 37515, upload-time = "2025-04-24T03:35:24.344Z" },
+]
+
+[[package]]
+name = "h5netcdf"
+version = "1.8.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
+    { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "packaging" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9e/cc/870c3642cfe900f0400d1784ac21a366b70bdb5b59c41fbe286e0c801e15/h5netcdf-1.8.3.tar.gz", hash = "sha256:95b5d1972894a28f3237aa6497fd34d365610c22880803c2640b0b49dcae85da", size = 83092, upload-time = "2026-11-11T12:31:48.967Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/63/4c/a784e8af8658a423335201b536f26ce2d6341e41cea15383d490089998f9/h5netcdf-1.8.3-py3-none-any.whl", hash = "sha256:767a61acaf0a2a2a99937ecd92c496c78dd54ad207b693c57211c466a975c75b", size = 65286, upload-time = "2026-11-11T12:31:47.397Z" },
 ]
 
 [[package]]

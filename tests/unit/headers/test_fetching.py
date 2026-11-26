@@ -1,5 +1,5 @@
 """
-Tests of fetching a file's first bytes and reading a header out of them
+Tests of reading a file's header from a data node, one range request at a time
 """
 
 from __future__ import annotations
@@ -9,29 +9,30 @@ import ssl
 
 import httpx
 import pytest
-from tests.conftest import CMIP5_FILE_SIZE, CMIP6_FILE_SIZE
+from tests.conftest import CMIP5_FILE_SIZE, CMIP6_FILE_SIZE, recorded_pieces
 
 from esmporium.datasets import HeaderReadOutcome
 from esmporium.headers import (
-    DEFAULT_WANT_BYTES,
+    DEFAULT_BLOCK_BYTES,
     HeaderNeedsCredentialsError,
     HeaderNodeBlockedError,
     HeaderNodeHostFaultError,
     HeaderReadTimeoutError,
     HeaderRouteMissingError,
     HeaderTransportError,
+    RangesNotHonouredError,
     TruncatedHeaderError,
     read_header,
 )
 
-from .conftest import NODE, URL
+from .conftest import NODE, URL, serving
 
 WHOLE_FILE_BYTES = 368702896
 
 
 def partial(prefix: bytes, *, file_size: int = WHOLE_FILE_BYTES) -> httpx.Response:
     """
-    Build the `206` a well-behaved data node answers a range request with
+    Build the `206` a well-behaved data node answers a range from byte zero with
 
     Parameters
     ----------
@@ -53,9 +54,14 @@ def partial(prefix: bytes, *, file_size: int = WHOLE_FILE_BYTES) -> httpx.Respon
     )
 
 
-def test_a_range_request_is_what_gets_sent(route, client_for, no_retry):
+# A valid classic header declaring nothing: magic, `numrecs`, then absent dimension,
+# attribute and variable lists.
+EMPTY_CLASSIC_HEADER = b"CDF\x01" + bytes(28)
+
+
+def test_a_range_request_from_the_start_is_what_gets_sent(route, client_for, no_retry):
     """
-    One request, asking for a prefix, is the whole mechanism
+    One request, for a block from the start of the file, is all a header needs
 
     Worth pinning because the alternative -- letting a netCDF library open the URL and
     seek around inside it -- is what made this hard the first time, and it is not
@@ -66,39 +72,39 @@ def test_a_range_request_is_what_gets_sent(route, client_for, no_retry):
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(request.headers.get("Range"))
 
-        # A valid classic header declaring nothing: magic, `numrecs`, then an absent
-        # dimension list and an absent attribute list.
-        return partial(b"CDF\x01" + bytes(20))
+        return partial(EMPTY_CLASSIC_HEADER)
 
     with client_for(handler) as client:
-        header = read_header(client, route, want_bytes=4096, retrying=no_retry)
+        header = read_header(client, route, block_bytes=4096, retrying=no_retry)
 
     assert seen == ["bytes=0-4095"]
-    assert dict(header.attributes) == {}
+    assert dict(header.global_attributes) == {}
+    assert (header.n_requests, header.bytes_read) == (1, len(EMPTY_CLASSIC_HEADER))
 
 
 def test_a_real_cmip5_header_is_read_over_a_route(
-    route, client_for, no_retry, cmip5_netcdf3_prefix
+    route, client_for, no_retry, cmip5_netcdf3_header
 ):
     """
     The happy path, end to end, with a real file's bytes behind a fake node
     """
 
     def handler(request: httpx.Request) -> httpx.Response:
-        return partial(cmip5_netcdf3_prefix, file_size=CMIP5_FILE_SIZE)
+        return partial(cmip5_netcdf3_header, file_size=CMIP5_FILE_SIZE)
 
     with client_for(handler) as client:
         header = read_header(client, route, retrying=no_retry)
 
-    assert header.attributes["parent_experiment_id"] == "piControl"
-    assert header.attributes["parent_experiment_rip"] == "r1i1p1"
+    assert header.global_attributes["parent_experiment_id"] == "piControl"
+    assert header.global_attributes["parent_experiment_rip"] == "r1i1p1"
+    assert header.variable_attributes["time"]["calendar"] == "noleap"
     assert header.route is route
-    assert header.bytes_read.file_size == CMIP5_FILE_SIZE
-    assert header.bytes_read.range_honoured
+    assert header.file_size == CMIP5_FILE_SIZE
+    assert header.time_bounds is None
 
 
 def test_the_file_size_comes_from_the_node_not_the_index(
-    route, client_for, no_retry, cmip5_netcdf3_prefix
+    route, client_for, no_retry, cmip5_netcdf3_header
 ):
     """
     The node's `Content-Range` wins over what the search index published
@@ -109,29 +115,21 @@ def test_the_file_size_comes_from_the_node_not_the_index(
     """
 
     def handler(request: httpx.Request) -> httpx.Response:
-        return partial(cmip5_netcdf3_prefix, file_size=CMIP5_FILE_SIZE)
+        return partial(cmip5_netcdf3_header, file_size=CMIP5_FILE_SIZE)
 
     with client_for(handler) as client:
         header = read_header(
             client, route, retrying=no_retry, published_size=CMIP5_FILE_SIZE + 999
         )
 
-    assert header.bytes_read.file_size == CMIP5_FILE_SIZE
+    assert header.file_size == CMIP5_FILE_SIZE
 
 
 def test_the_published_size_is_the_fallback_when_the_node_is_silent(
-    needs_h5py, route, client_for, no_retry, cmip6_netcdf4_prefix
+    needs_h5netcdf, route, client_for, no_retry, cmip6_netcdf4_prefix
 ):
     """
     A netCDF-4 file is unreadable without a size, so the index is better than nothing
-
-    Tested on HDF5 rather than classic netCDF because HDF5 is the only reader the size
-    reaches: it checks the length it is given against the superblock and refuses the
-    file when they disagree. For a classic file the argument is accepted and ignored,
-    so the same test there would pass without proving anything.
-
-    `HeaderBytes.file_size` still reports `None`, because that field is what the *node*
-    said and the node said nothing. The fallback is the caller's, not the node's.
     """
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -143,12 +141,119 @@ def test_the_published_size_is_the_fallback_when_the_node_is_silent(
             client,
             route,
             retrying=no_retry,
-            want_bytes=len(cmip6_netcdf4_prefix),
+            block_bytes=len(cmip6_netcdf4_prefix),
             published_size=CMIP6_FILE_SIZE,
         )
 
-    assert header.attributes["parent_experiment_id"] == "piControl"
-    assert header.bytes_read.file_size is None
+    assert header.global_attributes["parent_experiment_id"] == "piControl"
+    assert header.file_size == CMIP6_FILE_SIZE
+
+
+class TestReadingTimeBounds:
+    """
+    First and last time values, fetched as a few more ranges of the same file
+    """
+
+    def test_a_classic_file_costs_one_more_request(
+        self, route, client_for, no_retry, collect_calls
+    ):
+        """
+        The first record is inside the first block; the last is at the far end
+        """
+        observer, calls = collect_calls
+        pieces, size = recorded_pieces("cmip5-netcdf3-time-bounds")
+        asked: list[str] = []
+
+        with client_for(serving(pieces, size=size, asked=asked)) as client:
+            header = read_header(
+                client, route, time_bounds=True, retrying=no_retry, observer=observer
+            )
+
+        assert header.time_bounds is not None
+        assert header.time_bounds.last_bounds == (54719.0, 54750.0)
+        assert header.n_requests == 2
+        assert asked[0] == f"bytes=0-{DEFAULT_BLOCK_BYTES - 1}"
+        assert [call.outcome for call in calls] == [HeaderReadOutcome.SUCCESS] * 2
+        assert [call.attempt_number for call in calls] == [1, 2]
+
+    def test_a_cmip6_file_fits_the_default_budget(
+        self, needs_h5netcdf, route, client_for, no_retry
+    ):
+        """
+        CMOR's one-value chunks put each end of the time coordinate far into the file
+        """
+        pieces, size = recorded_pieces("cmip6-netcdf4-time-bounds")
+
+        with client_for(serving(pieces, size=size)) as client:
+            header = read_header(client, route, time_bounds=True, retrying=no_retry)
+
+        assert header.time_bounds is not None
+        assert header.time_bounds.first_bounds == (0.0, 31.0)
+        assert header.n_requests == 6
+
+    def test_a_cmip7_file_costs_two_requests(
+        self, needs_h5netcdf, route, client_for, no_retry
+    ):
+        """
+        Measured: its time values sit just past the first block, not inside it
+        """
+        pieces, size = recorded_pieces("cmip7-netcdf4-time-bounds")
+
+        with client_for(serving(pieces, size=size)) as client:
+            header = read_header(client, route, time_bounds=True, retrying=no_retry)
+
+        assert header.time_bounds is not None
+        assert header.time_bounds.last_bounds == (4014.0, 4015.0)
+        assert header.n_requests <= 2
+        assert header.bytes_read <= 2 * DEFAULT_BLOCK_BYTES
+
+    def test_going_past_the_budget_is_a_truncation_on_the_last_call(
+        self, needs_h5netcdf, route, client_for, no_retry, collect_calls
+    ):
+        """
+        A bigger budget is the fix, so the read says so rather than blaming the node
+        """
+        observer, calls = collect_calls
+        pieces, size = recorded_pieces("cmip6-netcdf4-time-bounds")
+
+        with client_for(serving(pieces, size=size)) as client:
+            with pytest.raises(TruncatedHeaderError, match="beyond the 3"):
+                read_header(
+                    client,
+                    route,
+                    time_bounds=True,
+                    max_requests=3,
+                    retrying=no_retry,
+                    observer=observer,
+                )
+
+        assert [call.outcome for call in calls] == [
+            HeaderReadOutcome.SUCCESS,
+            HeaderReadOutcome.SUCCESS,
+            HeaderReadOutcome.TRUNCATED_HEADER,
+        ]
+        assert not calls[-1].outcome.counts_against_data_node
+
+    def test_a_short_answer_to_a_later_range_is_a_transport_error(
+        self, route, client_for, no_retry
+    ):
+        pieces, size = recorded_pieces("cmip5-netcdf3-time-bounds")
+        whole = serving(pieces, size=size)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            answer = whole(request)
+            if request.headers["Range"].startswith("bytes=0-"):
+                return answer
+
+            return httpx.Response(
+                206,
+                content=answer.content[:3],
+                headers={"Content-Range": answer.headers["Content-Range"]},
+            )
+
+        with client_for(handler) as client:
+            with pytest.raises(HeaderTransportError, match="served 3"):
+                read_header(client, route, time_bounds=True, retrying=no_retry)
 
 
 class TestANodeThatIgnoresTheRange:
@@ -183,70 +288,135 @@ class TestANodeThatIgnoresTheRange:
             )
         )
 
-    def test_the_header_is_still_read(self, route, no_retry, cmip5_netcdf3_prefix):
+    def test_the_header_is_still_read(self, route, no_retry, cmip5_netcdf3_header):
         pulled: list[int] = []
-        transport = self._whole_file_handler(cmip5_netcdf3_prefix, pulled)
+        transport = self._whole_file_handler(cmip5_netcdf3_header, pulled)
 
         with httpx.Client(transport=transport) as client:
             header = read_header(
-                client, route, want_bytes=len(cmip5_netcdf3_prefix), retrying=no_retry
+                client,
+                route,
+                block_bytes=len(cmip5_netcdf3_header),
+                retrying=no_retry,
             )
 
-        assert header.attributes["parent_experiment_id"] == "piControl"
+        assert header.global_attributes["parent_experiment_id"] == "piControl"
 
     def test_the_rest_of_the_body_is_not_read(
-        self, route, no_retry, cmip5_netcdf3_prefix
+        self, route, no_retry, cmip5_netcdf3_header
     ):
         """
         We stop pulling as soon as we have enough, rather than draining the response
         """
         pulled: list[int] = []
-        transport = self._whole_file_handler(cmip5_netcdf3_prefix, pulled)
+        transport = self._whole_file_handler(cmip5_netcdf3_header, pulled)
 
         with httpx.Client(transport=transport) as client:
             read_header(
-                client, route, want_bytes=len(cmip5_netcdf3_prefix), retrying=no_retry
+                client,
+                route,
+                block_bytes=len(cmip5_netcdf3_header),
+                retrying=no_retry,
             )
 
         # One chunk carried everything we asked for, so nothing past it was pulled.
         assert pulled == [1]
 
     def test_it_is_recorded_so_the_node_can_be_told_apart(
-        self, route, no_retry, cmip5_netcdf3_prefix, collect_calls
+        self, route, no_retry, cmip5_netcdf3_header, collect_calls
     ):
         """
         A usable answer, but one that cost us a connection the node flooded
         """
         observer, calls = collect_calls
-        transport = self._whole_file_handler(cmip5_netcdf3_prefix, [])
+        transport = self._whole_file_handler(cmip5_netcdf3_header, [])
+
+        with httpx.Client(transport=transport) as client:
+            read_header(
+                client,
+                route,
+                block_bytes=len(cmip5_netcdf3_header),
+                retrying=no_retry,
+                observer=observer,
+            )
+
+        assert [call.range_honoured for call in calls] == [False]
+        assert [call.outcome for call in calls] == [HeaderReadOutcome.SUCCESS]
+
+    def test_the_whole_file_length_is_read_from_content_length(
+        self, route, no_retry, cmip5_netcdf3_header
+    ):
+        """
+        On a `200` the body *is* the file, so `Content-Length` is the file's length
+        """
+        transport = self._whole_file_handler(cmip5_netcdf3_header, [])
 
         with httpx.Client(transport=transport) as client:
             header = read_header(
                 client,
                 route,
-                want_bytes=len(cmip5_netcdf3_prefix),
+                block_bytes=len(cmip5_netcdf3_header),
                 retrying=no_retry,
-                observer=observer,
             )
 
-        assert not header.bytes_read.range_honoured
-        assert [call.range_honoured for call in calls] == [False]
-        assert [call.outcome for call in calls] == [HeaderReadOutcome.SUCCESS]
+        assert header.file_size == WHOLE_FILE_BYTES
 
-    def test_the_whole_file_length_is_read_from_content_length(
-        self, route, no_retry, cmip5_netcdf3_prefix
+    def test_reading_past_the_first_block_is_refused(
+        self, route, no_retry, cmip5_netcdf3_header, collect_calls
     ):
         """
-        On a `200` the body *is* the file, so `Content-Length` is the file's length
+        The last time value is near the end of the file, and the node would make us
+        stream everything before it
         """
-        transport = self._whole_file_handler(cmip5_netcdf3_prefix, [])
+        observer, calls = collect_calls
+        transport = self._whole_file_handler(cmip5_netcdf3_header, [])
 
         with httpx.Client(transport=transport) as client:
-            header = read_header(
-                client, route, want_bytes=len(cmip5_netcdf3_prefix), retrying=no_retry
-            )
+            with pytest.raises(RangesNotHonouredError) as caught:
+                read_header(
+                    client,
+                    route,
+                    time_bounds=True,
+                    block_bytes=len(cmip5_netcdf3_header),
+                    retrying=no_retry,
+                    observer=observer,
+                )
 
-        assert header.bytes_read.file_size == WHOLE_FILE_BYTES
+        assert caught.value.outcome.stops_this_data_node
+        assert not caught.value.outcome.is_worth_retrying
+        assert [call.outcome for call in calls] == [
+            HeaderReadOutcome.RANGES_NOT_HONOURED
+        ]
+
+    def test_a_later_range_answered_whole_is_refused_and_recorded(
+        self, route, client_for, no_retry, collect_calls
+    ):
+        observer, calls = collect_calls
+        pieces, size = recorded_pieces("cmip5-netcdf3-time-bounds")
+        well_behaved = serving(pieces, size=size)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.headers["Range"].startswith("bytes=0-"):
+                return well_behaved(request)
+
+            return httpx.Response(200, content=b"", headers={"Content-Length": "0"})
+
+        with client_for(handler) as client:
+            with pytest.raises(RangesNotHonouredError, match="whole file"):
+                read_header(
+                    client,
+                    route,
+                    time_bounds=True,
+                    retrying=no_retry,
+                    observer=observer,
+                )
+
+        assert [call.outcome for call in calls] == [
+            HeaderReadOutcome.SUCCESS,
+            HeaderReadOutcome.RANGES_NOT_HONOURED,
+        ]
+        assert calls[-1].response_code == 200
+        assert not calls[-1].range_honoured
 
 
 @pytest.mark.parametrize(
@@ -398,20 +568,20 @@ class TestTellingConnectionFailuresApart:
 
 
 def test_a_block_is_retried_on_the_same_route(
-    route, client_for, fast_retrying, cmip5_netcdf3_prefix
+    route, client_for, fast_retrying, cmip5_netcdf3_header
 ):
     """
     The one node-level failure a header read tries again
     """
     answers = [
         httpx.Response(503),
-        partial(cmip5_netcdf3_prefix, file_size=CMIP5_FILE_SIZE),
+        partial(cmip5_netcdf3_header, file_size=CMIP5_FILE_SIZE),
     ]
 
     with client_for(lambda request: answers.pop(0)) as client:
         header = read_header(client, route, retrying=fast_retrying(2))
 
-    assert header.attributes["parent_experiment_id"] == "piControl"
+    assert header.global_attributes["parent_experiment_id"] == "piControl"
     assert answers == []
 
 
@@ -441,12 +611,12 @@ def test_a_host_fault_is_not_retried_on_the_same_route(
 
 
 def test_every_attempt_is_observed_exactly_once(
-    route, client_for, fast_retrying, collect_calls, cmip5_netcdf3_prefix
+    route, client_for, fast_retrying, collect_calls, cmip5_netcdf3_header
 ):
     observer, calls = collect_calls
     answers = [
         httpx.Response(503),
-        partial(cmip5_netcdf3_prefix, file_size=CMIP5_FILE_SIZE),
+        partial(cmip5_netcdf3_header, file_size=CMIP5_FILE_SIZE),
     ]
 
     with client_for(lambda request: answers.pop(0)) as client:
@@ -469,8 +639,8 @@ def test_every_attempt_is_observed_exactly_once(
     assert {call.data_access_id for call in calls} == {7}
     assert {call.http_method for call in calls} == {"GET"}
     assert calls[0].bytes_transferred == 0
-    assert calls[1].bytes_transferred == len(cmip5_netcdf3_prefix)
-    assert calls[1].bytes_requested == DEFAULT_WANT_BYTES
+    assert calls[1].bytes_transferred == len(cmip5_netcdf3_header)
+    assert calls[1].bytes_requested == DEFAULT_BLOCK_BYTES
 
 
 def test_a_header_that_does_not_parse_is_observed_as_a_failed_call(
@@ -479,7 +649,7 @@ def test_a_header_that_does_not_parse_is_observed_as_a_failed_call(
     """
     Bytes that arrive and do not parse are not a successful read
 
-    Fetching and parsing are one attempt on purpose: the question an observer is
+    Fetching and parsing are one read on purpose: the question an observer is
     answering is "did asking this node for this header work".
     """
     observer, calls = collect_calls
@@ -491,102 +661,3 @@ def test_a_header_that_does_not_parse_is_observed_as_a_failed_call(
     assert [call.outcome for call in calls] == [HeaderReadOutcome.UNSUPPORTED_FORMAT]
     assert calls[0].response_code == 206
     assert not calls[0].outcome.counts_against_data_node
-
-
-class TestAskingForMoreBytes:
-    """
-    What happens when the prefix turns out to be too short
-
-    HDF5 does not promise to put the root group's attributes near the start of a file,
-    so a default ask can miss. Nothing sampled from ESGF needed more than 42 kB
-    against a 64 KiB default, so this should be rare -- but "rare" is not "never", and
-    the alternative is reporting a readable file as unreadable.
-    """
-
-    @staticmethod
-    def _serving(prefix: bytes, *, file_size: int, asked: list[int]):
-        def handler(request: httpx.Request) -> httpx.Response:
-            wanted = int(request.headers["Range"].removeprefix("bytes=0-")) + 1
-            asked.append(wanted)
-            served = prefix[:wanted]
-
-            return httpx.Response(
-                206,
-                content=served,
-                headers={"Content-Range": f"bytes 0-{len(served) - 1}/{file_size}"},
-            )
-
-        return handler
-
-    def test_a_short_ask_escalates_until_the_header_fits(
-        self, needs_h5py, route, client_for, no_retry, cmip6_netcdf4_prefix
-    ):
-        asked: list[int] = []
-        handler = self._serving(
-            cmip6_netcdf4_prefix, file_size=CMIP6_FILE_SIZE, asked=asked
-        )
-
-        with client_for(handler) as client:
-            header = read_header(
-                client,
-                route,
-                want_bytes=4096,
-                max_want_bytes=256 * 1024,
-                retrying=no_retry,
-            )
-
-        assert header.attributes["parent_experiment_id"] == "piControl"
-        # It escalated rather than giving up, and each ask was bigger than the last.
-        assert len(asked) > 1
-        assert asked == sorted(asked)
-        assert asked[0] == 4096
-
-    def test_escalation_stops_at_the_ceiling(
-        self, needs_h5py, route, client_for, no_retry, cmip6_netcdf4_prefix
-    ):
-        """
-        Doubling for ever would fetch a pathological file in full, one ask at a time
-        """
-        asked: list[int] = []
-        handler = self._serving(
-            cmip6_netcdf4_prefix, file_size=CMIP6_FILE_SIZE, asked=asked
-        )
-
-        with client_for(handler) as client:
-            with pytest.raises(TruncatedHeaderError):
-                read_header(
-                    client,
-                    route,
-                    want_bytes=1024,
-                    max_want_bytes=8192,
-                    retrying=no_retry,
-                )
-
-        assert max(asked) <= 8192
-
-    def test_no_more_is_asked_for_once_the_whole_file_is_held(
-        self, route, client_for, no_retry
-    ):
-        """
-        A truncated header in a file we hold entirely is malformed, not merely distant
-
-        Without this check, a small broken file would be re-requested until the
-        ceiling, each time returning the same bytes.
-        """
-        asked: list[int] = []
-        # A classic header that declares one attribute and then stops, so it parses as
-        # truncated however much of it we have.
-        broken = b"CDF\x01" + bytes(4) + bytes(8) + b"\x00\x00\x00\x0c\x00\x00\x00\x01"
-        handler = self._serving(broken, file_size=len(broken), asked=asked)
-
-        with client_for(handler) as client:
-            with pytest.raises(TruncatedHeaderError):
-                read_header(
-                    client,
-                    route,
-                    want_bytes=len(broken),
-                    max_want_bytes=1024 * 1024,
-                    retrying=no_retry,
-                )
-
-        assert asked == [len(broken)]

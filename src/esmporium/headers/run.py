@@ -20,14 +20,17 @@ from esmporium.downloads import (
     build_data_node_limiter,
     no_data_node_limit,
 )
+from esmporium.headers.contents import DEFAULT_TIME_VARIABLE
 from esmporium.headers.errors import HeaderParseError, HeaderReadError
 from esmporium.headers.fetching import (
     DEFAULT_CONNECT_TIMEOUT_SECONDS,
-    DEFAULT_MAX_WANT_BYTES,
     DEFAULT_READ_TIMEOUT_SECONDS,
-    DEFAULT_WANT_BYTES,
-    FileHeader,
     read_header,
+)
+from esmporium.headers.sources import (
+    DEFAULT_BLOCK_BYTES,
+    DEFAULT_MAX_BYTES,
+    DEFAULT_MAX_REQUESTS,
 )
 
 if TYPE_CHECKING:
@@ -36,6 +39,7 @@ if TYPE_CHECKING:
     from tenacity import Retrying
 
     from esmporium.downloads import DataNodeSelector, Route
+    from esmporium.headers.contents import FileHeader
     from esmporium.headers.health import HeaderReadCallObserver
 
 logger = logging.getLogger(__name__)
@@ -201,8 +205,11 @@ def read_one_header(  # noqa: PLR0913 - the keyword-only extras are deliberate i
     observer: HeaderReadCallObserver | None = None,
     max_routes: int | None = None,
     limiter: DataNodeLimiter = no_data_node_limit,
-    want_bytes: int = DEFAULT_WANT_BYTES,
-    max_want_bytes: int = DEFAULT_MAX_WANT_BYTES,
+    time_bounds: bool = False,
+    time_variable: str = DEFAULT_TIME_VARIABLE,
+    block_bytes: int = DEFAULT_BLOCK_BYTES,
+    max_bytes: int = DEFAULT_MAX_BYTES,
+    max_requests: int = DEFAULT_MAX_REQUESTS,
     connect_timeout: float = DEFAULT_CONNECT_TIMEOUT_SECONDS,
     read_timeout: float = DEFAULT_READ_TIMEOUT_SECONDS,
     retrying: Retrying | None = None,
@@ -234,17 +241,27 @@ def read_one_header(  # noqa: PLR0913 - the keyword-only extras are deliberate i
     limiter
         Decides when a read against one data node may start
 
-    want_bytes
-        How many bytes to ask for first
+    time_bounds
+        Whether to read the first and last values and bounds of the time coordinate
+        too. See [read_header][esmporium.headers.read_header].
 
-    max_want_bytes
-        The most to ask for before giving up on a file
+    time_variable
+        Which variable is the time coordinate
+
+    block_bytes
+        The least to fetch per request
+
+    max_bytes
+        The most to fetch from one file before giving up on it
+
+    max_requests
+        The most range requests to make of one file
 
     connect_timeout
         How long to wait for a node to accept a connection
 
     read_timeout
-        How long to wait for the bytes once connected
+        How long to wait for the bytes of one range once connected
 
     retrying
         The retry policy for one route, or `None` for the default
@@ -296,8 +313,11 @@ def read_one_header(  # noqa: PLR0913 - the keyword-only extras are deliberate i
                 header = read_header(
                     client,
                     route,
-                    want_bytes=want_bytes,
-                    max_want_bytes=max_want_bytes,
+                    time_bounds=time_bounds,
+                    time_variable=time_variable,
+                    block_bytes=block_bytes,
+                    max_bytes=max_bytes,
+                    max_requests=max_requests,
                     published_size=request.published_size,
                     connect_timeout=connect_timeout,
                     read_timeout=read_timeout,
@@ -346,8 +366,11 @@ def read_headers(  # noqa: PLR0913 - the keyword-only extras are deliberate inje
     observer: HeaderReadCallObserver | None = None,
     max_routes: int | None = None,
     on_result: ResultCallback | None = None,
-    want_bytes: int = DEFAULT_WANT_BYTES,
-    max_want_bytes: int = DEFAULT_MAX_WANT_BYTES,
+    time_bounds: bool = False,
+    time_variable: str = DEFAULT_TIME_VARIABLE,
+    block_bytes: int = DEFAULT_BLOCK_BYTES,
+    max_bytes: int = DEFAULT_MAX_BYTES,
+    max_requests: int = DEFAULT_MAX_REQUESTS,
     connect_timeout: float = DEFAULT_CONNECT_TIMEOUT_SECONDS,
     read_timeout: float = DEFAULT_READ_TIMEOUT_SECONDS,
     retrying: Retrying | None = None,
@@ -383,17 +406,27 @@ def read_headers(  # noqa: PLR0913 - the keyword-only extras are deliberate inje
         See [ResultCallback][(m).ResultCallback]. This is how a long run survives
         being killed.
 
-    want_bytes
-        How many bytes to ask for first
+    time_bounds
+        Whether to read the first and last values and bounds of the time coordinate
+        too. See [read_header][esmporium.headers.read_header].
 
-    max_want_bytes
-        The most to ask for before giving up on a file
+    time_variable
+        Which variable is the time coordinate
+
+    block_bytes
+        The least to fetch per request
+
+    max_bytes
+        The most to fetch from one file before giving up on it
+
+    max_requests
+        The most range requests to make of one file
 
     connect_timeout
         How long to wait for a node to accept a connection
 
     read_timeout
-        How long to wait for the bytes once connected
+        How long to wait for the bytes of one range once connected
 
     retrying
         The retry policy for one route, or `None` for the default
@@ -443,8 +476,11 @@ def read_headers(  # noqa: PLR0913 - the keyword-only extras are deliberate inje
             observer=observer,
             max_routes=max_routes,
             limiter=limiter,
-            want_bytes=want_bytes,
-            max_want_bytes=max_want_bytes,
+            time_bounds=time_bounds,
+            time_variable=time_variable,
+            block_bytes=block_bytes,
+            max_bytes=max_bytes,
+            max_requests=max_requests,
             connect_timeout=connect_timeout,
             read_timeout=read_timeout,
             retrying=retrying,
