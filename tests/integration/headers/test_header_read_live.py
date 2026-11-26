@@ -186,7 +186,7 @@ def test_a_live_cmip5_header_really_reads():
 
     The attributes asserted are the ones CMIP5 actually publishes and no more: there
     is no parent model, era or activity in a CMIP5 header, which is why
-    `read_cmip5_parent_header` has to infer two of them.
+    `parse_cmip5_file_header` has to infer two of them.
     """
     _, header = first_header(
         requests_for(

@@ -1,5 +1,5 @@
 """
-Tests of reading a time axis out of a time variable's attributes
+Tests of parsing a time variable's attributes
 
 Note what is being passed in throughout: the attributes of the file's **time
 variable**. A CMIP file does not publish its own calendar globally, which is why these
@@ -11,10 +11,10 @@ from __future__ import annotations
 import pytest
 
 from esmporium.datasets.time import TimeStep, UnknownTimeUnitsError
-from esmporium.enrich.headers import (
+from esmporium.enrich.variable_attributes import (
     NoCalendarError,
     NoTimeUnitsError,
-    read_time_axis,
+    parse_variable_attributes,
 )
 
 
@@ -38,21 +38,21 @@ from esmporium.enrich.headers import (
         ),
     ],
 )
-def test_reading_a_time_axis(attributes, units, calendar):
+def test_parsing_a_time_axis(attributes, units, calendar):
     """
     The units string is kept as the file wrote it, because that is the observation
     """
-    axis = read_time_axis(attributes)
+    axis = parse_variable_attributes(attributes).axis
 
     assert str(axis.units) == units
     assert axis.calendar == calendar
 
 
-def test_other_attributes_are_ignored():
+def test_the_bounds_variable_is_named_and_other_attributes_are_ignored():
     """
     A time variable carries bounds, axis labels and long names too
     """
-    axis = read_time_axis(
+    parsed = parse_variable_attributes(
         {
             "units": "days since 1850-01-01",
             "calendar": "noleap",
@@ -63,7 +63,25 @@ def test_other_attributes_are_ignored():
         }
     )
 
-    assert axis.units.step == TimeStep.DAYS
+    assert parsed.axis.units.step == TimeStep.DAYS
+    assert parsed.bounds_variable == "time_bnds"
+    assert parsed.climatology_variable is None
+
+
+def test_a_climatology_names_its_climatological_bounds():
+    """
+    Carried instead of `bounds`, as CMIP7's `tminavg` and `tmaxavg` files do
+    """
+    parsed = parse_variable_attributes(
+        {
+            "units": "days since 1850-01-01",
+            "calendar": "360_day",
+            "climatology": "climatology_bnds",
+        }
+    )
+
+    assert parsed.bounds_variable is None
+    assert parsed.climatology_variable == "climatology_bnds"
 
 
 @pytest.mark.parametrize("calendar", [None, "", b""])
@@ -80,7 +98,7 @@ def test_a_file_which_names_no_calendar_says_so(calendar):
         attributes["calendar"] = calendar
 
     with pytest.raises(NoCalendarError, match=r"axis, .*units") as error:
-        read_time_axis(attributes)
+        parse_variable_attributes(attributes)
 
     assert error.value.attributes is attributes
 
@@ -93,7 +111,7 @@ def test_attributes_with_no_units_say_what_is_missing_and_why():
     you read the wrong half of the header, so the message says so.
     """
     with pytest.raises(NoTimeUnitsError, match="global attributes"):
-        read_time_axis({"long_name": "time", "axis": "T"})
+        parse_variable_attributes({"long_name": "time", "axis": "T"})
 
 
 def test_units_we_cannot_read_are_refused():
@@ -101,7 +119,7 @@ def test_units_we_cannot_read_are_refused():
     Rather than guessed at
     """
     with pytest.raises(UnknownTimeUnitsError):
-        read_time_axis({"units": "fortnights since 1850-01-01"})
+        parse_variable_attributes({"units": "fortnights since 1850-01-01"})
 
 
 def test_a_character_attribute_stored_as_bytes_is_decoded():
@@ -112,7 +130,9 @@ def test_a_character_attribute_stored_as_bytes_is_decoded():
     is a name no calendar library has heard of -- arrived at silently, which is the
     worst way to be wrong.
     """
-    axis = read_time_axis({"units": b"days since 1850-01-01", "calendar": b"noleap"})
+    axis = parse_variable_attributes(
+        {"units": b"days since 1850-01-01", "calendar": b"noleap"}
+    ).axis
 
     assert axis.calendar == "noleap"
     assert str(axis.units) == "days since 1850-01-01"

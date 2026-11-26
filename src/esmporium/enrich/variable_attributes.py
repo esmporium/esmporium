@@ -1,19 +1,21 @@
 """
-Reading a time axis out of a file's header attributes
+Parsing what a file's time variable says about itself
 
-Project-independent, and deliberately so: `units` and `calendar` are CF attributes,
-so the formats are per-file, not per-project
+Project-independent, and deliberately so: `units`, `calendar`, `bounds` and
+`climatology` are CF attributes, so the formats are per-file, not per-project
 
 Note what the input is. These are the attributes of the file's **time variable**, not
 its global attributes: a CMIP file does not publish its own calendar globally.
 [esmporium.headers][] reads them
 ([read_variable_attributes][esmporium.headers.read_variable_attributes], or
 [FileHeader.variable_attributes][esmporium.headers.FileHeader.variable_attributes]);
-this function is the pure half, and takes whatever that returns.
+[parse_variable_attributes][(m).parse_variable_attributes] is the pure half, and takes
+whatever that returns.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from esmporium.datasets.time import TimeAxis, TimeUnits
@@ -26,6 +28,47 @@ CF_UNITS_ATTRIBUTE = "units"
 
 CF_CALENDAR_ATTRIBUTE = "calendar"
 """The CF attribute naming which calendar a time coordinate's values are in"""
+
+CF_BOUNDS_ATTRIBUTE = "bounds"
+"""The CF attribute naming the variable which holds a coordinate's cell bounds"""
+
+CF_CLIMATOLOGY_ATTRIBUTE = "climatology"
+"""
+The CF attribute naming the variable which holds a time coordinate's climatology
+bounds
+
+Carried instead of `bounds` by a statistic computed in two stages over time (CF
+conventions, section 7.4), of which there are two kinds. A multi-year climatology, e.g.
+the average January over 1961 to 1990, has bounds spanning the whole period averaged
+over. A statistic taken within a shorter period, e.g. a monthly mean of daily minima,
+has bounds which are each month's own. The data variable's `cell_methods` says which.
+"""
+
+
+@dataclass(frozen=True)
+class ParsedTimeVariable:
+    """
+    What a file's time variable says about itself
+    """
+
+    axis: TimeAxis
+    """The units and calendar its values are on"""
+
+    bounds_variable: str | None
+    """
+    The variable holding its cell bounds, from its `bounds` attribute
+
+    `None` when it has none, which is usual for data reported at instants rather than
+    over intervals.
+    """
+
+    climatology_variable: str | None
+    """
+    The variable holding its climatology bounds, from its `climatology` attribute
+
+    `None` unless the data is a statistic computed in two stages over time. See
+    [CF_CLIMATOLOGY_ATTRIBUTE][(m).CF_CLIMATOLOGY_ATTRIBUTE].
+    """
 
 
 class NoTimeUnitsError(ValueError):
@@ -79,9 +122,9 @@ class NoCalendarError(ValueError):
         )
 
 
-def read_time_axis(attributes: Mapping[str, object]) -> TimeAxis:
+def parse_variable_attributes(attributes: Mapping[str, object]) -> ParsedTimeVariable:
     """
-    Read a time axis out of a time variable's attributes
+    Parse everything a time variable's attributes say about it
 
     Parameters
     ----------
@@ -91,7 +134,7 @@ def read_time_axis(attributes: Mapping[str, object]) -> TimeAxis:
     Returns
     -------
     :
-        The axis they describe
+        The axis its values are on, and which variables hold its bounds
 
     Raises
     ------
@@ -106,14 +149,20 @@ def read_time_axis(attributes: Mapping[str, object]) -> TimeAxis:
 
     Examples
     --------
-    >>> axis = read_time_axis({"units": "days since 1850-01-01", "calendar": "noleap"})
-    >>> str(axis.units), axis.calendar
-    ('days since 1850-01-01', 'noleap')
+    >>> parsed = parse_variable_attributes(
+    ...     {
+    ...         "units": "days since 1850-01-01",
+    ...         "calendar": "noleap",
+    ...         "bounds": "time_bnds",
+    ...     }
+    ... )
+    >>> str(parsed.axis.units), parsed.axis.calendar, parsed.bounds_variable
+    ('days since 1850-01-01', 'noleap', 'time_bnds')
 
     A file which does not name a calendar says so, listing what it did name:
 
     >>> try:
-    ...     read_time_axis({"units": "days since 1850-01-01", "axis": "T"})
+    ...     parse_variable_attributes({"units": "days since 1850-01-01", "axis": "T"})
     ... except NoCalendarError as error:
     ...     sorted(error.attributes)
     ['axis', 'units']
@@ -127,7 +176,13 @@ def read_time_axis(attributes: Mapping[str, object]) -> TimeAxis:
     if not calendar:
         raise NoCalendarError(attributes)
 
-    return TimeAxis(units=units, calendar=calendar)
+    return ParsedTimeVariable(
+        axis=TimeAxis(units=units, calendar=calendar),
+        bounds_variable=_as_text(attributes.get(CF_BOUNDS_ATTRIBUTE)) or None,
+        climatology_variable=(
+            _as_text(attributes.get(CF_CLIMATOLOGY_ATTRIBUTE)) or None
+        ),
+    )
 
 
 def _as_text(value: object) -> str | None:

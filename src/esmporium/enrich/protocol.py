@@ -1,5 +1,5 @@
 """
-What a filename says about time, and the shape of a reader which reads it
+What a filename says about time, and the shape of a parser which parses it
 
 The raw range and the one conversion off it. The conversion is the only place in
 esmporium where a published, inclusive range becomes a half-open one, so it is the
@@ -305,19 +305,19 @@ def _time_point_of_stamp(stamp: str, precision: TimeStep, axis: TimeAxis) -> Tim
     )
 
 
-class FilenameTimeReader(Protocol):
+class FilenameTimeParser(Protocol):
     """
-    Reads the time range a project's filenames publish
+    Parses the time range a project's filenames publish
 
     One per project, registered in
-    [FILENAME_TIME_READERS_BY_PROJECT][esmporium.enrich.FILENAME_TIME_READERS_BY_PROJECT],
+    [FILENAME_TIME_PARSERS_BY_PROJECT][esmporium.enrich.FILENAME_TIME_PARSERS_BY_PROJECT],
     because where a filename puts its range -- and whether it has one at all -- is a
     project's own convention.
     """
 
     def __call__(self, filename: str) -> PublishedRange | None:
         """
-        Read the time range out of a filename
+        Parse the time range out of a filename
 
         Parameters
         ----------

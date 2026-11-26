@@ -311,7 +311,8 @@ def read_first_and_last_time_bounds(
     -------
     :
         The values, exactly as stored. Its bounds are `None` when the time variable
-        names no `bounds`, as is usual for data reported at instants.
+        names neither `bounds` nor `climatology`, as is usual for data reported at
+        instants.
 
     Raises
     ------

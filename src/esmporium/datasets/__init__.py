@@ -15,6 +15,15 @@ from esmporium.datasets.data_access import (
     HeaderReadOutcome,
 )
 from esmporium.datasets.facets import DATASET_FACET_COLUMNS
+from esmporium.datasets.information import (
+    TIME_RANGE_TRUST_ORDER,
+    Assumption,
+    InformationSource,
+    NoRangeReason,
+    NotATimeRangeSourceError,
+    SourcedTimeRange,
+    time_range_trust_rank,
+)
 from esmporium.datasets.no_time_axis import (
     NO_TIME_AXIS_INTERVALS_BY_PROJECT,
     UnknownProjectTimeAxisError,
@@ -56,7 +65,9 @@ __all__ = [
     "DATASET_FACET_COLUMNS",
     "MONTHS_PER_YEAR",
     "NO_TIME_AXIS_INTERVALS_BY_PROJECT",
+    "TIME_RANGE_TRUST_ORDER",
     "AccessService",
+    "Assumption",
     "BranchPoint",
     "BranchTimeInChild",
     "CalendarOnANaturalAxisError",
@@ -66,13 +77,17 @@ __all__ = [
     "EmptyTimeRangeError",
     "FractionalCalendarFreeDeltaError",
     "HeaderReadOutcome",
+    "InformationSource",
     "MismatchedTimeAxisError",
     "MissingCalendarsExtraError",
     "NeedsAnAnchorError",
     "NegativeLengthError",
     "NoEpochError",
+    "NoRangeReason",
     "NotAStepOnThisAxisError",
+    "NotATimeRangeSourceError",
     "NotAWholeStepError",
+    "SourcedTimeRange",
     "TimeAxis",
     "TimeDelta",
     "TimePoint",
@@ -90,6 +105,7 @@ __all__ = [
     "has_no_time_axis",
     "projects_with_a_known_time_axis_vocabulary",
     "spanned",
+    "time_range_trust_rank",
     "total_months",
     "year_and_month",
 ]

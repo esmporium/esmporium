@@ -9,6 +9,7 @@ import struct
 import pytest
 
 from esmporium.headers import (
+    BoundsAttribute,
     HeaderLayout,
     HeldBytesSource,
     TruncatedHeaderError,
@@ -312,8 +313,25 @@ class TestTimeBounds:
         assert bounds is not None
         assert bounds.n_steps == 24
         assert (bounds.first_value, bounds.last_value) == (15.0, 15.0 + 30 * 23)
+        assert bounds.bounds_attribute is BoundsAttribute.BOUNDS
         assert bounds.bounds_variable == "time_bnds"
         assert bounds.first_bounds == (0.0, 30.0)
+        assert bounds.last_bounds == (30.0 * 23, 30.0 * 24)
+
+    def test_climatology_bounds_are_read_and_said_to_be_climatology_bounds(self):
+        """
+        CF's `climatology` attribute names bounds as `bounds` does
+        """
+        variables = monthly_time(24)
+        time_attributes = variables[0].attributes
+        time_attributes["climatology"] = time_attributes.pop("bounds")
+        built = build({"time": 0, "bnds": 2}, variables)
+
+        bounds = read(built.whole(), time_variable="time").time_bounds
+
+        assert bounds is not None
+        assert bounds.bounds_attribute is BoundsAttribute.CLIMATOLOGY
+        assert bounds.bounds_variable == "time_bnds"
         assert bounds.last_bounds == (30.0 * 23, 30.0 * 24)
 
     def test_records_are_padded_when_there_are_several_record_variables(self):
@@ -346,6 +364,7 @@ class TestTimeBounds:
         assert bounds is not None
         assert (bounds.first_value, bounds.last_value) == (15, 135)
         assert bounds.first_bounds is None
+        assert bounds.bounds_attribute is None
         assert bounds.bounds_variable is None
 
     def test_a_fixed_length_time_dimension_is_read_too(self):

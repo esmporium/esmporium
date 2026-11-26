@@ -42,6 +42,66 @@ class HeaderLayout(str, Enum):
     """
 
 
+class BoundsAttribute(str, Enum):
+    """
+    Which attribute of a time variable names the variable holding its bounds
+
+    CF has two, and a time variable carries at most one of them. What the bounds mean
+    is the same in both cases -- where each step starts and ends -- but which one was
+    used says how the values were computed, so it is kept for whoever interprets them.
+    """
+
+    BOUNDS = "bounds"
+    """
+    `bounds`: each step's values describe that step
+
+    E.g. a monthly mean, whose bounds are the start and end of its month.
+    """
+
+    CLIMATOLOGY = "climatology"
+    """
+    `climatology`: a statistic computed in two stages over time (CF section 7.4)
+
+    The data variable's `cell_methods` says which two. A monthly mean of daily minima
+    (`time: minimum within days time: mean over days`) still has one value per month,
+    bounded by that month. A multi-year climatology
+    (`time: mean within years time: mean over years`) has one value per month of a
+    typical year, bounded by the whole period averaged over.
+    """
+
+
+def bounds_named_by(
+    attributes: Mapping[str, object],
+) -> tuple[BoundsAttribute, str] | None:
+    """
+    Get which variable holds a time variable's bounds, and which attribute said so
+
+    Parameters
+    ----------
+    attributes
+        The time variable's attributes
+
+    Returns
+    -------
+    :
+        The attribute and the variable it names, or `None` if it names neither kind
+
+    Examples
+    --------
+    >>> bounds_named_by({"climatology": "climatology_bnds"})
+    (<BoundsAttribute.CLIMATOLOGY: 'climatology'>, 'climatology_bnds')
+
+    >>> print(bounds_named_by({"units": "days since 1850-01-01"}))
+    None
+    """
+    for attribute in BoundsAttribute:
+        name = attributes.get(attribute.value)
+        if name is not None:
+            return attribute, str(name)
+
+    return None
+
+
 @dataclass(frozen=True)
 class FirstAndLastTimeBounds:
     """
@@ -64,12 +124,20 @@ class FirstAndLastTimeBounds:
     last_value: float | int
     """The time coordinate's last value"""
 
+    bounds_attribute: BoundsAttribute | None
+    """
+    Which of the time variable's attributes named its bounds variable
+
+    `None` when it carries neither `bounds` nor `climatology`, which is usual for data
+    reported at instants rather than over intervals.
+    """
+
     bounds_variable: str | None
     """
-    The name of the bounds variable, from the time variable's `bounds` attribute
+    The name of the bounds variable, from the time variable's `bounds` or
+    `climatology` attribute
 
-    `None` when the time variable has no `bounds` attribute, which is usual for data
-    reported at instants rather than over intervals.
+    `None` when it carries neither.
     """
 
     first_bounds: tuple[float | int, float | int] | None

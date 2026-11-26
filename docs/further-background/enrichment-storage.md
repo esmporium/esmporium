@@ -369,7 +369,7 @@ enrich_datasets(session, inputs, *, sources=…, prefer_local=True, executors=�
      ├─ parse_information_source   every artefact to every parser that applies
      │      ├─ parse_search_record
      │      ├─ parse_filename
-     │      ├─ parse_file_header          (parent facts too: this absorbs db/parent_headers.py's parsing)
+     │      ├─ parse_file_header          (parent facts too: db/parent_headers.py parses through it)
      │      ├─ parse_variable_attributes
      │      └─ parse_variable_values
      │
@@ -521,11 +521,48 @@ R1 before R2 (Covers uses R1's types); R3 is independent of both and must land b
 ### PR C2 — the `parse_*` functions, pure
 
 No database and no network, as PRs A and B were.
-`parse_search_record` in the search result parsers (field names are per API);
+`parse_search_record` in `esmporium.search`, its field names looked up by the stored
+`raw_docs_format_tag` (ESGF-1's Solr and the 1.5 bridge share the `solr` tag and spell
+the end `datetime_stop` and `datetime_end`, so both are read);
 `parse_filename`, `parse_file_header`, `parse_variable_attributes`, `parse_variable_values`
 in `esmporium.enrich`; and the consistency comparison.
+The six sources, the named assumptions and a range carrying both are values in
+`esmporium.datasets`, because `Covers` names a source at solve time.
 Unit tests on every recorded search response and header fixture we hold,
 and the cases from "Consistency between sources".
+
+As built, beyond the above:
+
+- `db/parent_headers.py`'s per-project parent parsing moved into `parse_file_header`
+  here rather than in C4, so there is one copy of it; `record_header_parent_facts`
+  calls it. C4 is left with making a prefix read for parents and one read for time the
+  same read.
+- C1's vocabulary is applied to `esmporium.enrich`: what interprets values already in
+  hand is a parser (`FilenameTimeParser`, `FILENAME_TIME_PARSERS_BY_PROJECT`,
+  `FILE_HEADER_PARSERS_BY_PROJECT`, `parse_cmip5_file_header`, ...), and
+  `read_time_axis` became `parse_variable_attributes`, which also names the bounds and
+  climatology variables.
+- A natural range from time bounds is **widened to whole steps**: a bound part way
+  through a month counts that month as covered, and the range names
+  `PART_STEPS_COUNT_AS_COVERED` when that happened (bounds within a second of a step
+  edge count as on it). Daily and finer data gets a monthly natural range too.
+- **Climatology bounds are read, and the data variable's `cell_methods` decides what
+  they mean.** CF names two kinds of statistic with `climatology` rather than `bounds`
+  (section 7.4): a multi-year climatology (`... over years`, the average January over
+  1961 to 1990), whose bounds are the period averaged over, and a statistic taken
+  within a shorter period (`time: minimum within days time: mean over days`), whose
+  bounds are each step's own. CMIP7's `tminavg` and `tmaxavg` files are the second
+  kind: 336 monthly values from 2022-01 to 2049-12, measured on the recording. So C1's
+  readers follow `climatology` as well as `bounds` and say which they followed
+  (`FirstAndLastTimeBounds.bounds_attribute`), and `parse_variable_values` takes
+  `cell_methods`: over years gives no range, anything else a range like ordinary
+  bounds, and climatology bounds with no `cell_methods` no range either.
+  `cmip7-netcdf4-climatology` was re-recorded to hold the climatology bounds.
+- No range is given from a time variable with no bounds, from a multi-year
+  climatology, from a filename carrying a suffix, or from a search record or filename
+  finer than a month; each says why (`NoRangeReason`).
+- `parse_search_record` is not yet called when results are saved; that and the
+  back-fill are C4's.
 
 ### PR C3 — storage
 
@@ -538,8 +575,8 @@ and round-trip tests beside `tests/integration/db/test_headers_against_migration
 
 Planning, retrieving (serially), parsing, recording, back-filling search records,
 `sources`, `prefer_local`, fixes and the fix check.
-`db/parent_headers.py`'s parsing moves into `parse_file_header`,
-so a prefix read for parents and one read for time are the same read.
+`db/parent_headers.py` already parses through `parse_file_header` (C2);
+what C4 changes is that a prefix read for parents and one read for time are the same read.
 
 ### PR D — the catalogue serves it, and the integration tests that were the point
 

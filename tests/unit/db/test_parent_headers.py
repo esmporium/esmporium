@@ -5,10 +5,8 @@ Tests of getting parent facts out of file headers
 from __future__ import annotations
 
 import socket
-from typing import ClassVar
 
 import httpx
-import pytest
 from sqlmodel import Session, select
 from tests.conftest import CMIP5_FILE_SIZE
 
@@ -22,245 +20,16 @@ from esmporium.db import (
     File,
     ParentInfoSource,
     ParentSimulation,
-    UnknownProjectHeaderReaderError,
     aggregate_header_read_health,
     build_header_facts_provider,
-    header_reader_for_project,
     plan_header_reads,
     preferred_parent_info,
-    read_cmip5_parent_header,
-    read_cmip6_parent_header,
 )
 from esmporium.db.results_to_database import flushed_id
 from esmporium.fixes import PARENT_FIXES, ParentFix, fixes_from_mapping
 from esmporium.search import ParentInfo
 
 NODE = "esgf.example.org"
-
-
-class TestReadingWhatCmip6Publishes:
-    """
-    CMIP6 publishes the parent completely, so nothing is inferred
-    """
-
-    ATTRIBUTES: ClassVar[dict[str, object]] = {
-        "parent_mip_era": "CMIP6",
-        "parent_activity_id": "CMIP",
-        "parent_source_id": "TaiESM1",
-        "parent_experiment_id": "piControl",
-        "parent_variant_label": "r1i1p1f1",
-        "parent_time_units": "days since 0701-01-01",
-        "branch_time_in_parent": 438000.0,
-        "branch_time_in_child": 0.0,
-    }
-
-    def test_every_field_is_read(self):
-        parent = read_cmip6_parent_header(self.ATTRIBUTES)
-
-        assert parent.parent_project == "CMIP6"
-        assert parent.parent_activity == "CMIP"
-        assert parent.parent_model == "TaiESM1"
-        assert parent.parent_experiment == "piControl"
-        assert parent.parent_variant_label == "r1i1p1f1"
-        assert parent.parent_time_units == "days since 0701-01-01"
-        assert parent.branch_time_in_parent == 438000.0
-        assert parent.branch_time_in_child == 0.0
-
-    def test_a_root_is_declared_with_a_sentinel(self):
-        """
-        `parent_experiment_id = "no parent"` is a CMIP6 convention
-
-        Which is a different convention from CMIP5's `"N/A"` and from CMIP7's, where a
-        root simply carries none of the keys -- hence a sentinel list rather than one
-        string.
-        """
-        parent = read_cmip6_parent_header({"parent_experiment_id": "no parent"})
-
-        assert not parent.declares_a_parent
-
-    def test_a_file_carrying_no_parent_keys_declares_no_parent(self):
-        assert not read_cmip6_parent_header({"source_id": "TaiESM1"}).declares_a_parent
-
-    def test_piControl_is_not_assumed_to_be_a_root(self):
-        """
-        A live CMIP6 `piControl` declares `piControl-spinup`, which nobody publishes
-
-        Checked on 2026-11-05 against TaiESM1 and AWI-CM-1-1-MR. So the chain does not
-        stop at `piControl`, and reading one as a root would be wrong -- which is why
-        `find_parents` stops on a named experiment rather than on a guess.
-        """
-        parent = read_cmip6_parent_header(
-            {
-                "parent_experiment_id": "piControl-spinup",
-                "parent_source_id": "TaiESM1",
-                "parent_variant_label": "r1i1p1f1",
-            }
-        )
-
-        assert parent.declares_a_parent
-        assert parent.parent_experiment == "piControl-spinup"
-
-
-class TestReadingWhatCmip5Publishes:
-    """
-    CMIP5 publishes three attributes and nothing else, so two have to be inferred
-    """
-
-    ATTRIBUTES: ClassVar[dict[str, object]] = {
-        "parent_experiment_id": "piControl",
-        "parent_experiment_rip": "r1i1p1",
-        "branch_time": 240.0,
-        # The file's own spelling of its model, which is *not* the spelling the search
-        # index uses -- see `test_the_model_comes_from_the_database_not_the_file`.
-        "model_id": "bcc-csm1-1-m",
-        "project_id": "CMIP5",
-        "institute_id": "BCC",
-    }
-
-    CHILD: ClassVar[ParentSimulation] = ParentSimulation(
-        project="CMIP5",
-        # The Solr facet spelling, which is what `Dataset.model` holds.
-        model="BCC-CSM1.1(m)",
-        experiment="abrupt4xCO2",
-        variant_label="r1i1p1",
-    )
-
-    def test_the_differently_named_fields_are_read(self):
-        parent = read_cmip5_parent_header(self.ATTRIBUTES, child=self.CHILD)
-
-        assert parent.parent_experiment == "piControl"
-        # CMIP5 calls the variant label `parent_experiment_rip`.
-        assert parent.parent_variant_label == "r1i1p1"
-        # And calls the branch time plain `branch_time`.
-        assert parent.branch_time_in_parent == 240.0
-
-    def test_the_model_comes_from_the_database_not_the_file(self):
-        """
-        The tempting mistake, and the one that would break every CMIP5 parent search
-
-        CMIP5's search index spells several models differently from the files
-        themselves. Checked live on 2026-11-05, the `model` facet says `INM-CM4`,
-        `BCC-CSM1.1(m)`, `ACCESS1.0` and `CSIRO-Mk3.6.0` where the file's `model_id`
-        -- and the DRS path -- say `inmcm4`, `bcc-csm1-1-m`, `ACCESS1-0` and
-        `CSIRO-Mk3-6-0`.
-
-        `Dataset.model` holds the facet spelling, because that is what a search is
-        issued with and what the matcher compares. So a parent named with the file's
-        spelling would be searched for and never found -- and the failure would look
-        like "this parent is not published" rather than like a naming mismatch.
-        """
-        parent = read_cmip5_parent_header(self.ATTRIBUTES, child=self.CHILD)
-
-        assert parent.parent_model == "BCC-CSM1.1(m)"
-        assert parent.parent_project == "CMIP5"
-        # Emphatically not the file's own spelling.
-        assert self.ATTRIBUTES["model_id"] == "bcc-csm1-1-m"
-        assert parent.parent_model != self.ATTRIBUTES["model_id"]
-
-    def test_what_cmip5_simply_does_not_have_is_left_alone(self):
-        parent = read_cmip5_parent_header(self.ATTRIBUTES, child=self.CHILD)
-
-        # CMIP5 has no concept of an activity.
-        assert parent.parent_activity is None
-        # And publishes no units for its branch time, which is what makes that number
-        # a record rather than a usable time.
-        assert parent.parent_time_units is None
-        assert parent.branch_time_in_child is None
-
-    def test_a_root_run_has_nothing_inferred_onto_it(self):
-        """
-        The one thing that must not happen here
-
-        A CMIP5 `piControl` says `parent_experiment_id = "N/A"` and nothing else --
-        checked live on 2026-11-05 across bcc-csm1-1-m, bcc-csm1-1, BNU-ESM and
-        CanESM2. Inferring a model and a project unconditionally would turn every root
-        run in the archive into one asserting a parent it never named, which
-        resolution could only fail on.
-        """
-        parent = read_cmip5_parent_header(
-            {"parent_experiment_id": "N/A", "model_id": "bcc-csm1-1-m"},
-            child=self.CHILD,
-        )
-
-        assert not parent.declares_a_parent
-        assert parent.parent_model is None
-        assert parent.parent_project is None
-
-    def test_one_unknown_field_does_not_make_the_record_a_root(self):
-        """
-        `"N/A"` means two different things in CMIP5, so it is judged per field
-
-        `CMCC-CM`'s rcp85 names `historical` as its parent and `"N/A"` as the variant
-        -- there one field is unknown and the record still declares a parent. The gap
-        is left as a gap, for a fix to close.
-        """
-        child = ParentSimulation(
-            project="CMIP5",
-            model="CMCC-CM",
-            experiment="rcp85",
-            variant_label="r1i1p1",
-        )
-        parent = read_cmip5_parent_header(
-            {"parent_experiment_id": "historical", "parent_experiment_rip": "N/A"},
-            child=child,
-        )
-
-        assert parent.declares_a_parent
-        assert parent.parent_experiment == "historical"
-        assert parent.parent_variant_label is None
-        # The inference still runs, because the record did declare a parent.
-        assert parent.parent_model == "CMCC-CM"
-
-    @pytest.mark.parametrize("branch_time", [0.0, 240.0, 185001.0, 20060101.0])
-    def test_a_branch_time_is_recorded_verbatim_whatever_it_means(self, branch_time):
-        """
-        The same attribute carries at least five incompatible encodings
-
-        Measured across 47 models: nothing recorded (`0.0`), a count of years
-        (`240.0`), `YYYYMM` (`185001.0`), `YYYYMMDD` (`20060101.0`) and days since an
-        unstated origin. With no `parent_time_units` published there is nothing to
-        tell them apart, so this is stored as what a file said and never interpreted.
-        """
-        parent = read_cmip5_parent_header(
-            {"parent_experiment_id": "piControl", "branch_time": branch_time},
-            child=self.CHILD,
-        )
-
-        assert parent.branch_time_in_parent == branch_time
-
-
-class TestChoosingAReader:
-    def test_each_project_gets_its_own(self):
-        assert header_reader_for_project("CMIP5") is read_cmip5_parent_header
-        assert header_reader_for_project("CMIP6") is read_cmip6_parent_header
-
-    def test_cmip7_refuses_although_we_search_it(self):
-        """
-        A project we search is not therefore a project whose headers we read
-
-        CMIP7 publishes its parent in the index, so nothing asks for its header, and
-        no CMIP7 file has been read to find out what its attributes are called.
-        Lending it CMIP6's reader would be the guess the test below rules out.
-        """
-        with pytest.raises(UnknownProjectHeaderReaderError) as caught:
-            header_reader_for_project("CMIP7")
-
-        assert caught.value.project == "CMIP7"
-        assert caught.value.known == ("CMIP5", "CMIP6")
-
-    def test_an_unknown_project_refuses_rather_than_guessing(self):
-        """
-        Deliberately no default, unlike the parent *matcher*
-
-        A reader that guessed which attributes carry the parent would not fail -- it
-        would record that every dataset in the project is a root of the tree, which is
-        a plausible-looking and completely wrong answer.
-        """
-        with pytest.raises(UnknownProjectHeaderReaderError) as caught:
-            header_reader_for_project("CORDEX")
-
-        assert caught.value.project == "CORDEX"
-        assert "CMIP5" in caught.value.known
 
 
 def served_range(prefix: bytes) -> str:

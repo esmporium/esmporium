@@ -1,5 +1,5 @@
 """
-Tests of reading a time range out of a filename
+Tests of parsing a time range out of a filename
 """
 
 from __future__ import annotations
@@ -8,14 +8,14 @@ import pytest
 
 from esmporium.datasets.no_time_axis import NO_TIME_AXIS_INTERVALS_BY_PROJECT
 from esmporium.datasets.time import TimeDelta, TimeRange, TimeStep
-from esmporium.enrich.known_readers import (
+from esmporium.enrich.known_parsers import (
     CLIMATOLOGY_SUFFIX,
-    FILENAME_TIME_READERS_BY_PROJECT,
-    UnknownProjectFilenameTimeReaderError,
+    FILENAME_TIME_PARSERS_BY_PROJECT,
+    UnknownProjectFilenameTimeParserError,
     UnknownReportingIntervalError,
     delta_of_reporting_interval,
-    read_trailing_range,
-    reader_for_project,
+    parse_trailing_range,
+    parser_for_project,
     step_of_stamp,
 )
 from esmporium.enrich.protocol import (
@@ -90,7 +90,7 @@ def half_open(read: PublishedRange, reporting_interval: str) -> TimeRange:
             # CMIP6's naming table with nothing invented. That is pinned against a
             # live document in
             # `tests/integration/requirements/test_cmip6plus_registration.py`; what
-            # is pinned here is only that the key reaches a reader.
+            # is pinned here is only that the key reaches a parser.
             "CMIP6Plus",
             "mon",
             "tas_Amon_MIROC6_esm-hist_r1i1p1f1_gn_185001-202012.nc",
@@ -106,7 +106,7 @@ def test_reading_a_monthly_or_yearly_filename(
     """
     The calendar-free cases, which cost nothing and need nothing installed
     """
-    read = reader_for_project(project)(filename)
+    read = parser_for_project(project)(filename)
 
     assert (read.start_raw, read.end_raw) == published
     assert half_open(read, reporting_interval).extent.count == extent
@@ -116,7 +116,7 @@ def test_a_single_month_file_holds_one_month():
     """
     The case which catches a conversion that subtracted the published values
     """
-    read = read_trailing_range(
+    read = parse_trailing_range(
         "tas_Amon_GFDL-ESM4_piControl_r1i1p1f1_gr1_320001-320001.nc"
     )
 
@@ -127,7 +127,7 @@ def test_a_climatology_keeps_its_range_and_its_suffix():
     """
     A CMIP climatology appends `-clim`, which is not part of the range
     """
-    read = read_trailing_range(
+    read = parse_trailing_range(
         "tas_Amon_ACCESS-ESM1-5_historical_r1i1p1f1_gn_185001-185012-clim.nc"
     )
 
@@ -138,12 +138,12 @@ def test_a_climatology_keeps_its_range_and_its_suffix():
 
 def test_a_cmip5_climatology_is_read_the_same_way():
     """
-    One reader strips `-clim` for every project
+    One parser strips `-clim` for every project
 
     CMIP5 spells the interval `monClim` where CMIP6 spells it `monC`, but the suffix
     on the filename is the same.
     """
-    read = read_trailing_range(
+    read = parse_trailing_range(
         "difvho_Oclim_HadGEM2-ES_historical_r1i1p1_185001-185012-clim.nc"
     )
 
@@ -156,7 +156,7 @@ def test_a_monthly_file_has_no_suffix():
     """
     `None` when nothing follows the range
     """
-    read = read_trailing_range(
+    read = parse_trailing_range(
         "tas_Amon_ACCESS-ESM1-5_historical_r1i1p1f1_gn_185001-185012.nc"
     )
 
@@ -181,7 +181,7 @@ def test_a_fixed_field_has_no_range_and_says_so_quietly(project, filename):
     """
     `None` rather than an error: there is nothing wrong with an `fx` file
     """
-    assert reader_for_project(project)(filename) is None
+    assert parser_for_project(project)(filename) is None
 
 
 def test_a_hyphenated_model_name_is_not_mistaken_for_a_range():
@@ -190,11 +190,11 @@ def test_a_hyphenated_model_name_is_not_mistaken_for_a_range():
 
     `MPI-M-MPI-ESM1-2-HR` and `EUR-12` are both full of hyphens, and a parser which
     split the stem would find a "range" in either. A CORDEX-shaped name because it is
-    the worst case to hand; this calls the reader directly, rather than through
-    `reader_for_project`, which has no reader for that project.
+    the worst case to hand; this calls the parser directly, rather than through
+    `parser_for_project`, which has no parser for that project.
     """
     assert (
-        read_trailing_range(
+        parse_trailing_range(
             "orog_EUR-12_MPI-M-MPI-ESM1-2-HR_historical_r1i1p1f1"
             "_GERICS_REMO2020_v1_fx.nc"
         )
@@ -223,7 +223,7 @@ def test_a_hyphenated_model_name_is_not_mistaken_for_a_range():
         (
             # The same twelve-digit stamp in CMIP5's spelling, which has no grid
             # label and no `f` in its ensemble member. The digit ladder is read off
-            # the string, so one reader serves both.
+            # the string, so one parser serves both.
             "pr_3hr_IPSL-CM5A-LR_historical_r1i1p1_197901010300-198001010000.nc",
             "3hr",
             ("197901010300", "198001010000"),
@@ -234,7 +234,7 @@ def test_a_hyphenated_model_name_is_not_mistaken_for_a_range():
             # (`tests/test-data/search/esgf-ng-stac-cmip7-east-search.json`). Its DRS
             # looks nothing like CMIP6's -- a branded variable, a region, a grid label
             # where CMIP6 puts none -- and the range is still the last field, which is
-            # why one reader serves every project we know.
+            # why one parser serves every project we know.
             "tas_tavg-h2m-hxy-u_day_glb_g120_CanESM5-1_1pctCO2_r1i1p2f1"
             "_18500101-18601231.nc",
             "day",
@@ -244,8 +244,8 @@ def test_a_hyphenated_model_name_is_not_mistaken_for_a_range():
         (
             # A CORDEX-shaped name, here because its half-hour stamps and
             # hyphen-laden fields are the hardest thing the parser is asked to cope
-            # with. Called directly rather than through `reader_for_project`, which
-            # has no reader for that project.
+            # with. Called directly rather than through `parser_for_project`, which
+            # has no parser for that project.
             "pr_EUR-12_MPI-M-MPI-ESM1-2-HR_historical_r1i1p1f1_GERICS_REMO2020"
             "_v1_1hr_195001010030-195001312330.nc",
             "1hr",
@@ -263,7 +263,7 @@ def test_sub_monthly_filenames_are_read_and_not_placed_on_an_axis(
     An exact dated range comes from a file's time bounds, so the filename is not
     padded out to a date to stand in for them.
     """
-    read = read_trailing_range(filename)
+    read = parse_trailing_range(filename)
 
     assert (read.start_raw, read.end_raw) == published
     assert step_of_stamp(read.start_raw) is precision
@@ -316,10 +316,10 @@ def test_an_interval_whose_width_we_do_not_know_is_refused():
 
 def test_a_range_written_to_a_precision_we_do_not_read_is_kept_raw():
     """
-    The reader keeps the stamps as written, and reading their precision refuses them
+    The parser keeps the stamps as written, and reading their precision refuses them
     rather than reading to the minute and being wrong by whatever the rest said
     """
-    read = read_trailing_range(
+    read = parse_trailing_range(
         "pr_1hr_X_historical_r1i1p1f1_gn_18500101000000-18500102000000.nc"
     )
 
@@ -328,42 +328,42 @@ def test_a_range_written_to_a_precision_we_do_not_read_is_kept_raw():
         step_of_stamp(read.start_raw)
 
 
-def test_an_unknown_project_has_no_reader_and_no_fallback():
+def test_an_unknown_project_has_no_parser_and_no_fallback():
     """
     Where a filename puts its range is a project's own convention
     """
-    with pytest.raises(UnknownProjectFilenameTimeReaderError, match="MIP1"):
-        reader_for_project("MIP1")
+    with pytest.raises(UnknownProjectFilenameTimeParserError, match="MIP1"):
+        parser_for_project("MIP1")
 
 
 def test_a_project_can_be_added_without_forking_anything():
     """
-    The registry idiom `PARENT_HEADER_READERS_BY_PROJECT` already sets
+    The registry idiom `FILE_HEADER_PARSERS_BY_PROJECT` already sets
     """
 
-    def read_mip1(filename):
+    def parse_mip1(filename):
         """Pretend MIP1 writes its range first"""
         start_raw, end_raw = filename.split("_")[0].split("-")
 
         return PublishedRange(start_raw, end_raw)
 
-    reader = reader_for_project(
-        "MIP1", readers={**FILENAME_TIME_READERS_BY_PROJECT, "MIP1": read_mip1}
+    parser = parser_for_project(
+        "MIP1", parsers={**FILENAME_TIME_PARSERS_BY_PROJECT, "MIP1": parse_mip1}
     )
-    read = reader("185001-185012_tas_MIP1.nc")
+    read = parser("185001-185012_tas_MIP1.nc")
 
     assert half_open(read, "mon").extent == TimeDelta(12, TimeStep.MONTHS)
 
 
 def test_the_two_registries_name_the_same_projects():
     """
-    Or a project would read its filenames and then not know what `fx` means
+    Or a project would parse its filenames and then not know what `fx` means
 
     They are separate mappings because they answer separate questions, and a project
     in one and not the other is a half-registered project: the thing to notice is
     that adding one entry means adding both.
     """
-    assert set(FILENAME_TIME_READERS_BY_PROJECT) == set(
+    assert set(FILENAME_TIME_PARSERS_BY_PROJECT) == set(
         NO_TIME_AXIS_INTERVALS_BY_PROJECT
     )
 

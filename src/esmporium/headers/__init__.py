@@ -21,9 +21,11 @@ the optional `headers` extra.
 
 from esmporium.headers.contents import (
     DEFAULT_TIME_VARIABLE,
+    BoundsAttribute,
     FileHeader,
     FirstAndLastTimeBounds,
     HeaderLayout,
+    bounds_named_by,
 )
 from esmporium.headers.errors import (
     HeaderNeedsCredentialsError,
@@ -108,6 +110,7 @@ __all__ = [
     "NETCDF3_MAGIC_64BIT_OFFSET",
     "NETCDF3_MAGIC_CLASSIC",
     "READERS_BY_LAYOUT",
+    "BoundsAttribute",
     "ByteSource",
     "FileHeader",
     "FirstAndLastTimeBounds",
@@ -137,6 +140,7 @@ __all__ = [
     "TruncatedHeaderError",
     "UnreadableHeaderError",
     "UnsupportedHeaderFormatError",
+    "bounds_named_by",
     "build_header_retrying",
     "fan_out",
     "is_worth_retrying",

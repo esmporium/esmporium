@@ -16,6 +16,7 @@ from esmporium.headers.contents import (
     FileHeader,
     FirstAndLastTimeBounds,
     HeaderLayout,
+    bounds_named_by,
 )
 from esmporium.headers.errors import (
     HeaderParseError,
@@ -266,22 +267,28 @@ def _first_and_last_time_bounds(
     first_value = _number(time[0], variable=time_variable)
     last_value = _number(time[n_steps - 1], variable=time_variable)
 
-    bounds_name = _plain_python(time.attrs.get("bounds"))
-    if bounds_name is None:
+    named = bounds_named_by(
+        {name: _plain_python(value) for name, value in time.attrs.items()}
+    )
+    if named is None:
         return FirstAndLastTimeBounds(
             time_variable=time_variable,
             n_steps=n_steps,
             first_value=first_value,
             last_value=last_value,
+            bounds_attribute=None,
             bounds_variable=None,
             first_bounds=None,
             last_bounds=None,
         )
 
+    bounds_attribute, bounds_name = named
+
     if str(bounds_name) not in variables:
         msg = (
             f"the time variable {time_variable!r} names {bounds_name!r} as its "
-            "bounds, and the file has no variable of that name"
+            f"bounds (in its {bounds_attribute.value!r} attribute), and the file has "
+            "no variable of that name"
         )
         raise UnreadableHeaderError(msg)
 
@@ -301,6 +308,7 @@ def _first_and_last_time_bounds(
         n_steps=n_steps,
         first_value=first_value,
         last_value=last_value,
+        bounds_attribute=bounds_attribute,
         bounds_variable=str(bounds_name),
         first_bounds=(
             _number(first_pair[0], variable=str(bounds_name)),
